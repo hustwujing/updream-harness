@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 import logging
+import time
 
 from .domain import Harness, identifier
 from .sandbox import Sandbox, SandboxBackend
@@ -24,6 +25,7 @@ class SandboxPool:
         self._warm: dict[Harness, list[Sandbox]] = defaultdict(list)
         self._attached: dict[str, Sandbox] = {}
         self._expiry: dict[str, asyncio.Task] = {}
+        self._idle_since: dict[str, float] = {}
         self._creating: dict[Harness, int] = defaultdict(int)
         self._refill: set[asyncio.Task] = set()
         self._closed = False
@@ -81,19 +83,32 @@ class SandboxPool:
                 expiry.cancel()
             attached = self._attached.get(thread_id)
             if attached and attached.harness == harness:
+                self._idle_since.pop(thread_id, None)
                 await self.backend.bind(attached, thread_id, turn_id)
                 attached.turn_id = turn_id
                 return attached
             if attached:
                 await self.backend.delete(attached)
                 self._attached.pop(thread_id, None)
+                self._idle_since.pop(thread_id, None)
                 self._user_slots.release()
+            if self._user_slots.locked() and self._idle_since:
+                evict_thread = min(self._idle_since, key=self._idle_since.get)
+                evict = self._attached.pop(evict_thread, None)
+                self._idle_since.pop(evict_thread, None)
+                evict_expiry = self._expiry.pop(evict_thread, None)
+                if evict_expiry:
+                    evict_expiry.cancel()
+                if evict:
+                    await self.backend.delete(evict)
+                    self._user_slots.release()
         await self._user_slots.acquire()
         try:
             async with self._lock:
                 attached = self._attached.get(thread_id)
                 if attached and attached.harness == harness:
                     self._user_slots.release()
+                    self._idle_since.pop(thread_id, None)
                     await self.backend.bind(attached, thread_id, turn_id)
                     attached.turn_id = turn_id
                     return attached
@@ -147,8 +162,10 @@ class SandboxPool:
                     self._expire(sandbox.thread_id, sandbox, keepalive_seconds),
                     name="sandbox-expire-" + sandbox.thread_id,
                 )
+                self._idle_since[sandbox.thread_id] = time.monotonic()
                 return
             self._attached.pop(sandbox.thread_id, None)
+            self._idle_since.pop(sandbox.thread_id, None)
             await self.backend.delete(sandbox)
             self._user_slots.release()
 
@@ -160,6 +177,7 @@ class SandboxPool:
                     return
                 await self.backend.delete(sandbox)
                 self._attached.pop(thread_id, None)
+                self._idle_since.pop(thread_id, None)
                 self._expiry.pop(thread_id, None)
                 self._user_slots.release()
         except asyncio.CancelledError:
@@ -177,6 +195,7 @@ class SandboxPool:
             self._refill.clear()
             self._expiry.clear()
             self._attached.clear()
+            self._idle_since.clear()
             self._warm.clear()
         for task in expiry:
             task.cancel()

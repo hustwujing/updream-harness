@@ -180,3 +180,20 @@ async def test_pool_shutdown_can_preserve_an_active_sandbox_for_broker_recovery(
     await pool.close(preserve_sandbox_ids={active.id})
     assert active.id in backend.items
     await backend.delete(active)
+
+
+async def test_capacity_evicts_oldest_idle_attached_sandbox_before_blocking_new_turn():
+    backend = FakeSandboxBackend()
+    pool = SandboxPool(backend, {harness: "" for harness in Harness}, {harness: 0 for harness in Harness},
+        max_sandboxes=2)
+    first = await pool.acquire(thread_id="first", turn_id="one", harness=Harness.CLAUDE, environment={})
+    await pool.release(first, keep_attached=True, keepalive_seconds=60)
+    await __import__('asyncio').sleep(.01)
+    second = await pool.acquire(thread_id="second", turn_id="two", harness=Harness.CLAUDE, environment={})
+    await pool.release(second, keep_attached=True, keepalive_seconds=60)
+    third = await __import__('asyncio').wait_for(pool.acquire(
+        thread_id="third", turn_id="three", harness=Harness.CLAUDE, environment={}), timeout=1)
+    assert first.id not in backend.items
+    assert second.id in backend.items and third.id in backend.items
+    await pool.release(third, keep_attached=False)
+    await pool.close()
