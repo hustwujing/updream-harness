@@ -35,7 +35,7 @@ def command(harness: str, model: str, native_thread_id: str = "") -> HarnessComm
             'name = "Sandbox Harness capability gateway"',
             "base_url = " + json.dumps(gateway + "/v1/models/codex"),
             'wire_api = "responses"',
-            'requires_openai_auth = false',
+            'requires_openai_auth = true',
             'request_max_retries = 1',
             'stream_max_retries = 1',
             '[features]',

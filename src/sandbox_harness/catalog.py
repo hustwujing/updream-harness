@@ -32,7 +32,7 @@ DEFAULT_CATALOG = {
         "label": "DeepSeek",
         "default_model": "deepseek-v4.1-flash",
         "models": [{"id": "deepseek-v4.1-flash", "label": "DeepSeek 4.1 Flash", "reasoning": [
-            {"id": "standard", "label": "标准", "native": "medium"},
+            {"id": "standard", "label": "标准", "native": "high"},
             {"id": "deep", "label": "深入", "native": "high"},
         ]}],
     },
@@ -108,4 +108,3 @@ class HarnessCatalog:
         if not level:
             raise ValueError("Reasoning level is not supported by the selected Harness model")
         return ResolvedProfile(harness, selected.id, level.id, level.native)
-
