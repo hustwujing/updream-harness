@@ -3,7 +3,7 @@ import asyncio
 from sandbox_harness.broker import Broker
 from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.config import Settings
-from sandbox_harness.domain import EventKind, Harness, RuntimeEvent, RuntimeResult, ThreadCreate, TurnCreate, TurnInputCreate, TurnState
+from sandbox_harness.domain import EventKind, Harness, InteractionResponse, RuntimeEvent, RuntimeResult, ThreadCreate, TurnCreate, TurnInputCreate, TurnState
 from sandbox_harness.objects import ObjectStore
 from sandbox_harness.pool import SandboxPool
 from sandbox_harness.sandbox import FakeSandboxBackend
@@ -15,6 +15,7 @@ class Runtime:
     async def restore(self, sandbox, archive): pass
     async def put_attachment(self, sandbox, name, data, mime): pass
     async def put_project_file(self, sandbox, path, data, mime): pass
+    async def reset_project_files(self, sandbox): pass
     async def run(self, sandbox, **kwargs):
         yield RuntimeEvent(kind=EventKind.TEXT_DELTA, payload={"text": "done"})
         yield RuntimeEvent(kind=EventKind.TOOL_FINISHED, payload={"name": "write", "result": "ok"})
@@ -62,6 +63,25 @@ class RecoverableRuntime(Runtime):
             yield RuntimeEvent(kind=EventKind.TEXT_DELTA, payload={"text": "recovered"}, runtime_sequence=1)
         if after_sequence < 2:
             yield RuntimeResult(status="completed", native_thread_id="native-recovered", runtime_sequence=2)
+
+
+class MissingExecutionRuntime(Runtime):
+    async def execution_status(self, sandbox, execution_id): return None
+
+
+class InteractionRuntime(Runtime):
+    def __init__(self):
+        self.release = asyncio.Event(); self.responses = []
+
+    async def run(self, sandbox, **kwargs):
+        yield RuntimeEvent(kind=EventKind.WAITING_USER, payload={"interaction_id":"native-question",
+            "interaction_kind":"question", "prompt":"Choose a format", "questions":[{"id":"format"}]})
+        await self.release.wait()
+        yield RuntimeEvent(kind=EventKind.TEXT_DELTA, payload={"text":"continued"})
+        yield RuntimeResult(status="completed", native_thread_id="native-interaction")
+
+    async def respond_interaction(self, sandbox, interaction_id, response):
+        self.responses.append((interaction_id, response)); self.release.set(); return True
 
 
 async def test_broker_runs_harness_and_persists_transcript_checkpoint_and_artifact(tmp_path):
@@ -242,6 +262,34 @@ async def test_broker_reattaches_expired_running_turn_and_replays_runtime_journa
         await broker.close(); await pool.close(); await store.close()
 
 
+async def test_broker_does_not_replay_turn_when_runtime_execution_is_lost(tmp_path):
+    settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "lost.db"),
+        backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9", recovery_scan_seconds=300)
+    store = Store(settings.database_url); await store.initialize(); objects = ObjectStore(tmp_path / "objects")
+    backend = FakeSandboxBackend(); pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
+    catalog = HarnessCatalog(); owner = "a" * 64
+    profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+    thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+        reasoning_level="standard", title="Lost"), profile, owner)
+    turn, _, _ = await store.create_turn(thread.id,
+        TurnCreate(message="must not replay", idempotency_key="lost-runtime-key"), profile, owner)
+    old = await store.claim_turn(turn.id, "dead", 30)
+    await store.start_runtime_execution(turn.id, turn.id + ":initial", "dead", old.recovery_generation)
+    sandbox = await backend.create(Harness.CLAUDE, "", {"sandbox-harness.io/turn":turn.id,
+        "sandbox-harness.io/thread":thread.id, "sandbox-harness.io/harness":"claude"}, {})
+    await store.set_turn_state(turn.id, TurnState.RUNNING, sandbox_id=sandbox.id,
+        lease_owner="dead", recovery_generation=old.recovery_generation)
+    await store.release_turn_lease(turn.id, "dead", old.recovery_generation)
+    broker = Broker(settings, store, objects, pool, MissingExecutionRuntime(), catalog)
+    try:
+        await broker.start(); current = await store.get_turn(turn.id)
+        assert current.state == TurnState.FAILED
+        assert current.error_code == "turn_interrupted_during_harness_execution"
+        assert sandbox.id not in backend.items
+    finally:
+        await broker.close(); await pool.close(); await store.close()
+
+
 async def test_broker_finishes_cleanup_after_sandbox_was_deleted_by_previous_process(tmp_path):
     settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "cleanup.db"),
         backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9",
@@ -265,5 +313,42 @@ async def test_broker_finishes_cleanup_after_sandbox_was_deleted_by_previous_pro
         assert current.state == TurnState.COMPLETED and current.pending_final_state == ""
         assert any(event.payload.get("code") == "turn_cleanup_recovered"
             for event in await store.events_after(turn.id, 0))
+    finally:
+        await broker.close(); await pool.close(); await store.close()
+
+
+async def test_broker_persists_native_question_and_resumes_the_same_runtime(tmp_path):
+    settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "interaction.db"),
+        backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9",
+        session_keepalive_seconds=0)
+    store = Store(settings.database_url); await store.initialize(); objects = ObjectStore(tmp_path / "objects")
+    backend = FakeSandboxBackend(); pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
+    runtime = InteractionRuntime(); catalog = HarnessCatalog(); broker = Broker(settings, store, objects, pool, runtime, catalog)
+    owner = "a" * 64
+    try:
+        profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Interaction"), profile, owner)
+        turn = await broker.submit(thread.id, TurnCreate(message="ask", idempotency_key="interaction-turn-key"))
+        for _ in range(100):
+            if (await store.get_turn(turn.id)).state == TurnState.AWAITING_USER:
+                break
+            await asyncio.sleep(.01)
+        interactions = await store.list_interactions(thread.id, owner)
+        assert len(interactions) == 1 and interactions[0].status == "pending"
+        response = InteractionResponse(idempotency_key="interaction-response-key",
+            action="answer", answers={"format":"mp4"})
+        resolved = await broker.respond_interaction(interactions[0].id, owner, response)
+        repeated = await broker.respond_interaction(interactions[0].id, owner, response)
+        assert resolved.status == repeated.status == "responded"
+        for _ in range(200):
+            current = await store.get_turn(turn.id)
+            if current.state in {TurnState.COMPLETED, TurnState.FAILED} and turn.id not in broker.tasks:
+                break
+            await asyncio.sleep(.01)
+        assert current.state == TurnState.COMPLETED
+        assert runtime.responses == [("native-question", {"action":"answer", "answers":{"format":"mp4"}})]
+        approval = next(item for item in await store.items_after(thread.id) if item.type.value == "approval")
+        assert approval.status == "completed" and approval.payload["response"]["answers"]["format"] == "mp4"
     finally:
         await broker.close(); await pool.close(); await store.close()

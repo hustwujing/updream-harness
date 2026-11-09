@@ -10,6 +10,7 @@ import tarfile
 from fastapi.testclient import TestClient
 
 import sandbox_runtime.app as runtime_app
+from sandbox_runtime.adapters import HarnessCommand
 
 
 def test_runtime_configuration_freezes_turn_harness_and_model(tmp_path, monkeypatch):
@@ -160,6 +161,8 @@ def test_runtime_materializes_only_managed_project_file_namespaces(tmp_path, mon
         assert (tmp_path / "workspace/project/assets/reference.txt").read_bytes() == b"persistent"
         for path in ("../escape", "state/private", "artifacts/../../escape"):
             assert client.put("/v1/project-files/file", params={"path":path}, content=b"x").status_code == 400
+        assert client.post("/v1/project-files/reset").status_code == 200
+        assert not (tmp_path / "workspace/project/assets/reference.txt").exists()
 
 
 def test_checkpoint_excludes_object_backed_managed_project_files(tmp_path, monkeypatch):
@@ -179,3 +182,116 @@ def test_checkpoint_excludes_object_backed_managed_project_files(tmp_path, monke
         names = set(archive.getnames())
     assert "project/src/app.py" in names
     assert not any(name.startswith("project/assets") or name.startswith("project/artifacts") for name in names)
+
+
+def test_runtime_delivers_native_interaction_response_to_control_harness(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
+    monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")
+    monkeypatch.setattr(runtime_app, "OUTPUTS", tmp_path / "workspace" / "outputs")
+    monkeypatch.setattr(runtime_app, "PERSISTENT", ("project", "state"))
+    runner = tmp_path / "interaction.py"
+    runner.write_text("""import json,sys
+first=json.loads(sys.stdin.readline())
+print(json.dumps({'type':'harness.interaction.requested','id':'native-approval','interaction_kind':'approval','prompt':'Allow command?'}),flush=True)
+response=json.loads(sys.stdin.readline())
+print(json.dumps({'type':'assistant_delta','text':response['response']['action']}),flush=True)
+print(json.dumps({'type':'harness.input.completed','input_ids':[first['id']],'thread_id':'native'}),flush=True)
+""")
+    monkeypatch.setattr(runtime_app, "command", lambda *args, **kwargs: HarnessCommand(
+        [sys.executable, str(runner)], {}, streaming_input=True, control_input=True, batched_completion=True))
+    app = runtime_app.create_app()
+    with TestClient(app) as client:
+        assert client.post("/v1/configure", json={"capability_token":"x"*32,"gateway_url":"http://gateway:28600",
+            "harness":"codex","model":"model","proxy_url":"http://172.31.0.1:28601"}).status_code == 200
+        result = {}
+        worker = threading.Thread(target=lambda: result.setdefault("response", client.post("/v1/turns",
+            json={"message":"first","execution_id":"interaction-execution","input_id":"input-one"})))
+        worker.start()
+        for _ in range(100):
+            execution = app.state.execution
+            if execution and any(row.get("kind") == "waiting_user" for row in execution.events):
+                break
+            time.sleep(.01)
+        response = client.post("/v1/interactions/native-approval", json={"action":"approve","answers":{}})
+        worker.join(timeout=5)
+    assert response.status_code == 200
+    rows = [json.loads(line) for line in result["response"].text.splitlines()]
+    assert any(row.get("kind") == "waiting_user" for row in rows)
+    assert any(row.get("payload", {}).get("text") == "approve" for row in rows)
+    assert rows[-1]["result"]["status"] == "completed"
+
+
+def test_runtime_waits_for_supervised_background_job_and_captures_status(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
+    monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")
+    monkeypatch.setattr(runtime_app, "OUTPUTS", tmp_path / "workspace" / "outputs")
+    monkeypatch.setattr(runtime_app, "PERSISTENT", ("project", "state"))
+    runner = tmp_path / "background_harness.py"
+    runner.write_text("import json,sys,time\nvalue=json.loads(sys.stdin.readline());time.sleep(.2)\nprint(json.dumps({'type':'harness.input.completed','input_ids':[value['id']],'thread_id':'native'}),flush=True)\n")
+    worker = tmp_path / "background_worker.py"
+    worker.write_text("import pathlib,time\ntime.sleep(.35)\npathlib.Path('" + str(tmp_path / "workspace/outputs/background.json") + "').write_text('{\"done\":true}')\nprint('BACKGROUND_DONE',flush=True)\n")
+    monkeypatch.setattr(runtime_app, "command", lambda *args, **kwargs: HarnessCommand(
+        [sys.executable, str(runner)], {}, streaming_input=True, control_input=True, batched_completion=True))
+    app = runtime_app.create_app()
+    with TestClient(app) as client:
+        assert client.post("/v1/configure", json={"capability_token":"x"*32,"gateway_url":"http://gateway:28600",
+            "harness":"codex","model":"model","proxy_url":"http://172.31.0.1:28601"}).status_code == 200
+        result = {}; started = time.monotonic()
+        turn_worker = threading.Thread(target=lambda: result.setdefault("response", client.post("/v1/turns",
+            json={"message":"first","execution_id":"background-execution","input_id":"input-one"})))
+        turn_worker.start()
+        for _ in range(100):
+            if app.state.execution:
+                break
+            time.sleep(.01)
+        response = client.post("/v1/background-jobs", json={"name":"render",
+            "argv":[sys.executable,str(worker)], "cwd":str(tmp_path / "workspace/project")})
+        assert response.status_code == 200
+        turn_worker.join(timeout=5)
+        jobs = client.get("/v1/background-jobs").json()["items"]
+    assert time.monotonic() - started >= .3
+    assert jobs[0]["status"] == "completed" and "BACKGROUND_DONE" in jobs[0]["log_tail"]
+    rows = [json.loads(line) for line in result["response"].text.splitlines()]
+    assert any(row.get("payload", {}).get("background_job_id") for row in rows)
+    assert rows[-1]["result"]["status"] == "completed"
+
+
+def test_runtime_generic_interaction_blocks_any_harness_until_user_response(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
+    monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")
+    monkeypatch.setattr(runtime_app, "OUTPUTS", tmp_path / "workspace" / "outputs")
+    monkeypatch.setattr(runtime_app, "PERSISTENT", ("project", "state"))
+    runner = tmp_path / "generic_interaction_harness.py"
+    runner.write_text("import json,sys,time\nvalue=json.loads(sys.stdin.readline());time.sleep(.8)\nprint(json.dumps({'type':'harness.input.completed','input_ids':[value['id']],'thread_id':'native'}),flush=True)\n")
+    monkeypatch.setattr(runtime_app, "command", lambda *args, **kwargs: HarnessCommand(
+        [sys.executable, str(runner)], {}, streaming_input=True, control_input=True, batched_completion=True))
+    app = runtime_app.create_app()
+    with TestClient(app) as client:
+        assert client.post("/v1/configure", json={"capability_token":"x"*32,"gateway_url":"http://gateway:28600",
+            "harness":"deepseek","model":"model","proxy_url":"http://172.31.0.1:28601"}).status_code == 200
+        turn_result = {}; interaction_result = {}
+        turn_worker = threading.Thread(target=lambda: turn_result.setdefault("response", client.post("/v1/turns",
+            json={"message":"first","execution_id":"generic-interaction","input_id":"input-one"})))
+        turn_worker.start()
+        for _ in range(100):
+            if app.state.execution:
+                break
+            time.sleep(.01)
+        interaction_worker = threading.Thread(target=lambda: interaction_result.setdefault("response",
+            client.post("/v1/native-interactions", json={"kind":"question","prompt":"Pick",
+                "questions":[{"id":"format","question":"Format?"}],"options":[]})))
+        interaction_worker.start()
+        identity = ""
+        for _ in range(100):
+            rows = app.state.execution.events
+            pending = next((row for row in rows if row.get("kind") == "waiting_user"), None)
+            if pending:
+                identity = pending["payload"]["interaction_id"]; break
+            time.sleep(.01)
+        assert identity.startswith("runtime-")
+        response = client.post(f"/v1/interactions/{identity}",
+            json={"action":"answer","answers":{"format":"mp4"}})
+        interaction_worker.join(timeout=5); turn_worker.join(timeout=5)
+    assert response.status_code == 200
+    assert interaction_result["response"].json()["answers"] == {"format":"mp4"}
+    assert turn_result["response"].status_code == 200

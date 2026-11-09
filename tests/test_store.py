@@ -92,5 +92,51 @@ async def test_project_files_keep_versions_and_return_only_the_current_content(t
         current = await store.current_project_files(thread.id, owner)
         assert len(current) == 1 and current[0].id == second.id
         assert await store.get_project_file_for_owner(second.id, "b" * 64) is None
+        renamed = await store.rename_project_file(second.id, owner, "assets/renamed.png")
+        assert renamed.path == "assets/renamed.png"
+        assert [item.path for item in await store.current_project_files(thread.id, owner)] == ["assets/renamed.png"]
+        deleted = await store.delete_project_file(renamed.id, owner)
+        assert deleted.deleted and await store.current_project_files(thread.id, owner) == []
+        restored, restored_created = await store.register_project_file(thread.id, path="assets/renamed.png",
+            source_type="upload", source_turn_id="four", sha256="2" * 64, size=20,
+            mime="image/png", object_ref="sha256:second")
+        assert restored_created and restored.version == 3
+        history = await store.project_file_history(thread.id, "assets/renamed.png", owner)
+        assert [item.version for item in history] == [3, 2, 1]
+    finally:
+        await store.close()
+
+
+async def test_interaction_response_is_owner_scoped_and_idempotent(tmp_path):
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "interactions.db")); await store.initialize()
+    try:
+        catalog = HarnessCatalog(); profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+        owner = "a" * 64
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Interaction"), profile, owner)
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="hello", idempotency_key="interaction-store-key"), profile, owner)
+        claimed = await store.claim_turn(turn.id, "worker", 30)
+        await store.start_runtime_execution(turn.id, "execution-one", "worker", claimed.recovery_generation)
+        await store.set_turn_state(turn.id, TurnState.AWAITING_USER,
+            lease_owner="worker", recovery_generation=claimed.recovery_generation)
+        interaction, created = await store.upsert_interaction(thread.id, turn.id, "execution-one",
+            "native-one", "approval", {"prompt":"Allow?"})
+        duplicate, duplicate_created = await store.upsert_interaction(thread.id, turn.id, "execution-one",
+            "native-one", "approval", {"prompt":"Allow?"})
+        assert created and not duplicate_created and duplicate.id == interaction.id
+        try:
+            await store.claim_interaction_response(interaction.id, "b" * 64, "response-key", {"action":"approve"})
+        except KeyError:
+            pass
+        else:
+            raise AssertionError("Foreign owner resolved an interaction")
+        responding, accepted = await store.claim_interaction_response(interaction.id, owner,
+            "response-key", {"action":"approve"})
+        assert accepted and responding.status == "responding"
+        await store.finish_interaction_response(interaction.id, delivered=True)
+        repeated, accepted_again = await store.claim_interaction_response(interaction.id, owner,
+            "response-key", {"action":"approve"})
+        assert not accepted_again and repeated.status == "responded"
     finally:
         await store.close()

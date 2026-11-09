@@ -27,6 +27,7 @@ class TurnState(StrEnum):
     RESTORING = "RESTORING"
     STARTING = "STARTING"
     RUNNING = "RUNNING"
+    AWAITING_USER = "AWAITING_USER"
     DRAINING_INPUTS = "DRAINING_INPUTS"
     CHECKPOINTING = "CHECKPOINTING"
     WAITING_USER = "WAITING_USER"
@@ -199,7 +200,33 @@ class ProjectFile(BaseModel):
     size: int = Field(ge=0)
     mime: str
     object_ref: str = Field(exclude=True)
+    deleted: bool = False
     created_at: datetime
+
+
+class ProjectFileRename(BaseModel):
+    path: str = Field(min_length=1, max_length=1000)
+
+
+class Interaction(BaseModel):
+    id: str
+    thread_id: str
+    turn_id: str
+    runtime_execution_id: str
+    runtime_interaction_id: str
+    kind: Literal["approval", "question"]
+    status: Literal["pending", "responding", "responded", "expired"]
+    request: dict[str, Any] = Field(default_factory=dict)
+    response: dict[str, Any] = Field(default_factory=dict)
+    response_key: str = ""
+    created_at: datetime
+    updated_at: datetime
+
+
+class InteractionResponse(BaseModel):
+    idempotency_key: str = Field(min_length=8, max_length=160)
+    action: Literal["approve", "reject", "answer"]
+    answers: dict[str, str] = Field(default_factory=dict)
 
 
 class RuntimeEvent(BaseModel):

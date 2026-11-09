@@ -11,12 +11,14 @@ import threading
 
 
 class Bridge:
-    def __init__(self):
+    def __init__(self, interaction_responses, interaction_condition):
         self.process = subprocess.Popen(["codex", "app-server", "--listen", "stdio://"], stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1, env=os.environ)
         self.messages = queue.Queue(); self.forwarded = queue.Queue(); self.errors = deque(maxlen=50); self.sequence = 0
         threading.Thread(target=self._read, daemon=True).start()
         threading.Thread(target=self._read_errors, daemon=True).start()
+        self.interaction_responses = interaction_responses
+        self.interaction_condition = interaction_condition
 
     def _read(self):
         for line in iter(lambda: self.process.stdout.readline(16 * 1024 * 1024 + 1), ""):
@@ -35,11 +37,28 @@ class Bridge:
 
     def respond(self, message):
         method = message.get("method", "")
-        if "requestApproval" in method:
-            result = {"permissions": {}} if "permissions" in method else {"decision": "decline"}
-        elif "requestUserInput" in method: result = {"answers": {}}
-        else:
+        is_question = "requestUserInput" in method
+        if "requestApproval" not in method and not is_question:
             self.write({"id": message["id"], "error": {"code": -32601, "message": "Interaction is not authorized"}}); return
+        interaction_id = "codex-" + str(message["id"])
+        params = message.get("params") or {}
+        self.emit({"type": "harness.interaction.requested", "id": interaction_id,
+            "interaction_kind": "question" if is_question else "approval",
+            "prompt": params.get("reason") or params.get("message") or method,
+            "options": params.get("options") or [], "questions": params.get("questions") or []})
+        with self.interaction_condition:
+            ready = self.interaction_condition.wait_for(
+                lambda: interaction_id in self.interaction_responses, timeout=86400,
+            )
+            if not ready:
+                self.write({"id": message["id"], "error": {"code": -32001, "message": "Interaction expired"}}); return
+            response = self.interaction_responses.pop(interaction_id)
+        if is_question:
+            result = {"answers": response.get("answers") or {}}
+        elif "permissions" in method:
+            result = {"permissions": params.get("permissions") or {}} if response.get("action") == "approve" else {"permissions": {}}
+        else:
+            result = {"decision": "accept" if response.get("action") == "approve" else "decline"}
         self.write({"id": message["id"], "result": result})
 
     @staticmethod
@@ -67,15 +86,20 @@ class Bridge:
 def main():
     parser = argparse.ArgumentParser(); parser.add_argument("--model", required=True); parser.add_argument("--thread-id", default="")
     args = parser.parse_args(); controls = queue.Queue(); eof = threading.Event()
+    interaction_responses = {}; interaction_condition = threading.Condition()
 
     def read_controls():
         for line in sys.stdin:
             try: value = json.loads(line)
             except ValueError: continue
             if isinstance(value, dict) and value.get("type") == "input": controls.put(value)
+            elif isinstance(value, dict) and value.get("type") == "interaction_response":
+                with interaction_condition:
+                    interaction_responses[str(value.get("id", ""))] = value.get("response") or {}
+                    interaction_condition.notify_all()
         eof.set()
 
-    threading.Thread(target=read_controls, daemon=True).start(); bridge = Bridge()
+    threading.Thread(target=read_controls, daemon=True).start(); bridge = Bridge(interaction_responses, interaction_condition)
     try:
         bridge.rpc("initialize", {"clientInfo": {"name": "sandbox-harness-platform", "version": "0.1.0"}})
         bridge.write({"method": "initialized", "params": {}})

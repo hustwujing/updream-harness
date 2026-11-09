@@ -88,6 +88,11 @@ def control_user_message(message: str) -> bytes:
         ensure_ascii=False, separators=(",", ":")) + "\n").encode()
 
 
+def control_interaction_response(interaction_id: str, response: dict) -> bytes:
+    return (json.dumps({"type": "interaction_response", "id": interaction_id, "response": response},
+        ensure_ascii=False, separators=(",", ":")) + "\n").encode()
+
+
 def normalize(harness: str, line: str) -> dict:
     try:
         value = json.loads(line)
@@ -99,6 +104,14 @@ def normalize(harness: str, line: str) -> dict:
     if kind == "harness.input.completed":
         return {"kind": "step_finished", "payload": {"name": "Input completed", "input_completed": True,
             "input_ids": value.get("input_ids", [])}}
+    if kind == "harness.interaction.requested":
+        return {"kind": "waiting_user", "payload": {
+            "interaction_id": str(value.get("id", "")),
+            "interaction_kind": value.get("interaction_kind", "approval"),
+            "prompt": value.get("prompt", "需要用户确认"),
+            "options": value.get("options") or [],
+            "questions": value.get("questions") or [],
+        }}
     if harness == "codex" and method == "item/agentMessage/delta":
         return {"kind": "text_delta", "payload": {"text": params.get("delta", "")}}
     if harness == "codex" and method in {"item/started", "item/completed"}:

@@ -47,6 +47,8 @@ Items are durable, ordered records rather than reconstructed UI from raw logs:
 
 Tool and command items are compact rows grouped under one collapsible activity section for a Turn. Only active items animate. Completed items never retain a cursor or pulse.
 
+Native questions and approvals appear as dedicated interaction rows. Questions render their declared fields or choices; approvals expose explicit allow and reject commands. The response control disables while submitting and a resolved row no longer animates.
+
 ## Composer
 
 The composer remains visible while a Turn runs. A new prompt can be sent as:
@@ -64,7 +66,8 @@ The transcript follows streaming output only while the user is already near the 
 
 Selecting an artifact opens a side sheet with preview, metadata and download. Media uses native playback; HTML uses a sandboxed document viewport; large or unsupported files remain downloadable. The sheet can show workspace files and outputs without exposing runtime credentials or private Harness state.
 
+The Workspace side sheet lists current project assets and artifacts, version history and active supervised background jobs. It supports direct asset upload, rename, deletion, download and background-job cancellation.
+
 ## Responsive Behavior
 
 On narrow screens the thread list and artifact viewer are independent drawers. The composer and transcript remain the main surface. Tool details default to collapsed, long lines wrap, and controls retain stable dimensions.
-

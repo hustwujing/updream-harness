@@ -51,6 +51,12 @@ class RuntimeClient:
                 headers={"Content-Type": mime})
             response.raise_for_status()
 
+    async def reset_project_files(self, sandbox: Sandbox) -> None:
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers,
+            timeout=60, trust_env=False) as client:
+            response = await client.post("/v1/project-files/reset")
+            response.raise_for_status()
+
     async def run(self, sandbox: Sandbox, *, message: str, attachments: list[Attachment], native_thread_id: str, reasoning_effort: str,
                   execution_id: str = "legacy", input_id: str = "initial", after_sequence: int = 0) -> AsyncIterator[RuntimeEvent | RuntimeResult]:
         body = {"message": message, "attachments": [item.model_dump(mode="json") for item in attachments],
@@ -91,6 +97,31 @@ class RuntimeClient:
             response = await client.get("/v1/executions/" + execution_id)
             if response.status_code == 404:
                 return None
+            response.raise_for_status()
+            return response.json()
+
+    async def respond_interaction(self, sandbox: Sandbox, interaction_id: str, response_value: dict) -> bool:
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers,
+            timeout=20, trust_env=False) as client:
+            response = await client.post(f"/v1/interactions/{interaction_id}", json=response_value)
+            if response.status_code == 409:
+                return False
+            response.raise_for_status()
+            return bool(response.json().get("accepted"))
+
+    async def background_jobs(self, sandbox: Sandbox) -> list[dict]:
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers,
+            timeout=20, trust_env=False) as client:
+            response = await client.get("/v1/background-jobs")
+            response.raise_for_status()
+            return response.json()["items"]
+
+    async def cancel_background_job(self, sandbox: Sandbox, job_id: str) -> dict:
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers,
+            timeout=20, trust_env=False) as client:
+            response = await client.post(f"/v1/background-jobs/{job_id}/cancel")
+            if response.status_code == 404:
+                raise KeyError("background_job_not_found")
             response.raise_for_status()
             return response.json()
 

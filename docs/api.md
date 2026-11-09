@@ -58,7 +58,14 @@ Events are replayable by sequence. The UI renders durable Items and applies delt
 POST /api/approvals/{approval_id}/respond
 ```
 
-The platform itself does not invent approvals. It transports approval requests emitted by a Harness and returns the user's response to that exact active Turn and Sandbox Attempt.
+The implemented endpoints are:
+
+```text
+GET  /api/threads/{thread_id}/interactions
+POST /api/interactions/{interaction_id}/respond
+```
+
+The platform itself does not invent approvals. It transports native Codex requests or explicit `sandbox-interact` requests from any Harness and returns the user's response to that exact active Turn, Runtime execution and Sandbox. Responses use an idempotency key; foreign owners, old executions and repeated responses with a different key are rejected.
 
 ## Attachments and Artifacts
 
@@ -67,10 +74,23 @@ POST /api/uploads
 GET  /api/artifacts/{artifact_id}
 GET  /api/threads/{thread_id}/project-files
 GET  /api/project-files/{file_id}
+POST /api/threads/{thread_id}/project-files
+GET  /api/threads/{thread_id}/project-files/history?path=
+POST /api/project-files/{file_id}/rename
+DELETE /api/project-files/{file_id}
 ```
 
 Uploads are content-addressed before a Turn references them. Artifact downloads validate thread ownership, object hash and byte limits.
 Attachments referenced by a Turn become versioned project assets. Exported Artifacts become versioned project artifacts. Project-file list and download endpoints enforce the same browser owner boundary as Threads and Artifacts.
+
+## Background Jobs
+
+```text
+GET  /api/turns/{turn_id}/background-jobs
+POST /api/turns/{turn_id}/background-jobs/{job_id}/cancel
+```
+
+Harnesses start jobs inside the Sandbox with `sandbox-background start --name NAME -- argv...`. Runtime uses an explicit argv without a host shell, constrains cwd to the project, owns the process group, drains a bounded log and holds the Turn open until all jobs finish. A failed, interrupted or cancelled job prevents a successful Turn result.
 
 ## Runtime Metadata
 

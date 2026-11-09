@@ -90,7 +90,16 @@ request_json, status, response_json
 created_at, responded_at
 ```
 
-Only the active Sandbox Attempt may resolve its approval. Replayed or expired responses are rejected.
+The implementation uses a common Interaction record for approvals and questions:
+
+```text
+id, thread_id, turn_id
+runtime_execution_id, runtime_interaction_id
+kind, status, request_json, response_json, response_key
+created_at, updated_at
+```
+
+Only the active Runtime execution may resolve its Interaction. Replayed, foreign-owner or expired responses are rejected. `AWAITING_USER` remains a nonterminal Turn state while the native Harness process waits.
 
 ## Capability Grant
 

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import asyncio
+from collections import defaultdict
 from datetime import datetime, timedelta
 
-from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, inspect, select, text, update
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, UniqueConstraint, inspect, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from .domain import Artifact, Event, EventKind, Harness, Item, ItemType, ProjectFile, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, identifier, now
+from .domain import Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, identifier, now
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
 
@@ -138,7 +140,25 @@ class ProjectFileRow(Base):
     size: Mapped[int] = mapped_column(Integer)
     mime: Mapped[str] = mapped_column(String(200))
     object_ref: Mapped[str] = mapped_column(Text)
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class InteractionRow(Base):
+    __tablename__ = "interactions"
+    __table_args__ = (UniqueConstraint("turn_id", "runtime_interaction_id"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    turn_id: Mapped[str] = mapped_column(String(32), index=True)
+    runtime_execution_id: Mapped[str] = mapped_column(String(160))
+    runtime_interaction_id: Mapped[str] = mapped_column(String(160))
+    kind: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    request_json: Mapped[str] = mapped_column(Text, default="{}")
+    response_json: Mapped[str] = mapped_column(Text, default="{}")
+    response_key: Mapped[str] = mapped_column(String(160), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class Store:
@@ -146,6 +166,7 @@ class Store:
         self.engine = create_async_engine(database_url)
         self.connections = async_sessionmaker(self.engine, expire_on_commit=False)
         self.events = RedisEventBus(redis_url, redis_prefix) if redis_url else None
+        self.event_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     async def initialize(self) -> None:
         if self.events:
@@ -186,6 +207,9 @@ class Store:
                 await connection.execute(text("ALTER TABLE events ADD COLUMN source_execution_id VARCHAR(160) NOT NULL DEFAULT ''"))
             if "source_sequence" not in event_columns:
                 await connection.execute(text("ALTER TABLE events ADD COLUMN source_sequence INTEGER NOT NULL DEFAULT 0"))
+            project_columns = await connection.run_sync(lambda value: {column["name"] for column in inspect(value).get_columns("project_files")})
+            if "deleted" not in project_columns:
+                await connection.execute(text("ALTER TABLE project_files ADD COLUMN deleted BOOLEAN NOT NULL DEFAULT FALSE"))
 
     async def close(self) -> None:
         if self.events:
@@ -379,7 +403,8 @@ class Store:
         return self.turn_view(row) if row else None
 
     async def create_turn_input(self, turn_id: str, value: TurnInputCreate, owner_id: str) -> tuple[TurnInputView, bool]:
-        accepting = {TurnState.QUEUED.value, TurnState.RESTORING.value, TurnState.STARTING.value, TurnState.RUNNING.value}
+        accepting = {TurnState.QUEUED.value, TurnState.RESTORING.value, TurnState.STARTING.value,
+            TurnState.RUNNING.value, TurnState.AWAITING_USER.value}
         async with self.connections.begin() as db:
             turn = (await db.execute(select(TurnRow).join(ThreadRow, ThreadRow.id == TurnRow.thread_id).where(
                 TurnRow.id == turn_id, ThreadRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
@@ -491,7 +516,14 @@ class Store:
 
     async def append_event(self, turn_id: str, kind: EventKind, payload: dict, *, item_id: str = "",
                            source_execution_id: str = "", source_sequence: int = 0) -> Event:
+        async with self.event_locks[turn_id]:
+            return await self._append_event_locked(turn_id, kind, payload, item_id=item_id,
+                source_execution_id=source_execution_id, source_sequence=source_sequence)
+
+    async def _append_event_locked(self, turn_id: str, kind: EventKind, payload: dict, *, item_id: str,
+                                   source_execution_id: str, source_sequence: int) -> Event:
         async with self.connections.begin() as db:
+            await db.get(TurnRow, turn_id, with_for_update=True)
             if source_execution_id and source_sequence:
                 existing = (await db.execute(select(EventRow).where(
                     EventRow.turn_id == turn_id,
@@ -609,7 +641,7 @@ class Store:
             latest = (await db.execute(select(ProjectFileRow).where(
                 ProjectFileRow.thread_id == thread_id, ProjectFileRow.path == path,
             ).order_by(ProjectFileRow.version.desc()).limit(1).with_for_update())).scalar_one_or_none()
-            if latest and latest.sha256 == sha256:
+            if latest and latest.sha256 == sha256 and not latest.deleted:
                 return self.project_file_view(latest), False
             row = ProjectFileRow(id=identifier(), thread_id=thread_id, path=path,
                 version=(latest.version + 1 if latest else 1), source_type=source_type,
@@ -628,7 +660,66 @@ class Store:
         current = {}
         for row in rows:
             current.setdefault(row.path, row)
-        return [self.project_file_view(current[path]) for path in sorted(current)]
+        return [self.project_file_view(current[path]) for path in sorted(current) if not current[path].deleted]
+
+    async def project_file_history(self, thread_id: str, path: str, owner_id: str) -> list[ProjectFile]:
+        async with self.connections() as db:
+            rows = (await db.execute(select(ProjectFileRow).join(ThreadRow,
+                ThreadRow.id == ProjectFileRow.thread_id).where(
+                    ProjectFileRow.thread_id == thread_id, ProjectFileRow.path == path,
+                    ThreadRow.owner_id == owner_id,
+                ).order_by(ProjectFileRow.version.desc()))).scalars().all()
+        return [self.project_file_view(row) for row in rows]
+
+    async def rename_project_file(self, file_id: str, owner_id: str, new_path: str) -> ProjectFile:
+        async with self.connections.begin() as db:
+            source = (await db.execute(select(ProjectFileRow).join(ThreadRow,
+                ThreadRow.id == ProjectFileRow.thread_id).where(
+                    ProjectFileRow.id == file_id, ThreadRow.owner_id == owner_id,
+                ).with_for_update())).scalar_one_or_none()
+            if not source or source.deleted:
+                raise KeyError("project_file_not_found")
+            latest_source = (await db.execute(select(ProjectFileRow).where(
+                ProjectFileRow.thread_id == source.thread_id, ProjectFileRow.path == source.path,
+            ).order_by(ProjectFileRow.version.desc()).limit(1).with_for_update())).scalar_one()
+            if latest_source.id != source.id:
+                raise RuntimeError("project_file_version_stale")
+            target = (await db.execute(select(ProjectFileRow).where(
+                ProjectFileRow.thread_id == source.thread_id, ProjectFileRow.path == new_path,
+            ).order_by(ProjectFileRow.version.desc()).limit(1).with_for_update())).scalar_one_or_none()
+            if target and not target.deleted:
+                raise RuntimeError("project_file_path_exists")
+            timestamp = now()
+            tombstone = ProjectFileRow(id=identifier(), thread_id=source.thread_id, path=source.path,
+                version=source.version + 1, source_type=source.source_type, source_turn_id=source.source_turn_id,
+                sha256=source.sha256, size=source.size, mime=source.mime, object_ref=source.object_ref,
+                deleted=True, created_at=timestamp)
+            row = ProjectFileRow(id=identifier(), thread_id=source.thread_id, path=new_path,
+                version=(target.version + 1 if target else 1), source_type=source.source_type,
+                source_turn_id=source.source_turn_id, sha256=source.sha256, size=source.size,
+                mime=source.mime, object_ref=source.object_ref, deleted=False, created_at=timestamp)
+            db.add_all([tombstone, row])
+        return self.project_file_view(row)
+
+    async def delete_project_file(self, file_id: str, owner_id: str) -> ProjectFile:
+        async with self.connections.begin() as db:
+            source = (await db.execute(select(ProjectFileRow).join(ThreadRow,
+                ThreadRow.id == ProjectFileRow.thread_id).where(
+                    ProjectFileRow.id == file_id, ThreadRow.owner_id == owner_id,
+                ).with_for_update())).scalar_one_or_none()
+            if not source or source.deleted:
+                raise KeyError("project_file_not_found")
+            latest = (await db.execute(select(ProjectFileRow).where(
+                ProjectFileRow.thread_id == source.thread_id, ProjectFileRow.path == source.path,
+            ).order_by(ProjectFileRow.version.desc()).limit(1).with_for_update())).scalar_one()
+            if latest.id != source.id:
+                raise RuntimeError("project_file_version_stale")
+            row = ProjectFileRow(id=identifier(), thread_id=source.thread_id, path=source.path,
+                version=source.version + 1, source_type=source.source_type,
+                source_turn_id=source.source_turn_id, sha256=source.sha256, size=source.size,
+                mime=source.mime, object_ref=source.object_ref, deleted=True, created_at=now())
+            db.add(row)
+        return self.project_file_view(row)
 
     async def get_project_file_for_owner(self, file_id: str, owner_id: str) -> ProjectFile | None:
         async with self.connections() as db:
@@ -637,6 +728,88 @@ class Store:
                     ProjectFileRow.id == file_id, ThreadRow.owner_id == owner_id,
                 ))).scalar_one_or_none()
         return self.project_file_view(row) if row else None
+
+    @staticmethod
+    def interaction_view(row: InteractionRow) -> Interaction:
+        return Interaction.model_validate({
+            "id": row.id, "thread_id": row.thread_id, "turn_id": row.turn_id,
+            "runtime_execution_id": row.runtime_execution_id,
+            "runtime_interaction_id": row.runtime_interaction_id, "kind": row.kind,
+            "status": row.status, "request": json.loads(row.request_json),
+            "response": json.loads(row.response_json), "response_key": row.response_key,
+            "created_at": row.created_at, "updated_at": row.updated_at,
+        })
+
+    async def upsert_interaction(self, thread_id: str, turn_id: str, execution_id: str,
+                                 runtime_interaction_id: str, kind: str, request: dict) -> tuple[Interaction, bool]:
+        timestamp = now()
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(InteractionRow).where(
+                InteractionRow.turn_id == turn_id,
+                InteractionRow.runtime_interaction_id == runtime_interaction_id,
+            ).with_for_update())).scalar_one_or_none()
+            if row:
+                return self.interaction_view(row), False
+            row = InteractionRow(id=identifier(), thread_id=thread_id, turn_id=turn_id,
+                runtime_execution_id=execution_id, runtime_interaction_id=runtime_interaction_id,
+                kind=kind, status="pending", request_json=json.dumps(request, ensure_ascii=False),
+                response_json="{}", response_key="", created_at=timestamp, updated_at=timestamp)
+            db.add(row)
+        return self.interaction_view(row), True
+
+    async def list_interactions(self, thread_id: str, owner_id: str) -> list[Interaction]:
+        async with self.connections() as db:
+            rows = (await db.execute(select(InteractionRow).join(ThreadRow,
+                ThreadRow.id == InteractionRow.thread_id).where(
+                    InteractionRow.thread_id == thread_id, ThreadRow.owner_id == owner_id,
+                ).order_by(InteractionRow.created_at))).scalars().all()
+        return [self.interaction_view(row) for row in rows]
+
+    async def claim_interaction_response(self, interaction_id: str, owner_id: str,
+                                         response_key: str, response: dict) -> tuple[Interaction, bool]:
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(InteractionRow).join(ThreadRow,
+                ThreadRow.id == InteractionRow.thread_id).where(
+                    InteractionRow.id == interaction_id, ThreadRow.owner_id == owner_id,
+                ).with_for_update())).scalar_one_or_none()
+            if not row:
+                raise KeyError("interaction_not_found")
+            if row.status == "responded" and row.response_key == response_key:
+                return self.interaction_view(row), False
+            if row.status != "pending":
+                raise RuntimeError("interaction_not_pending")
+            turn = await db.get(TurnRow, row.turn_id, with_for_update=True)
+            if (not turn or turn.runtime_execution_id != row.runtime_execution_id
+                    or TurnState(turn.state) not in {TurnState.RUNNING, TurnState.AWAITING_USER}):
+                row.status = "expired"; row.updated_at = now()
+                raise RuntimeError("interaction_expired")
+            row.status = "responding"; row.response_key = response_key
+            row.response_json = json.dumps(response, ensure_ascii=False); row.updated_at = now()
+        return self.interaction_view(row), True
+
+    async def finish_interaction_response(self, interaction_id: str, *, delivered: bool) -> Interaction:
+        async with self.connections.begin() as db:
+            row = await db.get(InteractionRow, interaction_id, with_for_update=True)
+            if not row:
+                raise KeyError("interaction_not_found")
+            if row.status == "responding":
+                row.status = "responded" if delivered else "pending"
+                if not delivered:
+                    row.response_key = ""; row.response_json = "{}"
+                row.updated_at = now()
+        return self.interaction_view(row)
+
+    async def finish_interaction_item(self, turn_id: str, interaction_id: str, response: dict) -> None:
+        async with self.connections.begin() as db:
+            rows = (await db.execute(select(ItemRow).where(
+                ItemRow.turn_id == turn_id, ItemRow.type == ItemType.APPROVAL.value,
+            ).order_by(ItemRow.sequence.desc()))).scalars().all()
+            row = next((item for item in rows
+                if json.loads(item.payload_json).get("interaction_id") == interaction_id), None)
+            if row:
+                payload = json.loads(row.payload_json); payload["response"] = response
+                row.payload_json = json.dumps(payload, ensure_ascii=False)
+                row.status = "completed"; row.updated_at = now()
 
     async def get_artifact(self, artifact_id: str) -> Artifact | None:
         async with self.connections() as db:

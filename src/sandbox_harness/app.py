@@ -6,7 +6,7 @@ import json
 import logging
 from contextlib import suppress
 from contextlib import asynccontextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from .broker import Broker
 from .catalog import HarnessCatalog
 from .config import Settings, load_settings
-from .domain import Attachment, Harness, ThreadCreate, TurnCreate, TurnInputCreate
+from .domain import Attachment, Harness, InteractionResponse, ProjectFileRename, ThreadCreate, TurnCreate, TurnInputCreate
 from .model_discovery import ModelDiscovery
 from .objects import object_store
 from .pool import SandboxPool
@@ -27,6 +27,16 @@ from .sessions import COOKIE, Sessions
 from .store import Store
 
 logger = logging.getLogger(__name__)
+
+
+def managed_project_path(value: str, *, upload: bool = False) -> str:
+    path = PurePosixPath(value)
+    allowed = {"assets"} if upload else {"assets", "artifacts"}
+    if path.is_absolute() or len(path.parts) < 2 or path.parts[0] not in allowed or any(
+        part in {"", ".", ".."} for part in path.parts
+    ):
+        raise ValueError("Invalid managed project path")
+    return path.as_posix()
 
 
 def components(settings: Settings):
@@ -205,6 +215,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "Thread not found")
         return await store.current_project_files(thread_id, request.state.owner_id)
 
+    @app.post("/api/threads/{thread_id}/project-files")
+    async def upload_project_file(thread_id: str, request: Request, path: str, mime: str = "application/octet-stream"):
+        if not await store.get_thread(thread_id, request.state.owner_id):
+            raise HTTPException(404, "Thread not found")
+        try:
+            path = managed_project_path(path, upload=True)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
+        data = await request.body()
+        if len(data) > settings.max_attachment_bytes:
+            raise HTTPException(413, "Project asset exceeds byte limit")
+        object_ref, digest = objects.put(data)
+        value, _ = await store.register_project_file(thread_id, path=path, source_type="upload",
+            source_turn_id="", sha256=digest, size=len(data), mime=mime, object_ref=object_ref)
+        return value
+
+    @app.get("/api/threads/{thread_id}/project-files/history")
+    async def project_file_history(thread_id: str, path: str, request: Request):
+        if not await store.get_thread(thread_id, request.state.owner_id):
+            raise HTTPException(404, "Thread not found")
+        try:
+            path = managed_project_path(path)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
+        return await store.project_file_history(thread_id, path, request.state.owner_id)
+
+    @app.get("/api/threads/{thread_id}/interactions")
+    async def list_interactions(thread_id: str, request: Request):
+        if not await store.get_thread(thread_id, request.state.owner_id):
+            raise HTTPException(404, "Thread not found")
+        return await store.list_interactions(thread_id, request.state.owner_id)
+
+    @app.post("/api/interactions/{interaction_id}/respond")
+    async def respond_interaction(interaction_id: str, value: InteractionResponse, request: Request):
+        try:
+            return await broker.respond_interaction(interaction_id, request.state.owner_id, value)
+        except KeyError:
+            raise HTTPException(404, "Interaction not found")
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+
     @app.get("/api/turns/{turn_id}")
     async def get_turn(turn_id: str, request: Request):
         value = await store.get_turn_for_owner(turn_id, request.state.owner_id)
@@ -244,6 +297,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not await store.get_turn_for_owner(turn_id, request.state.owner_id):
             raise HTTPException(404, "Turn not found")
         return await store.list_turn_inputs(turn_id)
+
+    @app.get("/api/turns/{turn_id}/background-jobs")
+    async def list_background_jobs(turn_id: str, request: Request):
+        try:
+            return await broker.background_jobs(turn_id, request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404, "Turn not found")
+
+    @app.post("/api/turns/{turn_id}/background-jobs/{job_id}/cancel")
+    async def cancel_background_job(turn_id: str, job_id: str, request: Request):
+        try:
+            return await broker.cancel_background_job(turn_id, job_id, request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404, "Turn or background job not found")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
 
     @app.get("/api/turns/{turn_id}/events")
     async def events(turn_id: str, request: Request, after: int = 0):
@@ -302,6 +371,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         data = objects.get(value.object_ref, maximum=maximum)
         return Response(data, media_type=value.mime,
             headers={"Content-Disposition": f'attachment; filename="{Path(value.path).name}"'})
+
+    @app.post("/api/project-files/{file_id}/rename")
+    async def rename_project_file(file_id: str, value: ProjectFileRename, request: Request):
+        current = await store.get_project_file_for_owner(file_id, request.state.owner_id)
+        if not current:
+            raise HTTPException(404, "Project file not found")
+        try:
+            path = managed_project_path(value.path)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
+        if path.split("/", 1)[0] != current.path.split("/", 1)[0]:
+            raise HTTPException(422, "Project file category cannot change during rename")
+        try:
+            return await store.rename_project_file(file_id, request.state.owner_id, path)
+        except KeyError:
+            raise HTTPException(404, "Project file not found")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+
+    @app.delete("/api/project-files/{file_id}")
+    async def delete_project_file(file_id: str, request: Request):
+        try:
+            return await store.delete_project_file(file_id, request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404, "Project file not found")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
 
     web_root = Path(__file__).resolve().parents[2] / "web"
     static = web_root / "dist" if (web_root / "dist" / "index.html").is_file() else web_root

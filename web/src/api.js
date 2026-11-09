@@ -13,6 +13,14 @@ export const createThread=value=>api('threads',{method:'POST',body:JSON.stringif
 export const listTurns=id=>api(`threads/${id}/turns`);
 export const listItems=(id,after=0)=>api(`threads/${id}/items?after=${after}&limit=500`);
 export const listProjectFiles=id=>api(`threads/${id}/project-files`);
+export const listInteractions=id=>api(`threads/${id}/interactions`);
+export const respondInteraction=(id,value)=>api(`interactions/${id}/respond`,{method:'POST',body:JSON.stringify(value)});
+export const projectFileHistory=(id,path)=>api(`threads/${id}/project-files/history?path=${encodeURIComponent(path)}`);
+export const renameProjectFile=(id,path)=>api(`project-files/${id}/rename`,{method:'POST',body:JSON.stringify({path})});
+export const deleteProjectFile=id=>api(`project-files/${id}`,{method:'DELETE'});
+export const uploadProjectFile=(threadId,file)=>api(`threads/${threadId}/project-files?path=${encodeURIComponent(`assets/${file.name}`)}&mime=${encodeURIComponent(file.type||'application/octet-stream')}`,{method:'POST',body:file,headers:{'Content-Type':file.type||'application/octet-stream'}});
+export const listBackgroundJobs=turnId=>api(`turns/${turnId}/background-jobs`);
+export const cancelBackgroundJob=(turnId,jobId)=>api(`turns/${turnId}/background-jobs/${jobId}/cancel`,{method:'POST'});
 export const getTurn=id=>api(`turns/${id}`);
 export const createTurn=(id,value)=>api(`threads/${id}/turns`,{method:'POST',body:JSON.stringify(value)});
 export const appendTurnInput=(id,value)=>api(`turns/${id}/inputs`,{method:'POST',body:JSON.stringify(value)});

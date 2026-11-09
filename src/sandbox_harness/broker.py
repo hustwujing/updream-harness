@@ -113,86 +113,66 @@ class Broker:
 
     async def reconcile(self) -> None:
         for turn in await self.store.recoverable_turns():
-            if self.closing or turn.id in self.tasks:
-                continue
-            claimed = await self.store.claim_turn(
-                turn.id, self.instance_id, self.settings.turn_lease_seconds,
-            )
-            if not claimed:
-                continue
-            self.leases[turn.id] = claimed.recovery_generation
-            if claimed.state == TurnState.QUEUED:
-                self._schedule(turn.id)
-                continue
-            if claimed.state == TurnState.CLEANING and claimed.pending_final_state:
-                if claimed.capability_nonce:
-                    try:
-                        async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
-                            response = await client.post(
-                                self.settings.gateway_url.rstrip('/') + '/internal/revoke/' + claimed.capability_nonce,
-                                headers={"X-Sandbox-Harness-Control": self.settings.gateway_control_key},
-                            )
-                            response.raise_for_status()
-                    except Exception as exc:
-                        await self.store.append_event(turn.id, EventKind.WARNING, {
-                            "code": "recovery_capability_revoke_failed", "detail": type(exc).__name__,
-                        })
-                for sandbox in await self.pool.backend.find_by_turn(turn.id):
-                    await self.pool.backend.delete(sandbox)
-                target = TurnState(claimed.pending_final_state)
-                await self.store.append_event(turn.id, EventKind.WARNING, {
-                    "code": "turn_cleanup_recovered", "generation": claimed.recovery_generation,
-                    "final_state": target.value,
-                })
-                logger.warning("Recovered cleanup turn=%s generation=%s final=%s",
-                    turn.id, claimed.recovery_generation, target.value)
-                await self._state(turn.id, target, sandbox_id="",
-                    error_code=claimed.error_code, error_detail=claimed.error_detail)
-                await self.store.release_turn_lease(turn.id, self.instance_id, claimed.recovery_generation)
-                self.leases.pop(turn.id, None)
-                continue
-            if claimed.state in {TurnState.RESTORING, TurnState.STARTING}:
-                matches = await self.pool.backend.find_by_turn(turn.id)
-                for sandbox in matches:
-                    await self.pool.backend.delete(sandbox)
-                await self.store.append_event(turn.id, EventKind.WARNING, {
-                    "code": "turn_recovered_before_harness_start",
-                    "generation": claimed.recovery_generation,
-                })
-                await self._state(turn.id, TurnState.QUEUED, sandbox_id="")
-                self._schedule(turn.id)
-                continue
-            if claimed.state in {
-                TurnState.RUNNING, TurnState.DRAINING_INPUTS, TurnState.CHECKPOINTING,
-            } and claimed.runtime_execution_id:
-                matches = await self.pool.backend.find_by_turn(turn.id)
-                if len(matches) == 1 and await self.runtime.execution_status(
-                    matches[0], claimed.runtime_execution_id,
-                ) is not None:
+            try:
+                await self._reconcile_turn(turn)
+            except Exception:
+                logger.exception("Turn reconciliation failed turn=%s", turn.id)
+                generation = self.leases.pop(turn.id, None)
+                if generation is not None:
+                    await self.store.release_turn_lease(turn.id, self.instance_id, generation)
+
+    async def _reconcile_turn(self, turn) -> None:
+        if self.closing or turn.id in self.tasks:
+            return
+        claimed = await self.store.claim_turn(turn.id, self.instance_id, self.settings.turn_lease_seconds)
+        if not claimed:
+            return
+        self.leases[turn.id] = claimed.recovery_generation
+        if claimed.state == TurnState.QUEUED:
+            self._schedule(turn.id); return
+        if claimed.state == TurnState.CLEANING and claimed.pending_final_state:
+            if claimed.capability_nonce:
+                try:
+                    async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
+                        response = await client.post(self.settings.gateway_url.rstrip('/') + '/internal/revoke/' + claimed.capability_nonce,
+                            headers={"X-Sandbox-Harness-Control": self.settings.gateway_control_key})
+                        response.raise_for_status()
+                except Exception as exc:
                     await self.store.append_event(turn.id, EventKind.WARNING, {
-                        "code": "turn_runtime_reattached",
-                        "generation": claimed.recovery_generation,
-                        "runtime_sequence": claimed.runtime_sequence,
-                    })
-                    logger.warning("Reattaching runtime turn=%s generation=%s sequence=%s",
-                        turn.id, claimed.recovery_generation, claimed.runtime_sequence)
-                    self._schedule(turn.id)
-                    continue
-                for sandbox in matches:
-                    await self.pool.backend.delete(sandbox)
-            await self.store.append_event(turn.id, EventKind.ERROR, {
-                "code": "turn_interrupted_during_harness_execution",
-                "detail": "The previous broker lease expired after Harness execution began; automatic replay was suppressed.",
-                "generation": claimed.recovery_generation,
-            })
-            logger.error("Runtime recovery unavailable turn=%s generation=%s",
-                turn.id, claimed.recovery_generation)
-            await self.store.complete_agent_item(turn.id, "interrupted")
-            await self._state(turn.id, TurnState.FAILED, sandbox_id="",
-                error_code="turn_interrupted_during_harness_execution",
-                error_detail="Harness execution was interrupted and was not replayed because external side effects may already exist")
+                        "code": "recovery_capability_revoke_failed", "detail": type(exc).__name__})
+            for sandbox in await self.pool.backend.find_by_turn(turn.id):
+                await self.pool.backend.delete(sandbox)
+            target = TurnState(claimed.pending_final_state)
+            await self.store.append_event(turn.id, EventKind.WARNING, {"code": "turn_cleanup_recovered",
+                "generation": claimed.recovery_generation, "final_state": target.value})
+            logger.warning("Recovered cleanup turn=%s generation=%s final=%s", turn.id, claimed.recovery_generation, target.value)
+            await self._state(turn.id, target, sandbox_id="", error_code=claimed.error_code, error_detail=claimed.error_detail)
             await self.store.release_turn_lease(turn.id, self.instance_id, claimed.recovery_generation)
-            self.leases.pop(turn.id, None)
+            self.leases.pop(turn.id, None); return
+        if claimed.state in {TurnState.RESTORING, TurnState.STARTING}:
+            for sandbox in await self.pool.backend.find_by_turn(turn.id):
+                await self.pool.backend.delete(sandbox)
+            await self.store.append_event(turn.id, EventKind.WARNING, {
+                "code": "turn_recovered_before_harness_start", "generation": claimed.recovery_generation})
+            await self._state(turn.id, TurnState.QUEUED, sandbox_id=""); self._schedule(turn.id); return
+        if claimed.state in {TurnState.RUNNING, TurnState.AWAITING_USER, TurnState.DRAINING_INPUTS, TurnState.CHECKPOINTING} and claimed.runtime_execution_id:
+            matches = await self.pool.backend.find_by_turn(turn.id)
+            if len(matches) == 1 and await self.runtime.execution_status(matches[0], claimed.runtime_execution_id) is not None:
+                await self.store.append_event(turn.id, EventKind.WARNING, {"code": "turn_runtime_reattached",
+                    "generation": claimed.recovery_generation, "runtime_sequence": claimed.runtime_sequence})
+                logger.warning("Reattaching runtime turn=%s generation=%s sequence=%s", turn.id, claimed.recovery_generation, claimed.runtime_sequence)
+                self._schedule(turn.id); return
+            for sandbox in matches:
+                await self.pool.backend.delete(sandbox)
+        await self.store.append_event(turn.id, EventKind.ERROR, {"code": "turn_interrupted_during_harness_execution",
+            "detail": "The previous broker lease expired after Harness execution began; automatic replay was suppressed.",
+            "generation": claimed.recovery_generation})
+        logger.error("Runtime recovery unavailable turn=%s generation=%s", turn.id, claimed.recovery_generation)
+        await self.store.complete_agent_item(turn.id, "interrupted")
+        await self._state(turn.id, TurnState.FAILED, sandbox_id="", error_code="turn_interrupted_during_harness_execution",
+            error_detail="Harness execution was interrupted and was not replayed because external side effects may already exist")
+        await self.store.release_turn_lease(turn.id, self.instance_id, claimed.recovery_generation)
+        self.leases.pop(turn.id, None)
 
     async def try_deliver_input(self, value) -> bool:
         async with self.input_locks[value.turn_id]:
@@ -213,6 +193,52 @@ class Broker:
                 await self.store.set_input_status(value.id,
                     "delivered" if current and current.state == TurnState.RUNNING else "applied", delivery_mode)
             return bool(delivery_mode)
+
+    async def respond_interaction(self, interaction_id: str, owner_id: str, value) -> object:
+        response = {"action": value.action, "answers": value.answers}
+        interaction, claimed = await self.store.claim_interaction_response(
+            interaction_id, owner_id, value.idempotency_key, response,
+        )
+        if not claimed:
+            return interaction
+        turn = await self.store.get_turn(interaction.turn_id)
+        sandbox = self.active_sandboxes.get(interaction.turn_id)
+        if (not turn or not sandbox or turn.runtime_execution_id != interaction.runtime_execution_id):
+            await self.store.finish_interaction_response(interaction_id, delivered=False)
+            raise RuntimeError("interaction_runtime_unavailable")
+        if interaction.kind == "approval" and value.action not in {"approve", "reject"}:
+            await self.store.finish_interaction_response(interaction_id, delivered=False)
+            raise ValueError("Approval requires approve or reject")
+        if interaction.kind == "question" and (value.action != "answer" or not value.answers):
+            await self.store.finish_interaction_response(interaction_id, delivered=False)
+            raise ValueError("Question requires at least one answer")
+        delivered = await self.runtime.respond_interaction(
+            sandbox, interaction.runtime_interaction_id, response,
+        )
+        current = await self.store.finish_interaction_response(interaction_id, delivered=delivered)
+        if not delivered:
+            raise RuntimeError("interaction_transport_unsupported")
+        await self.store.finish_interaction_item(interaction.turn_id, interaction.id, response)
+        await self._state(interaction.turn_id, TurnState.RUNNING, sandbox_id=sandbox.id)
+        return current
+
+    async def background_jobs(self, turn_id: str, owner_id: str) -> list[dict]:
+        turn = await self.store.get_turn_for_owner(turn_id, owner_id)
+        if not turn:
+            raise KeyError("turn_not_found")
+        sandbox = self.active_sandboxes.get(turn_id)
+        if not sandbox:
+            return []
+        return await self.runtime.background_jobs(sandbox)
+
+    async def cancel_background_job(self, turn_id: str, job_id: str, owner_id: str) -> dict:
+        turn = await self.store.get_turn_for_owner(turn_id, owner_id)
+        if not turn:
+            raise KeyError("turn_not_found")
+        sandbox = self.active_sandboxes.get(turn_id)
+        if not sandbox:
+            raise RuntimeError("background_runtime_unavailable")
+        return await self.runtime.cancel_background_job(sandbox, job_id)
 
     async def submit(self, thread_id: str, value: TurnCreate) -> TurnView:
         if sum(item.size for item in value.attachments) > self.settings.max_attachment_bytes:
@@ -268,6 +294,31 @@ class Broker:
         if value.kind == EventKind.TOOL_OUTPUT:
             await self.store.append_event(turn_id, value.kind, value.payload,
                 source_execution_id=execution_id, source_sequence=value.runtime_sequence)
+            return
+        if value.kind == EventKind.WAITING_USER:
+            runtime_id = str(value.payload.get("interaction_id") or "")
+            if not runtime_id:
+                raise ValueError("Runtime interaction has no ID")
+            kind = str(value.payload.get("interaction_kind") or "approval")
+            if kind not in {"approval", "question"}:
+                raise ValueError("Runtime interaction kind is invalid")
+            interaction, created = await self.store.upsert_interaction(
+                thread_id, turn_id, execution_id, runtime_id, kind, value.payload,
+            )
+            if created:
+                item = await self.store.append_item(thread_id, turn_id, ItemType.APPROVAL,
+                    status="in_progress", summary=str(value.payload.get("prompt") or "需要用户确认"),
+                    payload={**value.payload, "interaction_id": interaction.id})
+            else:
+                item = next((candidate for candidate in await self.store.items_after(thread_id)
+                    if candidate.turn_id == turn_id and candidate.payload.get("interaction_id") == interaction.id), None)
+                if item is None:
+                    item = await self.store.append_item(thread_id, turn_id, ItemType.APPROVAL,
+                        status="in_progress", summary=str(value.payload.get("prompt") or "需要用户确认"),
+                        payload={**value.payload, "interaction_id": interaction.id})
+            await self.store.append_event(turn_id, value.kind, value.payload, item_id=item.id,
+                source_execution_id=execution_id, source_sequence=value.runtime_sequence)
+            await self._state(turn_id, TurnState.AWAITING_USER)
             return
         if value.kind == EventKind.TEXT_DELTA:
             item = await self.store.append_agent_delta(thread_id, turn_id, str(value.payload.get("text", "")))
@@ -356,7 +407,7 @@ class Broker:
         try:
             async with self.locks[thread.id]:
                 recovering = turn.state in {
-                    TurnState.RUNNING, TurnState.DRAINING_INPUTS, TurnState.CHECKPOINTING,
+                    TurnState.RUNNING, TurnState.AWAITING_USER, TurnState.DRAINING_INPUTS, TurnState.CHECKPOINTING,
                 } and bool(turn.runtime_execution_id)
                 recovered_result = None
                 if recovering:
@@ -364,6 +415,7 @@ class Broker:
                     if len(matches) != 1:
                         raise RuntimeError("recoverable_sandbox_not_found")
                     sandbox = await self.pool.adopt(matches[0], thread_id=thread.id, turn_id=turn.id)
+                    self.active_sandboxes[turn.id] = sandbox
                     status = await self.runtime.execution_status(sandbox, turn.runtime_execution_id)
                     if status is None:
                         raise RuntimeError("recoverable_runtime_execution_not_found")
@@ -422,6 +474,7 @@ class Broker:
                         archive = self.objects.get(thread.checkpoint_ref, maximum=self.settings.max_checkpoint_bytes)
                         await self.runtime.restore(sandbox, archive)
                     await self._register_project_attachments(thread.id, turn.id, turn.attachments)
+                    await self.runtime.reset_project_files(sandbox)
                     await self._materialize_project_files(sandbox,
                         await self.store.current_project_files(thread.id))
                     await self._materialize_attachments(sandbox, turn.attachments)

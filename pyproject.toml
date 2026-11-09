@@ -23,6 +23,8 @@ test = ["pytest>=8.3,<9", "pytest-asyncio>=0.25,<1"]
 sandbox-harness-api = "sandbox_harness.main:run"
 sandbox-harness-gateway = "sandbox_harness.gateway:run"
 sandbox-harness-runtime = "sandbox_runtime.main:run"
+sandbox-background = "sandbox_runtime.background_cli:main"
+sandbox-interact = "sandbox_runtime.interaction_cli:main"
 
 [build-system]
 requires = ["hatchling>=1.27"]

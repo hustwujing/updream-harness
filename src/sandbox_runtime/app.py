@@ -7,17 +7,20 @@ import mimetypes
 import os
 from pathlib import Path, PurePosixPath
 import signal
+import shutil
 import tarfile
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from tempfile import NamedTemporaryFile
 from typing import Any
+import uuid
 from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from .adapters import command, control_user_message, normalize, streaming_user_message
+from .adapters import command, control_interaction_response, control_user_message, normalize, streaming_user_message
 
 
 WORKSPACE = Path("/workspace")
@@ -26,6 +29,15 @@ OUTPUTS = WORKSPACE / "outputs"
 RUN = Path("/run/harness")
 HARNESS_JSONL_LIMIT = 16 * 1024 * 1024
 RUNTIME_EVENT_JOURNAL_LIMIT = 256 * 1024 * 1024
+RUNTIME_GUIDANCE = """Sandbox runtime contract:
+- For casual conversation, reply normally without creating files.
+- Work in /workspace/project. Current-message attachments are in /workspace/inbox; durable project inputs and prior outputs are in /workspace/project/assets and /workspace/project/artifacts.
+- Put files intended for the user in /workspace/outputs and verify them before replying.
+- For a long subprocess that should outlive the immediate tool call, use `sandbox-background start --name NAME -- argv...`; its exit status is part of this Turn.
+- When a material user decision is required, use `sandbox-interact question --prompt TEXT --question id=TEXT` or `sandbox-interact approval --prompt TEXT`; continue only after its JSON response. Do not ask for confirmation when the request already authorizes the action.
+
+User message:
+"""
 
 
 class Configure(BaseModel):
@@ -44,6 +56,42 @@ class TurnRequest(BaseModel):
     execution_id: str = Field(default="legacy", min_length=1, max_length=160)
     input_id: str = Field(default="initial", min_length=1, max_length=160)
     after_sequence: int = Field(default=0, ge=0)
+
+
+class BackgroundJobCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    argv: list[str] = Field(min_length=1, max_length=256)
+    cwd: str = Field(default="/workspace/project", min_length=1, max_length=1000)
+
+
+class NativeInteractionCreate(BaseModel):
+    kind: str = Field(pattern=r"^(approval|question)$")
+    prompt: str = Field(min_length=1, max_length=4000)
+    questions: list[dict] = Field(default_factory=list, max_length=20)
+    options: list[str] = Field(default_factory=list, max_length=50)
+
+
+@dataclass
+class BackgroundJob:
+    id: str
+    name: str
+    argv: list[str]
+    cwd: str
+    execution_id: str
+    status: str = "running"
+    pid: int = 0
+    returncode: int | None = None
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    completed_at: str = ""
+    log_path: str = ""
+    process: asyncio.subprocess.Process | None = None
+    task: asyncio.Task | None = None
+
+    def public(self, *, log_tail: str = "") -> dict:
+        return {"id": self.id, "name": self.name, "argv": self.argv, "cwd": self.cwd,
+            "execution_id": self.execution_id, "status": self.status, "pid": self.pid,
+            "returncode": self.returncode, "created_at": self.created_at,
+            "completed_at": self.completed_at, "log_tail": log_tail}
 
 
 @dataclass
@@ -77,6 +125,23 @@ def create_app() -> FastAPI:
     app.state.process_command = None
     app.state.pending_inputs = 0
     app.state.execution = None
+    app.state.background_jobs = {}
+    app.state.interaction_waiters = {}
+    jobs_root = WORKSPACE / "state" / "background-jobs"
+    jobs_root.mkdir(parents=True, exist_ok=True)
+    def load_jobs() -> None:
+        for record in jobs_root.glob("*.json"):
+            try:
+                value = json.loads(record.read_text())
+                if value.get("status") in {"running", "cancelling"}:
+                    value["status"] = "interrupted"; value["completed_at"] = datetime.now(timezone.utc).isoformat()
+                    record.write_text(json.dumps(value, ensure_ascii=False))
+                job = BackgroundJob(**{key: value[key] for key in BackgroundJob.__dataclass_fields__
+                    if key in value and key not in {"process", "task"}})
+                app.state.background_jobs[job.id] = job
+            except (OSError, ValueError, TypeError, KeyError):
+                continue
+    load_jobs()
     app.state.write_lock = asyncio.Lock()
     for name in (*PERSISTENT, "inbox", "outputs", "tmp"):
         (WORKSPACE / name).mkdir(parents=True, exist_ok=True)
@@ -114,6 +179,49 @@ def create_app() -> FastAPI:
         execution.result = result
         await publish(execution, {"type": "result", "result": result})
 
+    def persist_job(job: BackgroundJob) -> None:
+        target = jobs_root / (job.id + ".json")
+        temporary = target.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps({**job.public(), "log_path": job.log_path}, ensure_ascii=False))
+        temporary.replace(target)
+
+    def job_log_tail(job: BackgroundJob) -> str:
+        try:
+            data = Path(job.log_path).read_bytes()[-8192:]
+            return data.decode(errors="replace")
+        except OSError:
+            return ""
+
+    async def watch_job(job: BackgroundJob) -> None:
+        written = 0
+        with Path(job.log_path).open("wb") as log:
+            while chunk := await job.process.stdout.read(65536):
+                if written < 16 * 1024 * 1024:
+                    value = chunk[:16 * 1024 * 1024 - written]
+                    log.write(value); log.flush(); written += len(value)
+        job.returncode = await job.process.wait()
+        if job.status == "cancelling":
+            job.status = "cancelled"
+        else:
+            job.status = "completed" if job.returncode == 0 else "failed"
+        job.completed_at = datetime.now(timezone.utc).isoformat(); persist_job(job)
+        execution = app.state.execution
+        if execution and execution.id == job.execution_id:
+            await publish(execution, {"kind": "step_finished", "payload": {
+                "name": "后台任务 · " + job.name, "background_job_id": job.id,
+                "status": job.status, "returncode": job.returncode,
+            }})
+
+    async def wait_background(execution: Execution) -> list[BackgroundJob]:
+        jobs = [job for job in app.state.background_jobs.values()
+            if job.execution_id == execution.id and job.status in {"running", "cancelling"}]
+        if jobs:
+            await publish(execution, {"kind": "step_progress", "payload": {
+                "name": "等待后台任务", "jobs": [job.id for job in jobs],
+            }})
+            await asyncio.gather(*(job.task for job in jobs))
+        return [job for job in app.state.background_jobs.values() if job.execution_id == execution.id]
+
     async def read_execution(execution: Execution, harness: str) -> None:
         process = execution.process
         try:
@@ -146,16 +254,20 @@ def create_app() -> FastAPI:
                     app.state.pending_inputs = len(execution.pending_input_ids)
                     if not execution.pending_input_ids:
                         await stop_process()
+                        background = await wait_background(execution)
                         failed = (
                             native.get("status") == "failed"
                             or bool(native.get("is_error"))
                             or native.get("subtype") in {"error", "error_max_turns", "error_during_execution"}
+                            or any(job.status != "completed" for job in background)
                         )
                         detail = native.get("error_detail") or native.get("result") or native.get("message") or ""
                         await finish_execution(execution, {
                             "status": "failed" if failed else "completed",
                             "native_thread_id": execution.native_thread_id,
-                            "error_code": (native.get("error_code") or "harness_failed") if failed else "",
+                            "error_code": (native.get("error_code") or (
+                                "background_job_failed" if any(job.status != "completed" for job in background)
+                                else "harness_failed")) if failed else "",
                             "error_detail": str(detail)[:4000] if failed else "",
                             "input_ids": execution.completed_input_ids,
                         })
@@ -164,11 +276,15 @@ def create_app() -> FastAPI:
             app.state.process = None
             app.state.process_command = None
             app.state.pending_inputs = 0
+            background = await wait_background(execution)
+            background_failed = any(job.status != "completed" for job in background)
             await finish_execution(execution, {
-                "status": "completed" if code == 0 else "failed",
+                "status": "completed" if code == 0 and not background_failed else "failed",
                 "native_thread_id": execution.native_thread_id,
-                "error_code": "" if code == 0 else "harness_exit",
-                "error_detail": "" if code == 0 else f"Harness exited with {code}",
+                "error_code": "" if code == 0 and not background_failed else (
+                    "background_job_failed" if background_failed else "harness_exit"),
+                "error_detail": "" if code == 0 and not background_failed else (
+                    "A supervised background job did not complete" if background_failed else f"Harness exited with {code}"),
                 "input_ids": list(execution.pending_input_ids),
             })
             execution.pending_input_ids.clear()
@@ -236,6 +352,7 @@ def create_app() -> FastAPI:
                     if path.parts[0] not in PERSISTENT or member.issym() or member.islnk() or member.isdev():
                         raise HTTPException(400, "Invalid checkpoint member")
                 archive.extractall(WORKSPACE, filter="data")
+        load_jobs()
         return {"restored": True}
 
     @app.put("/v1/attachments/file")
@@ -274,6 +391,18 @@ def create_app() -> FastAPI:
         temporary.replace(target)
         return {"path": "/workspace/project/" + relative.as_posix(), "bytes": len(data)}
 
+    @app.post("/v1/project-files/reset")
+    async def reset_project_files():
+        project = (WORKSPACE / "project").resolve()
+        for name in ("assets", "artifacts"):
+            target = project / name
+            if target.is_symlink():
+                target.unlink()
+            elif target.exists():
+                shutil.rmtree(target)
+            target.mkdir(parents=True, exist_ok=True)
+        return {"reset": True}
+
     @app.get("/v1/checkpoint")
     async def checkpoint():
         target = WORKSPACE / "tmp" / "checkpoint.tar"
@@ -296,7 +425,7 @@ def create_app() -> FastAPI:
         selected = command(harness, model, value.native_thread_id)
         environment = {**os.environ, **selected.environment, "HOME": "/workspace/state/home", "PWD": "/workspace/project"}
         Path(environment["HOME"]).mkdir(parents=True, exist_ok=True)
-        prompt = value.message
+        prompt = RUNTIME_GUIDANCE + value.message
         if value.attachments:
             prompt += "\n\nAttached files are available in /workspace/inbox. Their immutable records are listed in attachments.json."
             (WORKSPACE / "inbox" / "attachments.json").write_text(json.dumps(value.attachments, ensure_ascii=False))
@@ -366,6 +495,85 @@ def create_app() -> FastAPI:
         mode = "native_steer" if os.environ.get("HARNESS_KIND") == "codex" else (
             "native_safe_point" if os.environ.get("HARNESS_KIND") == "deepseek" else "native_stream")
         return {"accepted": True, "mode": mode}
+
+    @app.post("/v1/interactions/{interaction_id}")
+    async def respond_interaction(interaction_id: str, request: Request):
+        waiter = app.state.interaction_waiters.get(interaction_id)
+        response = await request.json()
+        if response.get("action") not in {"approve", "reject", "answer"}:
+            raise HTTPException(422, "Invalid interaction action")
+        if waiter is not None:
+            if not waiter.done():
+                waiter.set_result(response)
+            return {"accepted": True}
+        process = app.state.process
+        selected = app.state.process_command
+        if (os.environ.get("HARNESS_KIND") != "codex" or not process or process.returncode is not None
+                or not selected or not selected.control_input):
+            raise HTTPException(409, "Harness does not support a live native interaction")
+        async with app.state.write_lock:
+            process.stdin.write(control_interaction_response(interaction_id, response))
+            await process.stdin.drain()
+        return {"accepted": True}
+
+    @app.post("/v1/native-interactions")
+    async def start_native_interaction(value: NativeInteractionCreate):
+        execution = app.state.execution
+        if execution is None or execution.result is not None:
+            raise HTTPException(409, "No active Harness execution")
+        identity = "runtime-" + uuid.uuid4().hex
+        waiter = asyncio.get_running_loop().create_future()
+        app.state.interaction_waiters[identity] = waiter
+        await publish(execution, {"kind": "waiting_user", "payload": {
+            "interaction_id": identity, "interaction_kind": value.kind,
+            "prompt": value.prompt, "questions": value.questions, "options": value.options,
+        }})
+        try:
+            response = await waiter
+            return {"interaction_id": identity, **response}
+        finally:
+            app.state.interaction_waiters.pop(identity, None)
+
+    @app.post("/v1/background-jobs")
+    async def start_background_job(value: BackgroundJobCreate):
+        project = (WORKSPACE / "project").resolve()
+        cwd = Path(value.cwd).resolve()
+        if not cwd.is_relative_to(project) or not cwd.is_dir():
+            raise HTTPException(422, "Background job cwd must be inside /workspace/project")
+        execution = app.state.execution
+        if execution is None or execution.result is not None:
+            raise HTTPException(409, "No active Harness execution")
+        identity = uuid.uuid4().hex
+        process = await asyncio.create_subprocess_exec(*value.argv, cwd=cwd, env=os.environ.copy(),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True, limit=HARNESS_JSONL_LIMIT)
+        job = BackgroundJob(id=identity, name=value.name, argv=value.argv, cwd=str(cwd),
+            execution_id=execution.id, pid=process.pid, log_path=str(jobs_root / (identity + ".log")),
+            process=process)
+        app.state.background_jobs[job.id] = job; persist_job(job)
+        await publish(execution, {"kind": "step_started", "payload": {
+            "name": "后台任务 · " + job.name, "background_job_id": job.id, "pid": job.pid,
+        }})
+        job.task = asyncio.create_task(watch_job(job), name="background-job-" + job.id)
+        return job.public()
+
+    @app.get("/v1/background-jobs")
+    async def list_background_jobs():
+        return {"items": [job.public(log_tail=job_log_tail(job))
+            for job in app.state.background_jobs.values()]}
+
+    @app.post("/v1/background-jobs/{job_id}/cancel")
+    async def cancel_background_job(job_id: str):
+        job = app.state.background_jobs.get(job_id)
+        if not job:
+            raise HTTPException(404, "Background job not found")
+        if job.status == "running" and job.process and job.process.returncode is None:
+            job.status = "cancelling"; persist_job(job)
+            try:
+                os.killpg(job.process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        return job.public(log_tail=job_log_tail(job))
 
     @app.post("/v1/cancel")
     async def cancel():
