@@ -10,13 +10,13 @@ The project-file implementation is commit `4d9a7e0`; the final deployed source a
 
 | Harness | Immutable image digest |
 | --- | --- |
-| Codex | `sha256:2325e6e7133af543ac18d1bb87c3384831648f83d647f9c840750b0d30c7d8f6` |
-| Claude | `sha256:acc900c6ec707071add191eda24c2bb8e20efea99e8cb76b8ff63d92f89e861d` |
-| DeepSeek | `sha256:8ad645e3746a62c3aa885236c0aef3b87d291c369fbfbc01260c1115a63e43c6` |
+| Codex | `sha256:9a6b2484a2f082a1b6675db32995187ff33e27d39efbd678c22bed8b76aba814` |
+| Claude | `sha256:7c47d03b74c9afd529c7750ff2ef5e7ce6d743927323d2ba6c2831e894f2b0aa` |
+| DeepSeek | `sha256:576332b0a69c1cc0cf98bb419c021afea38e9d4f2bc8dc071ed26d50a9543cc8` |
 
 ## Automated Verification
 
-The Python suite passed 48 tests and the Vite production build completed. Tests cover manifest versioning and idempotency, owner isolation, artifact registration, managed path restrictions, Sandbox materialization and exclusion of object-backed media from checkpoint tar files.
+The final Python suite passed 58 tests and the Vite production build completed. Tests cover manifest versioning and idempotency, owner isolation, artifact registration, managed path restrictions, Sandbox materialization and exclusion of object-backed media from checkpoint tar files.
 
 After the final image update, real model smokes passed for Codex `gpt-6-sol`, Claude `claude-sonnet-5-5` and DeepSeek `deepseek-v4-pro`; each final digest executed, checkpointed and exported a validated JSON artifact.
 

@@ -10,15 +10,15 @@ The recovery implementation was validated at commit `c833d2a`; the final deploye
 
 | Harness | Immutable image digest |
 | --- | --- |
-| Codex | `sha256:2325e6e7133af543ac18d1bb87c3384831648f83d647f9c840750b0d30c7d8f6` |
-| Claude | `sha256:acc900c6ec707071add191eda24c2bb8e20efea99e8cb76b8ff63d92f89e861d` |
-| DeepSeek | `sha256:8ad645e3746a62c3aa885236c0aef3b87d291c369fbfbc01260c1115a63e43c6` |
+| Codex | `sha256:9a6b2484a2f082a1b6675db32995187ff33e27d39efbd678c22bed8b76aba814` |
+| Claude | `sha256:7c47d03b74c9afd529c7750ff2ef5e7ce6d743927323d2ba6c2831e894f2b0aa` |
+| DeepSeek | `sha256:576332b0a69c1cc0cf98bb419c021afea38e9d4f2bc8dc071ed26d50a9543cc8` |
 
 The public route `http://updream-lab.bilibili.co/sandbox-harness/` and the internal health endpoint both returned HTTP 200 after deployment. API, Gateway and network units were active.
 
 ## Verification
 
-The local suite passed `45` tests. It includes stale-owner fencing, expired running-Turn reattachment, Runtime event replay, cleanup completion after Sandbox deletion, input/drain concurrency and execution without any HTTP subscriber.
+The final local suite passed `58` tests. It includes stale-owner fencing, expired running-Turn reattachment, Runtime event replay, cleanup completion after Sandbox deletion, input/drain concurrency and execution without any HTTP subscriber.
 
 Real model smokes passed for Codex `gpt-6-sol`, Claude `claude-sonnet-5-5` and DeepSeek `deepseek-v4-pro`. Every Turn completed through a real OpenSandbox Runtime and exported a validated JSON artifact.
 

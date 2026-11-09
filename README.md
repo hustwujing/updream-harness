@@ -70,6 +70,8 @@ Non-graceful API restart, Runtime event replay, Turn lease fencing and cleanup r
 
 Versioned uploads and outputs restored into a different Sandbox, plus desktop/mobile Workspace UI evidence, are recorded in [project-files-report.md](docs/test-evidence/project-files-report.md).
 
+The final 21-case capability, interaction, Workspace, background execution, recovery and browser matrix is recorded in [full-product-report.md](docs/test-evidence/full-product-report.md).
+
 ## Runtime Toolchain
 
 Every Harness image inherits the same immutable foundation with Python, Node.js, ffmpeg/ffprobe, Git, curl, jq, ripgrep, file inspection, GCC/G++, Make, CMake, pkg-config, archive tools and CJK fonts. [toolchain.lock.json](runtime/toolchain.lock.json) records the observed command and package versions; image builds fail when the foundation no longer matches it. The deployed Harness images are referenced by registry digest rather than mutable tag.
