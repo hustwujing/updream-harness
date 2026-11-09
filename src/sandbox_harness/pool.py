@@ -77,6 +77,7 @@ class SandboxPool:
             if not value.cancelled() and value.exception() else None)
 
     async def acquire(self, *, thread_id: str, turn_id: str, harness: Harness, environment: dict[str, str]) -> Sandbox:
+        slot_reserved = False
         async with self._lock:
             expiry = self._expiry.pop(thread_id, None)
             if expiry:
@@ -102,7 +103,11 @@ class SandboxPool:
                 if evict:
                     await self.backend.delete(evict)
                     self._user_slots.release()
-        await self._user_slots.acquire()
+            if not self._user_slots.locked():
+                await self._user_slots.acquire()
+                slot_reserved = True
+        if not slot_reserved:
+            await self._user_slots.acquire()
         try:
             async with self._lock:
                 attached = self._attached.get(thread_id)

@@ -197,3 +197,20 @@ async def test_capacity_evicts_oldest_idle_attached_sandbox_before_blocking_new_
     assert second.id in backend.items and third.id in backend.items
     await pool.release(third, keep_attached=False)
     await pool.close()
+
+
+async def test_concurrent_claims_atomically_evict_idle_sessions_at_capacity():
+    asyncio = __import__('asyncio')
+    backend = FakeSandboxBackend()
+    pool = SandboxPool(backend, {harness: "" for harness in Harness}, {harness: 0 for harness in Harness},
+        max_sandboxes=2)
+    for name in ("idle-one", "idle-two"):
+        sandbox = await pool.acquire(thread_id=name, turn_id=name, harness=Harness.CLAUDE, environment={})
+        await pool.release(sandbox, keep_attached=True, keepalive_seconds=60)
+    first, second = await asyncio.wait_for(asyncio.gather(
+        pool.acquire(thread_id="new-one", turn_id="new-one", harness=Harness.CLAUDE, environment={}),
+        pool.acquire(thread_id="new-two", turn_id="new-two", harness=Harness.CLAUDE, environment={}),
+    ), timeout=2)
+    assert first.id in backend.items and second.id in backend.items
+    await pool.release(first, keep_attached=False); await pool.release(second, keep_attached=False)
+    await pool.close()
