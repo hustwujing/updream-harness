@@ -260,6 +260,24 @@ class Store:
                 row.status = status
                 row.updated_at = now()
 
+    async def finish_tool_item(self, turn_id: str, tool_use_id: str, payload: dict) -> Item | None:
+        async with self.connections.begin() as db:
+            rows = (await db.execute(select(ItemRow).where(
+                ItemRow.turn_id == turn_id,
+                ItemRow.type == ItemType.TOOL.value,
+            ).order_by(ItemRow.sequence.desc()))).scalars().all()
+            row = next((candidate for candidate in rows
+                        if json.loads(candidate.payload_json).get("tool_use_id") == tool_use_id), None)
+            if not row:
+                return None
+            row.status = "failed" if payload.get("is_error") else "completed"
+            row.summary = str(payload.get("name") or row.summary)
+            row.payload_json = json.dumps(payload, ensure_ascii=False)
+            row.updated_at = now()
+        return Item(id=row.id, thread_id=row.thread_id, turn_id=row.turn_id, sequence=row.sequence,
+            type=ItemType.TOOL, status=row.status, summary=row.summary, payload=payload,
+            created_at=row.created_at, updated_at=row.updated_at)
+
     async def items_after(self, thread_id: str, sequence: int = 0, limit: int = 200) -> list[Item]:
         async with self.connections() as db:
             rows = (await db.execute(select(ItemRow).where(ItemRow.thread_id == thread_id, ItemRow.sequence > sequence).order_by(ItemRow.sequence).limit(limit))).scalars().all()

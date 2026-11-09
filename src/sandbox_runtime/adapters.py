@@ -112,7 +112,7 @@ def normalize(harness: str, line: str) -> dict:
             return {"kind": "text_delta", "payload": {"text": delta.get("text", "")}}
         if native.get("type") == "content_block_start" and (native.get("content_block") or {}).get("type") == "tool_use":
             block = native["content_block"]
-            return {"kind": "tool_started", "payload": {"name": block.get("name", "tool"), "detail": block.get("input") or {}}}
+            return {"kind": "tool_started", "payload": {"name": block.get("name", "tool"), "tool_use_id": block.get("id", ""), "detail": block.get("input") or {}}}
         return None
     if harness == "claude" and kind == "system" and value.get("subtype") == "init":
         return {"kind": "step_finished", "payload": {"name": "Claude session", "thread_id": value.get("session_id", "")}}
@@ -120,6 +120,17 @@ def normalize(harness: str, line: str) -> dict:
         texts = [item.get("text", "") for item in (value.get("message") or {}).get("content", []) if item.get("type") == "text"]
         if texts:
             return {"kind": "text_delta", "payload": {"text": "".join(texts), "snapshot": True, "thread_id": value.get("session_id", "")}}
+        return None
+    if harness == "claude" and kind == "user":
+        results = [item for item in (value.get("message") or {}).get("content", []) if item.get("type") == "tool_result"]
+        if results:
+            item = results[0]
+            return {"kind": "tool_finished", "payload": {
+                "name": "tool",
+                "tool_use_id": item.get("tool_use_id", ""),
+                "result": value.get("tool_use_result") or item.get("content", ""),
+                "is_error": bool(item.get("is_error")),
+            }}
         return None
     if harness == "claude" and kind == "result":
         return {"kind": "step_finished", "payload": {"name": "Claude response", "usage": value.get("usage") or {}, "thread_id": value.get("session_id", "")}}

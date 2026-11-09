@@ -123,6 +123,12 @@ class Broker:
                     else:
                         if value.kind == EventKind.TEXT_DELTA:
                             item = await self.store.append_agent_delta(thread.id, turn.id, str(value.payload.get("text", "")))
+                        elif value.kind == EventKind.TOOL_FINISHED and value.payload.get("tool_use_id"):
+                            item = await self.store.finish_tool_item(turn.id, str(value.payload["tool_use_id"]), value.payload)
+                            if item is None:
+                                item = await self.store.append_item(thread.id, turn.id, ItemType.TOOL,
+                                    status="failed" if value.payload.get("is_error") else "completed",
+                                    summary=str(value.payload.get("name") or "tool"), payload=value.payload)
                         else:
                             item_type = {
                                 EventKind.TOOL_STARTED: ItemType.TOOL,

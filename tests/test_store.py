@@ -1,5 +1,5 @@
 from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.domain import EventKind, Harness, ThreadCreate, TurnCreate, TurnState
+from sandbox_harness.domain import EventKind, Harness, ItemType, ThreadCreate, TurnCreate, TurnState
 from sandbox_harness.store import Store
 
 
@@ -21,10 +21,15 @@ async def test_thread_turn_items_and_idempotency(tmp_path):
         assert agent.summary == "hello"
         event = await store.append_event(turn.id, EventKind.TEXT_DELTA, {"text": "lo"}, item_id=agent.id)
         assert (await store.events_after(turn.id, 0))[0].sequence == event.sequence
+        tool = await store.append_item(thread.id, turn.id, ItemType.TOOL, status="in_progress",
+            summary="Bash", payload={"tool_use_id": "tool-1"})
+        finished = await store.finish_tool_item(turn.id, "tool-1", {
+            "tool_use_id": "tool-1", "name": "Bash", "result": "ok",
+        })
+        assert finished.id == tool.id and finished.status == "completed"
         items = await store.items_after(thread.id)
-        assert [item.type.value for item in items] == ["user_message", "agent_message"]
+        assert [item.type.value for item in items] == ["user_message", "agent_message", "tool"]
         await store.set_turn_state(turn.id, TurnState.COMPLETED)
         assert (await store.get_turn(turn.id)).state == TurnState.COMPLETED
     finally:
         await store.close()
-
