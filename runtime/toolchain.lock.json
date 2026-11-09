@@ -1,0 +1,40 @@
+{
+  "commands": {
+    "cmake": "cmake version 3.25.1",
+    "curl": "curl 7.88.1 (x86_64-pc-linux-gnu) libcurl/7.88.1 OpenSSL/3.0.22 zlib/1.2.13 brotli/1.0.9 zstd/1.5.4 libidn2/2.3.3 libpsl/0.21.2 (+libidn2/2.3.3) libssh2/1.10.0 nghttp2/1.52.0 librtmp/2.3 OpenLDAP/2.5.13",
+    "ffmpeg": "ffmpeg version 5.1.9-0+deb12u1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffprobe": "ffprobe version 5.1.9-0+deb12u1 Copyright (c) 2007-2026 the FFmpeg developers",
+    "file": "file-5.44",
+    "g++": "g++ (Debian 12.2.0-14+deb12u1) 12.2.0",
+    "gcc": "gcc (Debian 12.2.0-14+deb12u1) 12.2.0",
+    "git": "git version 2.39.5",
+    "jq": "jq-1.6",
+    "make": "GNU Make 4.3",
+    "node": "v18.20.4",
+    "npm": "9.2.0",
+    "pkg-config": "1.8.1",
+    "python": "Python 3.13.18",
+    "rg": "ripgrep 13.0.0",
+    "unzip": "UnZip 6.00 of 20 April 2009, by Debian. Original by Info-ZIP.",
+    "xz": "xz (XZ Utils) 5.4.1"
+  },
+  "packages": {
+    "build-essential": "12.9",
+    "ca-certificates": "20250419~deb12u2",
+    "cmake": "3.25.1-1",
+    "curl": "7.88.1-10+deb12u15",
+    "ffmpeg": "7:5.1.9-0+deb12u1",
+    "file": "1:5.44-3",
+    "fonts-wqy-zenhei": "0.9.45-8",
+    "git": "1:2.39.5-0+deb12u3",
+    "jq": "1.6-2.1+deb12u3",
+    "nodejs": "18.20.4+dfsg-1~deb12u3",
+    "npm": "9.2.0~ds1-1",
+    "pkg-config": "1.8.1-1",
+    "procps": "2:4.0.2-3",
+    "ripgrep": "13.0.0-4+b2",
+    "unzip": "6.0-28+deb12u1",
+    "xz-utils": "5.4.1-1+deb12u2"
+  },
+  "schema_version": 1
+}

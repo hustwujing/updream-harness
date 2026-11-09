@@ -37,3 +37,5 @@ The deployment must not start another PostgreSQL, Redis, Docker daemon, registry
 6. Run a real OpenSandbox smoke Turn and verify its metadata namespace, image digest, event stream, checkpoint and artifact prefix.
 
 Local UI tests may use SQLite, local content-addressed objects and the explicit fake lifecycle backend. Those results do not count as a deployment or real OpenSandbox validation.
+
+The foundation image tag includes the SHA-256 prefix of `runtime/foundation.Dockerfile`. `runtime/toolchain.lock.json` is verified while building the common runtime base, and the three final Harness images must expose the same locked toolchain before their immutable registry digests are deployed.
