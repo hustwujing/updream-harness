@@ -35,7 +35,7 @@ async def test_broker_runs_harness_and_persists_transcript_checkpoint_and_artifa
     try:
         profile = catalog.resolve("claude", "claude-4.6-sonnet", "deep")
         thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
-            reasoning_level="deep", title="Test"), profile)
+            reasoning_level="deep", title="Test"), profile, "a" * 64)
         turn = await broker.submit(thread.id, TurnCreate(message="make a file", idempotency_key="turn-key-1"))
         for _ in range(100):
             current = await store.get_turn(turn.id)

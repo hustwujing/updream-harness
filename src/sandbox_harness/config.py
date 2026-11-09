@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     gateway_proxy_port: int = Field(default=28601, ge=1024, le=65535)
     gateway_signing_key: str = Field(default="development-only-change-me", min_length=16)
     gateway_control_key: str = Field(default="development-control-change-me", min_length=16)
+    session_signing_key: str = Field(default="development-session-change-me", min_length=16)
 
     @property
     def public_proxy_url(self) -> str:

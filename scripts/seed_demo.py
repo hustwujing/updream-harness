@@ -10,10 +10,11 @@ async def main():
     await store.initialize()
     catalog = HarnessCatalog()
     profile = catalog.resolve("claude", "claude-4.6-sonnet", "deep")
+    owner = "demo".ljust(64, "0")
     thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
-        reasoning_level="deep", title="制作一支产品介绍短片"), profile)
+        reasoning_level="deep", title="制作一支产品介绍短片"), profile, owner)
     turn, _, _ = await store.create_turn(thread.id, TurnCreate(message="把上传的视频整理成 30 秒产品介绍，保留对白并加上简洁字幕。",
-        idempotency_key="demo-turn-0001"), profile)
+        idempotency_key="demo-turn-0001"), profile, owner)
     await store.set_turn_state(turn.id, TurnState.COMPLETED)
     await store.append_agent_delta(thread.id, turn.id, "我已经检查了素材，并完成了 30 秒版本。对白保持清晰，字幕使用了紧凑的双行排版。")
     await store.complete_agent_item(turn.id, "completed")
@@ -29,4 +30,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

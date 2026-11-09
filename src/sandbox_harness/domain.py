@@ -100,6 +100,7 @@ class ThreadView(BaseModel):
     active_turn_id: str = ""
     created_at: datetime
     updated_at: datetime
+    owner_id: str = Field(default="", exclude=True)
 
 
 class Attachment(BaseModel):

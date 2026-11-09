@@ -7,6 +7,7 @@ export async function api(path,options={}){
 }
 
 export const listThreads=()=>api('threads');
+export const ensureSession=()=>api('session');
 export const getHarnessCatalog=()=>api('catalog/harnesses');
 export const createThread=value=>api('threads',{method:'POST',body:JSON.stringify(value)});
 export const listTurns=id=>api(`threads/${id}/turns`);

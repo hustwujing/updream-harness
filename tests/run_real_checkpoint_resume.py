@@ -9,6 +9,8 @@ import uuid
 
 import httpx
 
+from sandbox_harness.sessions import COOKIE
+
 
 PROJECT_FILES = {
     "codex-media": "process_video.py",
@@ -73,25 +75,31 @@ async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:22766/")
     parser.add_argument("--report", default=".data/first-capability-report.json")
+    parser.add_argument("--case", choices=[*PROJECT_FILES, "all"], default="all")
     args = parser.parse_args()
     path = Path(args.report)
     report = json.loads(path.read_text())
+    selected = report["results"] if args.case == "all" else [result for result in report["results"] if result["case"] == args.case]
     async with httpx.AsyncClient(base_url=args.base_url, timeout=None, trust_env=False) as client:
-        for result in report["results"]:
+        session_file = path.with_suffix(".session")
+        if session_file.is_file():
+            client.cookies.set(COOKIE, session_file.read_text().strip())
+        for result in selected:
             response = await client.get(f"api/turns/{result['turn_id']}")
             response.raise_for_status()
             result["sandbox_id"] = response.json()["sandbox_id"]
-        resumed = await asyncio.gather(*(verify(client, result) for result in report["results"]), return_exceptions=True)
+        resumed = await asyncio.gather(*(verify(client, result) for result in selected), return_exceptions=True)
     failed = False
-    report["checkpoint_resume"] = []
-    for original, result in zip(report["results"], resumed, strict=True):
+    outcomes = {result["case"]: result for result in report.get("checkpoint_resume", [])}
+    for original, result in zip(selected, resumed, strict=True):
         if isinstance(result, Exception):
             failed = True
-            report["checkpoint_resume"].append({
+            outcomes[original["case"]] = {
                 "case": original["case"], "state": "FAILED", "error": type(result).__name__ + ": " + str(result),
-            })
+            }
         else:
-            report["checkpoint_resume"].append(result)
+            outcomes[original["case"]] = result
+    report["checkpoint_resume"] = [outcomes[result["case"]] for result in report["results"] if result["case"] in outcomes]
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps({"checkpoint_resume": report["checkpoint_resume"]}, ensure_ascii=False, indent=2))
     if failed:

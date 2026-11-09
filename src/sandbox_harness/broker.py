@@ -43,7 +43,7 @@ class Broker:
             raise KeyError("thread_not_found")
         resolved = self.catalog.resolve(value.harness or thread.harness, value.model or thread.model,
             value.reasoning_level or thread.reasoning_level)
-        turn, created, start_now = await self.store.create_turn(thread_id, value, resolved)
+        turn, created, start_now = await self.store.create_turn(thread_id, value, resolved, thread.owner_id)
         if created and start_now:
             self.tasks[turn.id] = asyncio.create_task(self._process(turn.id), name="turn-" + turn.id)
         return turn

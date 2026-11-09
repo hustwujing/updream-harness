@@ -9,12 +9,13 @@ async def test_thread_turn_items_and_idempotency(tmp_path):
     try:
         catalog = HarnessCatalog()
         profile = catalog.resolve("claude", "claude-4.6-sonnet", "deep")
+        owner = "a" * 64
         thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
-            reasoning_level="deep", title="Thread"), profile)
+            reasoning_level="deep", title="Thread"), profile, owner)
         value = TurnCreate(message="hello", idempotency_key="idempotency-1")
-        turn, created, start = await store.create_turn(thread.id, value, profile)
+        turn, created, start = await store.create_turn(thread.id, value, profile, owner)
         assert created and start and turn.reasoning_effort == "high"
-        duplicate, created, _ = await store.create_turn(thread.id, value, profile)
+        duplicate, created, _ = await store.create_turn(thread.id, value, profile, owner)
         assert not created and duplicate.id == turn.id
         agent = await store.append_agent_delta(thread.id, turn.id, "hel")
         agent = await store.append_agent_delta(thread.id, turn.id, "lo")

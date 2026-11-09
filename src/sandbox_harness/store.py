@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, select, update
+from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, inspect, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -19,6 +19,7 @@ class Base(DeclarativeBase):
 class ThreadRow(Base):
     __tablename__ = "threads"
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True, default="legacy-unowned", server_default="legacy-unowned")
     harness: Mapped[str] = mapped_column(String(20))
     model: Mapped[str] = mapped_column(String(160))
     reasoning_level: Mapped[str] = mapped_column(String(32))
@@ -89,6 +90,17 @@ class ItemRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class UploadRow(Base):
+    __tablename__ = "uploads"
+    owner_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    object_ref: Mapped[str] = mapped_column(Text, primary_key=True)
+    sha256: Mapped[str] = mapped_column(String(64))
+    size: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(String(255))
+    mime: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class Store:
     def __init__(self, database_url: str, redis_url: str = "", redis_prefix: str = "sandbox-harness:"):
         self.engine = create_async_engine(database_url)
@@ -100,6 +112,10 @@ class Store:
             await self.events.initialize()
         async with self.engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
+            columns = await connection.run_sync(lambda value: {column["name"] for column in inspect(value).get_columns("threads")})
+            if "owner_id" not in columns:
+                await connection.execute(text("ALTER TABLE threads ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT 'legacy-unowned'"))
+            await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_threads_owner_id ON threads (owner_id)"))
 
     async def close(self) -> None:
         if self.events:
@@ -117,29 +133,32 @@ class Store:
             "attachments": json.loads(row.attachments_json),
         })
 
-    async def create_thread(self, value: ThreadCreate, resolved: ResolvedProfile) -> ThreadView:
+    async def create_thread(self, value: ThreadCreate, resolved: ResolvedProfile, owner_id: str) -> ThreadView:
         timestamp = now()
-        row = ThreadRow(id=identifier(), harness=resolved.harness.value, model=resolved.model,
+        row = ThreadRow(id=identifier(), owner_id=owner_id, harness=resolved.harness.value, model=resolved.model,
             reasoning_level=resolved.reasoning_level, reasoning_effort=resolved.reasoning_effort,
             title=value.title, created_at=timestamp, updated_at=timestamp)
         async with self.connections.begin() as db:
             db.add(row)
         return self.thread_view(row)
 
-    async def list_threads(self) -> list[ThreadView]:
+    async def list_threads(self, owner_id: str) -> list[ThreadView]:
         async with self.connections() as db:
-            rows = (await db.execute(select(ThreadRow).order_by(ThreadRow.updated_at.desc()))).scalars().all()
+            rows = (await db.execute(select(ThreadRow).where(ThreadRow.owner_id == owner_id).order_by(ThreadRow.updated_at.desc()))).scalars().all()
         return [self.thread_view(row) for row in rows]
 
-    async def get_thread(self, thread_id: str) -> ThreadView | None:
+    async def get_thread(self, thread_id: str, owner_id: str | None = None) -> ThreadView | None:
         async with self.connections() as db:
-            row = await db.get(ThreadRow, thread_id)
+            query = select(ThreadRow).where(ThreadRow.id == thread_id)
+            if owner_id is not None:
+                query = query.where(ThreadRow.owner_id == owner_id)
+            row = (await db.execute(query)).scalar_one_or_none()
         return self.thread_view(row) if row else None
 
-    async def create_turn(self, thread_id: str, value: TurnCreate, resolved: ResolvedProfile) -> tuple[TurnView, bool, bool]:
+    async def create_turn(self, thread_id: str, value: TurnCreate, resolved: ResolvedProfile, owner_id: str) -> tuple[TurnView, bool, bool]:
         async with self.connections.begin() as db:
             thread = await db.get(ThreadRow, thread_id, with_for_update=True)
-            if not thread:
+            if not thread or thread.owner_id != owner_id:
                 raise KeyError("thread_not_found")
             existing = (await db.execute(select(TurnRow).where(TurnRow.thread_id == thread_id, TurnRow.idempotency_key == value.idempotency_key))).scalar_one_or_none()
             if existing:
@@ -188,10 +207,19 @@ class Store:
             row = await db.get(TurnRow, turn_id)
         return self.turn_view(row) if row else None
 
-    async def list_turns(self, thread_id: str) -> list[TurnView]:
+    async def list_turns(self, thread_id: str, owner_id: str | None = None) -> list[TurnView]:
         async with self.connections() as db:
-            rows = (await db.execute(select(TurnRow).where(TurnRow.thread_id == thread_id).order_by(TurnRow.created_at))).scalars().all()
+            query = select(TurnRow).join(ThreadRow, ThreadRow.id == TurnRow.thread_id).where(TurnRow.thread_id == thread_id)
+            if owner_id is not None:
+                query = query.where(ThreadRow.owner_id == owner_id)
+            rows = (await db.execute(query.order_by(TurnRow.created_at))).scalars().all()
         return [self.turn_view(row) for row in rows]
+
+    async def get_turn_for_owner(self, turn_id: str, owner_id: str) -> TurnView | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(TurnRow).join(ThreadRow, ThreadRow.id == TurnRow.thread_id).where(
+                TurnRow.id == turn_id, ThreadRow.owner_id == owner_id))).scalar_one_or_none()
+        return self.turn_view(row) if row else None
 
     async def set_turn_state(self, turn_id: str, state: TurnState, *, sandbox_id: str | None = None, error_code: str = "", error_detail: str = "") -> TurnView:
         async with self.connections.begin() as db:
@@ -280,9 +308,13 @@ class Store:
             type=ItemType.TOOL, status=row.status, summary=row.summary, payload=json.loads(row.payload_json),
             created_at=row.created_at, updated_at=row.updated_at)
 
-    async def items_after(self, thread_id: str, sequence: int = 0, limit: int = 200) -> list[Item]:
+    async def items_after(self, thread_id: str, sequence: int = 0, limit: int = 200, owner_id: str | None = None) -> list[Item]:
         async with self.connections() as db:
-            rows = (await db.execute(select(ItemRow).where(ItemRow.thread_id == thread_id, ItemRow.sequence > sequence).order_by(ItemRow.sequence).limit(limit))).scalars().all()
+            query = select(ItemRow).join(ThreadRow, ThreadRow.id == ItemRow.thread_id).where(
+                ItemRow.thread_id == thread_id, ItemRow.sequence > sequence)
+            if owner_id is not None:
+                query = query.where(ThreadRow.owner_id == owner_id)
+            rows = (await db.execute(query.order_by(ItemRow.sequence).limit(limit))).scalars().all()
         return [Item(id=row.id, thread_id=row.thread_id, turn_id=row.turn_id, sequence=row.sequence,
             type=ItemType(row.type), status=row.status, summary=row.summary, payload=json.loads(row.payload_json),
             created_at=row.created_at, updated_at=row.updated_at) for row in rows]
@@ -302,3 +334,27 @@ class Store:
         async with self.connections() as db:
             row = await db.get(ArtifactRow, artifact_id)
         return Artifact.model_validate({key: getattr(row, key) for key in Artifact.model_fields}) if row else None
+
+    async def get_artifact_for_owner(self, artifact_id: str, owner_id: str) -> Artifact | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(ArtifactRow).join(TurnRow, TurnRow.id == ArtifactRow.turn_id)
+                .join(ThreadRow, ThreadRow.id == TurnRow.thread_id).where(
+                    ArtifactRow.id == artifact_id, ThreadRow.owner_id == owner_id))).scalar_one_or_none()
+        return Artifact.model_validate({key: getattr(row, key) for key in Artifact.model_fields}) if row else None
+
+    async def record_upload(self, owner_id: str, attachment) -> None:
+        async with self.connections.begin() as db:
+            existing = await db.get(UploadRow, (owner_id, attachment.object_ref))
+            if not existing:
+                db.add(UploadRow(owner_id=owner_id, object_ref=attachment.object_ref, sha256=attachment.sha256,
+                    size=attachment.size, name=attachment.name, mime=attachment.mime, created_at=now()))
+
+    async def attachments_owned(self, owner_id: str, attachments: list) -> bool:
+        if not attachments:
+            return True
+        async with self.connections() as db:
+            for attachment in attachments:
+                row = await db.get(UploadRow, (owner_id, attachment.object_ref))
+                if not row or row.sha256 != attachment.sha256 or row.size != attachment.size:
+                    return False
+        return True

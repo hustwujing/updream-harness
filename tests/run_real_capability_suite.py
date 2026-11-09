@@ -5,6 +5,7 @@ import asyncio
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -182,6 +183,12 @@ async def main() -> None:
         make_inputs(root)
         async with httpx.AsyncClient(base_url=args.base_url, timeout=None, trust_env=False) as client:
             results = await asyncio.gather(*(execute_case(client, root, name, spec) for name, spec in selected.items()), return_exceptions=True)
+            session_token = client.cookies.get("sandbox_harness_session")
+        if session_token:
+            session_file = Path(args.report).with_suffix(".session")
+            session_file.parent.mkdir(parents=True, exist_ok=True)
+            session_file.write_text(session_token)
+            os.chmod(session_file, 0o600)
         report = {"started_at": datetime.now(timezone.utc).isoformat(), "base_url": args.base_url, "results": []}
         failed = False
         for name, result in zip(selected, results, strict=True):
