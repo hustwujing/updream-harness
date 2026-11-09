@@ -64,6 +64,8 @@ Real Chromium, Canvas, Three.js, deterministic animation recording and native mu
 
 Non-graceful API restart, Runtime event replay, Turn lease fencing and cleanup recovery evidence is recorded in [broker-recovery-report.md](docs/test-evidence/broker-recovery-report.md).
 
+Versioned uploads and outputs restored into a different Sandbox, plus desktop/mobile Workspace UI evidence, are recorded in [project-files-report.md](docs/test-evidence/project-files-report.md).
+
 ## Runtime Toolchain
 
 Every Harness image inherits the same immutable foundation with Python, Node.js, ffmpeg/ffprobe, Git, curl, jq, ripgrep, file inspection, GCC/G++, Make, CMake, pkg-config, archive tools and CJK fonts. [toolchain.lock.json](runtime/toolchain.lock.json) records the observed command and package versions; image builds fail when the foundation no longer matches it. The deployed Harness images are referenced by registry digest rather than mutable tag.

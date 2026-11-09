@@ -6,13 +6,13 @@ Scope: PostgreSQL Turn leases, fencing generations, Sandbox Runtime event replay
 
 ## Deployment
 
-The deployed API source includes commit `c833d2a`. Runtime images containing the background Harness reader and replay endpoints are:
+The recovery implementation was validated at commit `c833d2a`; the final deployed source also includes the later project-file work. Runtime images containing the background Harness reader and replay endpoints are:
 
 | Harness | Immutable image digest |
 | --- | --- |
-| Codex | `sha256:26f017c32061f99c6d71ce4dfbff32cf42a1055c83dbb75bc90a5fea0191e37a` |
-| Claude | `sha256:2018cc009730a14173f8222234282db1befe8c09580988a52cf7bd72d38f30fa` |
-| DeepSeek | `sha256:24eee9987d1bbbec5a8014a4fe2b3ec3e822df1581abad7d2a1c69d155989bfb` |
+| Codex | `sha256:279cc36892c82953f97d82270073a070c55f1b23de646d6f03a7584370ee47b8` |
+| Claude | `sha256:f751cee7a8defc18449e0378ac0d8329e5856234a9dd8110e8488ef27675b89a` |
+| DeepSeek | `sha256:c9c474d5436f3853bef7b0e8683b7a1e0c4efbd93bb7dafe4619da8ef9cb62c6` |
 
 The public route `http://updream-lab.bilibili.co/sandbox-harness/` and the internal health endpoint both returned HTTP 200 after deployment. API, Gateway and network units were active.
 
