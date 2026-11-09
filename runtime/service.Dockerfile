@@ -1,0 +1,7 @@
+FROM python:3.13-slim@sha256:413041be39649714885528a06586416279db85744b6dcdf290af0ae557d782f6
+WORKDIR /app
+COPY . /app
+RUN pip install --no-cache-dir .
+USER 10001:10001
+ENTRYPOINT []
+

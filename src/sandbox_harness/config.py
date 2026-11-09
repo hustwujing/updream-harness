@@ -1,0 +1,69 @@
+from pathlib import Path
+from typing import Literal
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="SANDBOX_HARNESS_", env_file=".env", extra="ignore")
+
+    data_root: Path = Path(".data")
+    api_bind_host: str = "127.0.0.1"
+    api_bind_port: int = Field(default=22766, ge=1024, le=65535)
+    database_url: str = "sqlite+aiosqlite:///.data/platform.db"
+    namespace: str = Field(default="sandbox-harness", pattern=r"^[a-z0-9][a-z0-9-]{1,62}$")
+    backend: Literal["opensandbox", "fake"] = "opensandbox"
+    opensandbox_url: str = "http://127.0.0.1:28090"
+    opensandbox_api_key: str = ""
+    redis_url: str = "redis://127.0.0.1:6379/0"
+    redis_prefix: str = "sandbox-harness:"
+    object_backend: Literal["local", "s3"] = "local"
+    object_endpoint: str = ""
+    object_bucket: str = ""
+    object_prefix: str = "sandbox-harness/"
+    gateway_url: str = "http://172.31.0.1:28600"
+    gateway_bind_host: str = "172.31.0.1"
+    gateway_bind_port: int = Field(default=28600, ge=1024, le=65535)
+    gateway_proxy_port: int = Field(default=28601, ge=1024, le=65535)
+    gateway_signing_key: str = Field(default="development-only-change-me", min_length=16)
+    gateway_control_key: str = Field(default="development-control-change-me", min_length=16)
+
+    @property
+    def public_proxy_url(self) -> str:
+        return f"http://{self.gateway_bind_host}:{self.gateway_proxy_port}"
+    runtime_image_codex: str = ""
+    runtime_image_claude: str = ""
+    runtime_image_deepseek: str = ""
+    warm_pool_codex: int = Field(default=2, ge=0, le=32)
+    warm_pool_claude: int = Field(default=2, ge=0, le=32)
+    warm_pool_deepseek: int = Field(default=1, ge=0, le=32)
+    session_keepalive_seconds: int = Field(default=900, ge=0, le=3600)
+    sandbox_timeout_seconds: int = Field(default=3600, ge=60, le=86400)
+    max_attachment_bytes: int = Field(default=512 * 1024 * 1024, ge=1)
+    max_artifact_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=1)
+    max_checkpoint_bytes: int = Field(default=4 * 1024 * 1024 * 1024, ge=1)
+    capability_ttl_seconds: int = Field(default=3600, ge=60, le=86400)
+    capability_request_limit: int = Field(default=200, ge=1, le=10000)
+    capability_public_request_limit: int = Field(default=5000, ge=1, le=100000)
+    model_token_budget: int = Field(default=2_000_000, ge=1)
+    upstream_codex: str = ""
+    upstream_claude: str = ""
+    upstream_deepseek: str = ""
+    upstream_image: str = ""
+    upstream_video: str = ""
+    upstream_audio: str = ""
+    harness_catalog_json: str = ""
+
+    def image_for(self, harness: str) -> str:
+        return {
+            "codex": self.runtime_image_codex,
+            "claude": self.runtime_image_claude,
+            "deepseek": self.runtime_image_deepseek,
+        }[harness]
+
+
+def load_settings() -> Settings:
+    value = Settings()
+    value.data_root.mkdir(parents=True, exist_ok=True)
+    return value

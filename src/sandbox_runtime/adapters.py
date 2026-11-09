@@ -1,0 +1,57 @@
+from __future__ import annotations
+
+import json
+import os
+import shlex
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class HarnessCommand:
+    argv: list[str]
+    environment: dict[str, str]
+
+
+def command(harness: str, model: str, native_thread_id: str = "") -> HarnessCommand:
+    gateway = os.environ["HARNESS_GATEWAY_URL"].rstrip("/")
+    token_file = "/run/harness/capability-token"
+    capability_token = Path(token_file).read_text().strip()
+    common = {"HARNESS_CAPABILITY_TOKEN_FILE": token_file, "HARNESS_MODEL": model}
+    override = os.environ.get("HARNESS_COMMAND_JSON")
+    if override:
+        value = json.loads(override)
+        return HarnessCommand(list(value[harness]), common)
+    if harness == "codex":
+        argv = ["codex", "exec", "--json", "--skip-git-repo-check", "--model", model, "-"]
+        if native_thread_id:
+            argv = ["codex", "exec", "resume", native_thread_id, "--json", "-"]
+        return HarnessCommand(argv, {**common, "OPENAI_BASE_URL": gateway + "/v1/models/codex", "OPENAI_API_KEY": capability_token})
+    if harness == "claude":
+        argv = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--model", model]
+        if native_thread_id:
+            argv += ["--resume", native_thread_id]
+        return HarnessCommand(argv, {**common, "ANTHROPIC_BASE_URL": gateway + "/v1/models/claude", "ANTHROPIC_API_KEY": capability_token})
+    if harness == "deepseek":
+        argv = ["deepseek-harness", "run", "--stream-json", "--model", model]
+        if native_thread_id:
+            argv += ["--resume", native_thread_id]
+        return HarnessCommand(argv, {**common, "DEEPSEEK_BASE_URL": gateway + "/v1/models/deepseek", "DEEPSEEK_API_KEY": capability_token})
+    raise ValueError("Unsupported Harness")
+
+
+def normalize(harness: str, line: str) -> dict:
+    try:
+        value = json.loads(line)
+    except (ValueError, TypeError):
+        return {"kind": "text_delta", "payload": {"text": line + "\n"}}
+    kind = value.get("type") or value.get("event") or "tool_output"
+    if kind in {"text_delta", "response.output_text.delta", "assistant_delta"}:
+        return {"kind": "text_delta", "payload": {"text": value.get("delta") or value.get("text") or ""}}
+    if kind in {"tool_started", "tool_use", "item.started"}:
+        return {"kind": "tool_started", "payload": {"name": value.get("name") or value.get("tool") or "tool", "detail": value.get("input") or {}}}
+    if kind in {"tool_finished", "tool_result", "item.completed"}:
+        return {"kind": "tool_finished", "payload": {"name": value.get("name") or value.get("tool") or "tool", "result": value.get("result") or value.get("output") or {}}}
+    if kind in {"step_started", "step_progress", "step_finished", "artifact_created", "warning", "error", "waiting_user"}:
+        return {"kind": kind, "payload": value.get("payload") or value}
+    return {"kind": "tool_output", "payload": {"event": value}}

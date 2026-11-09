@@ -1,0 +1,30 @@
+from sandbox_harness.catalog import HarnessCatalog
+from sandbox_harness.domain import EventKind, Harness, ThreadCreate, TurnCreate, TurnState
+from sandbox_harness.store import Store
+
+
+async def test_thread_turn_items_and_idempotency(tmp_path):
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "store.db"))
+    await store.initialize()
+    try:
+        catalog = HarnessCatalog()
+        profile = catalog.resolve("claude", "claude-4.6-sonnet", "deep")
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="deep", title="Thread"), profile)
+        value = TurnCreate(message="hello", idempotency_key="idempotency-1")
+        turn, created, start = await store.create_turn(thread.id, value, profile)
+        assert created and start and turn.reasoning_effort == "high"
+        duplicate, created, _ = await store.create_turn(thread.id, value, profile)
+        assert not created and duplicate.id == turn.id
+        agent = await store.append_agent_delta(thread.id, turn.id, "hel")
+        agent = await store.append_agent_delta(thread.id, turn.id, "lo")
+        assert agent.summary == "hello"
+        event = await store.append_event(turn.id, EventKind.TEXT_DELTA, {"text": "lo"}, item_id=agent.id)
+        assert (await store.events_after(turn.id, 0))[0].sequence == event.sequence
+        items = await store.items_after(thread.id)
+        assert [item.type.value for item in items] == ["user_message", "agent_message"]
+        await store.set_turn_state(turn.id, TurnState.COMPLETED)
+        assert (await store.get_turn(turn.id)).state == TurnState.COMPLETED
+    finally:
+        await store.close()
+

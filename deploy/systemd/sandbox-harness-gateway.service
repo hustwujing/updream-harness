@@ -1,0 +1,34 @@
+[Unit]
+Description=Sandbox Harness capability Gateway
+After=network-online.target redis-server.service sandbox-harness-network.service
+Requires=sandbox-harness-network.service
+
+[Service]
+Type=simple
+User=sandbox-harness
+Group=sandbox-harness
+WorkingDirectory=/data2/wujing03/sandbox-harness-platform
+EnvironmentFile=/etc/sandbox-harness/platform.env
+ExecStart=/data2/wujing03/sandbox-harness-platform/.venv/bin/sandbox-harness-gateway
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryDenyWriteExecute=true
+TasksMax=256
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

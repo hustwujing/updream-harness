@@ -1,0 +1,35 @@
+[Unit]
+Description=Sandbox Harness web and session API
+After=network-online.target postgresql.service redis-server.service sandbox-agent-opensandbox.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sandbox-harness
+Group=sandbox-harness
+WorkingDirectory=/data2/wujing03/sandbox-harness-platform
+EnvironmentFile=/etc/sandbox-harness/platform.env
+ExecStart=/data2/wujing03/sandbox-harness-platform/.venv/bin/sandbox-harness-api
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/data2/wujing03/sandbox-harness-platform/.data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryDenyWriteExecute=true
+TasksMax=256
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

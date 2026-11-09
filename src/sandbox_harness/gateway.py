@@ -1,0 +1,162 @@
+from __future__ import annotations
+
+import asyncio
+from collections import defaultdict
+from contextlib import asynccontextmanager
+import os
+import time
+
+import httpx
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from redis.asyncio import Redis
+import uvicorn
+
+from .capability import CapabilityCodec
+from .config import Settings, load_settings
+from .public_proxy import start_proxy
+
+
+HOP_HEADERS = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length"}
+
+CONSUME_CAPABILITY = """
+if redis.call('EXISTS', KEYS[1]) == 1 then return -1 end
+local count = redis.call('INCR', KEYS[2])
+if count == 1 then redis.call('EXPIRE', KEYS[2], ARGV[1]) end
+return count
+"""
+
+
+def token_from(request: Request) -> str:
+    authorization = request.headers.get("authorization", "")
+    if authorization.lower().startswith("bearer "):
+        return authorization[7:].strip()
+    return request.headers.get("x-api-key") or request.headers.get("anthropic-api-key") or ""
+
+
+def create_gateway(settings: Settings | None = None) -> FastAPI:
+    settings = settings or load_settings()
+    codec = CapabilityCodec(settings.gateway_signing_key)
+    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    active: dict[str, set[httpx.Response]] = defaultdict(set)
+    clients: dict[str, httpx.AsyncClient] = {}
+    upstreams = {
+        "/v1/models/codex": (settings.upstream_codex, os.environ.get("SANDBOX_HARNESS_UPSTREAM_CODEX_KEY", "")),
+        "/v1/models/claude": (settings.upstream_claude, os.environ.get("SANDBOX_HARNESS_UPSTREAM_CLAUDE_KEY", "")),
+        "/v1/models/deepseek": (settings.upstream_deepseek, os.environ.get("SANDBOX_HARNESS_UPSTREAM_DEEPSEEK_KEY", "")),
+        "/v1/providers/image": (settings.upstream_image, os.environ.get("SANDBOX_HARNESS_UPSTREAM_IMAGE_KEY", "")),
+        "/v1/providers/video": (settings.upstream_video, os.environ.get("SANDBOX_HARNESS_UPSTREAM_VIDEO_KEY", "")),
+        "/v1/providers/audio": (settings.upstream_audio, os.environ.get("SANDBOX_HARNESS_UPSTREAM_AUDIO_KEY", "")),
+    }
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        await redis.ping()
+
+        async def authorize_public(token: str):
+            try:
+                claims = codec.verify(token, route="/v1/public-http")
+            except ValueError as exc:
+                raise ValueError("Invalid proxy capability") from exc
+            remaining = max(1, claims.expires_at - int(time.time()))
+            count = await redis.eval(
+                CONSUME_CAPABILITY,
+                2,
+                settings.redis_prefix + "capability:revoked:" + claims.nonce,
+                settings.redis_prefix + "capability:public-usage:" + claims.nonce,
+                remaining,
+            )
+            if count == -1 or count > claims.max_public_requests:
+                raise ValueError("Proxy capability is revoked or exhausted")
+            return claims
+
+        proxy = await start_proxy(settings.gateway_bind_host, settings.gateway_proxy_port, authorize_public)
+        try:
+            yield
+        finally:
+            proxy.close()
+            await proxy.wait_closed()
+            await redis.aclose()
+            await asyncio.gather(*(client.aclose() for client in clients.values()))
+
+    app = FastAPI(title="Sandbox Capability Gateway", lifespan=lifespan)
+
+    @app.get("/health")
+    async def health():
+        return {"status": "ok"}
+
+    @app.post("/internal/revoke/{nonce}")
+    async def revoke(nonce: str, request: Request):
+        if request.headers.get("x-sandbox-harness-control") != settings.gateway_control_key:
+            raise HTTPException(403, "Invalid control credential")
+        await redis.set(
+            settings.redis_prefix + "capability:revoked:" + nonce,
+            "1",
+            ex=settings.capability_ttl_seconds,
+        )
+        responses = list(active.pop(nonce, set()))
+        if responses:
+            await asyncio.gather(*(response.aclose() for response in responses), return_exceptions=True)
+        return {"revoked": True}
+
+    @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+    async def proxy(path: str, request: Request):
+        route = "/" + path
+        token = token_from(request)
+        try:
+            claims = codec.verify(token, route=route)
+        except ValueError as exc:
+            raise HTTPException(401, str(exc))
+        remaining = max(1, claims.expires_at - int(time.time()))
+        count = await redis.eval(
+            CONSUME_CAPABILITY,
+            2,
+            settings.redis_prefix + "capability:revoked:" + claims.nonce,
+            settings.redis_prefix + "capability:usage:" + claims.nonce,
+            remaining,
+        )
+        if count == -1:
+            raise HTTPException(401, "Capability token revoked")
+        if count > claims.max_requests:
+            raise HTTPException(429, "Capability request limit reached")
+        prefix = next((candidate for candidate in sorted(upstreams, key=len, reverse=True) if route == candidate or route.startswith(candidate + "/")), None)
+        if not prefix:
+            raise HTTPException(404, "Gateway route is not configured")
+        base_url, credential = upstreams[prefix]
+        if not base_url:
+            raise HTTPException(503, "Gateway upstream is not configured")
+        client = clients.setdefault(prefix, httpx.AsyncClient(base_url=base_url.rstrip("/"), timeout=None, trust_env=False))
+        suffix = route[len(prefix):] or "/"
+        headers = {key: value for key, value in request.headers.items() if key.lower() not in HOP_HEADERS | {"authorization", "x-api-key", "anthropic-api-key"}}
+        if credential:
+            headers["authorization"] = "Bearer " + credential
+            if prefix.endswith("claude"):
+                headers["x-api-key"] = credential
+        body = await request.body()
+        upstream = client.build_request(request.method, suffix, params=request.query_params, headers=headers, content=body)
+        response = await client.send(upstream, stream=True)
+        active[claims.nonce].add(response)
+
+        async def content():
+            try:
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+            finally:
+                active[claims.nonce].discard(response)
+                if not active[claims.nonce]:
+                    active.pop(claims.nonce, None)
+                await response.aclose()
+
+        response_headers = {key: value for key, value in response.headers.items() if key.lower() not in HOP_HEADERS}
+        return StreamingResponse(content(), status_code=response.status_code, headers=response_headers, media_type=response.headers.get("content-type"))
+
+    return app
+
+
+def run() -> None:
+    settings = load_settings()
+    uvicorn.run(create_gateway(settings), host=settings.gateway_bind_host, port=settings.gateway_bind_port)
+
+
+if __name__ == "__main__":
+    run()

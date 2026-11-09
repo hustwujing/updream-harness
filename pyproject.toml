@@ -1,0 +1,36 @@
+[project]
+name = "sandbox-harness-platform"
+version = "0.1.0"
+description = "A thin stateful OpenSandbox session broker for Codex, Claude and DeepSeek harnesses"
+requires-python = ">=3.12"
+dependencies = [
+  "aiosqlite>=0.20,<1",
+  "asyncpg>=0.30,<1",
+  "boto3>=1.35,<2",
+  "fastapi>=0.115,<1",
+  "httpx>=0.28,<1",
+  "pydantic>=2.10,<3",
+  "pydantic-settings>=2.7,<3",
+  "redis>=5,<7",
+  "sqlalchemy[asyncio]>=2.0,<3",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.3,<9", "pytest-asyncio>=0.25,<1"]
+
+[project.scripts]
+sandbox-harness-api = "sandbox_harness.main:run"
+sandbox-harness-gateway = "sandbox_harness.gateway:run"
+sandbox-harness-runtime = "sandbox_runtime.main:run"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sandbox_harness", "src/sandbox_runtime"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
