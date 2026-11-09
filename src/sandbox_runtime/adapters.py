@@ -83,12 +83,14 @@ def normalize(harness: str, line: str) -> dict:
         item = value.get("item") or {}
         if item.get("type") == "agent_message":
             return {"kind": "text_delta", "payload": {"text": item.get("text", ""), "snapshot": True}}
+        if item.get("type") == "reasoning":
+            return {"kind": "step_finished", "payload": {"name": item.get("text", "Reasoning")}}
         if item.get("type") == "error" and "fallback metadata" in item.get("message", ""):
             return {"kind": "warning", "payload": {"text": item.get("message", ""), "code": "model_metadata_fallback"}}
-        return {"kind": "tool_finished", "payload": {"name": item.get("type", "tool"), "result": item}}
+        return {"kind": "tool_finished", "payload": {"name": item.get("type", "tool"), "tool_use_id": item.get("id", ""), "result": item}}
     if harness == "codex" and kind == "item.started":
         item = value.get("item") or {}
-        return {"kind": "tool_started", "payload": {"name": item.get("type", "tool"), "detail": item}}
+        return {"kind": "tool_started", "payload": {"name": item.get("type", "tool"), "tool_use_id": item.get("id", ""), "detail": item}}
     if harness == "codex" and kind == "turn.completed":
         return {"kind": "step_finished", "payload": {"name": "Codex response", "usage": value.get("usage") or {}}}
     if harness == "codex" and kind == "turn.started":
@@ -100,10 +102,13 @@ def normalize(harness: str, line: str) -> dict:
         event = (notification.get("payload") or {}).get("event") or {}
         event_type = event.get("type", "")
         data = event.get("data") or {}
+        message = data.get("message") or {}
+        source = message.get("source") or {}
+        tool_use_id = data.get("callId") or message.get("toolCallId") or source.get("callId") or ""
         if event_type in {"tool/start", "tool/call", "tool_use"}:
-            return {"kind": "tool_started", "payload": {"name": data.get("name", "tool"), "detail": data}}
+            return {"kind": "tool_started", "payload": {"name": data.get("name", "tool"), "tool_use_id": tool_use_id, "detail": data}}
         if event_type in {"tool/end", "tool/result", "tool_result"}:
-            return {"kind": "tool_finished", "payload": {"name": data.get("name", "tool"), "result": data}}
+            return {"kind": "tool_finished", "payload": {"name": data.get("name", "tool"), "tool_use_id": tool_use_id, "result": data, "is_error": bool(message.get("isError"))}}
         return None
     if harness == "claude" and kind == "stream_event":
         native = value.get("event") or {}

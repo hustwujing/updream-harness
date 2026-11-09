@@ -34,3 +34,20 @@ def test_codex_agent_message_and_thread_are_normalized():
 
     assert thread["payload"]["thread_id"] == "thread-1"
     assert message == {"kind": "text_delta", "payload": {"text": "done", "snapshot": True}}
+
+
+def test_codex_and_deepseek_tool_ids_are_stable():
+    codex = normalize("codex", json.dumps({
+        "type": "item.completed",
+        "item": {"id": "item-1", "type": "command_execution", "exit_code": 0},
+    }))
+    deepseek = normalize("deepseek", json.dumps({
+        "type": "deepseek.notification",
+        "event": {"method": "session.event", "payload": {"event": {
+            "type": "tool/result",
+            "data": {"message": {"toolCallId": "call-1", "isError": False}},
+        }}},
+    }))
+
+    assert codex["payload"]["tool_use_id"] == "item-1"
+    assert deepseek["payload"]["tool_use_id"] == "call-1"
