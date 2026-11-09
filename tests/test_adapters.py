@@ -16,3 +16,10 @@ def test_claude_partial_text_and_final_snapshot_normalization():
 
     assert partial == {"kind": "text_delta", "payload": {"text": "hello"}}
     assert snapshot["payload"] == {"text": "hello world", "snapshot": True, "thread_id": "native-session"}
+
+
+def test_claude_non_public_protocol_frames_are_not_transcript_steps():
+    assert normalize("claude", json.dumps({
+        "type": "stream_event",
+        "event": {"type": "message_start", "message": {}},
+    })) is None

@@ -14,5 +14,7 @@ def test_capability_is_bound_to_route_and_expiry():
         codec.verify(token, route="/v1/providers/video", now=claims.issued_at)
     with pytest.raises(ValueError, match="expired"):
         codec.verify(token, now=claims.expires_at)
+    payload, signature = token.split(".", 1)
+    tampered = payload + "." + ("A" if signature[0] != "A" else "B") + signature[1:]
     with pytest.raises(ValueError, match="signature"):
-        codec.verify(token[:-1] + ("A" if token[-1] != "A" else "B"), now=claims.issued_at)
+        codec.verify(tampered, now=claims.issued_at)

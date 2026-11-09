@@ -139,6 +139,8 @@ def create_app() -> FastAPI:
             saw_text_delta = False
             while line := await process.stdout.readline():
                 event = normalize(harness, line.decode(errors="replace").rstrip("\n"))
+                if event is None:
+                    continue
                 native_thread_id = event.get("payload", {}).get("thread_id") or native_thread_id
                 if event.get("kind") == "text_delta":
                     if event.get("payload", {}).get("snapshot") and saw_text_delta:
