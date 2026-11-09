@@ -34,6 +34,23 @@ class Broker:
         self.tasks: dict[str, asyncio.Task] = {}
         self.cancelled: set[str] = set()
         self.locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.input_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.active_sandboxes = {}
+
+    async def try_deliver_input(self, value) -> bool:
+        async with self.input_locks[value.turn_id]:
+            sandbox = self.active_sandboxes.get(value.turn_id)
+            turn = await self.store.get_turn(value.turn_id)
+            if not sandbox or not turn or turn.state != TurnState.RUNNING:
+                return False
+            await self._materialize_attachments(sandbox, value.attachments)
+            accepted = await self.runtime.append_input(sandbox, message=value.message,
+                attachments=value.attachments, reasoning_effort=turn.reasoning_effort)
+            if accepted:
+                current = await self.store.get_turn(value.turn_id)
+                await self.store.set_input_status(value.id,
+                    "delivered" if current and current.state == TurnState.RUNNING else "applied")
+            return accepted
 
     async def submit(self, thread_id: str, value: TurnCreate) -> TurnView:
         if sum(item.size for item in value.attachments) > self.settings.max_attachment_bytes:
@@ -144,6 +161,7 @@ class Broker:
                     await self.runtime.restore(sandbox, archive)
                 await self._materialize_attachments(sandbox, turn.attachments)
                 await self._state(turn.id, TurnState.RUNNING, sandbox_id=sandbox.id)
+                self.active_sandboxes[turn.id] = sandbox
                 message, attachments, native_thread_id = turn.message, turn.attachments, thread.native_thread_id
                 result, current_input_id = None, None
                 while True:
@@ -156,13 +174,15 @@ class Broker:
                             await self._record_runtime_event(thread.id, turn.id, value)
                     if result is None:
                         raise RuntimeError("Runtime stream ended without a result")
+                    if result.status in ("completed", "waiting_user"):
+                        await self._state(turn.id, TurnState.DRAINING_INPUTS, sandbox_id=sandbox.id)
+                        await self.store.apply_delivered_inputs(turn.id)
                     if current_input_id:
                         await self.store.set_input_status(current_input_id,
                             "applied" if result.status in ("completed", "waiting_user") else "failed")
                     if result.status not in ("completed", "waiting_user"):
                         break
                     native_thread_id = result.native_thread_id or native_thread_id
-                    await self._state(turn.id, TurnState.DRAINING_INPUTS, sandbox_id=sandbox.id)
                     pending = await self.store.next_pending_input(turn.id)
                     if not pending:
                         break
@@ -270,6 +290,8 @@ class Broker:
                     await self.store.append_event(turn.id, EventKind.ERROR,
                         {"code": error_code, "detail": public_detail}, item_id=item.id)
                 await self._state(turn.id, final_state, sandbox_id=sandbox.id if sandbox else "", error_code=error_code, error_detail=error_detail)
+                self.active_sandboxes.pop(turn.id, None)
+                self.input_locks.pop(turn.id, None)
                 self.tasks.pop(turn.id, None)
                 next_turn = await self.store.claim_next_turn(turn.thread_id, turn.id)
                 if next_turn:

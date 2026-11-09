@@ -42,6 +42,14 @@ class AppendedInputRuntime(Runtime):
         yield RuntimeResult(status="completed", native_thread_id="native-appended")
 
 
+class LiveInputRuntime(AppendedInputRuntime):
+    def __init__(self):
+        super().__init__(); self.live_inputs = []
+
+    async def append_input(self, sandbox, **kwargs):
+        self.live_inputs.append(kwargs["message"]); self.release.set(); return True
+
+
 async def test_broker_runs_harness_and_persists_transcript_checkpoint_and_artifact(tmp_path):
     settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "broker.db"),
         backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9",
@@ -57,7 +65,7 @@ async def test_broker_runs_harness_and_persists_transcript_checkpoint_and_artifa
         turn = await broker.submit(thread.id, TurnCreate(message="make a file", idempotency_key="turn-key-1"))
         for _ in range(100):
             current = await store.get_turn(turn.id)
-            if current.state in {TurnState.COMPLETED, TurnState.FAILED}:
+            if current.state in {TurnState.COMPLETED, TurnState.FAILED} and turn.id not in broker.tasks:
                 break
             await asyncio.sleep(.02)
         assert current.state == TurnState.COMPLETED
@@ -83,7 +91,7 @@ async def test_broker_persists_a_user_visible_item_for_terminal_failure(tmp_path
         turn = await broker.submit(thread.id, TurnCreate(message="fail", idempotency_key="failed-turn-key"))
         for _ in range(100):
             current = await store.get_turn(turn.id)
-            if current.state == TurnState.FAILED:
+            if current.state == TurnState.FAILED and turn.id not in broker.tasks:
                 break
             await asyncio.sleep(.02)
         errors = [item for item in await store.items_after(thread.id) if item.type.value == "error"]
@@ -143,5 +151,33 @@ async def test_broker_drains_appended_inputs_in_same_sandbox_session(tmp_path):
         assert runtime.messages == ["first", "second"]
         assert (await store.list_turn_inputs(turn.id))[0].status == "applied"
         assert len({item.sandbox_id for item in [current]}) == 1
+    finally:
+        await pool.close(); await store.close()
+
+
+async def test_broker_delivers_live_input_and_marks_it_applied_at_turn_boundary(tmp_path):
+    settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "live.db"),
+        backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9", session_keepalive_seconds=0)
+    store = Store(settings.database_url); await store.initialize(); objects = ObjectStore(tmp_path / "objects")
+    backend = FakeSandboxBackend(); pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
+    runtime = LiveInputRuntime(); catalog = HarnessCatalog(); broker = Broker(settings, store, objects, pool, runtime, catalog)
+    owner = "a" * 64
+    try:
+        profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Live"), profile, owner)
+        turn = await broker.submit(thread.id, TurnCreate(message="first", idempotency_key="live-first-key"))
+        for _ in range(100):
+            if (await store.get_turn(turn.id)).state == TurnState.RUNNING: break
+            await asyncio.sleep(.01)
+        appended, _ = await store.create_turn_input(turn.id,
+            TurnInputCreate(message="steer", idempotency_key="live-steer-key"), owner)
+        assert await broker.try_deliver_input(appended)
+        for _ in range(200):
+            current = await store.get_turn(turn.id)
+            if current.state in {TurnState.COMPLETED, TurnState.FAILED} and turn.id not in broker.tasks: break
+            await asyncio.sleep(.01)
+        assert current.state == TurnState.COMPLETED and runtime.live_inputs == ["steer"]
+        assert (await store.list_turn_inputs(turn.id))[0].status == "applied"
     finally:
         await pool.close(); await store.close()

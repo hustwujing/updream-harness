@@ -1,6 +1,6 @@
 import json
 
-from sandbox_runtime.adapters import codex_argv, normalize
+from sandbox_runtime.adapters import control_user_message, normalize
 
 
 def test_claude_partial_text_and_final_snapshot_normalization():
@@ -53,8 +53,12 @@ def test_codex_and_deepseek_tool_ids_are_stable():
     assert deepseek["payload"]["tool_use_id"] == "call-1"
 
 
-def test_codex_resume_keeps_non_git_workspace_and_frozen_model_options():
-    argv = codex_argv("gpt-5.6", "native-thread")
-    assert argv == [
-        "codex", "exec", "resume", "--skip-git-repo-check", "--model", "gpt-5.6", "--json", "native-thread", "-",
-    ]
+def test_codex_app_server_events_and_control_inputs_are_normalized():
+    control = json.loads(control_user_message("追加要求"))
+    assert control["type"] == "input" and control["message"] == "追加要求" and len(control["id"]) == 32
+    delta = normalize("codex", json.dumps({"method":"item/agentMessage/delta","params":{"itemId":"m","delta":"hello"}}))
+    started = normalize("codex", json.dumps({"method":"item/started","params":{"item":{"id":"t","type":"commandExecution","command":"pwd"}}}))
+    finished = normalize("codex", json.dumps({"method":"item/completed","params":{"item":{"id":"t","type":"commandExecution","status":"completed"}}}))
+    assert delta == {"kind":"text_delta","payload":{"text":"hello"}}
+    assert started["kind"] == "tool_started" and started["payload"]["tool_use_id"] == "t"
+    assert finished["kind"] == "tool_finished" and finished["payload"]["tool_use_id"] == "t"

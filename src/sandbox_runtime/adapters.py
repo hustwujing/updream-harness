@@ -11,12 +11,9 @@ from pathlib import Path
 class HarnessCommand:
     argv: list[str]
     environment: dict[str, str]
-
-
-def codex_argv(model: str, native_thread_id: str = "") -> list[str]:
-    if native_thread_id:
-        return ["codex", "exec", "resume", "--skip-git-repo-check", "--model", model, "--json", native_thread_id, "-"]
-    return ["codex", "exec", "--json", "--skip-git-repo-check", "--model", model, "-"]
+    streaming_input: bool = False
+    control_input: bool = False
+    batched_completion: bool = False
 
 
 def command(harness: str, model: str, native_thread_id: str = "") -> HarnessCommand:
@@ -27,7 +24,7 @@ def command(harness: str, model: str, native_thread_id: str = "") -> HarnessComm
     override = os.environ.get("HARNESS_COMMAND_JSON")
     if override:
         value = json.loads(override)
-        return HarnessCommand(list(value[harness]), common)
+        return HarnessCommand(list(value[harness]), common, streaming_input=harness == "claude")
     if harness == "codex":
         codex_home = Path("/workspace/state/codex")
         codex_home.mkdir(parents=True, exist_ok=True)
@@ -52,14 +49,19 @@ def command(harness: str, model: str, native_thread_id: str = "") -> HarnessComm
             '',
         ])
         (codex_home / "config.toml").write_text(config)
-        argv = codex_argv(model, native_thread_id)
-        return HarnessCommand(argv, {**common, "CODEX_HOME": str(codex_home), "OPENAI_API_KEY": capability_token})
+        argv = ["python", "-m", "sandbox_runtime.codex_runner", "--model", model]
+        if native_thread_id:
+            argv += ["--thread-id", native_thread_id]
+        return HarnessCommand(argv, {**common, "CODEX_HOME": str(codex_home), "OPENAI_API_KEY": capability_token},
+            streaming_input=True, control_input=True, batched_completion=True)
     if harness == "claude":
-        argv = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+        argv = ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+                "--include-partial-messages", "--replay-user-messages",
                 "--permission-mode", "bypassPermissions", "--model", model]
         if native_thread_id:
             argv += ["--resume", native_thread_id]
-        return HarnessCommand(argv, {**common, "ANTHROPIC_BASE_URL": gateway + "/v1/models/claude", "ANTHROPIC_API_KEY": capability_token})
+        return HarnessCommand(argv, {**common, "ANTHROPIC_BASE_URL": gateway + "/v1/models/claude",
+            "ANTHROPIC_API_KEY": capability_token}, streaming_input=True)
     if harness == "deepseek":
         argv = ["python", "-m", "sandbox_runtime.deepseek_runner", "--model", model]
         if native_thread_id:
@@ -71,8 +73,19 @@ def command(harness: str, model: str, native_thread_id: str = "") -> HarnessComm
             "DEEPSEEK_BASE_URL": gateway + "/v1/models/deepseek",
             "DEEPSEEK_API_KEY": capability_token,
             "DEEPSEEK_REASONING_EFFORT": os.environ.get("HARNESS_REASONING_EFFORT", "high"),
-        })
+        }, streaming_input=True, control_input=True)
     raise ValueError("Unsupported Harness")
+
+
+def streaming_user_message(message: str) -> bytes:
+    return (json.dumps({"type": "user", "message": {"role": "user", "content": [
+        {"type": "text", "text": message},
+    ]}, "parent_tool_use_id": None, "session_id": ""}, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
+
+
+def control_user_message(message: str) -> bytes:
+    return (json.dumps({"type": "input", "id": __import__("uuid").uuid4().hex, "message": message},
+        ensure_ascii=False, separators=(",", ":")) + "\n").encode()
 
 
 def normalize(harness: str, line: str) -> dict:
@@ -81,6 +94,27 @@ def normalize(harness: str, line: str) -> dict:
     except (ValueError, TypeError):
         return {"kind": "text_delta", "payload": {"text": line + "\n"}}
     kind = value.get("type") or value.get("event") or "tool_output"
+    method = value.get("method", "")
+    params = value.get("params") or {}
+    if kind == "harness.input.completed":
+        return None
+    if harness == "codex" and method == "item/agentMessage/delta":
+        return {"kind": "text_delta", "payload": {"text": params.get("delta", "")}}
+    if harness == "codex" and method in {"item/started", "item/completed"}:
+        item = params.get("item") or {}; identity = item.get("id", ""); item_type = item.get("type", "tool")
+        if item_type == "agentMessage" and method == "item/completed":
+            return {"kind": "text_delta", "payload": {"text": item.get("text", ""), "snapshot": True}}
+        if item_type in {"commandExecution", "fileChange", "imageView", "mcpToolCall", "dynamicToolCall"}:
+            payload = {"name": item_type, "tool_use_id": identity}
+            payload["detail" if method == "item/started" else "result"] = item
+            return {"kind": "tool_started" if method == "item/started" else "tool_finished", "payload": payload}
+        return None
+    if harness == "codex" and method in {"item/commandExecution/outputDelta", "item/fileChange/outputDelta"}:
+        return {"kind": "tool_output", "payload": {"name": "tool", "tool_use_id": params.get("itemId", ""), "text": params.get("delta", "")}}
+    if harness == "codex" and method == "turn/plan/updated":
+        return {"kind": "step_progress", "payload": {"name": "Plan", "plan": params.get("plan", [])}}
+    if harness == "codex" and method == "turn/completed":
+        return {"kind": "step_finished", "payload": {"name": "Codex response", "turn": params.get("turn", {})}}
     if harness == "codex" and kind == "thread.started":
         return {"kind": "step_finished", "payload": {"name": "Codex session", "thread_id": value.get("thread_id", "")}}
     if harness == "codex" and kind == "item.completed":

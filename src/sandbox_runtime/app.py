@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from .adapters import command, normalize
+from .adapters import command, control_user_message, normalize, streaming_user_message
 
 
 WORKSPACE = Path("/workspace")
@@ -50,9 +50,27 @@ def safe_relative(value: str) -> Path:
 def create_app() -> FastAPI:
     app = FastAPI(title="Sandbox Harness Runtime")
     app.state.process = None
+    app.state.process_command = None
+    app.state.pending_inputs = 0
+    app.state.write_lock = asyncio.Lock()
     for name in (*PERSISTENT, "inbox", "outputs", "tmp"):
         (WORKSPACE / name).mkdir(parents=True, exist_ok=True)
     RUN.mkdir(parents=True, exist_ok=True)
+
+    async def stop_process() -> None:
+        process = app.state.process
+        app.state.process = None
+        app.state.process_command = None
+        app.state.pending_inputs = 0
+        if not process or process.returncode is not None:
+            return
+        if process.stdin and not process.stdin.is_closing():
+            process.stdin.close()
+        try:
+            await asyncio.wait_for(process.wait(), 5)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
 
     @app.get("/health")
     async def health():
@@ -119,8 +137,6 @@ def create_app() -> FastAPI:
 
     @app.post("/v1/turns")
     async def run_turn(value: TurnRequest):
-        if app.state.process and app.state.process.returncode is None:
-            raise HTTPException(409, "Harness is already running")
         harness = os.environ.get("HARNESS_KIND", "claude")
         model = os.environ.get("HARNESS_MODEL", "default")
         os.environ["HARNESS_REASONING_EFFORT"] = value.reasoning_effort
@@ -133,35 +149,77 @@ def create_app() -> FastAPI:
             (WORKSPACE / "inbox" / "attachments.json").write_text(json.dumps(value.attachments, ensure_ascii=False))
 
         async def stream():
-            process = await asyncio.create_subprocess_exec(*selected.argv, cwd=WORKSPACE / "project", env=environment,
-                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-                limit=HARNESS_JSONL_LIMIT)
-            app.state.process = process
-            process.stdin.write(prompt.encode()); await process.stdin.drain(); process.stdin.close()
+            process = app.state.process
+            if process is None or process.returncode is not None:
+                process = await asyncio.create_subprocess_exec(*selected.argv, cwd=WORKSPACE / "project", env=environment,
+                    stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                    limit=HARNESS_JSONL_LIMIT)
+                app.state.process = process
+                app.state.process_command = selected
+            elif not selected.streaming_input or not getattr(app.state.process_command, "streaming_input", False):
+                raise HTTPException(409, "Harness is already running")
+            async with app.state.write_lock:
+                process.stdin.write(control_user_message(prompt) if selected.control_input else
+                    streaming_user_message(prompt) if selected.streaming_input else prompt.encode())
+                await process.stdin.drain()
+                app.state.pending_inputs += 1
+                if not selected.streaming_input:
+                    process.stdin.close()
             native_thread_id = value.native_thread_id
             saw_text_delta = False
             while line := await process.stdout.readline():
-                event = normalize(harness, line.decode(errors="replace").rstrip("\n"))
-                if event is None:
-                    continue
-                native_thread_id = event.get("payload", {}).get("thread_id") or native_thread_id
-                if event.get("kind") == "text_delta":
-                    if event.get("payload", {}).get("snapshot") and saw_text_delta:
-                        continue
-                    saw_text_delta = True
-                yield json.dumps(event, ensure_ascii=False) + "\n"
+                decoded = line.decode(errors="replace").rstrip("\n")
+                try:
+                    native = json.loads(decoded)
+                except (TypeError, ValueError):
+                    native = {}
+                event = normalize(harness, decoded)
+                terminal_input = (native.get("type") == "harness.input.completed" if selected.control_input else native.get("type") == "result")
+                if event is not None:
+                    native_thread_id = event.get("payload", {}).get("thread_id") or native_thread_id
+                    if event.get("kind") == "text_delta":
+                        if not (event.get("payload", {}).get("snapshot") and saw_text_delta):
+                            saw_text_delta = True
+                            yield json.dumps(event, ensure_ascii=False) + "\n"
+                    else:
+                        yield json.dumps(event, ensure_ascii=False) + "\n"
+                if selected.streaming_input and terminal_input:
+                    app.state.pending_inputs = 0 if selected.batched_completion else max(0, app.state.pending_inputs - 1)
+                    if app.state.pending_inputs == 0:
+                        await stop_process()
+                        yield json.dumps({"type": "result", "result": {"status": "completed",
+                            "native_thread_id": native_thread_id, "error_code": "", "error_detail": ""}}, ensure_ascii=False) + "\n"
+                        return
             code = await process.wait()
             app.state.process = None
+            app.state.process_command = None
+            app.state.pending_inputs = 0
             result = {"status": "completed" if code == 0 else "failed", "native_thread_id": native_thread_id,
                       "error_code": "" if code == 0 else "harness_exit", "error_detail": "" if code == 0 else f"Harness exited with {code}"}
             yield json.dumps({"type": "result", "result": result}, ensure_ascii=False) + "\n"
         return StreamingResponse(stream(), media_type="application/x-ndjson")
+
+    @app.post("/v1/inputs")
+    async def append_input(value: TurnRequest):
+        process = app.state.process
+        selected = app.state.process_command
+        if not process or process.returncode is not None or not selected or not selected.streaming_input:
+            raise HTTPException(409, "Harness does not have a live input stream")
+        prompt = value.message
+        if value.attachments:
+            prompt += "\n\nAttached files are available in /workspace/inbox. Their immutable records are listed in attachments.json."
+            (WORKSPACE / "inbox" / "attachments.json").write_text(json.dumps(value.attachments, ensure_ascii=False))
+        async with app.state.write_lock:
+            process.stdin.write(control_user_message(prompt) if selected.control_input else streaming_user_message(prompt)); await process.stdin.drain()
+            app.state.pending_inputs += 1
+        return {"accepted": True, "mode": "native_stream"}
 
     @app.post("/v1/cancel")
     async def cancel():
         process = app.state.process
         if process and process.returncode is None:
             process.send_signal(signal.SIGTERM)
+        await stop_process()
         return {"cancelled": True}
 
     @app.get("/v1/artifacts")

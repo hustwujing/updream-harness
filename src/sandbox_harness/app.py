@@ -224,7 +224,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if sum(item.size for item in value.attachments) > settings.max_attachment_bytes:
             raise HTTPException(413, "Attachments exceed the input byte limit")
         try:
-            result, _ = await store.create_turn_input(turn_id, value, request.state.owner_id)
+            result, created = await store.create_turn_input(turn_id, value, request.state.owner_id)
+            if created:
+                await broker.try_deliver_input(result)
             return result
         except RuntimeError as exc:
             raise HTTPException(409, str(exc))

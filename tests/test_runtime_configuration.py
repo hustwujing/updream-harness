@@ -1,6 +1,8 @@
 from pathlib import Path
 import json
 import sys
+import threading
+import time
 
 from fastapi.testclient import TestClient
 
@@ -54,3 +56,34 @@ def test_runtime_stream_accepts_bounded_large_native_json_lines(tmp_path, monkey
     rows = [json.loads(line) for line in response.text.splitlines()]
     assert len(rows[0]["payload"]["text"]) == 100_000
     assert rows[-1]["type"] == "result" and rows[-1]["result"]["status"] == "completed"
+
+
+def test_claude_live_stream_accepts_appended_input_before_first_result(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
+    monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")
+    monkeypatch.setattr(runtime_app, "OUTPUTS", tmp_path / "workspace" / "outputs")
+    monkeypatch.setattr(runtime_app, "PERSISTENT", ("project", "state"))
+    runner = tmp_path / "stream.py"
+    runner.write_text("""import json,sys,time
+print(json.dumps({'type':'system','subtype':'init','session_id':'native-live'}),flush=True)
+for index,line in enumerate(sys.stdin,1):
+    time.sleep(.2)
+    print(json.dumps({'type':'stream_event','event':{'type':'content_block_delta','delta':{'type':'text_delta','text':f'reply-{index}'}}}),flush=True)
+    print(json.dumps({'type':'result','session_id':'native-live','usage':{}}),flush=True)
+""")
+    monkeypatch.setenv("HARNESS_COMMAND_JSON", json.dumps({name: [sys.executable, str(runner)]
+        for name in ("codex", "claude", "deepseek")}))
+    app = runtime_app.create_app()
+    with TestClient(app) as client:
+        assert client.post("/v1/configure", json={"capability_token":"x"*32,"gateway_url":"http://gateway:28600",
+            "harness":"claude","model":"model","proxy_url":"http://172.31.0.1:28601"}).status_code == 200
+        result = {}
+        worker = threading.Thread(target=lambda: result.setdefault("response", client.post("/v1/turns",
+            json={"message":"first","reasoning_effort":"high"})))
+        worker.start(); time.sleep(.08)
+        appended = client.post("/v1/inputs", json={"message":"second","reasoning_effort":"high"})
+        worker.join(timeout=5)
+    assert appended.status_code == 200 and appended.json()["mode"] == "native_stream"
+    rows = [json.loads(line) for line in result["response"].text.splitlines()]
+    assert [row["payload"]["text"] for row in rows if row.get("kind") == "text_delta"] == ["reply-1", "reply-2"]
+    assert rows[-1]["type"] == "result" and rows[-1]["result"]["native_thread_id"] == "native-live"

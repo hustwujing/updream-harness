@@ -1,0 +1,34 @@
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+def test_deepseek_runner_reuses_one_session_for_multiple_inputs(tmp_path):
+    package = tmp_path / "deepseek_harness"; package.mkdir()
+    package.joinpath("__init__.py").write_text("""from types import SimpleNamespace
+class Session:
+    def __init__(self,id):self.id=id
+    def run(self,text,on_notification=None):
+        if on_notification:on_notification(SimpleNamespace(model_dump=lambda mode='json':{'method':'session.event','payload':{'sessionId':self.id,'event':{'type':'message','data':{'text':text}}}}))
+        return SimpleNamespace(final_response='reply:'+text,finish_reason='completed')
+class DeepSeekHarness:
+    def __init__(self,**kwargs):self.session=None
+    def start(self):pass
+    def start_session(self,id):self.session=Session(id);return self.session
+    def resume_session(self,id):self.session=Session(id);return self.session
+    def close(self):pass
+""")
+    environment = {**os.environ, "PYTHONPATH": str(tmp_path) + os.pathsep + str(Path(__file__).resolve().parents[1] / "src"),
+        "DSH_HOME": str(tmp_path / "dsh"), "DEEPSEEK_BASE_URL": "http://gateway", "DEEPSEEK_API_KEY": "test",
+        "DEEPSEEK_REASONING_EFFORT": "high"}
+    commands = "".join(json.dumps({"type":"input","id":str(index),"message":text}) + "\n"
+        for index,text in enumerate(("first","second"),1))
+    result = subprocess.run([sys.executable, "-m", "sandbox_runtime.deepseek_runner", "--model", "model"],
+        input=commands, text=True, capture_output=True, env=environment, timeout=5)
+    assert result.returncode == 0, result.stderr
+    rows = [json.loads(line) for line in result.stdout.splitlines()]
+    assert [row["text"] for row in rows if row.get("type") == "assistant_delta"] == ["reply:first", "reply:second"]
+    assert [row["input_ids"] for row in rows if row.get("type") == "harness.input.completed"] == [["1"], ["2"]]
+    assert len({row["thread_id"] for row in rows if row.get("thread_id")}) == 1

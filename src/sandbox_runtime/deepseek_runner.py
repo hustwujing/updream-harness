@@ -29,7 +29,6 @@ def main() -> None:
     parser.add_argument("--model", required=True)
     parser.add_argument("--session-id", default="")
     args = parser.parse_args()
-    prompt = sys.stdin.read()
     session_id = args.session_id or "session-" + uuid.uuid4().hex
     harness = DeepSeekHarness(
         dsh_home=os.environ["DSH_HOME"],
@@ -44,18 +43,26 @@ def main() -> None:
         request_timeout_seconds=120,
         shutdown_timeout_seconds=10,
     )
-    emit({"type": "thread.started", "thread_id": session_id})
     try:
         harness.start()
         if args.session_id:
-            harness.resume_session(session_id)
-        result = harness.start_session(session_id).run(
-            prompt,
-            on_notification=lambda value: emit({"type": "deepseek.notification", "event": public_notification(value)}),
-        )
-        emit({"type": "assistant_delta", "text": result.final_response})
-        if result.finish_reason != "completed":
-            raise RuntimeError("DeepSeek Harness finished with " + str(result.finish_reason))
+            session = harness.resume_session(session_id)
+        else:
+            session = harness.start_session(session_id)
+        emit({"type": "thread.started", "thread_id": session_id})
+        for line in sys.stdin:
+            try:
+                command = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(command, dict) or command.get("type") != "input":
+                continue
+            result = session.run(command.get("message", ""),
+                on_notification=lambda value: emit({"type": "deepseek.notification", "event": public_notification(value)}))
+            emit({"type": "assistant_delta", "text": result.final_response})
+            if result.finish_reason != "completed":
+                raise RuntimeError("DeepSeek Harness finished with " + str(result.finish_reason))
+            emit({"type": "harness.input.completed", "input_ids": [command.get("id", "")], "thread_id": session_id})
     finally:
         harness.close()
 

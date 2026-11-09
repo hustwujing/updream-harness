@@ -286,6 +286,13 @@ class Store:
             if row:
                 row.status = status; row.updated_at = now()
 
+    async def apply_delivered_inputs(self, turn_id: str) -> None:
+        async with self.connections.begin() as db:
+            rows = (await db.execute(select(TurnInputRow).where(TurnInputRow.turn_id == turn_id,
+                TurnInputRow.status == "delivered").with_for_update())).scalars().all()
+            for row in rows:
+                row.status = "applied"; row.updated_at = now()
+
     async def list_turn_inputs(self, turn_id: str) -> list[TurnInputView]:
         async with self.connections() as db:
             rows = (await db.execute(select(TurnInputRow).where(TurnInputRow.turn_id == turn_id)
