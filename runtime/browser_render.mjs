@@ -25,7 +25,12 @@ function integer(value, fallback, minimum, maximum) {
   return parsed;
 }
 
-const options = argumentsFrom(process.argv.slice(2));
+const rawArguments = process.argv.slice(2);
+if (rawArguments.length === 1 && ['--help', '-h'].includes(rawArguments[0])) {
+  console.log('usage: sandbox-browser-render --html FILE --output PNG [--width 1280 --height 720 --frames 1 --fps 30 --video MP4 --diagnostics JSON --frame-dir DIR]');
+  process.exit(0);
+}
+const options = argumentsFrom(rawArguments);
 if (!options.html || !options.output) {
   console.error('usage: sandbox-browser-render --html FILE --output FILE [--width 1280 --height 720 --frames 1 --fps 30 --video FILE --diagnostics FILE]');
   process.exit(2);
@@ -38,7 +43,8 @@ const height = integer(options.height, 720, 16, 8192);
 const frames = integer(options.frames, 1, 1, 18000);
 const fps = integer(options.fps, 30, 1, 120);
 const diagnosticsPath = path.resolve(options.diagnostics || output + '.json');
-const frameDirectory = path.resolve(options['frame-dir'] || output + '.frames');
+const automaticFrameDirectory = !options['frame-dir'];
+const frameDirectory = path.resolve(options['frame-dir'] || path.join('/tmp', `sandbox-render-frames-${process.pid}`));
 const browserHome = path.join('/tmp', `sandbox-browser-${process.pid}`);
 const consoleMessages = [];
 const pageErrors = [];
@@ -59,7 +65,7 @@ try {
   page.on('pageerror', error => pageErrors.push(error.message));
   await page.goto(pathToFileURL(html).href, {waitUntil: 'load'});
   await page.evaluate(async () => { if (document.fonts?.ready) await document.fonts.ready; });
-  await page.waitForFunction(() => globalThis.__RENDER_READY__ !== false, null, {timeout: 30000});
+  await page.waitForFunction(() => globalThis.__RENDER_READY__ === true, null, {timeout: 30000});
   const graphics = await page.evaluate(() => {
     const canvas = document.querySelector('canvas');
     const gl = canvas && (canvas.getContext('webgl2') || canvas.getContext('webgl'));
@@ -93,5 +99,6 @@ try {
   console.log(JSON.stringify(diagnostics));
 } finally {
   await browser?.close();
+  if (automaticFrameDirectory) rmSync(frameDirectory, {recursive: true, force: true});
   rmSync(browserHome, {recursive: true, force: true});
 }
