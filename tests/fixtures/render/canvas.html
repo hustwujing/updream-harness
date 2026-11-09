@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #101417; }
+  canvas { display: block; width: 100%; height: 100%; }
+</style>
+<canvas width="640" height="360"></canvas>
+<script>
+  const canvas = document.querySelector('canvas');
+  const context = canvas.getContext('2d');
+  window.renderFrame = time => {
+    context.fillStyle = '#101417'; context.fillRect(0, 0, 640, 360);
+    context.fillStyle = '#f2f4ef'; context.font = 'bold 34px sans-serif'; context.fillText('沙箱动画渲染', 36, 62);
+    context.fillStyle = '#2cc9b7'; context.fillRect(40 + (time * 180) % 480, 140, 96, 96);
+    context.fillStyle = '#f1b24a'; context.beginPath(); context.arc(520, 188, 52, 0, Math.PI * 2); context.fill();
+  };
+  window.renderFrame(0); window.__RENDER_READY__ = true;
+</script>
+</html>

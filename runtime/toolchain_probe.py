@@ -8,13 +8,14 @@ from pathlib import Path
 
 
 PACKAGES = (
-    "build-essential", "ca-certificates", "cmake", "curl", "ffmpeg", "file",
-    "fonts-wqy-zenhei", "git", "jq", "nodejs", "npm", "pkg-config", "procps",
-    "ripgrep", "unzip", "xz-utils",
+    "build-essential", "ca-certificates", "chromium", "cmake", "curl", "ffmpeg", "file",
+    "fonts-noto-color-emoji", "fonts-wqy-zenhei", "git", "jq", "libgbm1", "libgl1-mesa-dri",
+    "libglx-mesa0", "mesa-utils", "pkg-config", "procps", "ripgrep", "unzip", "xauth", "xvfb", "xz-utils",
 )
 
 COMMANDS = {
     "cmake": ["cmake", "--version"],
+    "chromium": ["chromium", "--version"],
     "curl": ["curl", "--version"],
     "ffmpeg": ["ffmpeg", "-version"],
     "ffprobe": ["ffprobe", "-version"],
@@ -33,6 +34,8 @@ COMMANDS = {
     "xz": ["xz", "--version"],
 }
 
+NPM_PACKAGES = ("playwright", "three", "esbuild")
+
 
 def first_line(command: list[str]) -> str:
     result = subprocess.run(command, check=True, text=True, capture_output=True)
@@ -47,9 +50,11 @@ def snapshot() -> dict:
         ["dpkg-query", "-W", "-f=${Package}\t${Version}\n", *PACKAGES], text=True,
     ).splitlines()
     packages = dict(row.split("\t", 1) for row in package_rows)
+    npm_root = Path(subprocess.check_output(["npm", "root", "-g"], text=True).strip())
     return {
         "schema_version": 1,
         "commands": {name: first_line(command) for name, command in COMMANDS.items()},
+        "npm_packages": {name: json.loads((npm_root / name / "package.json").read_text())["version"] for name in NPM_PACKAGES},
         "packages": dict(sorted(packages.items())),
     }
 
