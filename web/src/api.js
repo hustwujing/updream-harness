@@ -1,5 +1,7 @@
+export function apiUrl(path){return new URL(`api/${path}`,document.baseURI).toString();}
+
 export async function api(path,options={}){
-  const response=await fetch(`/api/${path}`,{...options,headers:{...(options.body instanceof Blob?{}:{'Content-Type':'application/json'}),...(options.headers||{})}});
+  const response=await fetch(apiUrl(path),{...options,headers:{...(options.body instanceof Blob?{}:{'Content-Type':'application/json'}),...(options.headers||{})}});
   if(!response.ok)throw new Error((await response.text())||response.statusText);
   return response.status===204?null:response.json();
 }

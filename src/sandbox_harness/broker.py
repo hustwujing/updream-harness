@@ -187,20 +187,44 @@ class Broker:
         finally:
             try:
                 await self.store.complete_agent_item(turn.id, "completed" if final_state in {TurnState.COMPLETED, TurnState.WAITING_USER} else "interrupted")
-                await self._state(turn.id, final_state, sandbox_id=sandbox.id if sandbox else "", error_code=error_code, error_detail=error_detail)
-            finally:
                 if sandbox:
+                    revoked = False
                     if 'claims' in locals():
-                        try:
-                            async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
-                                response = await client.post(
-                                    self.settings.gateway_url.rstrip('/') + '/internal/revoke/' + claims.nonce,
-                                    headers={"X-Sandbox-Harness-Control": self.settings.gateway_control_key},
-                                )
-                                response.raise_for_status()
-                        except Exception:
-                            pass
-                    await self.pool.release(sandbox, keep_attached=final_state in {TurnState.COMPLETED, TurnState.WAITING_USER} and self.settings.session_keepalive_seconds > 0)
+                        for attempt in range(3):
+                            try:
+                                async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
+                                    response = await client.post(
+                                        self.settings.gateway_url.rstrip('/') + '/internal/revoke/' + claims.nonce,
+                                        headers={"X-Sandbox-Harness-Control": self.settings.gateway_control_key},
+                                    )
+                                    response.raise_for_status()
+                                revoked = True
+                                break
+                            except Exception as exc:
+                                if attempt == 2:
+                                    await self.store.append_event(turn.id, EventKind.WARNING, {
+                                        "code": "capability_revoke_failed",
+                                        "detail": type(exc).__name__,
+                                        "action": "delete_sandbox",
+                                    })
+                                else:
+                                    await asyncio.sleep(0.2 * (attempt + 1))
+                    keep_attached = (
+                        revoked
+                        and final_state in {TurnState.COMPLETED, TurnState.WAITING_USER}
+                        and self.settings.session_keepalive_seconds > 0
+                    )
+                    await self.pool.release(sandbox, keep_attached=keep_attached)
+            except Exception as exc:
+                final_state = TurnState.FAILED
+                error_code = "cleanup_failed"
+                error_detail = type(exc).__name__ + ": " + str(exc)
+                await self.store.append_event(turn.id, EventKind.ERROR, {
+                    "code": error_code,
+                    "detail": error_detail[:1000],
+                })
+            finally:
+                await self._state(turn.id, final_state, sandbox_id=sandbox.id if sandbox else "", error_code=error_code, error_detail=error_detail)
                 self.tasks.pop(turn.id, None)
                 next_turn = await self.store.claim_next_turn(turn.thread_id, turn.id)
                 if next_turn:
