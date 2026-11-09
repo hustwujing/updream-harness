@@ -199,6 +199,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "Thread not found")
         return await store.items_after(thread_id, after, min(max(limit, 1), 500), request.state.owner_id)
 
+    @app.get("/api/threads/{thread_id}/project-files")
+    async def list_project_files(thread_id: str, request: Request):
+        if not await store.get_thread(thread_id, request.state.owner_id):
+            raise HTTPException(404, "Thread not found")
+        return await store.current_project_files(thread_id, request.state.owner_id)
+
     @app.get("/api/turns/{turn_id}")
     async def get_turn(turn_id: str, request: Request):
         value = await store.get_turn_for_owner(turn_id, request.state.owner_id)
@@ -286,6 +292,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "Artifact not found")
         data = objects.get(value.object_ref, maximum=settings.max_artifact_bytes)
         return Response(data, media_type=value.mime, headers={"Content-Disposition": f'attachment; filename="{Path(value.path).name}"'})
+
+    @app.get("/api/project-files/{file_id}")
+    async def project_file(file_id: str, request: Request):
+        value = await store.get_project_file_for_owner(file_id, request.state.owner_id)
+        if not value:
+            raise HTTPException(404, "Project file not found")
+        maximum = settings.max_attachment_bytes if value.source_type == "upload" else settings.max_artifact_bytes
+        data = objects.get(value.object_ref, maximum=maximum)
+        return Response(data, media_type=value.mime,
+            headers={"Content-Disposition": f'attachment; filename="{Path(value.path).name}"'})
 
     web_root = Path(__file__).resolve().parents[2] / "web"
     static = web_root / "dist" if (web_root / "dist" / "index.html").is_file() else web_root

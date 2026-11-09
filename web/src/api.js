@@ -12,6 +12,7 @@ export const getHarnessCatalog=()=>api('catalog/harnesses');
 export const createThread=value=>api('threads',{method:'POST',body:JSON.stringify(value)});
 export const listTurns=id=>api(`threads/${id}/turns`);
 export const listItems=(id,after=0)=>api(`threads/${id}/items?after=${after}&limit=500`);
+export const listProjectFiles=id=>api(`threads/${id}/project-files`);
 export const getTurn=id=>api(`turns/${id}`);
 export const createTurn=(id,value)=>api(`threads/${id}/turns`,{method:'POST',body:JSON.stringify(value)});
 export const appendTurnInput=(id,value)=>api(`turns/${id}/inputs`,{method:'POST',body:JSON.stringify(value)});

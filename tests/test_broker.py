@@ -14,6 +14,7 @@ class Runtime:
     async def inject(self, sandbox, **kwargs): pass
     async def restore(self, sandbox, archive): pass
     async def put_attachment(self, sandbox, name, data, mime): pass
+    async def put_project_file(self, sandbox, path, data, mime): pass
     async def run(self, sandbox, **kwargs):
         yield RuntimeEvent(kind=EventKind.TEXT_DELTA, payload={"text": "done"})
         yield RuntimeEvent(kind=EventKind.TOOL_FINISHED, payload={"name": "write", "result": "ok"})
@@ -85,6 +86,8 @@ async def test_broker_runs_harness_and_persists_transcript_checkpoint_and_artifa
         assert (await store.get_thread(thread.id)).checkpoint_ref.startswith("sha256:")
         assert [item.type.value for item in await store.items_after(thread.id)] == ["user_message", "agent_message", "tool", "artifact"]
         assert (await store.artifacts(turn.id))[0].path == "result.txt"
+        files = await store.current_project_files(thread.id)
+        assert [(item.path, item.source_type) for item in files] == [("artifacts/result.txt", "artifact")]
         assert not backend.items
     finally:
         await pool.close(); await store.close()

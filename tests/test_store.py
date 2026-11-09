@@ -68,3 +68,29 @@ async def test_turn_lease_generation_fences_stale_broker_writes(tmp_path):
             raise AssertionError("A stale broker changed the Turn state")
     finally:
         await store.close()
+
+
+async def test_project_files_keep_versions_and_return_only_the_current_content(tmp_path):
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "files.db"))
+    await store.initialize()
+    try:
+        catalog = HarnessCatalog(); profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+        owner = "a" * 64
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Files"), profile, owner)
+        first, created = await store.register_project_file(thread.id, path="assets/reference.png",
+            source_type="upload", source_turn_id="one", sha256="1" * 64, size=10,
+            mime="image/png", object_ref="sha256:first")
+        duplicate, duplicate_created = await store.register_project_file(thread.id, path="assets/reference.png",
+            source_type="upload", source_turn_id="two", sha256="1" * 64, size=10,
+            mime="image/png", object_ref="sha256:first")
+        second, replaced = await store.register_project_file(thread.id, path="assets/reference.png",
+            source_type="upload", source_turn_id="three", sha256="2" * 64, size=20,
+            mime="image/png", object_ref="sha256:second")
+        assert created and not duplicate_created and replaced
+        assert duplicate.id == first.id and second.version == 2
+        current = await store.current_project_files(thread.id, owner)
+        assert len(current) == 1 and current[0].id == second.id
+        assert await store.get_project_file_for_owner(second.id, "b" * 64) is None
+    finally:
+        await store.close()

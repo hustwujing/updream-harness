@@ -89,6 +89,33 @@
   color: #898a84;
 }
 
+.inspector section > a.project-file {
+  align-items: flex-start;
+}
+
+.project-file > span {
+  min-width: 0;
+}
+
+.project-file b,
+.project-file small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-file b {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.project-file small {
+  margin-top: 3px;
+  color: #8b8b85;
+  font-size: 8px;
+}
+
 .activity-row.failed b,
 .activity-row.failed small,
 .activity-row.interrupted b,

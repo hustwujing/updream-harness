@@ -44,6 +44,8 @@ Turn ownership is a renewable PostgreSQL lease. The Sandbox Runtime consumes Har
 /run/harness         ephemeral token and runtime configuration
 ```
 
+Uploaded Turn attachments are versioned as managed project assets and exported outputs are versioned as managed project artifacts. Their immutable objects remain in object storage and are materialized under `/workspace/project/assets` and `/workspace/project/artifacts` after every checkpoint restore. They therefore survive a new Sandbox or a different OpenSandbox worker without retaining historical `inbox` or `outputs` directories.
+
 ## Development
 
 ```bash

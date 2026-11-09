@@ -71,6 +71,17 @@ created_at
 
 Attachments are immutable Turn inputs. Artifacts are immutable files exported from `/workspace/outputs`. Both store object reference, hash, bytes, MIME type and original display name.
 
+## Project File
+
+```text
+id, thread_id, path, version
+source_type, source_turn_id
+object_ref, sha256, bytes, mime
+created_at
+```
+
+Current logical paths are `assets/<upload-name>` and `artifacts/<output-path>`. The database retains older versions for audit; the Workspace API and Sandbox materialization return only the highest version of each path.
+
 ## Approval
 
 ```text

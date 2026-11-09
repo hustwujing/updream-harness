@@ -7,7 +7,7 @@ from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, inspec
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from .domain import Artifact, Event, EventKind, Harness, Item, ItemType, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, identifier, now
+from .domain import Artifact, Event, EventKind, Harness, Item, ItemType, ProjectFile, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, identifier, now
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
 
@@ -122,6 +122,22 @@ class UploadRow(Base):
     size: Mapped[int] = mapped_column(Integer)
     name: Mapped[str] = mapped_column(String(255))
     mime: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ProjectFileRow(Base):
+    __tablename__ = "project_files"
+    __table_args__ = (UniqueConstraint("thread_id", "path", "version"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    path: Mapped[str] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(Integer)
+    source_type: Mapped[str] = mapped_column(String(20))
+    source_turn_id: Mapped[str] = mapped_column(String(32), default="")
+    sha256: Mapped[str] = mapped_column(String(64))
+    size: Mapped[int] = mapped_column(Integer)
+    mime: Mapped[str] = mapped_column(String(200))
+    object_ref: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -581,6 +597,46 @@ class Store:
         async with self.connections() as db:
             rows = (await db.execute(select(ArtifactRow).where(ArtifactRow.turn_id == turn_id).order_by(ArtifactRow.created_at))).scalars().all()
         return [Artifact.model_validate({key: getattr(row, key) for key in Artifact.model_fields}) for row in rows]
+
+    @staticmethod
+    def project_file_view(row: ProjectFileRow) -> ProjectFile:
+        return ProjectFile.model_validate({key: getattr(row, key) for key in ProjectFile.model_fields})
+
+    async def register_project_file(self, thread_id: str, *, path: str, source_type: str,
+                                    source_turn_id: str, sha256: str, size: int, mime: str,
+                                    object_ref: str) -> tuple[ProjectFile, bool]:
+        async with self.connections.begin() as db:
+            latest = (await db.execute(select(ProjectFileRow).where(
+                ProjectFileRow.thread_id == thread_id, ProjectFileRow.path == path,
+            ).order_by(ProjectFileRow.version.desc()).limit(1).with_for_update())).scalar_one_or_none()
+            if latest and latest.sha256 == sha256:
+                return self.project_file_view(latest), False
+            row = ProjectFileRow(id=identifier(), thread_id=thread_id, path=path,
+                version=(latest.version + 1 if latest else 1), source_type=source_type,
+                source_turn_id=source_turn_id, sha256=sha256, size=size, mime=mime,
+                object_ref=object_ref, created_at=now())
+            db.add(row)
+        return self.project_file_view(row), True
+
+    async def current_project_files(self, thread_id: str, owner_id: str | None = None) -> list[ProjectFile]:
+        async with self.connections() as db:
+            query = select(ProjectFileRow).join(ThreadRow, ThreadRow.id == ProjectFileRow.thread_id).where(
+                ProjectFileRow.thread_id == thread_id)
+            if owner_id is not None:
+                query = query.where(ThreadRow.owner_id == owner_id)
+            rows = (await db.execute(query.order_by(ProjectFileRow.path, ProjectFileRow.version.desc()))).scalars().all()
+        current = {}
+        for row in rows:
+            current.setdefault(row.path, row)
+        return [self.project_file_view(current[path]) for path in sorted(current)]
+
+    async def get_project_file_for_owner(self, file_id: str, owner_id: str) -> ProjectFile | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(ProjectFileRow).join(ThreadRow,
+                ThreadRow.id == ProjectFileRow.thread_id).where(
+                    ProjectFileRow.id == file_id, ThreadRow.owner_id == owner_id,
+                ))).scalar_one_or_none()
+        return self.project_file_view(row) if row else None
 
     async def get_artifact(self, artifact_id: str) -> Artifact | None:
         async with self.connections() as db:

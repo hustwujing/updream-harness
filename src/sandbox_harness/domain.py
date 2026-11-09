@@ -188,6 +188,20 @@ class Artifact(BaseModel):
     created_at: datetime
 
 
+class ProjectFile(BaseModel):
+    id: str
+    thread_id: str
+    path: str
+    version: int = Field(ge=1)
+    source_type: Literal["upload", "artifact"]
+    source_turn_id: str = ""
+    sha256: str
+    size: int = Field(ge=0)
+    mime: str
+    object_ref: str = Field(exclude=True)
+    created_at: datetime
+
+
 class RuntimeEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: EventKind

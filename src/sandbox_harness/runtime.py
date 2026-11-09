@@ -44,6 +44,13 @@ class RuntimeClient:
                 headers={"Content-Type": mime})
             response.raise_for_status()
 
+    async def put_project_file(self, sandbox: Sandbox, path: str, data: bytes, mime: str) -> None:
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers,
+            timeout=300, trust_env=False) as client:
+            response = await client.put("/v1/project-files/file", params={"path": path}, content=data,
+                headers={"Content-Type": mime})
+            response.raise_for_status()
+
     async def run(self, sandbox: Sandbox, *, message: str, attachments: list[Attachment], native_thread_id: str, reasoning_effort: str,
                   execution_id: str = "legacy", input_id: str = "initial", after_sequence: int = 0) -> AsyncIterator[RuntimeEvent | RuntimeResult]:
         body = {"message": message, "attachments": [item.model_dump(mode="json") for item in attachments],

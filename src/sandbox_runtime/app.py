@@ -252,6 +252,28 @@ def create_app() -> FastAPI:
         temporary.replace(target)
         return {"path": "/workspace/inbox/" + name, "bytes": len(data)}
 
+    @app.put("/v1/project-files/file")
+    async def put_project_file(request: Request, path: str):
+        try:
+            relative = safe_relative(path)
+            if relative.parts[0] not in {"assets", "artifacts"}:
+                raise ValueError
+            project = (WORKSPACE / "project").resolve()
+            target = project / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if not target.parent.resolve().is_relative_to(project):
+                raise ValueError
+        except ValueError:
+            raise HTTPException(400, "Invalid managed project path")
+        data = await request.body()
+        if len(data) > 2 * 1024 * 1024 * 1024:
+            raise HTTPException(413, "Project file too large")
+        temporary = target.with_name("." + target.name + ".tmp")
+        temporary.write_bytes(data)
+        os.chmod(temporary, 0o600)
+        temporary.replace(target)
+        return {"path": "/workspace/project/" + relative.as_posix(), "bytes": len(data)}
+
     @app.get("/v1/checkpoint")
     async def checkpoint():
         target = WORKSPACE / "tmp" / "checkpoint.tar"

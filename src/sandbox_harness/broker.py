@@ -200,6 +200,10 @@ class Broker:
             turn = await self.store.get_turn(value.turn_id)
             if not sandbox or not turn or turn.state != TurnState.RUNNING:
                 return False
+            project_files = await self._register_project_attachments(
+                turn.thread_id, turn.id, value.attachments,
+            )
+            await self._materialize_project_files(sandbox, project_files)
             await self._materialize_attachments(sandbox, value.attachments)
             delivery_mode = await self.runtime.append_input(sandbox, message=value.message,
                 attachments=value.attachments, reasoning_effort=turn.reasoning_effort,
@@ -297,6 +301,23 @@ class Broker:
             if len(data) != attachment.size:
                 raise ValueError("Attachment size does not match its immutable record")
             await self.runtime.put_attachment(sandbox, attachment.name, data, attachment.mime)
+
+    async def _register_project_attachments(self, thread_id: str, turn_id: str, attachments) -> list:
+        values = []
+        for attachment in attachments:
+            value, _ = await self.store.register_project_file(thread_id,
+                path="assets/" + attachment.name, source_type="upload", source_turn_id=turn_id,
+                sha256=attachment.sha256, size=attachment.size, mime=attachment.mime,
+                object_ref=attachment.object_ref)
+            values.append(value)
+        return values
+
+    async def _materialize_project_files(self, sandbox, files) -> None:
+        for value in files:
+            data = self.objects.get(value.object_ref, maximum=self.settings.max_artifact_bytes)
+            if len(data) != value.size:
+                raise ValueError("Project file size does not match its immutable record")
+            await self.runtime.put_project_file(sandbox, value.path, data, value.mime)
 
     async def _process(self, turn_id: str) -> None:
         claimed = await self.store.claim_turn(
@@ -400,6 +421,9 @@ class Broker:
                     if thread.checkpoint_ref:
                         archive = self.objects.get(thread.checkpoint_ref, maximum=self.settings.max_checkpoint_bytes)
                         await self.runtime.restore(sandbox, archive)
+                    await self._register_project_attachments(thread.id, turn.id, turn.attachments)
+                    await self._materialize_project_files(sandbox,
+                        await self.store.current_project_files(thread.id))
                     await self._materialize_attachments(sandbox, turn.attachments)
                     await self._state(turn.id, TurnState.RUNNING, sandbox_id=sandbox.id)
                 self.active_sandboxes[turn.id] = sandbox
@@ -448,6 +472,10 @@ class Broker:
                         break
                     try:
                         await self.store.complete_agent_item(turn.id, "completed")
+                        project_files = await self._register_project_attachments(
+                            thread.id, turn.id, pending.attachments,
+                        )
+                        await self._materialize_project_files(sandbox, project_files)
                         await self._materialize_attachments(sandbox, pending.attachments)
                         message, attachments = pending.message, pending.attachments
                         current_input_id = pending.id
@@ -475,6 +503,9 @@ class Broker:
                             artifact = await self.store.add_artifact(turn.id, path=path, sha256=digest, size=len(data), mime=item.get("mime") or mimetypes.guess_type(path)[0] or "application/octet-stream", object_ref=object_ref)
                             await self.store.append_item(thread.id, turn.id, ItemType.ARTIFACT, status="completed", summary=path,
                                 payload={"artifact_id": artifact.id, "mime": artifact.mime, "size": artifact.size})
+                        await self.store.register_project_file(thread.id,
+                            path="artifacts/" + path, source_type="artifact", source_turn_id=turn.id,
+                            sha256=digest, size=len(data), mime=artifact.mime, object_ref=object_ref)
                     final_state = TurnState.COMPLETED if result.status == "completed" else TurnState.WAITING_USER
                     error_code = ""
                     error_detail = ""

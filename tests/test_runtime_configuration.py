@@ -143,3 +143,18 @@ for line in sys.stdin:
     assert rows[-1]["result"]["status"] == "failed"
     assert rows[-1]["result"]["error_code"] == "harness_failed"
     assert rows[-1]["result"]["error_detail"] == "native failure"
+
+
+def test_runtime_materializes_only_managed_project_file_namespaces(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
+    monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")
+    monkeypatch.setattr(runtime_app, "OUTPUTS", tmp_path / "workspace" / "outputs")
+    monkeypatch.setattr(runtime_app, "PERSISTENT", ("project", "state"))
+    app = runtime_app.create_app()
+    with TestClient(app) as client:
+        response = client.put("/v1/project-files/file", params={"path":"assets/reference.txt"},
+            content=b"persistent")
+        assert response.status_code == 200
+        assert (tmp_path / "workspace/project/assets/reference.txt").read_bytes() == b"persistent"
+        for path in ("../escape", "state/private", "artifacts/../../escape"):
+            assert client.put("/v1/project-files/file", params={"path":path}, content=b"x").status_code == 400

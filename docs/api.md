@@ -65,10 +65,12 @@ The platform itself does not invent approvals. It transports approval requests e
 ```text
 POST /api/uploads
 GET  /api/artifacts/{artifact_id}
-GET  /api/threads/{thread_id}/workspace
+GET  /api/threads/{thread_id}/project-files
+GET  /api/project-files/{file_id}
 ```
 
 Uploads are content-addressed before a Turn references them. Artifact downloads validate thread ownership, object hash and byte limits.
+Attachments referenced by a Turn become versioned project assets. Exported Artifacts become versioned project artifacts. Project-file list and download endpoints enforce the same browser owner boundary as Threads and Artifacts.
 
 ## Runtime Metadata
 
