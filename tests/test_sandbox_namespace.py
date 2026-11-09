@@ -171,3 +171,12 @@ async def test_total_limit_applies_backpressure_until_user_slot_is_released():
     assert len(pool._attached) + sum(len(items) for items in pool._warm.values()) <= 2
     await pool.release(second, keep_attached=False)
     await pool.close()
+
+
+async def test_pool_shutdown_can_preserve_an_active_sandbox_for_broker_recovery():
+    backend = FakeSandboxBackend()
+    pool = SandboxPool(backend, {harness: "" for harness in Harness}, {harness: 0 for harness in Harness})
+    active = await pool.acquire(thread_id="thread", turn_id="turn", harness=Harness.CODEX, environment={})
+    await pool.close(preserve_sandbox_ids={active.id})
+    assert active.id in backend.items
+    await backend.delete(active)

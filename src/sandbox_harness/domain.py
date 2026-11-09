@@ -157,6 +157,13 @@ class TurnView(BaseModel):
     sandbox_id: str = ""
     error_code: str = ""
     error_detail: str = ""
+    lease_owner: str = ""
+    lease_expires_at: datetime | None = None
+    recovery_generation: int = 0
+    runtime_sequence: int = 0
+    runtime_execution_id: str = ""
+    capability_nonce: str = ""
+    pending_final_state: str = ""
     created_at: datetime
     updated_at: datetime
 
@@ -185,6 +192,7 @@ class RuntimeEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: EventKind
     payload: dict[str, Any] = Field(default_factory=dict)
+    runtime_sequence: int = Field(default=0, ge=0)
 
 
 class RuntimeResult(BaseModel):
@@ -192,6 +200,8 @@ class RuntimeResult(BaseModel):
     native_thread_id: str = ""
     error_code: str = ""
     error_detail: str = ""
+    input_ids: list[str] = Field(default_factory=list)
+    runtime_sequence: int = Field(default=0, ge=0)
 
 
 class CapabilityClaims(BaseModel):

@@ -50,6 +50,19 @@ class LiveInputRuntime(AppendedInputRuntime):
         self.live_inputs.append(kwargs["message"]); self.release.set(); return "native_stream"
 
 
+class RecoverableRuntime(Runtime):
+    async def execution_status(self, sandbox, execution_id):
+        return {"execution_id": execution_id, "state": "completed", "last_sequence": 2,
+            "result": {"status": "completed", "native_thread_id": "native-recovered",
+                "error_code": "", "error_detail": "", "input_ids": []}}
+
+    async def resume(self, sandbox, execution_id, after_sequence):
+        if after_sequence < 1:
+            yield RuntimeEvent(kind=EventKind.TEXT_DELTA, payload={"text": "recovered"}, runtime_sequence=1)
+        if after_sequence < 2:
+            yield RuntimeResult(status="completed", native_thread_id="native-recovered", runtime_sequence=2)
+
+
 async def test_broker_runs_harness_and_persists_transcript_checkpoint_and_artifact(tmp_path):
     settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "broker.db"),
         backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9",
@@ -183,3 +196,71 @@ async def test_broker_delivers_live_input_and_marks_it_applied_at_turn_boundary(
         assert recorded.status == "applied" and recorded.delivery_mode == "native_stream"
     finally:
         await pool.close(); await store.close()
+
+
+async def test_broker_reattaches_expired_running_turn_and_replays_runtime_journal(tmp_path):
+    settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "recover.db"),
+        backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9",
+        session_keepalive_seconds=0, recovery_scan_seconds=300)
+    store = Store(settings.database_url); await store.initialize(); objects = ObjectStore(tmp_path / "objects")
+    backend = FakeSandboxBackend(); pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
+    catalog = HarnessCatalog(); owner = "a" * 64
+    profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+    thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+        reasoning_level="standard", title="Recover"), profile, owner)
+    turn, _, _ = await store.create_turn(thread.id,
+        TurnCreate(message="survive restart", idempotency_key="recover-running-key"), profile, owner)
+    old = await store.claim_turn(turn.id, "dead-broker", 30)
+    execution_id = turn.id + ":" + turn.id
+    await store.start_runtime_execution(turn.id, execution_id, "dead-broker", old.recovery_generation)
+    sandbox = await backend.create(Harness.CLAUDE, "", {
+        "sandbox-harness.io/turn": turn.id,
+        "sandbox-harness.io/thread": thread.id,
+        "sandbox-harness.io/harness": Harness.CLAUDE.value,
+    }, {})
+    await store.set_turn_state(turn.id, TurnState.RUNNING, sandbox_id=sandbox.id,
+        lease_owner="dead-broker", recovery_generation=old.recovery_generation)
+    await store.release_turn_lease(turn.id, "dead-broker", old.recovery_generation)
+    broker = Broker(settings, store, objects, pool, RecoverableRuntime(), catalog)
+    try:
+        await broker.start()
+        for _ in range(200):
+            current = await store.get_turn(turn.id)
+            if current.state in {TurnState.COMPLETED, TurnState.FAILED} and turn.id not in broker.tasks:
+                break
+            await asyncio.sleep(.01)
+        assert current.state == TurnState.COMPLETED
+        assert current.runtime_sequence == 2
+        assert "recovered" in [item.summary for item in await store.items_after(thread.id)]
+        assert any(event.payload.get("code") == "turn_runtime_reattached"
+            for event in await store.events_after(turn.id, 0))
+        assert sandbox.id not in backend.items
+    finally:
+        await broker.close(); await pool.close(); await store.close()
+
+
+async def test_broker_finishes_cleanup_after_sandbox_was_deleted_by_previous_process(tmp_path):
+    settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "cleanup.db"),
+        backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9",
+        recovery_scan_seconds=300)
+    store = Store(settings.database_url); await store.initialize(); objects = ObjectStore(tmp_path / "objects")
+    backend = FakeSandboxBackend(); pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
+    catalog = HarnessCatalog(); owner = "a" * 64
+    profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+    thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+        reasoning_level="standard", title="Cleanup"), profile, owner)
+    turn, _, _ = await store.create_turn(thread.id,
+        TurnCreate(message="finish cleanup", idempotency_key="cleanup-recovery-key"), profile, owner)
+    old = await store.claim_turn(turn.id, "dead-broker", 30)
+    await store.begin_turn_cleanup(turn.id, TurnState.COMPLETED, error_code="", error_detail="",
+        owner="dead-broker", generation=old.recovery_generation)
+    await store.release_turn_lease(turn.id, "dead-broker", old.recovery_generation)
+    broker = Broker(settings, store, objects, pool, RecoverableRuntime(), catalog)
+    try:
+        await broker.start()
+        current = await store.get_turn(turn.id)
+        assert current.state == TurnState.COMPLETED and current.pending_final_state == ""
+        assert any(event.payload.get("code") == "turn_cleanup_recovered"
+            for event in await store.events_after(turn.id, 0))
+    finally:
+        await broker.close(); await pool.close(); await store.close()

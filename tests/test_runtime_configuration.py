@@ -3,6 +3,7 @@ import json
 import sys
 import threading
 import time
+import asyncio
 
 from fastapi.testclient import TestClient
 
@@ -87,3 +88,35 @@ for index,line in enumerate(sys.stdin,1):
     rows = [json.loads(line) for line in result["response"].text.splitlines()]
     assert [row["payload"]["text"] for row in rows if row.get("kind") == "text_delta"] == ["reply-1", "reply-2"]
     assert rows[-1]["type"] == "result" and rows[-1]["result"]["native_thread_id"] == "native-live"
+
+
+async def test_runtime_finishes_and_replays_events_without_an_http_subscriber(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
+    monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")
+    monkeypatch.setattr(runtime_app, "OUTPUTS", tmp_path / "workspace" / "outputs")
+    monkeypatch.setattr(runtime_app, "PERSISTENT", ("project", "state"))
+    emitter = tmp_path / "background.py"
+    emitter.write_text("import json,time\ntime.sleep(.05)\nprint(json.dumps({'type':'assistant_delta','text':'background-finished'}),flush=True)\n")
+    monkeypatch.setenv("HARNESS_COMMAND_JSON", json.dumps({name: [sys.executable, str(emitter)]
+        for name in ("codex", "claude", "deepseek")}))
+    app = runtime_app.create_app()
+    configure = next(route.endpoint for route in app.routes if getattr(route, "path", "") == "/v1/configure")
+    run_turn = next(route.endpoint for route in app.routes if getattr(route, "path", "") == "/v1/turns")
+    replay = next(route.endpoint for route in app.routes if getattr(route, "path", "") == "/v1/executions/{execution_id}/events")
+    await configure(runtime_app.Configure(capability_token="x" * 32, gateway_url="http://gateway:28600",
+        harness="codex", model="model", proxy_url="http://172.31.0.1:28601"))
+    response = await run_turn(runtime_app.TurnRequest(message="hello", execution_id="background-one"))
+    for _ in range(100):
+        execution = app.state.execution
+        if execution and execution.result is not None:
+            break
+        await asyncio.sleep(.01)
+    assert app.state.execution.result["status"] == "completed"
+    replayed = await replay("background-one", after=0)
+    rows = []
+    async for chunk in replayed.body_iterator:
+        text = chunk.decode() if isinstance(chunk, bytes) else chunk
+        rows.extend(json.loads(line) for line in text.splitlines() if line)
+    assert any(row.get("payload", {}).get("text") == "background-finished" for row in rows)
+    assert rows[-1]["type"] == "result"
+    await response.body_iterator.aclose()

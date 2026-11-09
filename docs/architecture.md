@@ -16,10 +16,18 @@ The runtime daemon starts or resumes the selected Harness, sends the user messag
 
 ## Recovery
 
-Sandbox creation is keyed by Turn ID. An unknown create result is reconciled by metadata before another create is allowed. A Turn can resume only from its last committed checkpoint. Provider handles are ordinary Harness state under `/workspace/state`; the broker does not interpret or replay them.
+Every nonterminal Turn has a renewable owner lease and a monotonically increasing recovery generation. State writes are fenced by both values, so a delayed worker from an older generation cannot overwrite the current owner. A startup coordinator and periodic scanner claim expired leases.
 
-Cleanup revokes the capability token, terminates Gateway streams, quiesces the runtime, deletes the exact sandbox ID, confirms absence and only then releases the pool slot.
+Sandbox creation is keyed by Turn ID. An unknown create result is reconciled by namespace and Turn metadata before another create is allowed. `RESTORING` and `STARTING` can restart from the last committed checkpoint because the Harness has not started. Once `RUNNING` begins, the broker never blindly resends the user message.
+
+The Sandbox Runtime owns the Harness subprocess reader. It continues draining stdout when the Browser or Broker HTTP stream disconnects, assigns a sequence to every normalized event and retains the terminal result. PostgreSQL stores the active Runtime execution ID and last committed Runtime sequence. A replacement Broker finds the exact Sandbox, resumes after that sequence and proceeds through checkpoint, artifact export and cleanup. Runtime-derived events carry their execution ID and source sequence so replay does not duplicate already committed events.
+
+If the Runtime execution cannot be found, the Turn fails with an explicit interruption instead of replaying unknown public or Provider side effects. Provider handles are ordinary Harness state under `/workspace/state`; the broker does not interpret or replay them.
+
+Cleanup first persists the intended terminal state, then revokes the capability token, terminates Gateway streams, quiesces the runtime, deletes the exact sandbox ID, confirms absence and only then releases the pool slot. A new Broker can finish an interrupted cleanup without changing that intended result. Artifact registration is idempotent by Turn, path and content hash.
 
 Each conversation freezes one Harness. Codex uses app-server `turn/steer`, Claude uses realtime stream-json input, and DeepSeek drains appended input in the same SDK Session at its idle boundary. Inputs are persisted with a sequence and idempotency key before native delivery. A draining state closes the race between the last accepted input and checkpoint publication.
 
 The product keeps a bounded pristine warm pool and a separate attached-session set. Used sandboxes are never returned to the warm pool. Total product capacity is bounded; excess Turns wait for a released slot.
+
+Graceful API shutdown preserves only currently executing sandboxes. On startup, stale warm sandboxes and sandboxes whose Turns are terminal are removed. A periodic namespace-scoped reaper removes later orphans without touching another product's OpenSandbox resources.

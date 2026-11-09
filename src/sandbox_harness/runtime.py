@@ -44,9 +44,11 @@ class RuntimeClient:
                 headers={"Content-Type": mime})
             response.raise_for_status()
 
-    async def run(self, sandbox: Sandbox, *, message: str, attachments: list[Attachment], native_thread_id: str, reasoning_effort: str) -> AsyncIterator[RuntimeEvent | RuntimeResult]:
+    async def run(self, sandbox: Sandbox, *, message: str, attachments: list[Attachment], native_thread_id: str, reasoning_effort: str,
+                  execution_id: str = "legacy", input_id: str = "initial", after_sequence: int = 0) -> AsyncIterator[RuntimeEvent | RuntimeResult]:
         body = {"message": message, "attachments": [item.model_dump(mode="json") for item in attachments],
-                "native_thread_id": native_thread_id, "reasoning_effort": reasoning_effort}
+                "native_thread_id": native_thread_id, "reasoning_effort": reasoning_effort,
+                "execution_id": execution_id, "input_id": input_id, "after_sequence": after_sequence}
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers, timeout=self.timeout, trust_env=False) as client:
             async with client.stream("POST", "/v1/turns", json=body) as response:
                 response.raise_for_status()
@@ -55,13 +57,15 @@ class RuntimeClient:
                         continue
                     value = json.loads(line)
                     if value.get("type") == "result":
-                        yield RuntimeResult.model_validate(value["result"])
+                        yield RuntimeResult.model_validate({**value["result"], "runtime_sequence": value.get("runtime_sequence", 0)})
                     else:
                         yield RuntimeEvent.model_validate(value)
 
-    async def append_input(self, sandbox: Sandbox, *, message: str, attachments: list[Attachment], reasoning_effort: str) -> str:
+    async def append_input(self, sandbox: Sandbox, *, message: str, attachments: list[Attachment], reasoning_effort: str,
+                           execution_id: str = "legacy", input_id: str = "initial") -> str:
         body = {"message": message, "attachments": [item.model_dump(mode="json") for item in attachments],
-                "native_thread_id": "", "reasoning_effort": reasoning_effort}
+                "native_thread_id": "", "reasoning_effort": reasoning_effort,
+                "execution_id": execution_id, "input_id": input_id}
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers,
             timeout=20, trust_env=False) as client:
             response = await client.post("/v1/inputs", json=body)
@@ -73,6 +77,30 @@ class RuntimeClient:
                 return ""
             return {"codex": "native_steer", "claude": "native_stream",
                 "deepseek": "native_safe_point"}[sandbox.harness.value]
+
+    async def execution_status(self, sandbox: Sandbox, execution_id: str) -> dict | None:
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers,
+            timeout=20, trust_env=False) as client:
+            response = await client.get("/v1/executions/" + execution_id)
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            return response.json()
+
+    async def resume(self, sandbox: Sandbox, execution_id: str, after_sequence: int) -> AsyncIterator[RuntimeEvent | RuntimeResult]:
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers,
+            timeout=self.timeout, trust_env=False) as client:
+            async with client.stream("GET", f"/v1/executions/{execution_id}/events",
+                params={"after": after_sequence}) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    value = json.loads(line)
+                    if value.get("type") == "result":
+                        yield RuntimeResult.model_validate({**value["result"], "runtime_sequence": value.get("runtime_sequence", 0)})
+                    else:
+                        yield RuntimeEvent.model_validate(value)
 
     async def checkpoint(self, sandbox: Sandbox) -> bytes:
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers, timeout=300, trust_env=False) as client:

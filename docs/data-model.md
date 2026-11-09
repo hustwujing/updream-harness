@@ -17,13 +17,17 @@ The native thread identifier belongs to the selected Harness and is opaque to th
 ```text
 id, thread_id, idempotency_key, status, delivery_mode
 harness, model, reasoning_effort
-input_message_item_id
-sandbox_attempt_id
+lease_owner, lease_expires_at, recovery_generation
+sandbox_id, capability_nonce
+runtime_execution_id, runtime_sequence
+pending_final_state
 error_code, error_detail
-created_at, started_at, finished_at
+created_at, updated_at
 ```
 
-Statuses are `queued`, `restoring`, `starting`, `running`, `waiting_user`, `checkpointing`, `completed`, `failed`, `interrupted` and `cancelled`.
+Statuses are `QUEUED`, `RESTORING`, `STARTING`, `RUNNING`, `DRAINING_INPUTS`, `CHECKPOINTING`, `CLEANING`, `WAITING_USER`, `COMPLETED`, `FAILED` and `CANCELLED`.
+
+`recovery_generation` is the fencing token. `runtime_sequence` advances only after the corresponding transcript event is durable. `pending_final_state` is populated before cleanup and cleared when the terminal state is committed.
 
 ## Item
 
@@ -39,10 +43,11 @@ Item types are `user_message`, `agent_message`, `reasoning`, `plan`, `command`, 
 ## Event
 
 ```text
-turn_id, sequence, event_type, item_id, payload_json, created_at
+turn_id, sequence, event_type, item_id, payload_json
+source_execution_id, source_sequence, created_at
 ```
 
-Events are the ordered replay and SSE transport log. Items are the durable product transcript.
+Events are the ordered replay and SSE transport log. Runtime source coordinates make Broker reattachment idempotent. Items are the durable product transcript.
 
 ## Sandbox Attempt
 
@@ -86,4 +91,3 @@ request_count, input_tokens, output_tokens
 ```
 
 This table supports revocation, usage and audit. It is infrastructure state, not a workflow plan.
-

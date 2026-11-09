@@ -69,6 +69,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await store.initialize()
+        await broker.start()
         pool_task = None
         catalog_task = None
         if settings.model_catalog_discovery:
@@ -103,7 +104,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             pool_task.cancel()
             with suppress(asyncio.CancelledError):
                 await pool_task
-        await pool.close()
+        await broker.close()
+        await pool.close(preserve_sandbox_ids={sandbox.id for sandbox in broker.active_sandboxes.values()})
         await store.close()
 
     app = FastAPI(title="Sandbox Harness Platform", lifespan=lifespan)
@@ -140,7 +142,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health():
         pool_status = app.state.pool_status
         payload = {"status": "ok" if pool_status in {"ready", "disabled"} else "degraded",
-                   "backend": settings.backend, "warm_pool": pool_status}
+                   "backend": settings.backend, "warm_pool": pool_status, "broker": broker.status()}
         return JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
 
     @app.get("/api/catalog/harnesses")

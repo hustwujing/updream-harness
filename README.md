@@ -5,7 +5,7 @@ A thin, stateful OpenSandbox platform that sends every user message to a Codex, 
 ## Services
 
 ```text
-Web → Session API → Turn Worker → Warm Sandbox Pool → OpenSandbox/gVisor
+Web → Session API → Leased Turn Worker → Warm Sandbox Pool → OpenSandbox/gVisor
                                       │                     │
                                       └──── Capability Gateway ◄── Harness
 
@@ -22,14 +22,16 @@ The Capability Gateway is an infrastructure proxy. It injects model and Provider
 
 ```text
 QUEUED → RESTORING → STARTING → RUNNING
-                                ├─→ WAITING_USER
-                                ├─→ CHECKPOINTING → COMPLETED
-                                ├─→ FAILED
-                                └─→ CANCELLED
-all terminal paths → CLEANING
+                                ├─→ WAITING_USER result
+                                ├─→ CHECKPOINTING → COMPLETED result
+                                ├─→ FAILED result
+                                └─→ CANCELLED result
+result → CLEANING → terminal state
 ```
 
 Only one Turn may run for a Session. A warm sandbox may stay attached to that Session for a short TTL; after expiry, its workspace is checkpointed and the sandbox is deleted.
+
+Turn ownership is a renewable PostgreSQL lease. The Sandbox Runtime consumes Harness stdout in a background task and keeps a sequenced replay journal independently of the Broker HTTP connection. A replacement Broker can reattach the same namespaced Sandbox, replay only missing Runtime events, checkpoint the result and finish cleanup. If the Runtime or Sandbox itself is lost after Harness execution began, the broker reports an interrupted Turn instead of replaying potentially non-idempotent public side effects.
 
 ## Workspace
 

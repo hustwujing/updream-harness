@@ -32,6 +32,12 @@ class SandboxPool:
     async def fill(self) -> None:
         await asyncio.gather(*(self._fill_harness(harness) for harness in self.targets))
 
+    async def managed_sandbox_ids(self) -> set[str]:
+        async with self._lock:
+            return {sandbox.id for sandbox in self._attached.values()} | {
+                sandbox.id for rows in self._warm.values() for sandbox in rows
+            }
+
     async def _fill_harness(self, harness: Harness) -> None:
         while True:
             async with self._lock:
@@ -113,6 +119,23 @@ class SandboxPool:
         self._schedule_refill(harness)
         return sandbox
 
+    async def adopt(self, sandbox: Sandbox, *, thread_id: str, turn_id: str) -> Sandbox:
+        await self._user_slots.acquire()
+        try:
+            async with self._lock:
+                existing = self._attached.get(thread_id)
+                if existing and existing.id != sandbox.id:
+                    raise RuntimeError("Thread already owns another sandbox")
+                await self.backend.bind(sandbox, thread_id, turn_id)
+                sandbox.thread_id = thread_id
+                sandbox.turn_id = turn_id
+                sandbox.warm = False
+                self._attached[thread_id] = sandbox
+            return sandbox
+        except BaseException:
+            self._user_slots.release()
+            raise
+
     async def release(self, sandbox: Sandbox, *, keep_attached: bool, keepalive_seconds: int = 0) -> None:
         async with self._lock:
             if keep_attached:
@@ -144,7 +167,8 @@ class SandboxPool:
         except Exception:
             logger.exception("Failed to delete expired sandbox %s", sandbox.id)
 
-    async def close(self) -> None:
+    async def close(self, *, preserve_sandbox_ids: set[str] | None = None) -> None:
+        preserve_sandbox_ids = preserve_sandbox_ids or set()
         async with self._lock:
             self._closed = True
             values = [*self._attached.values(), *(item for rows in self._warm.values() for item in rows)]
@@ -163,4 +187,5 @@ class SandboxPool:
         if refill:
             await asyncio.gather(*refill, return_exceptions=True)
         for sandbox in values:
-            await self.backend.delete(sandbox)
+            if sandbox.id not in preserve_sandbox_ids:
+                await self.backend.delete(sandbox)

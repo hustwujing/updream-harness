@@ -28,6 +28,7 @@ class SandboxBackend(Protocol):
     async def bind(self, sandbox: Sandbox, thread_id: str, turn_id: str) -> None: ...
     async def delete(self, sandbox: Sandbox) -> None: ...
     async def find_by_turn(self, turn_id: str) -> list[Sandbox]: ...
+    async def list_namespace(self) -> list[Sandbox]: ...
 
 
 class OpenSandboxBackend:
@@ -116,6 +117,26 @@ class OpenSandboxBackend:
             result.append(await self._ready(self._sandbox(row, harness, (row.get("image") or {}).get("uri", ""), metadata)))
         return result
 
+    async def list_namespace(self) -> list[Sandbox]:
+        response = await self.client.get("/v1/sandboxes", params={
+            "metadata": f"sandbox-harness.io/namespace={self.namespace}", "pageSize": 1000,
+        })
+        response.raise_for_status()
+        rows = response.json().get("items") or response.json().get("sandboxes") or []
+        result = []
+        for row in rows:
+            metadata = row.get("metadata") or {}
+            if metadata.get("sandbox-harness.io/namespace") != self.namespace:
+                continue
+            try:
+                harness = Harness(metadata.get("sandbox-harness.io/harness", "codex"))
+                result.append(await self._ready(self._sandbox(
+                    row, harness, (row.get("image") or {}).get("uri", ""), metadata,
+                )))
+            except RuntimeError:
+                continue
+        return result
+
     async def bind(self, sandbox: Sandbox, thread_id: str, turn_id: str) -> None:
         patch = {
             "sandbox-harness.io/pool": None,
@@ -162,6 +183,10 @@ class FakeSandboxBackend:
             if item.metadata.get("sandbox-harness.io/namespace") == self.namespace
             and item.metadata.get("sandbox-harness.io/turn") == turn_id
         ]
+
+    async def list_namespace(self) -> list[Sandbox]:
+        return [item for item in self.items.values()
+            if item.metadata.get("sandbox-harness.io/namespace") == self.namespace]
 
     async def bind(self, sandbox: Sandbox, thread_id: str, turn_id: str) -> None:
         sandbox.metadata.pop("sandbox-harness.io/pool", None)

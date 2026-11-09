@@ -43,3 +43,28 @@ async def test_thread_turn_items_and_idempotency(tmp_path):
         assert (await store.get_turn(turn.id)).state == TurnState.COMPLETED
     finally:
         await store.close()
+
+
+async def test_turn_lease_generation_fences_stale_broker_writes(tmp_path):
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "fencing.db"))
+    await store.initialize()
+    try:
+        catalog = HarnessCatalog(); profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+        owner = "a" * 64
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Fence"), profile, owner)
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="hello", idempotency_key="fencing-turn-key"), profile, owner)
+        first = await store.claim_turn(turn.id, "first", 30)
+        await store.release_turn_lease(turn.id, "first", first.recovery_generation)
+        second = await store.claim_turn(turn.id, "second", 30)
+        assert second.recovery_generation > first.recovery_generation
+        try:
+            await store.set_turn_state(turn.id, TurnState.RUNNING,
+                lease_owner="first", recovery_generation=first.recovery_generation)
+        except RuntimeError as exc:
+            assert str(exc) == "stale_turn_lease"
+        else:
+            raise AssertionError("A stale broker changed the Turn state")
+    finally:
+        await store.close()
