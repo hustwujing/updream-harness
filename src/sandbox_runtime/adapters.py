@@ -21,7 +21,7 @@ def codex_argv(model: str, native_thread_id: str = "") -> list[str]:
 
 def command(harness: str, model: str, native_thread_id: str = "") -> HarnessCommand:
     gateway = os.environ["HARNESS_GATEWAY_URL"].rstrip("/")
-    token_file = "/run/harness/capability-token"
+    token_file = os.environ.get("HARNESS_CAPABILITY_TOKEN_FILE", "/run/harness/capability-token")
     capability_token = Path(token_file).read_text().strip()
     common = {"HARNESS_CAPABILITY_TOKEN_FILE": token_file, "HARNESS_MODEL": model}
     override = os.environ.get("HARNESS_COMMAND_JSON")

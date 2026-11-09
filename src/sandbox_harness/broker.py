@@ -41,7 +41,9 @@ class Broker:
         thread = await self.store.get_thread(thread_id)
         if not thread:
             raise KeyError("thread_not_found")
-        resolved = self.catalog.resolve(value.harness or thread.harness, value.model or thread.model,
+        if value.harness is not None and value.harness != thread.harness:
+            raise ValueError("Harness is fixed for this conversation; create a new conversation to switch Harness")
+        resolved = self.catalog.resolve(thread.harness, value.model or thread.model,
             value.reasoning_level or thread.reasoning_level)
         turn, created, start_now = await self.store.create_turn(thread_id, value, resolved, thread.owner_id)
         if created and start_now:

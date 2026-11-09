@@ -79,3 +79,24 @@ async def test_broker_persists_a_user_visible_item_for_terminal_failure(tmp_path
         assert "Harness 执行失败" in errors[0].summary
     finally:
         await pool.close(); await store.close()
+
+
+async def test_broker_rejects_switching_harness_inside_a_conversation(tmp_path):
+    settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "fixed.db"),
+        backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9")
+    store = Store(settings.database_url); await store.initialize(); objects = ObjectStore(tmp_path / "objects")
+    backend = FakeSandboxBackend(); pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
+    catalog = HarnessCatalog(); broker = Broker(settings, store, objects, pool, Runtime(), catalog)
+    try:
+        profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Fixed"), profile, "a" * 64)
+        try:
+            await broker.submit(thread.id, TurnCreate(message="switch", idempotency_key="fixed-switch-key",
+                harness=Harness.CODEX, model="gpt-5.6", reasoning_level="standard"))
+        except ValueError as exc:
+            assert "fixed" in str(exc)
+        else:
+            raise AssertionError("Harness switch was accepted")
+    finally:
+        await pool.close(); await store.close()

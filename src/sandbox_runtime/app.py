@@ -22,6 +22,7 @@ WORKSPACE = Path("/workspace")
 PERSISTENT = ("project", "state")
 OUTPUTS = WORKSPACE / "outputs"
 RUN = Path("/run/harness")
+HARNESS_JSONL_LIMIT = 16 * 1024 * 1024
 
 
 class Configure(BaseModel):
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
         temporary.write_text(value.capability_token)
         os.chmod(temporary, 0o400)
         temporary.replace(token)
+        os.environ["HARNESS_CAPABILITY_TOKEN_FILE"] = str(token)
         os.environ["HARNESS_GATEWAY_URL"] = value.gateway_url
         os.environ["HARNESS_KIND"] = value.harness
         os.environ["HARNESS_MODEL"] = value.model
@@ -132,7 +134,8 @@ def create_app() -> FastAPI:
 
         async def stream():
             process = await asyncio.create_subprocess_exec(*selected.argv, cwd=WORKSPACE / "project", env=environment,
-                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                limit=HARNESS_JSONL_LIMIT)
             app.state.process = process
             process.stdin.write(prompt.encode()); await process.stdin.drain(); process.stdin.close()
             native_thread_id = value.native_thread_id
