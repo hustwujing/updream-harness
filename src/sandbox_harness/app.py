@@ -17,6 +17,7 @@ from .broker import Broker
 from .catalog import HarnessCatalog
 from .config import Settings, load_settings
 from .domain import Attachment, Harness, ThreadCreate, TurnCreate
+from .model_discovery import ModelDiscovery
 from .objects import object_store
 from .pool import SandboxPool
 from .runtime import RuntimeClient
@@ -50,17 +51,30 @@ def components(settings: Settings):
     pool = SandboxPool(backend, images, targets)
     runtime = RuntimeClient(timeout_seconds=settings.sandbox_timeout_seconds)
     catalog = HarnessCatalog(settings.harness_catalog_json or None)
-    return store, objects, pool, catalog, Broker(settings, store, objects, pool, runtime, catalog)
+    discovery = ModelDiscovery(settings, catalog)
+    if settings.model_catalog_discovery:
+        discovery.load_snapshot()
+    return store, objects, pool, catalog, discovery, Broker(settings, store, objects, pool, runtime, catalog)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
-    store, objects, pool, catalog, broker = components(settings)
+    store, objects, pool, catalog, discovery, broker = components(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await store.initialize()
         pool_task = None
+        catalog_task = None
+        if settings.model_catalog_discovery:
+            await discovery.refresh()
+
+            async def refresh_catalog():
+                while True:
+                    await asyncio.sleep(settings.model_catalog_refresh_seconds)
+                    await discovery.refresh()
+
+            catalog_task = asyncio.create_task(refresh_catalog(), name="model-catalog-refresh")
         if settings.backend == "opensandbox":
             app.state.pool_status = "starting"
 
@@ -76,6 +90,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             app.state.pool_status = "disabled"
         yield
+        if catalog_task:
+            catalog_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await catalog_task
         if pool_task and not pool_task.done():
             pool_task.cancel()
             with suppress(asyncio.CancelledError):

@@ -29,9 +29,13 @@ const assert=require('node:assert/strict');
    assert.ok(Math.abs(mainBox.height-viewport.height)<=1,
     `main must stay viewport-height: ${JSON.stringify({viewport,mainBox})}`);
    assert.ok(await page.getByRole('button',{name:/添加文件/}).isVisible());
+   await page.getByLabel('Harness').selectOption('claude');
+   assert.ok(await page.getByLabel('模型').locator('option[value="claude-sonnet-5-5"]').count()>0);
    await page.getByLabel('Harness').selectOption('codex');
+   assert.ok(await page.getByLabel('模型').locator('option').count()>1);
    assert.equal(await page.getByLabel('推理强度').locator('option').count(),4);
    await page.getByLabel('Harness').selectOption('deepseek');
+   assert.ok(await page.getByLabel('模型').locator('option').count()>1);
    assert.equal(await page.getByLabel('推理强度').locator('option').count(),2);
    await page.locator('.inspector header .icon-button').click();
    await page.waitForSelector('.inspector.open',{state:'hidden'});

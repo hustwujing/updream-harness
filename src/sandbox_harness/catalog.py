@@ -86,6 +86,31 @@ class HarnessCatalog:
         if set(value) != {item.value for item in Harness}:
             raise ValueError("Catalog must configure codex, claude and deepseek")
         self.options = {Harness(key): HarnessOption.model_validate(option) for key, option in value.items()}
+        self.known_models = {
+            harness: {model.id: model for model in option.models}
+            for harness, option in self.options.items()
+        }
+
+    def replace_models(self, discovered: dict[Harness | str, list[str]]) -> None:
+        for raw_harness, identifiers in discovered.items():
+            harness = Harness(raw_harness)
+            option = self.options[harness]
+            template = option.models[0]
+            unique = list(dict.fromkeys(identifier for identifier in identifiers if identifier))
+            if not unique:
+                continue
+            models = []
+            for identifier in unique:
+                model = self.known_models[harness].get(identifier) or ModelOption(
+                    id=identifier,
+                    label=model_label(identifier),
+                    reasoning=template.reasoning,
+                )
+                self.known_models[harness][identifier] = model
+                models.append(model)
+            default_model = option.default_model if option.default_model in unique else unique[0]
+            models.sort(key=lambda model: (model.id != default_model, model.id))
+            self.options[harness] = option.model_copy(update={"default_model": default_model, "models": models})
 
     def public(self) -> list[dict]:
         result = []
@@ -100,7 +125,7 @@ class HarnessCatalog:
         harness = Harness(harness)
         option = self.options[harness]
         model_id = model or option.default_model
-        selected = next((item for item in option.models if item.id == model_id), None)
+        selected = next((item for item in option.models if item.id == model_id), None) or self.known_models[harness].get(model_id)
         if not selected:
             raise ValueError("Model is not configured for the selected Harness")
         level_id = reasoning_level or selected.reasoning[min(1, len(selected.reasoning) - 1)].id
@@ -108,3 +133,9 @@ class HarnessCatalog:
         if not level:
             raise ValueError("Reasoning level is not supported by the selected Harness model")
         return ResolvedProfile(harness, selected.id, level.id, level.native)
+
+
+def model_label(identifier: str) -> str:
+    words = identifier.replace("_", "-").split("-")
+    labels = {"gpt": "GPT", "claude": "Claude", "deepseek": "DeepSeek", "codex": "Codex"}
+    return " ".join(labels.get(word.lower(), word.capitalize()) for word in words)

@@ -78,5 +78,4 @@ GET /api/catalog/models?harness=codex
 GET /api/threads/{thread_id}/sandbox
 ```
 
-Catalog data is configuration, not an entitlement claim. A successful Turn proves the selected route worked for that request.
-
+The host discovers model IDs from each configured upstream at startup and every five minutes, then filters them by native Harness protocol family. Claude exposes only `claude-*`, DeepSeek only `deepseek-*`, and Codex compatible GPT text/reasoning models. The last successful catalog is persisted under the isolated data root and the built-in catalog remains the final fallback. Catalog data is configuration, not an entitlement claim. A successful Turn proves the selected route worked for that request.

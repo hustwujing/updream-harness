@@ -1,7 +1,11 @@
 import json
+import httpx
 import pytest
 
 from sandbox_harness.catalog import HarnessCatalog
+from sandbox_harness.config import Settings
+from sandbox_harness.domain import Harness
+from sandbox_harness.model_discovery import ModelDiscovery, compatible_models, parse_model_ids
 
 
 def test_public_reasoning_level_maps_to_native_harness_effort():
@@ -19,3 +23,45 @@ def test_unsupported_model_or_reasoning_level_is_rejected():
         catalog.resolve("claude", "invented", "deep")
     with pytest.raises(ValueError, match="Reasoning"):
         catalog.resolve("deepseek", "deepseek-v4.1-flash", "maximum")
+
+
+def test_provider_catalog_is_filtered_by_native_harness_protocol():
+    mixed = ["claude-sonnet-5-5", "deepseek-v4.1-flash", "gpt-6-sol", "gpt-image-2", "text-embedding-v4"]
+    assert compatible_models("codex", mixed) == ["gpt-6-sol"]
+    assert compatible_models("claude", mixed) == ["claude-sonnet-5-5"]
+    assert compatible_models("deepseek", mixed) == ["deepseek-v4.1-flash"]
+    assert parse_model_ids({"data": [{"id": "one"}, {"name": "two"}, {"invalid": True}]}) == ["one", "two"]
+
+
+async def test_model_discovery_refreshes_catalog_and_persists_snapshot(tmp_path, monkeypatch):
+    settings = Settings(
+        data_root=tmp_path,
+        upstream_codex="https://codex.example",
+        upstream_claude="https://claude.example/v1",
+        upstream_deepseek="https://deepseek.example/v1",
+    )
+    for harness in ("CODEX", "CLAUDE", "DEEPSEEK"):
+        monkeypatch.setenv("SANDBOX_HARNESS_UPSTREAM_" + harness + "_KEY", harness.lower() + "-secret")
+
+    def handler(request: httpx.Request):
+        assert request.headers.get("authorization")
+        models = {
+            "codex.example": ["gpt-6-sol", "gpt-image-2", "claude-4.6-sonnet"],
+            "claude.example": ["claude-4.6-sonnet", "claude-sonnet-5-5", "deepseek-v4.1-flash"],
+            "deepseek.example": ["deepseek-v4.1-flash", "deepseek-r1", "claude-opus-5"],
+        }[request.url.host]
+        return httpx.Response(200, json={"data": [{"id": model} for model in models]})
+
+    catalog = HarnessCatalog()
+    discovery = ModelDiscovery(settings, catalog, httpx.MockTransport(handler))
+    refreshed = await discovery.refresh()
+    assert refreshed[Harness.CODEX] == ["gpt-6-sol"]
+    assert [model.id for model in catalog.options[Harness.CLAUDE].models] == [
+        "claude-4.6-sonnet", "claude-sonnet-5-5",
+    ]
+    assert catalog.resolve("deepseek", "deepseek-r1", "deep").model == "deepseek-r1"
+    assert discovery.snapshot.is_file()
+
+    restored = HarnessCatalog()
+    assert ModelDiscovery(settings, restored).load_snapshot()
+    assert restored.resolve("codex", "gpt-6-sol", "maximum").reasoning_effort == "xhigh"
