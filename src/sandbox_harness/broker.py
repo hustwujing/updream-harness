@@ -63,7 +63,10 @@ class Broker:
 
     async def start(self) -> None:
         await self.reconcile()
-        await self.cleanup_startup_orphans(delete_stale_warm=True)
+        try:
+            await self.cleanup_startup_orphans(delete_stale_warm=True)
+        except Exception:
+            logger.exception("Startup orphan reconciliation failed")
         self.recovery_task = asyncio.create_task(self._recovery_loop(), name="turn-recovery-loop")
         self.reaper_task = asyncio.create_task(self._reaper_loop(), name="sandbox-orphan-reaper")
 
@@ -100,7 +103,10 @@ class Broker:
     async def _reaper_loop(self) -> None:
         while True:
             await asyncio.sleep(self.settings.orphan_reaper_seconds)
-            await self.cleanup_startup_orphans()
+            try:
+                await self.cleanup_startup_orphans()
+            except Exception:
+                logger.exception("Periodic orphan reconciliation failed")
 
     async def reconcile(self) -> None:
         for turn in await self.store.recoverable_turns():

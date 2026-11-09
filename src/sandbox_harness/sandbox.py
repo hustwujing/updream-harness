@@ -119,7 +119,7 @@ class OpenSandboxBackend:
 
     async def list_namespace(self) -> list[Sandbox]:
         response = await self.client.get("/v1/sandboxes", params={
-            "metadata": f"sandbox-harness.io/namespace={self.namespace}", "pageSize": 1000,
+            "metadata": f"sandbox-harness.io/namespace={self.namespace}", "pageSize": 100,
         })
         response.raise_for_status()
         rows = response.json().get("items") or response.json().get("sandboxes") or []
