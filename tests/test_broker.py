@@ -3,7 +3,7 @@ import asyncio
 from sandbox_harness.broker import Broker
 from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.config import Settings
-from sandbox_harness.domain import EventKind, Harness, RuntimeEvent, RuntimeResult, ThreadCreate, TurnCreate, TurnState
+from sandbox_harness.domain import EventKind, Harness, RuntimeEvent, RuntimeResult, ThreadCreate, TurnCreate, TurnInputCreate, TurnState
 from sandbox_harness.objects import ObjectStore
 from sandbox_harness.pool import SandboxPool
 from sandbox_harness.sandbox import FakeSandboxBackend
@@ -27,6 +27,19 @@ class Runtime:
 class FailingRuntime(Runtime):
     async def run(self, sandbox, **kwargs):
         yield RuntimeResult(status="failed", error_code="harness_exit", error_detail="native process exited")
+
+
+class AppendedInputRuntime(Runtime):
+    def __init__(self):
+        self.release = asyncio.Event()
+        self.messages = []
+
+    async def run(self, sandbox, **kwargs):
+        self.messages.append(kwargs["message"])
+        if len(self.messages) == 1:
+            await self.release.wait()
+        yield RuntimeEvent(kind=EventKind.TEXT_DELTA, payload={"text": "done " + kwargs["message"]})
+        yield RuntimeResult(status="completed", native_thread_id="native-appended")
 
 
 async def test_broker_runs_harness_and_persists_transcript_checkpoint_and_artifact(tmp_path):
@@ -98,5 +111,37 @@ async def test_broker_rejects_switching_harness_inside_a_conversation(tmp_path):
             assert "fixed" in str(exc)
         else:
             raise AssertionError("Harness switch was accepted")
+    finally:
+        await pool.close(); await store.close()
+
+
+async def test_broker_drains_appended_inputs_in_same_sandbox_session(tmp_path):
+    settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "append.db"),
+        backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9", session_keepalive_seconds=0)
+    store = Store(settings.database_url); await store.initialize(); objects = ObjectStore(tmp_path / "objects")
+    backend = FakeSandboxBackend(); pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
+    runtime = AppendedInputRuntime(); catalog = HarnessCatalog(); broker = Broker(settings, store, objects, pool, runtime, catalog)
+    owner = "a" * 64
+    try:
+        profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Append"), profile, owner)
+        turn = await broker.submit(thread.id, TurnCreate(message="first", idempotency_key="append-first-key"))
+        for _ in range(100):
+            if (await store.get_turn(turn.id)).state == TurnState.RUNNING:
+                break
+            await asyncio.sleep(.01)
+        appended, _ = await store.create_turn_input(turn.id,
+            TurnInputCreate(message="second", idempotency_key="append-second-key"), owner)
+        runtime.release.set()
+        for _ in range(200):
+            current = await store.get_turn(turn.id)
+            if current.state in {TurnState.COMPLETED, TurnState.FAILED} and turn.id not in broker.tasks:
+                break
+            await asyncio.sleep(.01)
+        assert current.state == TurnState.COMPLETED
+        assert runtime.messages == ["first", "second"]
+        assert (await store.list_turn_inputs(turn.id))[0].status == "applied"
+        assert len({item.sandbox_id for item in [current]}) == 1
     finally:
         await pool.close(); await store.close()

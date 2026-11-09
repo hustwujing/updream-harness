@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from .broker import Broker
 from .catalog import HarnessCatalog
 from .config import Settings, load_settings
-from .domain import Attachment, Harness, ThreadCreate, TurnCreate
+from .domain import Attachment, Harness, ThreadCreate, TurnCreate, TurnInputCreate
 from .model_discovery import ModelDiscovery
 from .objects import object_store
 from .pool import SandboxPool
@@ -211,6 +211,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Turn not found")
         return {"accepted": True}
+
+    @app.post("/api/turns/{turn_id}/inputs")
+    async def append_turn_input(turn_id: str, value: TurnInputCreate, request: Request):
+        turn = await store.get_turn_for_owner(turn_id, request.state.owner_id)
+        if not turn:
+            raise HTTPException(404, "Turn not found")
+        if not await store.attachments_owned(request.state.owner_id, value.attachments):
+            raise HTTPException(404, "Attachment not found")
+        if sum(item.size for item in value.attachments) > settings.max_attachment_bytes:
+            raise HTTPException(413, "Attachments exceed the input byte limit")
+        try:
+            result, _ = await store.create_turn_input(turn_id, value, request.state.owner_id)
+            return result
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+
+    @app.get("/api/turns/{turn_id}/inputs")
+    async def list_turn_inputs(turn_id: str, request: Request):
+        if not await store.get_turn_for_owner(turn_id, request.state.owner_id):
+            raise HTTPException(404, "Turn not found")
+        return await store.list_turn_inputs(turn_id)
 
     @app.get("/api/turns/{turn_id}/events")
     async def events(turn_id: str, request: Request, after: int = 0):

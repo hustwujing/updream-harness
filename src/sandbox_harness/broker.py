@@ -67,6 +67,37 @@ class Broker:
         await self.store.append_event(turn_id, EventKind.STATE, {"state": state.value})
         return turn
 
+    async def _record_runtime_event(self, thread_id: str, turn_id: str, value: RuntimeEvent) -> None:
+        if value.kind == EventKind.TEXT_DELTA:
+            item = await self.store.append_agent_delta(thread_id, turn_id, str(value.payload.get("text", "")))
+        elif value.kind == EventKind.TOOL_FINISHED and value.payload.get("tool_use_id"):
+            item = await self.store.finish_tool_item(turn_id, str(value.payload["tool_use_id"]), value.payload)
+            if item is None:
+                item = await self.store.append_item(thread_id, turn_id, ItemType.TOOL,
+                    status="failed" if value.payload.get("is_error") else "completed",
+                    summary=str(value.payload.get("name") or "tool"), payload=value.payload)
+        else:
+            item_type = {
+                EventKind.TOOL_STARTED: ItemType.TOOL, EventKind.TOOL_OUTPUT: ItemType.TOOL,
+                EventKind.TOOL_FINISHED: ItemType.TOOL, EventKind.STEP_STARTED: ItemType.PLAN,
+                EventKind.STEP_PROGRESS: ItemType.PLAN, EventKind.STEP_FINISHED: ItemType.PLAN,
+                EventKind.ARTIFACT_CREATED: ItemType.ARTIFACT, EventKind.WARNING: ItemType.WARNING,
+                EventKind.ERROR: ItemType.ERROR, EventKind.WAITING_USER: ItemType.APPROVAL,
+            }.get(value.kind, ItemType.REASONING)
+            item = await self.store.append_item(thread_id, turn_id, item_type,
+                status="completed" if value.kind in {
+                    EventKind.TOOL_FINISHED, EventKind.STEP_FINISHED, EventKind.WARNING, EventKind.ERROR,
+                } else "in_progress",
+                summary=str(value.payload.get("name") or value.payload.get("text") or value.kind.value), payload=value.payload)
+        await self.store.append_event(turn_id, value.kind, value.payload, item_id=item.id)
+
+    async def _materialize_attachments(self, sandbox, attachments) -> None:
+        for attachment in attachments:
+            data = self.objects.get(attachment.object_ref, maximum=self.settings.max_attachment_bytes)
+            if len(data) != attachment.size:
+                raise ValueError("Attachment size does not match its immutable record")
+            await self.runtime.put_attachment(sandbox, attachment.name, data, attachment.mime)
+
     async def _process(self, turn_id: str) -> None:
         turn = await self.store.get_turn(turn_id)
         if not turn:
@@ -111,47 +142,39 @@ class Broker:
                 if thread.checkpoint_ref:
                     archive = self.objects.get(thread.checkpoint_ref, maximum=self.settings.max_checkpoint_bytes)
                     await self.runtime.restore(sandbox, archive)
-                for attachment in turn.attachments:
-                    data = self.objects.get(attachment.object_ref, maximum=self.settings.max_attachment_bytes)
-                    if len(data) != attachment.size:
-                        raise ValueError("Attachment size does not match its immutable record")
-                    await self.runtime.put_attachment(sandbox, attachment.name, data, attachment.mime)
+                await self._materialize_attachments(sandbox, turn.attachments)
                 await self._state(turn.id, TurnState.RUNNING, sandbox_id=sandbox.id)
-                result = None
-                async for value in self.runtime.run(sandbox, message=turn.message, attachments=turn.attachments,
-                    native_thread_id=thread.native_thread_id, reasoning_effort=turn.reasoning_effort):
-                    if isinstance(value, RuntimeResult):
-                        result = value
-                    else:
-                        if value.kind == EventKind.TEXT_DELTA:
-                            item = await self.store.append_agent_delta(thread.id, turn.id, str(value.payload.get("text", "")))
-                        elif value.kind == EventKind.TOOL_FINISHED and value.payload.get("tool_use_id"):
-                            item = await self.store.finish_tool_item(turn.id, str(value.payload["tool_use_id"]), value.payload)
-                            if item is None:
-                                item = await self.store.append_item(thread.id, turn.id, ItemType.TOOL,
-                                    status="failed" if value.payload.get("is_error") else "completed",
-                                    summary=str(value.payload.get("name") or "tool"), payload=value.payload)
+                message, attachments, native_thread_id = turn.message, turn.attachments, thread.native_thread_id
+                result, current_input_id = None, None
+                while True:
+                    result = None
+                    async for value in self.runtime.run(sandbox, message=message, attachments=attachments,
+                        native_thread_id=native_thread_id, reasoning_effort=turn.reasoning_effort):
+                        if isinstance(value, RuntimeResult):
+                            result = value
                         else:
-                            item_type = {
-                                EventKind.TOOL_STARTED: ItemType.TOOL,
-                                EventKind.TOOL_OUTPUT: ItemType.TOOL,
-                                EventKind.TOOL_FINISHED: ItemType.TOOL,
-                                EventKind.STEP_STARTED: ItemType.PLAN,
-                                EventKind.STEP_PROGRESS: ItemType.PLAN,
-                                EventKind.STEP_FINISHED: ItemType.PLAN,
-                                EventKind.ARTIFACT_CREATED: ItemType.ARTIFACT,
-                                EventKind.WARNING: ItemType.WARNING,
-                                EventKind.ERROR: ItemType.ERROR,
-                                EventKind.WAITING_USER: ItemType.APPROVAL,
-                            }.get(value.kind, ItemType.REASONING)
-                            item = await self.store.append_item(thread.id, turn.id, item_type,
-                                status="completed" if value.kind in {
-                                    EventKind.TOOL_FINISHED, EventKind.STEP_FINISHED, EventKind.WARNING, EventKind.ERROR,
-                                } else "in_progress",
-                                summary=str(value.payload.get("name") or value.payload.get("text") or value.kind.value), payload=value.payload)
-                        await self.store.append_event(turn.id, value.kind, value.payload, item_id=item.id)
-                if result is None:
-                    raise RuntimeError("Runtime stream ended without a result")
+                            await self._record_runtime_event(thread.id, turn.id, value)
+                    if result is None:
+                        raise RuntimeError("Runtime stream ended without a result")
+                    if current_input_id:
+                        await self.store.set_input_status(current_input_id,
+                            "applied" if result.status in ("completed", "waiting_user") else "failed")
+                    if result.status not in ("completed", "waiting_user"):
+                        break
+                    native_thread_id = result.native_thread_id or native_thread_id
+                    await self._state(turn.id, TurnState.DRAINING_INPUTS, sandbox_id=sandbox.id)
+                    pending = await self.store.next_pending_input(turn.id)
+                    if not pending:
+                        break
+                    try:
+                        await self.store.complete_agent_item(turn.id, "completed")
+                        await self._materialize_attachments(sandbox, pending.attachments)
+                        message, attachments = pending.message, pending.attachments
+                        current_input_id = pending.id
+                        await self._state(turn.id, TurnState.RUNNING, sandbox_id=sandbox.id)
+                    except Exception:
+                        await self.store.set_input_status(pending.id, "failed")
+                        raise
                 if result.status in ("completed", "waiting_user"):
                     await self._state(turn.id, TurnState.CHECKPOINTING, sandbox_id=sandbox.id)
                     archive = await self.runtime.checkpoint(sandbox)
@@ -224,7 +247,8 @@ class Broker:
                         and final_state in {TurnState.COMPLETED, TurnState.WAITING_USER}
                         and self.settings.session_keepalive_seconds > 0
                     )
-                    await self.pool.release(sandbox, keep_attached=keep_attached)
+                    await self.pool.release(sandbox, keep_attached=keep_attached,
+                        keepalive_seconds=self.settings.session_keepalive_seconds)
             except Exception as exc:
                 final_state = TurnState.FAILED
                 error_code = "cleanup_failed"

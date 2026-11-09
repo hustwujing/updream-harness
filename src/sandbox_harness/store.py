@@ -7,7 +7,7 @@ from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, inspec
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from .domain import Artifact, Event, EventKind, Harness, Item, ItemType, ThreadCreate, ThreadView, TurnCreate, TurnState, TurnView, identifier, now
+from .domain import Artifact, Event, EventKind, Harness, Item, ItemType, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, identifier, now
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
 
@@ -61,6 +61,20 @@ class EventRow(Base):
     item_id: Mapped[str] = mapped_column(String(32), default="")
     payload_json: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TurnInputRow(Base):
+    __tablename__ = "turn_inputs"
+    __table_args__ = (UniqueConstraint("turn_id", "idempotency_key"), UniqueConstraint("turn_id", "sequence"))
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    turn_id: Mapped[str] = mapped_column(String(32), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    idempotency_key: Mapped[str] = mapped_column(String(160))
+    message: Mapped[str] = mapped_column(Text)
+    attachments_json: Mapped[str] = mapped_column(Text, default="[]")
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class ArtifactRow(Base):
@@ -130,6 +144,13 @@ class Store:
     def turn_view(row: TurnRow) -> TurnView:
         return TurnView.model_validate({
             **{key: getattr(row, key) for key in TurnView.model_fields if key != "attachments"},
+            "attachments": json.loads(row.attachments_json),
+        })
+
+    @staticmethod
+    def input_view(row: TurnInputRow) -> TurnInputView:
+        return TurnInputView.model_validate({
+            **{key: getattr(row, key) for key in TurnInputView.model_fields if key != "attachments"},
             "attachments": json.loads(row.attachments_json),
         })
 
@@ -221,6 +242,56 @@ class Store:
                 TurnRow.id == turn_id, ThreadRow.owner_id == owner_id))).scalar_one_or_none()
         return self.turn_view(row) if row else None
 
+    async def create_turn_input(self, turn_id: str, value: TurnInputCreate, owner_id: str) -> tuple[TurnInputView, bool]:
+        accepting = {TurnState.QUEUED.value, TurnState.RESTORING.value, TurnState.STARTING.value, TurnState.RUNNING.value}
+        async with self.connections.begin() as db:
+            turn = (await db.execute(select(TurnRow).join(ThreadRow, ThreadRow.id == TurnRow.thread_id).where(
+                TurnRow.id == turn_id, ThreadRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
+            if not turn:
+                raise KeyError("turn_not_found")
+            existing = (await db.execute(select(TurnInputRow).where(TurnInputRow.turn_id == turn_id,
+                TurnInputRow.idempotency_key == value.idempotency_key))).scalar_one_or_none()
+            if existing:
+                return self.input_view(existing), False
+            if turn.state not in accepting:
+                raise RuntimeError("turn_not_accepting_input")
+            timestamp = now()
+            sequence = (await db.execute(select(TurnInputRow.sequence).where(TurnInputRow.turn_id == turn_id)
+                .order_by(TurnInputRow.sequence.desc()).limit(1))).scalar_one_or_none() or 0
+            row = TurnInputRow(id=identifier(), turn_id=turn_id, sequence=sequence + 1,
+                idempotency_key=value.idempotency_key, message=value.message,
+                attachments_json=json.dumps([item.model_dump(mode="json") for item in value.attachments]),
+                status="pending", created_at=timestamp, updated_at=timestamp)
+            db.add(row)
+            item_sequence = (await db.execute(select(ItemRow.sequence).where(ItemRow.thread_id == turn.thread_id)
+                .order_by(ItemRow.sequence.desc()).limit(1))).scalar_one_or_none() or 0
+            db.add(ItemRow(id=identifier(), thread_id=turn.thread_id, turn_id=turn_id, sequence=item_sequence + 1,
+                type=ItemType.USER_MESSAGE.value, status="completed", summary=value.message,
+                payload_json=json.dumps({"input_id": row.id, "attachments": [item.model_dump(mode="json") for item in value.attachments]}),
+                created_at=timestamp, updated_at=timestamp))
+        return self.input_view(row), True
+
+    async def next_pending_input(self, turn_id: str) -> TurnInputView | None:
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(TurnInputRow).where(TurnInputRow.turn_id == turn_id,
+                TurnInputRow.status == "pending").order_by(TurnInputRow.sequence).limit(1).with_for_update(skip_locked=True))).scalar_one_or_none()
+            if not row:
+                return None
+            row.status = "delivered"; row.updated_at = now()
+        return self.input_view(row)
+
+    async def set_input_status(self, input_id: str, status: str) -> None:
+        async with self.connections.begin() as db:
+            row = await db.get(TurnInputRow, input_id, with_for_update=True)
+            if row:
+                row.status = status; row.updated_at = now()
+
+    async def list_turn_inputs(self, turn_id: str) -> list[TurnInputView]:
+        async with self.connections() as db:
+            rows = (await db.execute(select(TurnInputRow).where(TurnInputRow.turn_id == turn_id)
+                .order_by(TurnInputRow.sequence))).scalars().all()
+        return [self.input_view(row) for row in rows]
+
     async def set_turn_state(self, turn_id: str, state: TurnState, *, sandbox_id: str | None = None, error_code: str = "", error_detail: str = "") -> TurnView:
         async with self.connections.begin() as db:
             row = await db.get(TurnRow, turn_id, with_for_update=True)
@@ -270,7 +341,9 @@ class Store:
 
     async def append_agent_delta(self, thread_id: str, turn_id: str, text: str) -> Item:
         async with self.connections.begin() as db:
-            row = (await db.execute(select(ItemRow).where(ItemRow.turn_id == turn_id, ItemRow.type == ItemType.AGENT_MESSAGE.value).order_by(ItemRow.sequence.desc()).limit(1))).scalar_one_or_none()
+            row = (await db.execute(select(ItemRow).where(ItemRow.turn_id == turn_id,
+                ItemRow.type == ItemType.AGENT_MESSAGE.value, ItemRow.status == "in_progress")
+                .order_by(ItemRow.sequence.desc()).limit(1))).scalar_one_or_none()
             if not row:
                 last = (await db.execute(select(ItemRow.sequence).where(ItemRow.thread_id == thread_id).order_by(ItemRow.sequence.desc()).limit(1))).scalar_one_or_none() or 0
                 row = ItemRow(id=identifier(), thread_id=thread_id, turn_id=turn_id, sequence=last + 1,

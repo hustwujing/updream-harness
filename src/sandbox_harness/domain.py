@@ -27,6 +27,7 @@ class TurnState(StrEnum):
     RESTORING = "RESTORING"
     STARTING = "STARTING"
     RUNNING = "RUNNING"
+    DRAINING_INPUTS = "DRAINING_INPUTS"
     CHECKPOINTING = "CHECKPOINTING"
     WAITING_USER = "WAITING_USER"
     COMPLETED = "COMPLETED"
@@ -120,6 +121,24 @@ class TurnCreate(BaseModel):
     model: str | None = Field(default=None, min_length=1, max_length=160)
     reasoning_level: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,31}$")
     delivery_mode: Literal["start", "queue", "steer"] = "start"
+
+
+class TurnInputCreate(BaseModel):
+    message: str = Field(min_length=1, max_length=200_000)
+    idempotency_key: str = Field(min_length=8, max_length=160)
+    attachments: list[Attachment] = Field(default_factory=list, max_length=64)
+
+
+class TurnInputView(BaseModel):
+    id: str
+    turn_id: str
+    sequence: int = Field(ge=1)
+    idempotency_key: str
+    message: str
+    attachments: list[Attachment]
+    status: Literal["pending", "delivered", "applied", "failed"]
+    created_at: datetime
+    updated_at: datetime
 
 
 class TurnView(BaseModel):

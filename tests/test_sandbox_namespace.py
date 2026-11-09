@@ -4,6 +4,7 @@ import httpx
 
 from sandbox_harness.domain import Harness
 from sandbox_harness.sandbox import FakeSandboxBackend, OpenSandboxBackend
+from sandbox_harness.pool import SandboxPool
 
 
 async def test_fake_backend_scopes_turn_lookup_to_namespace():
@@ -108,3 +109,47 @@ async def test_create_scopes_sandbox_for_the_shared_internal_network():
     assert sandbox.metadata["sandbox-harness.io/namespace"] == "sandbox-harness"
     assert sandbox.runtime_url == "http://127.0.0.1:28090/proxy/8080"
     assert "networkPolicy" not in body
+
+
+async def test_attached_sandbox_expires_and_is_deleted():
+    backend = FakeSandboxBackend()
+    pool = SandboxPool(backend, {harness: "" for harness in Harness}, {harness: 0 for harness in Harness})
+    sandbox = await pool.acquire(thread_id="thread", turn_id="turn", harness=Harness.CLAUDE, environment={})
+    await pool.release(sandbox, keep_attached=True, keepalive_seconds=0)
+    for _ in range(100):
+        if sandbox.id not in backend.items:
+            break
+        await __import__('asyncio').sleep(.01)
+    assert sandbox.id not in backend.items
+    assert "thread" not in pool._attached
+    await pool.close()
+
+
+async def test_reacquiring_attached_sandbox_cancels_expiration():
+    backend = FakeSandboxBackend()
+    pool = SandboxPool(backend, {harness: "" for harness in Harness}, {harness: 0 for harness in Harness})
+    sandbox = await pool.acquire(thread_id="thread", turn_id="one", harness=Harness.CLAUDE, environment={})
+    await pool.release(sandbox, keep_attached=True, keepalive_seconds=1)
+    same = await pool.acquire(thread_id="thread", turn_id="two", harness=Harness.CLAUDE, environment={})
+    assert same is sandbox
+    await __import__('asyncio').sleep(.02)
+    assert sandbox.id in backend.items
+    await pool.release(sandbox, keep_attached=False)
+    await pool.close()
+
+
+async def test_warm_pool_refills_after_claim():
+    backend = FakeSandboxBackend()
+    targets = {harness: (2 if harness == Harness.CODEX else 0) for harness in Harness}
+    pool = SandboxPool(backend, {harness: "" for harness in Harness}, targets)
+    await pool.fill()
+    assert len(pool._warm[Harness.CODEX]) == 2
+    claimed = await pool.acquire(thread_id="thread", turn_id="turn", harness=Harness.CODEX, environment={})
+    for _ in range(100):
+        if len(pool._warm[Harness.CODEX]) == 2:
+            break
+        await __import__('asyncio').sleep(.01)
+    assert len(pool._warm[Harness.CODEX]) == 2
+    assert claimed.id not in {sandbox.id for sandbox in pool._warm[Harness.CODEX]}
+    await pool.release(claimed, keep_attached=False)
+    await pool.close()
