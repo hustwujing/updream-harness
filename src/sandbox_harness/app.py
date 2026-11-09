@@ -50,7 +50,9 @@ def components(settings: Settings):
         Harness.CLAUDE: settings.warm_pool_claude,
         Harness.DEEPSEEK: settings.warm_pool_deepseek,
     }
-    pool = SandboxPool(backend, images, targets)
+    if sum(targets.values()) >= settings.max_sandboxes:
+        raise ValueError("max_sandboxes must exceed the total warm pool target")
+    pool = SandboxPool(backend, images, targets, max_sandboxes=settings.max_sandboxes)
     runtime = RuntimeClient(timeout_seconds=settings.sandbox_timeout_seconds)
     catalog = HarnessCatalog(settings.harness_catalog_json or None)
     discovery = ModelDiscovery(settings, catalog)

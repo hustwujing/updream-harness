@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     warm_pool_codex: int = Field(default=2, ge=0, le=32)
     warm_pool_claude: int = Field(default=2, ge=0, le=32)
     warm_pool_deepseek: int = Field(default=1, ge=0, le=32)
+    max_sandboxes: int = Field(default=12, ge=1, le=128)
     session_keepalive_seconds: int = Field(default=900, ge=0, le=3600)
     sandbox_timeout_seconds: int = Field(default=3600, ge=60, le=86400)
     max_attachment_bytes: int = Field(default=512 * 1024 * 1024, ge=1)

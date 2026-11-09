@@ -153,3 +153,21 @@ async def test_warm_pool_refills_after_claim():
     assert claimed.id not in {sandbox.id for sandbox in pool._warm[Harness.CODEX]}
     await pool.release(claimed, keep_attached=False)
     await pool.close()
+
+
+async def test_total_limit_applies_backpressure_until_user_slot_is_released():
+    asyncio = __import__('asyncio')
+    backend = FakeSandboxBackend()
+    targets = {harness: (1 if harness == Harness.CLAUDE else 0) for harness in Harness}
+    pool = SandboxPool(backend, {harness: "" for harness in Harness}, targets, max_sandboxes=2)
+    await pool.fill()
+    first = await pool.acquire(thread_id="first", turn_id="one", harness=Harness.CLAUDE, environment={})
+    waiting = asyncio.create_task(pool.acquire(thread_id="second", turn_id="two", harness=Harness.CLAUDE, environment={}))
+    await asyncio.sleep(.02)
+    assert not waiting.done()
+    await pool.release(first, keep_attached=False)
+    second = await asyncio.wait_for(waiting, 1)
+    assert second.thread_id == "second"
+    assert len(pool._attached) + sum(len(items) for items in pool._warm.values()) <= 2
+    await pool.release(second, keep_attached=False)
+    await pool.close()
