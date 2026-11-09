@@ -277,9 +277,15 @@ def create_app() -> FastAPI:
     @app.get("/v1/checkpoint")
     async def checkpoint():
         target = WORKSPACE / "tmp" / "checkpoint.tar"
+        def include_unmanaged(member: tarfile.TarInfo):
+            parts = PurePosixPath(member.name).parts
+            if len(parts) >= 2 and parts[0] == "project" and parts[1] in {"assets", "artifacts"}:
+                return None
+            return member
         with tarfile.open(target, "w") as archive:
             for name in PERSISTENT:
-                archive.add(WORKSPACE / name, arcname=name, recursive=True)
+                archive.add(WORKSPACE / name, arcname=name, recursive=True,
+                    filter=include_unmanaged if name == "project" else None)
         return FileResponse(target, media_type="application/x-tar")
 
     @app.post("/v1/turns")

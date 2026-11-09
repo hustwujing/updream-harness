@@ -18,7 +18,7 @@ The runtime daemon starts or resumes the selected Harness, sends the user messag
 
 `/workspace/project` is included in checkpoints. The host additionally maintains a Thread-scoped manifest for immutable uploads and exported artifacts. Reusing a logical path with different content creates a new version; identical content is idempotent. Current uploads are materialized under `project/assets`, while current outputs are materialized under `project/artifacts` after checkpoint restore and before the Harness starts.
 
-`inbox` remains the current-message delivery area and `outputs` remains the current-Turn publication area. Their contents do not need to survive a Sandbox because the object store and project manifest are authoritative. Sandboxes receive file bytes through the Runtime control endpoint and never receive object-store credentials.
+`inbox` remains the current-message delivery area and `outputs` remains the current-Turn publication area. Their contents do not need to survive a Sandbox because the object store and project manifest are authoritative. Managed `project/assets` and `project/artifacts` are excluded from checkpoint tar files to avoid storing large media twice, then restored from the manifest. Sandboxes receive file bytes through the Runtime control endpoint and never receive object-store credentials.
 
 ## Recovery
 

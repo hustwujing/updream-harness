@@ -4,6 +4,8 @@ import sys
 import threading
 import time
 import asyncio
+import io
+import tarfile
 
 from fastapi.testclient import TestClient
 
@@ -158,3 +160,22 @@ def test_runtime_materializes_only_managed_project_file_namespaces(tmp_path, mon
         assert (tmp_path / "workspace/project/assets/reference.txt").read_bytes() == b"persistent"
         for path in ("../escape", "state/private", "artifacts/../../escape"):
             assert client.put("/v1/project-files/file", params={"path":path}, content=b"x").status_code == 400
+
+
+def test_checkpoint_excludes_object_backed_managed_project_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
+    monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")
+    monkeypatch.setattr(runtime_app, "OUTPUTS", tmp_path / "workspace" / "outputs")
+    monkeypatch.setattr(runtime_app, "PERSISTENT", ("project", "state"))
+    app = runtime_app.create_app()
+    project = tmp_path / "workspace/project"
+    (project / "src").mkdir(parents=True); (project / "src/app.py").write_text("print('kept')")
+    (project / "assets").mkdir(); (project / "assets/large.bin").write_bytes(b"asset")
+    (project / "artifacts").mkdir(); (project / "artifacts/result.bin").write_bytes(b"artifact")
+    with TestClient(app) as client:
+        response = client.get("/v1/checkpoint")
+    assert response.status_code == 200
+    with tarfile.open(fileobj=io.BytesIO(response.content), mode="r:") as archive:
+        names = set(archive.getnames())
+    assert "project/src/app.py" in names
+    assert not any(name.startswith("project/assets") or name.startswith("project/artifacts") for name in names)
