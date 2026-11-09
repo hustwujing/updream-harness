@@ -23,20 +23,49 @@ def command(harness: str, model: str, native_thread_id: str = "") -> HarnessComm
         value = json.loads(override)
         return HarnessCommand(list(value[harness]), common)
     if harness == "codex":
+        codex_home = Path("/workspace/state/codex")
+        codex_home.mkdir(parents=True, exist_ok=True)
+        config = "\n".join([
+            "model = " + json.dumps(model),
+            'model_provider = "sandbox_gateway"',
+            'approval_policy = "never"',
+            'sandbox_mode = "danger-full-access"',
+            "model_reasoning_effort = " + json.dumps(os.environ.get("HARNESS_REASONING_EFFORT", "high")),
+            '[model_providers.sandbox_gateway]',
+            'name = "Sandbox Harness capability gateway"',
+            "base_url = " + json.dumps(gateway + "/v1/models/codex"),
+            'wire_api = "responses"',
+            'requires_openai_auth = false',
+            'request_max_retries = 1',
+            'stream_max_retries = 1',
+            '[features]',
+            'multi_agent = false',
+            '[shell_environment_policy]',
+            'inherit = "all"',
+            '',
+        ])
+        (codex_home / "config.toml").write_text(config)
         argv = ["codex", "exec", "--json", "--skip-git-repo-check", "--model", model, "-"]
         if native_thread_id:
             argv = ["codex", "exec", "resume", native_thread_id, "--json", "-"]
-        return HarnessCommand(argv, {**common, "OPENAI_BASE_URL": gateway + "/v1/models/codex", "OPENAI_API_KEY": capability_token})
+        return HarnessCommand(argv, {**common, "CODEX_HOME": str(codex_home), "OPENAI_API_KEY": capability_token})
     if harness == "claude":
         argv = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--model", model]
         if native_thread_id:
             argv += ["--resume", native_thread_id]
         return HarnessCommand(argv, {**common, "ANTHROPIC_BASE_URL": gateway + "/v1/models/claude", "ANTHROPIC_API_KEY": capability_token})
     if harness == "deepseek":
-        argv = ["deepseek-harness", "run", "--stream-json", "--model", model]
+        argv = ["python", "-m", "sandbox_runtime.deepseek_runner", "--model", model]
         if native_thread_id:
-            argv += ["--resume", native_thread_id]
-        return HarnessCommand(argv, {**common, "DEEPSEEK_BASE_URL": gateway + "/v1/models/deepseek", "DEEPSEEK_API_KEY": capability_token})
+            argv += ["--session-id", native_thread_id]
+        return HarnessCommand(argv, {
+            **common,
+            "DSH_HOME": "/workspace/state/dsh",
+            "DSH_PERMISSION_MODE": "danger-full-access",
+            "DEEPSEEK_BASE_URL": gateway + "/v1/models/deepseek",
+            "DEEPSEEK_API_KEY": capability_token,
+            "DEEPSEEK_REASONING_EFFORT": os.environ.get("HARNESS_REASONING_EFFORT", "high"),
+        })
     raise ValueError("Unsupported Harness")
 
 
@@ -46,6 +75,24 @@ def normalize(harness: str, line: str) -> dict:
     except (ValueError, TypeError):
         return {"kind": "text_delta", "payload": {"text": line + "\n"}}
     kind = value.get("type") or value.get("event") or "tool_output"
+    if harness == "codex" and kind == "thread.started":
+        return {"kind": "step_finished", "payload": {"name": "Codex session", "thread_id": value.get("thread_id", "")}}
+    if harness == "codex" and kind == "item.completed":
+        item = value.get("item") or {}
+        if item.get("type") == "agent_message":
+            return {"kind": "text_delta", "payload": {"text": item.get("text", ""), "snapshot": True}}
+        return {"kind": "tool_finished", "payload": {"name": item.get("type", "tool"), "result": item}}
+    if harness == "codex" and kind == "item.started":
+        item = value.get("item") or {}
+        return {"kind": "tool_started", "payload": {"name": item.get("type", "tool"), "detail": item}}
+    if harness == "codex" and kind == "turn.completed":
+        return {"kind": "step_finished", "payload": {"name": "Codex response", "usage": value.get("usage") or {}}}
+    if harness == "codex" and kind == "turn.started":
+        return None
+    if harness == "deepseek" and kind == "thread.started":
+        return {"kind": "step_finished", "payload": {"name": "DeepSeek session", "thread_id": value.get("thread_id", "")}}
+    if harness == "deepseek" and kind == "deepseek.notification":
+        return {"kind": "tool_output", "payload": {"event": value.get("event")}}
     if harness == "claude" and kind == "stream_event":
         native = value.get("event") or {}
         delta = native.get("delta") or {}

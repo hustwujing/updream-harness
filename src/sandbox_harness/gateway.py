@@ -5,6 +5,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 import os
 import time
+import json
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -140,6 +141,15 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             if prefix.endswith(("claude", "deepseek")):
                 headers["x-api-key"] = credential
         body = await request.body()
+        if prefix.startswith("/v1/models/"):
+            try:
+                payload = json.loads(body)
+            except (TypeError, ValueError):
+                raise HTTPException(422, "Model request must be JSON")
+            if not isinstance(payload, dict):
+                raise HTTPException(422, "Model request must be an object")
+            payload["model"] = claims.model
+            body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
         upstream = client.build_request(request.method, suffix, params=request.query_params, headers=headers, content=body)
         response = await client.send(upstream, stream=True)
         active[claims.nonce].add(response)
