@@ -34,6 +34,13 @@ def token_from(request: Request) -> str:
     return request.headers.get("x-api-key") or request.headers.get("anthropic-api-key") or ""
 
 
+def upstream_suffix(route: str, prefix: str) -> str:
+    suffix = route[len(prefix):] or "/"
+    if suffix == "/v1" or suffix.startswith("/v1/"):
+        suffix = suffix[3:] or "/"
+    return suffix
+
+
 def create_gateway(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     codec = CapabilityCodec(settings.gateway_signing_key)
@@ -126,11 +133,11 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         if not base_url:
             raise HTTPException(503, "Gateway upstream is not configured")
         client = clients.setdefault(prefix, httpx.AsyncClient(base_url=base_url.rstrip("/"), timeout=None, trust_env=False))
-        suffix = route[len(prefix):] or "/"
+        suffix = upstream_suffix(route, prefix)
         headers = {key: value for key, value in request.headers.items() if key.lower() not in HOP_HEADERS | {"authorization", "x-api-key", "anthropic-api-key"}}
         if credential:
             headers["authorization"] = "Bearer " + credential
-            if prefix.endswith("claude"):
+            if prefix.endswith(("claude", "deepseek")):
                 headers["x-api-key"] = credential
         body = await request.body()
         upstream = client.build_request(request.method, suffix, params=request.query_params, headers=headers, content=body)

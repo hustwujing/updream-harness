@@ -136,9 +136,14 @@ def create_app() -> FastAPI:
             app.state.process = process
             process.stdin.write(prompt.encode()); await process.stdin.drain(); process.stdin.close()
             native_thread_id = value.native_thread_id
+            saw_text_delta = False
             while line := await process.stdout.readline():
                 event = normalize(harness, line.decode(errors="replace").rstrip("\n"))
                 native_thread_id = event.get("payload", {}).get("thread_id") or native_thread_id
+                if event.get("kind") == "text_delta":
+                    if event.get("payload", {}).get("snapshot") and saw_text_delta:
+                        continue
+                    saw_text_delta = True
                 yield json.dumps(event, ensure_ascii=False) + "\n"
             code = await process.wait()
             app.state.process = None

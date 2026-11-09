@@ -28,7 +28,7 @@ def command(harness: str, model: str, native_thread_id: str = "") -> HarnessComm
             argv = ["codex", "exec", "resume", native_thread_id, "--json", "-"]
         return HarnessCommand(argv, {**common, "OPENAI_BASE_URL": gateway + "/v1/models/codex", "OPENAI_API_KEY": capability_token})
     if harness == "claude":
-        argv = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--model", model]
+        argv = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--model", model]
         if native_thread_id:
             argv += ["--resume", native_thread_id]
         return HarnessCommand(argv, {**common, "ANTHROPIC_BASE_URL": gateway + "/v1/models/claude", "ANTHROPIC_API_KEY": capability_token})
@@ -46,6 +46,24 @@ def normalize(harness: str, line: str) -> dict:
     except (ValueError, TypeError):
         return {"kind": "text_delta", "payload": {"text": line + "\n"}}
     kind = value.get("type") or value.get("event") or "tool_output"
+    if harness == "claude" and kind == "stream_event":
+        native = value.get("event") or {}
+        delta = native.get("delta") or {}
+        if native.get("type") == "content_block_delta" and delta.get("type") == "text_delta":
+            return {"kind": "text_delta", "payload": {"text": delta.get("text", "")}}
+        if native.get("type") == "content_block_start" and (native.get("content_block") or {}).get("type") == "tool_use":
+            block = native["content_block"]
+            return {"kind": "tool_started", "payload": {"name": block.get("name", "tool"), "detail": block.get("input") or {}}}
+        return {"kind": "step_progress", "payload": {"name": "Claude is working"}}
+    if harness == "claude" and kind == "system" and value.get("subtype") == "init":
+        return {"kind": "step_started", "payload": {"name": "Claude session", "thread_id": value.get("session_id", "")}}
+    if harness == "claude" and kind == "assistant":
+        texts = [item.get("text", "") for item in (value.get("message") or {}).get("content", []) if item.get("type") == "text"]
+        if texts:
+            return {"kind": "text_delta", "payload": {"text": "".join(texts), "snapshot": True, "thread_id": value.get("session_id", "")}}
+        return {"kind": "step_progress", "payload": {"name": "Claude is working", "thread_id": value.get("session_id", "")}}
+    if harness == "claude" and kind == "result":
+        return {"kind": "step_finished", "payload": {"name": "Claude response", "usage": value.get("usage") or {}, "thread_id": value.get("session_id", "")}}
     if kind in {"text_delta", "response.output_text.delta", "assistant_delta"}:
         return {"kind": "text_delta", "payload": {"text": value.get("delta") or value.get("text") or ""}}
     if kind in {"tool_started", "tool_use", "item.started"}:
