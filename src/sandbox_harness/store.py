@@ -271,11 +271,13 @@ class Store:
             if not row:
                 return None
             row.status = "failed" if payload.get("is_error") else "completed"
-            row.summary = str(payload.get("name") or row.summary)
-            row.payload_json = json.dumps(payload, ensure_ascii=False)
+            name = str(payload.get("name") or "")
+            row.summary = row.summary if name in {"", "tool"} else name
+            previous = json.loads(row.payload_json)
+            row.payload_json = json.dumps({**previous, **payload, "name": row.summary}, ensure_ascii=False)
             row.updated_at = now()
         return Item(id=row.id, thread_id=row.thread_id, turn_id=row.turn_id, sequence=row.sequence,
-            type=ItemType.TOOL, status=row.status, summary=row.summary, payload=payload,
+            type=ItemType.TOOL, status=row.status, summary=row.summary, payload=json.loads(row.payload_json),
             created_at=row.created_at, updated_at=row.updated_at)
 
     async def items_after(self, thread_id: str, sequence: int = 0, limit: int = 200) -> list[Item]:

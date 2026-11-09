@@ -1,0 +1,169 @@
+.top-actions {
+  position: relative;
+}
+
+.more-menu {
+  position: absolute;
+  right: 0;
+  top: 38px;
+  z-index: 25;
+  width: 190px;
+  padding: 5px;
+  background: #fff;
+  border: 1px solid #d9d9d4;
+  border-radius: 7px;
+  box-shadow: 0 12px 32px #0002;
+}
+
+.more-menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 34px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  text-align: left;
+  font-size: 11px;
+}
+
+.more-menu button:hover {
+  background: #f1f1ee;
+}
+
+.composer-shell {
+  padding-bottom: 12px;
+}
+
+.composer {
+  overflow: visible;
+}
+
+.composer-config {
+  display: grid;
+  grid-template-columns: minmax(110px, .8fr) minmax(150px, 1.4fr) minmax(120px, .9fr);
+  gap: 8px;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid #ecece8;
+  background: #fafaf8;
+  border-radius: 8px 8px 0 0;
+}
+
+.composer-config label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.composer-config label > span {
+  font-size: 9px;
+  font-weight: 600;
+  color: #777872;
+}
+
+.composer-config select {
+  width: 100%;
+  max-width: none;
+  height: 30px;
+  border: 1px solid #ddddda;
+  background: #fff;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.composer textarea {
+  height: 82px;
+  min-height: 82px;
+  padding: 13px 14px 7px;
+  font-size: 13px;
+}
+
+.composer-bar {
+  height: 44px;
+}
+
+.attach-button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 10px;
+  font-weight: 550;
+}
+
+.attach-button:hover {
+  background: #f1f1ee;
+}
+
+.attachments > span small {
+  color: #898a84;
+}
+
+.activity-row.failed b,
+.activity-row.failed small,
+.activity-row.interrupted b,
+.activity-row.interrupted small {
+  color: #a1443d;
+}
+
+.activity-row.completed > svg {
+  color: #5f7e5b;
+}
+
+@media (max-width: 700px) {
+  .app > main {
+    grid-template-rows: 58px minmax(0, 1fr) auto;
+  }
+
+  .composer-shell {
+    width: calc(100% - 16px);
+    padding-bottom: 8px;
+  }
+
+  .composer-config {
+    grid-template-columns: 1fr 1fr;
+    padding: 8px;
+    gap: 6px;
+  }
+
+  .composer-config label:nth-child(2) {
+    grid-column: span 2;
+    grid-row: 2;
+  }
+
+  .composer-config label:nth-child(3) {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .composer-config label > span {
+    font-size: 8px;
+  }
+
+  .composer-config select {
+    max-width: none;
+    height: 29px;
+    font-size: 10px;
+  }
+
+  .composer textarea {
+    height: 72px;
+    min-height: 72px;
+  }
+
+  .composer-bar {
+    height: 40px;
+  }
+
+  .more-menu {
+    position: fixed;
+    right: 10px;
+    top: 52px;
+  }
+}

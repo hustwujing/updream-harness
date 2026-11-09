@@ -17,10 +17,14 @@ const assert=require('node:assert/strict');
    await page.getByTitle('Workspace').click();await page.waitForSelector('.inspector.open');
    if(viewport.name==='mobile'){assert.equal(await page.locator('.sidebar.open').count(),0);await page.waitForTimeout(220);}
    if(viewport.name==='desktop')assert.ok((await page.locator('.transcript').boundingBox()).width>500);
-   await page.locator('.composer-bar select').nth(0).selectOption('codex');
-   assert.equal(await page.locator('.composer-bar select').nth(2).locator('option').count(),4);
-   await page.locator('.composer-bar select').nth(0).selectOption('deepseek');
-   assert.equal(await page.locator('.composer-bar select').nth(2).locator('option').count(),2);
+   assert.ok(await page.locator('.composer textarea').isVisible());
+   assert.ok(await page.getByRole('button',{name:/添加文件/}).isVisible());
+   await page.getByLabel('Harness').selectOption('codex');
+   assert.equal(await page.getByLabel('推理强度').locator('option').count(),4);
+   await page.getByLabel('Harness').selectOption('deepseek');
+   assert.equal(await page.getByLabel('推理强度').locator('option').count(),2);
+   await page.getByTitle('更多').click();
+   assert.ok(await page.getByRole('button',{name:'新建对话'}).isVisible());
    assert.deepEqual(errors,[]);
    await page.screenshot({path:`/data2/wujing03/sandbox-harness-platform/.data/ui-${viewport.name}-workspace.png`,fullPage:true});
    await page.close();
