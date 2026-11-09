@@ -54,6 +54,8 @@ Set `SANDBOX_HARNESS_BACKEND=fake` only for local UI development and tests. Prod
 
 See [architecture.md](docs/architecture.md), [client API](docs/api.md), [data model](docs/data-model.md), [product interface](docs/product-interface.md), [gateway.md](docs/gateway.md) and [deployment.md](docs/deployment.md).
 
+Real deployment evidence for code execution, media processing, autonomous repair, checkpoint recovery, discovered models and browser isolation is recorded in [first-capability-report.md](docs/test-evidence/first-capability-report.md).
+
 ## Runtime Toolchain
 
 Every Harness image inherits the same immutable foundation with Python, Node.js, ffmpeg/ffprobe, Git, curl, jq, ripgrep, file inspection, GCC/G++, Make, CMake, pkg-config, archive tools and CJK fonts. [toolchain.lock.json](runtime/toolchain.lock.json) records the observed command and package versions; image builds fail when the foundation no longer matches it. The deployed Harness images are referenced by registry digest rather than mutable tag.
