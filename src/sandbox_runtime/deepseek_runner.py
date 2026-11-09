@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import sys
@@ -11,6 +12,16 @@ from deepseek_harness import DeepSeekHarness
 
 def emit(value: dict) -> None:
     print(json.dumps(value, ensure_ascii=False, default=str), flush=True)
+
+
+def public_notification(value):
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if dataclasses.is_dataclass(value):
+        return dataclasses.asdict(value)
+    if hasattr(value, "__dict__"):
+        return vars(value)
+    return {"type": type(value).__name__}
 
 
 def main() -> None:
@@ -40,7 +51,7 @@ def main() -> None:
             harness.resume_session(session_id)
         result = harness.start_session(session_id).run(
             prompt,
-            on_notification=lambda value: emit({"type": "deepseek.notification", "event": value}),
+            on_notification=lambda value: emit({"type": "deepseek.notification", "event": public_notification(value)}),
         )
         emit({"type": "assistant_delta", "text": result.final_response})
         if result.finish_reason != "completed":

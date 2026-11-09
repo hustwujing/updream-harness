@@ -35,7 +35,8 @@ def command(harness: str, model: str, native_thread_id: str = "") -> HarnessComm
             'name = "Sandbox Harness capability gateway"',
             "base_url = " + json.dumps(gateway + "/v1/models/codex"),
             'wire_api = "responses"',
-            'requires_openai_auth = true',
+            'env_key = "OPENAI_API_KEY"',
+            'requires_openai_auth = false',
             'request_max_retries = 1',
             'stream_max_retries = 1',
             '[features]',
@@ -92,7 +93,15 @@ def normalize(harness: str, line: str) -> dict:
     if harness == "deepseek" and kind == "thread.started":
         return {"kind": "step_finished", "payload": {"name": "DeepSeek session", "thread_id": value.get("thread_id", "")}}
     if harness == "deepseek" and kind == "deepseek.notification":
-        return {"kind": "tool_output", "payload": {"event": value.get("event")}}
+        notification = value.get("event") or {}
+        event = (notification.get("payload") or {}).get("event") or {}
+        event_type = event.get("type", "")
+        data = event.get("data") or {}
+        if event_type in {"tool/start", "tool/call", "tool_use"}:
+            return {"kind": "tool_started", "payload": {"name": data.get("name", "tool"), "detail": data}}
+        if event_type in {"tool/end", "tool/result", "tool_result"}:
+            return {"kind": "tool_finished", "payload": {"name": data.get("name", "tool"), "result": data}}
+        return None
     if harness == "claude" and kind == "stream_event":
         native = value.get("event") or {}
         delta = native.get("delta") or {}
