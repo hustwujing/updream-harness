@@ -13,6 +13,12 @@ class HarnessCommand:
     environment: dict[str, str]
 
 
+def codex_argv(model: str, native_thread_id: str = "") -> list[str]:
+    if native_thread_id:
+        return ["codex", "exec", "resume", "--skip-git-repo-check", "--model", model, "--json", native_thread_id, "-"]
+    return ["codex", "exec", "--json", "--skip-git-repo-check", "--model", model, "-"]
+
+
 def command(harness: str, model: str, native_thread_id: str = "") -> HarnessCommand:
     gateway = os.environ["HARNESS_GATEWAY_URL"].rstrip("/")
     token_file = "/run/harness/capability-token"
@@ -46,9 +52,7 @@ def command(harness: str, model: str, native_thread_id: str = "") -> HarnessComm
             '',
         ])
         (codex_home / "config.toml").write_text(config)
-        argv = ["codex", "exec", "--json", "--skip-git-repo-check", "--model", model, "-"]
-        if native_thread_id:
-            argv = ["codex", "exec", "resume", native_thread_id, "--json", "-"]
+        argv = codex_argv(model, native_thread_id)
         return HarnessCommand(argv, {**common, "CODEX_HOME": str(codex_home), "OPENAI_API_KEY": capability_token})
     if harness == "claude":
         argv = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",

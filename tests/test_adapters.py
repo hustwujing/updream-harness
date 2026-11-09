@@ -1,6 +1,6 @@
 import json
 
-from sandbox_runtime.adapters import normalize
+from sandbox_runtime.adapters import codex_argv, normalize
 
 
 def test_claude_partial_text_and_final_snapshot_normalization():
@@ -51,3 +51,10 @@ def test_codex_and_deepseek_tool_ids_are_stable():
 
     assert codex["payload"]["tool_use_id"] == "item-1"
     assert deepseek["payload"]["tool_use_id"] == "call-1"
+
+
+def test_codex_resume_keeps_non_git_workspace_and_frozen_model_options():
+    argv = codex_argv("gpt-5.6", "native-thread")
+    assert argv == [
+        "codex", "exec", "resume", "--skip-git-repo-check", "--model", "gpt-5.6", "--json", "native-thread", "-",
+    ]
