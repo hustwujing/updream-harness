@@ -10,9 +10,9 @@ The recovery implementation was validated at commit `c833d2a`; the final deploye
 
 | Harness | Immutable image digest |
 | --- | --- |
-| Codex | `sha256:279cc36892c82953f97d82270073a070c55f1b23de646d6f03a7584370ee47b8` |
-| Claude | `sha256:f751cee7a8defc18449e0378ac0d8329e5856234a9dd8110e8488ef27675b89a` |
-| DeepSeek | `sha256:c9c474d5436f3853bef7b0e8683b7a1e0c4efbd93bb7dafe4619da8ef9cb62c6` |
+| Codex | `sha256:2325e6e7133af543ac18d1bb87c3384831648f83d647f9c840750b0d30c7d8f6` |
+| Claude | `sha256:acc900c6ec707071add191eda24c2bb8e20efea99e8cb76b8ff63d92f89e861d` |
+| DeepSeek | `sha256:8ad645e3746a62c3aa885236c0aef3b87d291c369fbfbc01260c1115a63e43c6` |
 
 The public route `http://updream-lab.bilibili.co/sandbox-harness/` and the internal health endpoint both returned HTTP 200 after deployment. API, Gateway and network units were active.
 
