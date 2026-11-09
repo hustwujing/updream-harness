@@ -116,6 +116,8 @@ def normalize(harness: str, line: str) -> dict:
         return {"kind": "step_progress", "payload": {"name": "Plan", "plan": params.get("plan", [])}}
     if harness == "codex" and method == "turn/completed":
         return {"kind": "step_finished", "payload": {"name": "Codex response", "turn": params.get("turn", {})}}
+    if harness == "codex" and method:
+        return None
     if harness == "codex" and kind == "thread.started":
         return {"kind": "step_finished", "payload": {"name": "Codex session", "thread_id": value.get("thread_id", "")}}
     if harness == "codex" and kind == "item.completed":

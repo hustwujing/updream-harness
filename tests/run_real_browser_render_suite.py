@@ -15,7 +15,7 @@ import httpx
 
 CASES = {
     "canvas-2d": {
-        "harness": "codex", "model": "gpt-6-sol",
+        "harness": "codex", "model": "gpt-5.6",
         "prompt": """Work directly in the sandbox. Create /workspace/project/canvas.html as a self-contained 640x360 Canvas 2D animation. It must visibly render the Chinese title “创意动画实验室”, use at least four distinct non-white colors, and expose window.renderFrame(timeSeconds) that moves at least two shapes differently over time. Set window.__RENDER_READY__=true only after drawing the first frame. Run sandbox-browser-render to produce exactly 60 frames at 30 fps as /workspace/outputs/canvas.mp4, plus /workspace/outputs/canvas.png and /workspace/outputs/canvas-diagnostics.json. Inspect the diagnostics, use ffprobe to verify H.264 yuv420p 640x360, 60 frames and about 2 seconds, and use framemd5 to verify frames change. If anything fails, read the actual error and repair it before replying.""",
         "artifacts": ["canvas.mp4", "canvas.png", "canvas-diagnostics.json"],
     },

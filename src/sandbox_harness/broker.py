@@ -85,6 +85,9 @@ class Broker:
         return turn
 
     async def _record_runtime_event(self, thread_id: str, turn_id: str, value: RuntimeEvent) -> None:
+        if value.kind == EventKind.TOOL_OUTPUT:
+            await self.store.append_event(turn_id, value.kind, value.payload)
+            return
         if value.kind == EventKind.TEXT_DELTA:
             item = await self.store.append_agent_delta(thread_id, turn_id, str(value.payload.get("text", "")))
         elif value.kind == EventKind.TOOL_FINISHED and value.payload.get("tool_use_id"):
