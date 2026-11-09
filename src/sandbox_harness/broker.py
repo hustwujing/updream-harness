@@ -143,7 +143,9 @@ class Broker:
                                 EventKind.WAITING_USER: ItemType.APPROVAL,
                             }.get(value.kind, ItemType.REASONING)
                             item = await self.store.append_item(thread.id, turn.id, item_type,
-                                status="completed" if value.kind in {EventKind.TOOL_FINISHED, EventKind.STEP_FINISHED} else "in_progress",
+                                status="completed" if value.kind in {
+                                    EventKind.TOOL_FINISHED, EventKind.STEP_FINISHED, EventKind.WARNING, EventKind.ERROR,
+                                } else "in_progress",
                                 summary=str(value.payload.get("name") or value.payload.get("text") or value.kind.value), payload=value.payload)
                         await self.store.append_event(turn.id, value.kind, value.payload, item_id=item.id)
                 if result is None:

@@ -3,11 +3,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
+from contextlib import suppress
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .broker import Broker
@@ -19,6 +22,8 @@ from .pool import SandboxPool
 from .runtime import RuntimeClient
 from .sandbox import FakeSandboxBackend, OpenSandboxBackend
 from .store import Store
+
+logger = logging.getLogger(__name__)
 
 
 def components(settings: Settings):
@@ -55,9 +60,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await store.initialize()
+        pool_task = None
         if settings.backend == "opensandbox":
-            asyncio.create_task(pool.fill())
+            app.state.pool_status = "starting"
+
+            async def fill_pool():
+                try:
+                    await pool.fill()
+                    app.state.pool_status = "ready"
+                except Exception:
+                    app.state.pool_status = "error"
+                    logger.exception("OpenSandbox warm pool initialization failed")
+
+            pool_task = asyncio.create_task(fill_pool(), name="warm-pool-fill")
+        else:
+            app.state.pool_status = "disabled"
         yield
+        if pool_task and not pool_task.done():
+            pool_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await pool_task
         await pool.close()
         await store.close()
 
@@ -70,7 +92,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/health")
     async def health():
-        return {"status": "ok", "backend": settings.backend}
+        pool_status = app.state.pool_status
+        payload = {"status": "ok" if pool_status in {"ready", "disabled"} else "degraded",
+                   "backend": settings.backend, "warm_pool": pool_status}
+        return JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
 
     @app.get("/api/catalog/harnesses")
     async def harness_catalog():
