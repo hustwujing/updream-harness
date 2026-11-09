@@ -61,7 +61,7 @@ def command(harness: str, model: str, native_thread_id: str = "") -> HarnessComm
         if native_thread_id:
             argv += ["--resume", native_thread_id]
         return HarnessCommand(argv, {**common, "ANTHROPIC_BASE_URL": gateway + "/v1/models/claude",
-            "ANTHROPIC_API_KEY": capability_token}, streaming_input=True)
+            "ANTHROPIC_API_KEY": capability_token}, streaming_input=True, batched_completion=True)
     if harness == "deepseek":
         argv = ["python", "-m", "sandbox_runtime.deepseek_runner", "--model", model]
         if native_thread_id:
@@ -97,7 +97,8 @@ def normalize(harness: str, line: str) -> dict:
     method = value.get("method", "")
     params = value.get("params") or {}
     if kind == "harness.input.completed":
-        return None
+        return {"kind": "step_finished", "payload": {"name": "Input completed", "input_completed": True,
+            "input_ids": value.get("input_ids", [])}}
     if harness == "codex" and method == "item/agentMessage/delta":
         return {"kind": "text_delta", "payload": {"text": params.get("delta", "")}}
     if harness == "codex" and method in {"item/started", "item/completed"}:

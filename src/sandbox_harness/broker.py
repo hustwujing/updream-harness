@@ -107,6 +107,8 @@ class Broker:
                 } else "in_progress",
                 summary=str(value.payload.get("name") or value.payload.get("text") or value.kind.value), payload=value.payload)
         await self.store.append_event(turn_id, value.kind, value.payload, item_id=item.id)
+        if value.payload.get("input_completed"):
+            await self.store.complete_agent_item(turn_id, "completed")
 
     async def _materialize_attachments(self, sandbox, attachments) -> None:
         for attachment in attachments:
@@ -185,6 +187,7 @@ class Broker:
                     native_thread_id = result.native_thread_id or native_thread_id
                     pending = await self.store.next_pending_input(turn.id)
                     if not pending:
+                        await self.store.apply_delivered_inputs(turn.id)
                         break
                     try:
                         await self.store.complete_agent_item(turn.id, "completed")
