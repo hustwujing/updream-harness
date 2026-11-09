@@ -51,7 +51,8 @@ def command(harness: str, model: str, native_thread_id: str = "") -> HarnessComm
             argv = ["codex", "exec", "resume", native_thread_id, "--json", "-"]
         return HarnessCommand(argv, {**common, "CODEX_HOME": str(codex_home), "OPENAI_API_KEY": capability_token})
     if harness == "claude":
-        argv = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--model", model]
+        argv = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+                "--permission-mode", "bypassPermissions", "--model", model]
         if native_thread_id:
             argv += ["--resume", native_thread_id]
         return HarnessCommand(argv, {**common, "ANTHROPIC_BASE_URL": gateway + "/v1/models/claude", "ANTHROPIC_API_KEY": capability_token})
@@ -82,6 +83,8 @@ def normalize(harness: str, line: str) -> dict:
         item = value.get("item") or {}
         if item.get("type") == "agent_message":
             return {"kind": "text_delta", "payload": {"text": item.get("text", ""), "snapshot": True}}
+        if item.get("type") == "error" and "fallback metadata" in item.get("message", ""):
+            return {"kind": "warning", "payload": {"text": item.get("message", ""), "code": "model_metadata_fallback"}}
         return {"kind": "tool_finished", "payload": {"name": item.get("type", "tool"), "result": item}}
     if harness == "codex" and kind == "item.started":
         item = value.get("item") or {}
