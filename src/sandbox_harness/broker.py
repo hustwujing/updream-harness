@@ -232,6 +232,17 @@ class Broker:
                     "detail": error_detail[:1000],
                 })
             finally:
+                if final_state == TurnState.FAILED:
+                    public_detail = {
+                        "HTTPStatusError": "沙箱运行环境暂时不可用，请重新发送消息。",
+                        "ConnectError": "沙箱运行环境暂时无法连接，请重新发送消息。",
+                        "harness_exit": "Harness 执行失败，请重试或切换模型。",
+                        "cleanup_failed": "运行结果保存或环境清理失败，请重试。",
+                    }.get(error_code, "本轮执行失败，请重试；如果持续失败，可以切换模型。")
+                    item = await self.store.append_item(thread.id, turn.id, ItemType.ERROR, status="failed",
+                        summary=public_detail, payload={"code": error_code, "detail": public_detail})
+                    await self.store.append_event(turn.id, EventKind.ERROR,
+                        {"code": error_code, "detail": public_detail}, item_id=item.id)
                 await self._state(turn.id, final_state, sandbox_id=sandbox.id if sandbox else "", error_code=error_code, error_detail=error_detail)
                 self.tasks.pop(turn.id, None)
                 next_turn = await self.store.claim_next_turn(turn.thread_id, turn.id)

@@ -22,7 +22,7 @@ function idempotencyKey(){
 function relativeTime(value){const seconds=Math.max(1,(Date.now()-new Date(value).getTime())/1000);if(seconds<60)return '刚刚';if(seconds<3600)return `${Math.floor(seconds/60)} 分钟前`;if(seconds<86400)return `${Math.floor(seconds/3600)} 小时前`;return new Date(value).toLocaleDateString();}
 function groupThreads(rows){const today=[],previous=[];for(const row of rows)(Date.now()-new Date(row.updated_at).getTime()<86400000?today:previous).push(row);return {today,previous};}
 function compactValue(value){if(value==null)return '';if(typeof value==='string')return value;if(typeof value==='number'||typeof value==='boolean')return String(value);if(typeof value==='object'){const selected=value.command||value.filePath||value.path||value.stdout||value.content||value.error||value.message;if(selected)return compactValue(selected);try{return JSON.stringify(value)}catch{return ''}}return ''}
-function activityName(item){if(item.type==='plan')return item.summary||'执行阶段';if(item.type==='warning')return item.payload?.code||'警告';if(item.type==='error')return item.payload?.code||'错误';const name=item.summary||item.payload?.name;return !name||name==='tool'||name==='tool_output'?'工具调用':name}
+function activityName(item){if(item.type==='plan')return item.summary||'执行阶段';if(item.type==='warning')return item.summary||item.payload?.code||'警告';if(item.type==='error')return item.summary||item.payload?.code||'错误';const name=item.summary||item.payload?.name;return !name||name==='tool'||name==='tool_output'?'工具调用':name}
 function activityDetail(item){const detail=compactValue(item.payload?.detail)||compactValue(item.payload?.result)||compactValue(item.payload?.text);return detail||({in_progress:'执行中',completed:'已完成',failed:'失败',interrupted:'已中断'}[item.status]||item.status)}
 
 function Sidebar({threads,current,onSelect,onNew,open,onClose}){
@@ -41,8 +41,9 @@ function Sidebar({threads,current,onSelect,onNew,open,onClose}){
 function Activity({items,active}){
  if(!items.length)return null;
  const tools=items.filter(item=>['command','tool','file_change'].includes(item.type)).length,stages=items.length-tools;
- const summary=active?'正在执行':tools&&stages?`${tools} 个工具 · ${stages} 个阶段`:tools?`${tools} 个工具`:`${stages} 个阶段`;
- return <details className="activity" open={active}><summary><span className={active?'activity-pulse':''}></span><b>{summary}</b><ChevronDown size={14}/></summary><div>{items.map(item=><div className={`activity-row ${item.status}`} key={item.id}>{item.type==='command'?<Terminal size={14}/>:<Wrench size={14}/>}<span><b>{activityName(item)}</b><small title={activityDetail(item)}>{activityDetail(item)}</small></span></div>)}</div></details>;
+ const failure=items.find(item=>item.type==='error'||item.status==='failed');
+ const summary=failure?activityName(failure):active?'正在执行':tools&&stages?`${tools} 个工具 · ${stages} 个阶段`:tools?`${tools} 个工具`:`${stages} 个阶段`;
+ return <details className="activity" open={active||Boolean(failure)}><summary><span className={active?'activity-pulse':''}></span><b>{summary}</b><ChevronDown size={14}/></summary><div>{items.map(item=><div className={`activity-row ${item.status}`} key={item.id}>{item.type==='command'?<Terminal size={14}/>:<Wrench size={14}/>}<span><b>{activityName(item)}</b><small title={activityDetail(item)}>{activityDetail(item)}</small></span></div>)}</div></details>;
 }
 
 function ArtifactRow({item,onOpen}){return <button className="artifact-row" onClick={()=>onOpen(item)}><File size={16}/><span><b>{item.summary}</b><small>{item.payload?.mime||'文件'} · {item.payload?.size?`${Math.ceil(item.payload.size/1024)} KB`:''}</small></span><ChevronRight size={14}/></button>}

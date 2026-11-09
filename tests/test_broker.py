@@ -24,6 +24,11 @@ class Runtime:
     async def cancel(self, sandbox): pass
 
 
+class FailingRuntime(Runtime):
+    async def run(self, sandbox, **kwargs):
+        yield RuntimeResult(status="failed", error_code="harness_exit", error_detail="native process exited")
+
+
 async def test_broker_runs_harness_and_persists_transcript_checkpoint_and_artifact(tmp_path):
     settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "broker.db"),
         backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9",
@@ -47,5 +52,30 @@ async def test_broker_runs_harness_and_persists_transcript_checkpoint_and_artifa
         assert [item.type.value for item in await store.items_after(thread.id)] == ["user_message", "agent_message", "tool", "artifact"]
         assert (await store.artifacts(turn.id))[0].path == "result.txt"
         assert not backend.items
+    finally:
+        await pool.close(); await store.close()
+
+
+async def test_broker_persists_a_user_visible_item_for_terminal_failure(tmp_path):
+    settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "failed.db"),
+        backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9", session_keepalive_seconds=0)
+    store = Store(settings.database_url); await store.initialize()
+    objects = ObjectStore(tmp_path / "objects"); backend = FakeSandboxBackend()
+    pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
+    catalog = HarnessCatalog(); broker = Broker(settings, store, objects, pool, FailingRuntime(), catalog)
+    try:
+        profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Failure"), profile, "a" * 64)
+        turn = await broker.submit(thread.id, TurnCreate(message="fail", idempotency_key="failed-turn-key"))
+        for _ in range(100):
+            current = await store.get_turn(turn.id)
+            if current.state == TurnState.FAILED:
+                break
+            await asyncio.sleep(.02)
+        errors = [item for item in await store.items_after(thread.id) if item.type.value == "error"]
+        assert current.state == TurnState.FAILED
+        assert len(errors) == 1 and errors[0].status == "failed"
+        assert "Harness 执行失败" in errors[0].summary
     finally:
         await pool.close(); await store.close()
