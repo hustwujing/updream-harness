@@ -212,7 +212,9 @@ def create_app() -> FastAPI:
         async with app.state.write_lock:
             process.stdin.write(control_user_message(prompt) if selected.control_input else streaming_user_message(prompt)); await process.stdin.drain()
             app.state.pending_inputs += 1
-        return {"accepted": True, "mode": "native_stream"}
+        mode = "native_steer" if os.environ.get("HARNESS_KIND") == "codex" else (
+            "native_safe_point" if os.environ.get("HARNESS_KIND") == "deepseek" else "native_stream")
+        return {"accepted": True, "mode": mode}
 
     @app.post("/v1/cancel")
     async def cancel():

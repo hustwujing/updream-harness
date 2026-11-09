@@ -59,16 +59,20 @@ class RuntimeClient:
                     else:
                         yield RuntimeEvent.model_validate(value)
 
-    async def append_input(self, sandbox: Sandbox, *, message: str, attachments: list[Attachment], reasoning_effort: str) -> bool:
+    async def append_input(self, sandbox: Sandbox, *, message: str, attachments: list[Attachment], reasoning_effort: str) -> str:
         body = {"message": message, "attachments": [item.model_dump(mode="json") for item in attachments],
                 "native_thread_id": "", "reasoning_effort": reasoning_effort}
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers,
             timeout=20, trust_env=False) as client:
             response = await client.post("/v1/inputs", json=body)
             if response.status_code == 409:
-                return False
+                return ""
             response.raise_for_status()
-            return bool(response.json().get("accepted"))
+            value = response.json()
+            if not value.get("accepted"):
+                return ""
+            return {"codex": "native_steer", "claude": "native_stream",
+                "deepseek": "native_safe_point"}[sandbox.harness.value]
 
     async def checkpoint(self, sandbox: Sandbox) -> bytes:
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers, timeout=300, trust_env=False) as client:

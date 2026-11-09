@@ -44,13 +44,13 @@ class Broker:
             if not sandbox or not turn or turn.state != TurnState.RUNNING:
                 return False
             await self._materialize_attachments(sandbox, value.attachments)
-            accepted = await self.runtime.append_input(sandbox, message=value.message,
+            delivery_mode = await self.runtime.append_input(sandbox, message=value.message,
                 attachments=value.attachments, reasoning_effort=turn.reasoning_effort)
-            if accepted:
+            if delivery_mode:
                 current = await self.store.get_turn(value.turn_id)
                 await self.store.set_input_status(value.id,
-                    "delivered" if current and current.state == TurnState.RUNNING else "applied")
-            return accepted
+                    "delivered" if current and current.state == TurnState.RUNNING else "applied", delivery_mode)
+            return bool(delivery_mode)
 
     async def submit(self, thread_id: str, value: TurnCreate) -> TurnView:
         if sum(item.size for item in value.attachments) > self.settings.max_attachment_bytes:
@@ -292,7 +292,7 @@ class Broker:
                 await self._state(turn.id, final_state, sandbox_id=sandbox.id if sandbox else "", error_code=error_code, error_detail=error_detail)
                 self.active_sandboxes.pop(turn.id, None)
                 self.input_locks.pop(turn.id, None)
-                self.tasks.pop(turn.id, None)
                 next_turn = await self.store.claim_next_turn(turn.thread_id, turn.id)
                 if next_turn:
                     self.tasks[next_turn.id] = asyncio.create_task(self._process(next_turn.id), name="turn-" + next_turn.id)
+                self.tasks.pop(turn.id, None)

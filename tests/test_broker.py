@@ -47,7 +47,7 @@ class LiveInputRuntime(AppendedInputRuntime):
         super().__init__(); self.live_inputs = []
 
     async def append_input(self, sandbox, **kwargs):
-        self.live_inputs.append(kwargs["message"]); self.release.set(); return True
+        self.live_inputs.append(kwargs["message"]); self.release.set(); return "native_stream"
 
 
 async def test_broker_runs_harness_and_persists_transcript_checkpoint_and_artifact(tmp_path):
@@ -149,7 +149,8 @@ async def test_broker_drains_appended_inputs_in_same_sandbox_session(tmp_path):
             await asyncio.sleep(.01)
         assert current.state == TurnState.COMPLETED
         assert runtime.messages == ["first", "second"]
-        assert (await store.list_turn_inputs(turn.id))[0].status == "applied"
+        recorded = (await store.list_turn_inputs(turn.id))[0]
+        assert recorded.status == "applied" and recorded.delivery_mode == "deferred_safe_point"
         assert len({item.sandbox_id for item in [current]}) == 1
     finally:
         await pool.close(); await store.close()
@@ -178,6 +179,7 @@ async def test_broker_delivers_live_input_and_marks_it_applied_at_turn_boundary(
             if current.state in {TurnState.COMPLETED, TurnState.FAILED} and turn.id not in broker.tasks: break
             await asyncio.sleep(.01)
         assert current.state == TurnState.COMPLETED and runtime.live_inputs == ["steer"]
-        assert (await store.list_turn_inputs(turn.id))[0].status == "applied"
+        recorded = (await store.list_turn_inputs(turn.id))[0]
+        assert recorded.status == "applied" and recorded.delivery_mode == "native_stream"
     finally:
         await pool.close(); await store.close()

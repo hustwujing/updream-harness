@@ -73,6 +73,7 @@ class TurnInputRow(Base):
     message: Mapped[str] = mapped_column(Text)
     attachments_json: Mapped[str] = mapped_column(Text, default="[]")
     status: Mapped[str] = mapped_column(String(20), index=True)
+    delivery_mode: Mapped[str] = mapped_column(String(30), default="pending", server_default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -130,6 +131,9 @@ class Store:
             if "owner_id" not in columns:
                 await connection.execute(text("ALTER TABLE threads ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT 'legacy-unowned'"))
             await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_threads_owner_id ON threads (owner_id)"))
+            input_columns = await connection.run_sync(lambda value: {column["name"] for column in inspect(value).get_columns("turn_inputs")})
+            if "delivery_mode" not in input_columns:
+                await connection.execute(text("ALTER TABLE turn_inputs ADD COLUMN delivery_mode VARCHAR(30) NOT NULL DEFAULT 'pending'"))
 
     async def close(self) -> None:
         if self.events:
@@ -261,7 +265,7 @@ class Store:
             row = TurnInputRow(id=identifier(), turn_id=turn_id, sequence=sequence + 1,
                 idempotency_key=value.idempotency_key, message=value.message,
                 attachments_json=json.dumps([item.model_dump(mode="json") for item in value.attachments]),
-                status="pending", created_at=timestamp, updated_at=timestamp)
+                status="pending", delivery_mode="pending", created_at=timestamp, updated_at=timestamp)
             db.add(row)
             item_sequence = (await db.execute(select(ItemRow.sequence).where(ItemRow.thread_id == turn.thread_id)
                 .order_by(ItemRow.sequence.desc()).limit(1))).scalar_one_or_none() or 0
@@ -277,14 +281,16 @@ class Store:
                 TurnInputRow.status == "pending").order_by(TurnInputRow.sequence).limit(1).with_for_update(skip_locked=True))).scalar_one_or_none()
             if not row:
                 return None
-            row.status = "delivered"; row.updated_at = now()
+            row.status = "delivered"; row.delivery_mode = "deferred_safe_point"; row.updated_at = now()
         return self.input_view(row)
 
-    async def set_input_status(self, input_id: str, status: str) -> None:
+    async def set_input_status(self, input_id: str, status: str, delivery_mode: str | None = None) -> None:
         async with self.connections.begin() as db:
             row = await db.get(TurnInputRow, input_id, with_for_update=True)
             if row:
                 row.status = status; row.updated_at = now()
+                if delivery_mode:
+                    row.delivery_mode = delivery_mode
 
     async def apply_delivered_inputs(self, turn_id: str) -> None:
         async with self.connections.begin() as db:

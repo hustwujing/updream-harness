@@ -137,6 +137,7 @@ class TurnInputView(BaseModel):
     message: str
     attachments: list[Attachment]
     status: Literal["pending", "delivered", "applied", "failed"]
+    delivery_mode: str = "pending"
     created_at: datetime
     updated_at: datetime
 

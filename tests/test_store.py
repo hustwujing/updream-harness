@@ -23,7 +23,7 @@ async def test_thread_turn_items_and_idempotency(tmp_path):
             TurnInputCreate(message="follow up", idempotency_key="input-key-1"), owner)
         assert created and not created_again and repeated.id == appended.id
         claimed = await store.next_pending_input(turn.id)
-        assert claimed.id == appended.id and claimed.status == "delivered"
+        assert claimed.id == appended.id and claimed.status == "delivered" and claimed.delivery_mode == "deferred_safe_point"
         await store.set_input_status(claimed.id, "applied")
         assert (await store.list_turn_inputs(turn.id))[0].status == "applied"
         agent = await store.append_agent_delta(thread.id, turn.id, "hel")
