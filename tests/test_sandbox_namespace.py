@@ -78,6 +78,8 @@ async def test_create_scopes_sandbox_for_the_shared_internal_network():
 
     def respond(request: httpx.Request):
         requests.append(request)
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, json={"status": "ok"})
         if request.url.path.endswith("/endpoints/8080"):
             return httpx.Response(200, json={"endpoint": "127.0.0.1:28090/proxy/8080"})
         if request.method == "GET":

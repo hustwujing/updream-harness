@@ -68,7 +68,12 @@ class OpenSandboxBackend:
                     value = endpoint.json()["endpoint"]
                     sandbox.runtime_url = value if "://" in value else "http://" + value
                     sandbox.runtime_headers = dict(self.client.headers)
-                    return sandbox
+                    try:
+                        health = await self.client.get(sandbox.runtime_url.rstrip("/") + "/health")
+                        if health.status_code == 200 and health.json().get("status") == "ok":
+                            return sandbox
+                    except (httpx.TimeoutException, httpx.TransportError, ValueError):
+                        pass
             await asyncio.sleep(0.25)
         raise RuntimeError("OpenSandbox runtime endpoint did not become ready")
 

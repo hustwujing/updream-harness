@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 
@@ -10,19 +11,27 @@ from .sandbox import Sandbox
 
 
 class RuntimeClient:
-    def __init__(self, *, timeout_seconds: int = 3600):
+    def __init__(self, *, timeout_seconds: int = 3600, transport: httpx.AsyncBaseTransport | None = None):
         self.timeout = httpx.Timeout(timeout_seconds, connect=20)
+        self.transport = transport
 
     async def inject(self, sandbox: Sandbox, *, capability_token: str, gateway_url: str, proxy_url: str, harness: str, model: str) -> None:
-        async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers, timeout=20, trust_env=False) as client:
-            response = await client.post("/v1/configure", json={
-                "capability_token": capability_token,
-                "gateway_url": gateway_url,
-                "harness": harness,
-                "model": model,
-                "proxy_url": proxy_url,
-            })
-            response.raise_for_status()
+        payload = {"capability_token": capability_token, "gateway_url": gateway_url,
+            "harness": harness, "model": model, "proxy_url": proxy_url}
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers, timeout=20,
+            trust_env=False, transport=self.transport) as client:
+            for attempt in range(8):
+                try:
+                    response = await client.post("/v1/configure", json=payload)
+                    if response.status_code not in {502, 503, 504}:
+                        response.raise_for_status()
+                        return
+                    if attempt == 7:
+                        response.raise_for_status()
+                except (httpx.TimeoutException, httpx.TransportError):
+                    if attempt == 7:
+                        raise
+                await asyncio.sleep(0.25 * (attempt + 1))
 
     async def restore(self, sandbox: Sandbox, archive: bytes) -> None:
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers, timeout=120, trust_env=False) as client:
