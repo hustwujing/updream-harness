@@ -17,6 +17,7 @@ class Sandbox:
     image: str
     runtime_url: str
     metadata: dict[str, str]
+    runtime_headers: dict[str, str] = field(default_factory=dict)
     warm: bool = False
     thread_id: str = ""
     turn_id: str = ""
@@ -47,9 +48,29 @@ class OpenSandboxBackend:
         sandbox_id = payload.get("id") or payload.get("sandboxId")
         endpoints = payload.get("endpoints") or {}
         runtime_url = payload.get("runtime_url") or endpoints.get("runtime") or endpoints.get("8080")
-        if not isinstance(sandbox_id, str) or not isinstance(runtime_url, str):
-            raise RuntimeError("OpenSandbox response has no sandbox ID or runtime endpoint")
-        return Sandbox(id=sandbox_id, harness=harness, image=image, runtime_url=runtime_url, metadata=metadata)
+        if not isinstance(sandbox_id, str):
+            raise RuntimeError("OpenSandbox response has no sandbox ID")
+        return Sandbox(id=sandbox_id, harness=harness, image=image, runtime_url=runtime_url or "", metadata=metadata)
+
+    async def _ready(self, sandbox: Sandbox) -> Sandbox:
+        for _ in range(80):
+            status = await self.client.get(f"/v1/sandboxes/{sandbox.id}")
+            status.raise_for_status()
+            state = ((status.json().get("status") or {}).get("state") or "").lower()
+            if state in {"failed", "terminated"}:
+                raise RuntimeError("OpenSandbox failed before its runtime endpoint became ready")
+            if state == "running":
+                endpoint = await self.client.get(
+                    f"/v1/sandboxes/{sandbox.id}/endpoints/8080",
+                    params={"use_server_proxy": "true"},
+                )
+                if endpoint.status_code == 200 and endpoint.json().get("endpoint"):
+                    value = endpoint.json()["endpoint"]
+                    sandbox.runtime_url = value if "://" in value else "http://" + value
+                    sandbox.runtime_headers = dict(self.client.headers)
+                    return sandbox
+            await asyncio.sleep(0.25)
+        raise RuntimeError("OpenSandbox runtime endpoint did not become ready")
 
     async def create(self, harness: Harness, image: str, metadata: dict[str, str], environment: dict[str, str]) -> Sandbox:
         if "@sha256:" not in image:
@@ -62,13 +83,12 @@ class OpenSandboxBackend:
             "metadata": metadata,
             "env": environment,
             "entrypoint": ["sandbox-harness-runtime"],
-            "networkPolicy": {"defaultAction": "deny", "egress": [{"action": "allow", "target": self.gateway_host, "ports": [self.gateway_port, self.proxy_port]}]},
         }
         request_id = metadata["sandbox-harness.io/turn"]
         try:
             response = await self.client.post("/v1/sandboxes", json=body, headers={"X-Request-ID": request_id})
             response.raise_for_status()
-            return self._sandbox(response.json(), harness, image, metadata)
+            return await self._ready(self._sandbox(response.json(), harness, image, metadata))
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             matches = await self.find_by_turn(request_id)
             if len(matches) == 1:
@@ -88,7 +108,7 @@ class OpenSandboxBackend:
             if metadata.get("sandbox-harness.io/namespace") != self.namespace:
                 continue
             harness = Harness(metadata.get("sandbox-harness.io/harness", "codex"))
-            result.append(self._sandbox(row, harness, (row.get("image") or {}).get("uri", ""), metadata))
+            result.append(await self._ready(self._sandbox(row, harness, (row.get("image") or {}).get("uri", ""), metadata)))
         return result
 
     async def bind(self, sandbox: Sandbox, thread_id: str, turn_id: str) -> None:

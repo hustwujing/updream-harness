@@ -25,4 +25,5 @@ def test_runtime_configuration_freezes_turn_harness_and_model(tmp_path, monkeypa
     assert runtime_app.os.environ["HARNESS_KIND"] == "deepseek"
     assert runtime_app.os.environ["HARNESS_MODEL"] == "deepseek-v4.1"
     assert runtime_app.os.environ["HTTPS_PROXY"].startswith("http://" + "x" * 32 + ":@")
+    assert "172.31.0.1" in runtime_app.os.environ["NO_PROXY"]
     assert (tmp_path / "run" / "capability-token").read_text() == "x" * 32

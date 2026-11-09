@@ -73,14 +73,17 @@ async def test_warm_sandbox_binding_persists_turn_metadata():
     assert await backend.find_by_turn("turn-one") == [sandbox]
 
 
-async def test_create_scopes_sandbox_and_only_allows_gateway_and_public_proxy():
+async def test_create_scopes_sandbox_for_the_shared_internal_network():
     requests = []
 
     def respond(request: httpx.Request):
         requests.append(request)
+        if request.url.path.endswith("/endpoints/8080"):
+            return httpx.Response(200, json={"endpoint": "127.0.0.1:28090/proxy/8080"})
+        if request.method == "GET":
+            return httpx.Response(200, json={"id": "sandbox-one", "status": {"state": "Running"}})
         return httpx.Response(202, json={
             "id": "sandbox-one",
-            "endpoints": {"runtime": "http://127.0.0.1:42001"},
         })
 
     backend = OpenSandboxBackend(
@@ -101,7 +104,5 @@ async def test_create_scopes_sandbox_and_only_allows_gateway_and_public_proxy():
 
     body = json.loads(requests[0].content)
     assert sandbox.metadata["sandbox-harness.io/namespace"] == "sandbox-harness"
-    assert body["networkPolicy"] == {
-        "defaultAction": "deny",
-        "egress": [{"action": "allow", "target": "172.31.0.1", "ports": [28600, 28601]}],
-    }
+    assert sandbox.runtime_url == "http://127.0.0.1:28090/proxy/8080"
+    assert "networkPolicy" not in body

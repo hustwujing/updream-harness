@@ -73,6 +73,9 @@ def create_app() -> FastAPI:
         os.environ["HTTPS_PROXY"] = authenticated_proxy
         os.environ["http_proxy"] = authenticated_proxy
         os.environ["https_proxy"] = authenticated_proxy
+        no_proxy = ",".join(filter(None, {"127.0.0.1", "localhost", proxy.hostname, urlsplit(value.gateway_url).hostname}))
+        os.environ["NO_PROXY"] = no_proxy
+        os.environ["no_proxy"] = no_proxy
         return {"configured": True}
 
     @app.put("/v1/checkpoint")

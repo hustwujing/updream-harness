@@ -3,6 +3,7 @@ set -euo pipefail
 
 action="${1:-}"
 chain=INPUT
+iptables=/usr/sbin/iptables-nft
 docker=/data2/wujing03/opensandbox-stack/tools/docker-29.9.3/docker
 read -r network_id source_cidr gateway internal < <(
   DOCKER_HOST=unix:///run/docker.sock "$docker" network inspect sandbox-agent-net \
@@ -22,17 +23,17 @@ case "$action" in
     echo "$bridge $source_cidr $gateway:$port"
     ;;
   install)
-    if ! iptables -C "$chain" "${rule[@]}" 2>/dev/null; then
-      drop_line=$(iptables -L "$chain" --line-numbers -n | awk '$0 ~ /sandbox-agent-native/ && $NF == "DROP" {print $1; exit}')
+    if ! "$iptables" -C "$chain" "${rule[@]}" 2>/dev/null; then
+      drop_line=$("$iptables" -L "$chain" --line-numbers -n | awk '$0 ~ /sandbox-agent-native/ && $2 == "DROP" {print $1; exit}')
       if [[ -z "$drop_line" ]]; then
         echo "sandbox bridge deny rule is missing" >&2
         exit 1
       fi
-      iptables -I "$chain" "$drop_line" "${rule[@]}"
+      "$iptables" -I "$chain" "$drop_line" "${rule[@]}"
     fi
     ;;
   remove)
-    iptables -D "$chain" "${rule[@]}" 2>/dev/null || true
+    "$iptables" -D "$chain" "${rule[@]}" 2>/dev/null || true
     ;;
   *)
     echo "usage: $0 validate|install|remove" >&2

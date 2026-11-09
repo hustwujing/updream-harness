@@ -15,6 +15,12 @@ if ! getent passwd sandbox-harness >/dev/null; then
 fi
 install -d -o sandbox-harness -g sandbox-harness -m 0700 "$root/.data"
 setfacl -m u:sandbox-harness:rx /data2/wujing03 "$root"
+setfacl -m u:sandbox-harness:rx /data/wujing03 /data/wujing03/miniforge3 /data/wujing03/miniforge3/bin
+setfacl -m u:sandbox-harness:rx /data/wujing03/miniforge3/bin/python3.13
+setfacl -m u:sandbox-harness:rx /data/wujing03/miniforge3/lib
+setfacl -R -m u:sandbox-harness:rX /data/wujing03/miniforge3/lib/python3.13
+setfacl -m u:sandbox-harness:rx "$root/web"
+setfacl -R -m u:sandbox-harness:rX "$root/.venv" "$root/src" "$root/web/dist"
 chmod 0755 "$root/deploy/network-rule.sh"
 install -m 0644 "$root"/deploy/systemd/*.service /etc/systemd/system/
 systemctl daemon-reload

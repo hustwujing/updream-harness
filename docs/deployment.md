@@ -25,7 +25,7 @@ The deployment must not start another PostgreSQL, Redis, Docker daemon, registry
 - Every Redis key starts with the configured prefix. Lua scripts and scans must include that prefix.
 - Every checkpoint, attachment and artifact key starts with the configured BOSS/S3 prefix. Sandboxes never receive object-store credentials.
 - API and Gateway secrets live in a product-specific environment file. Existing project environment files are read only during initial operator configuration and are never sourced by the running service.
-- The host firewall permits `172.31.0.0/24` to reach only `172.31.0.1:28600-28601` for this product. The OpenSandbox request also uses a deny-by-default egress policy with those two destinations. Port 28601 proxies public HTTP/S only and rejects private destinations after DNS resolution.
+- The shared OpenSandbox Docker network is internal and has no public NAT. Its host firewall permits `172.31.0.0/24` to reach only the existing runtime range plus this product's `172.31.0.1:28600-28601`; port 28601 proxies public HTTP/S only and rejects private destinations after DNS resolution. OpenSandbox rejects per-sandbox `networkPolicy` on this user-defined network, so create requests do not claim unsupported enforcement.
 
 ## Installation Order
 
