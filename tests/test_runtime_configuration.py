@@ -120,3 +120,26 @@ async def test_runtime_finishes_and_replays_events_without_an_http_subscriber(tm
     assert any(row.get("payload", {}).get("text") == "background-finished" for row in rows)
     assert rows[-1]["type"] == "result"
     await response.body_iterator.aclose()
+
+
+def test_runtime_preserves_native_harness_failure_status(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
+    monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")
+    monkeypatch.setattr(runtime_app, "OUTPUTS", tmp_path / "workspace" / "outputs")
+    monkeypatch.setattr(runtime_app, "PERSISTENT", ("project", "state"))
+    runner = tmp_path / "failed.py"
+    runner.write_text("""import json,sys
+for line in sys.stdin:
+    print(json.dumps({'type':'result','is_error':True,'subtype':'error_during_execution','result':'native failure'}),flush=True)
+""")
+    monkeypatch.setenv("HARNESS_COMMAND_JSON", json.dumps({name: [sys.executable, str(runner)]
+        for name in ("codex", "claude", "deepseek")}))
+    app = runtime_app.create_app()
+    with TestClient(app) as client:
+        assert client.post("/v1/configure", json={"capability_token":"x"*32,"gateway_url":"http://gateway:28600",
+            "harness":"claude","model":"model","proxy_url":"http://172.31.0.1:28601"}).status_code == 200
+        response = client.post("/v1/turns", json={"message":"first","reasoning_effort":"high"})
+    rows = [json.loads(line) for line in response.text.splitlines()]
+    assert rows[-1]["result"]["status"] == "failed"
+    assert rows[-1]["result"]["error_code"] == "harness_failed"
+    assert rows[-1]["result"]["error_detail"] == "native failure"

@@ -146,9 +146,18 @@ def create_app() -> FastAPI:
                     app.state.pending_inputs = len(execution.pending_input_ids)
                     if not execution.pending_input_ids:
                         await stop_process()
+                        failed = (
+                            native.get("status") == "failed"
+                            or bool(native.get("is_error"))
+                            or native.get("subtype") in {"error", "error_max_turns", "error_during_execution"}
+                        )
+                        detail = native.get("error_detail") or native.get("result") or native.get("message") or ""
                         await finish_execution(execution, {
-                            "status": "completed", "native_thread_id": execution.native_thread_id,
-                            "error_code": "", "error_detail": "", "input_ids": execution.completed_input_ids,
+                            "status": "failed" if failed else "completed",
+                            "native_thread_id": execution.native_thread_id,
+                            "error_code": (native.get("error_code") or "harness_failed") if failed else "",
+                            "error_detail": str(detail)[:4000] if failed else "",
+                            "input_ids": execution.completed_input_ids,
                         })
                         return
             code = await process.wait()

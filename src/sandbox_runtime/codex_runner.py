@@ -90,7 +90,7 @@ def main():
                 "sandboxPolicy": {"type": "externalSandbox", "networkAccess": "enabled"},
                 "input": [{"type": "text", "text": first["message"]}], "model": args.model,
                 "effort": os.environ.get("HARNESS_REASONING_EFFORT", "high")})
-            turn_id = started["turn"]["id"]; input_ids = [first["id"]]; completed = False
+            turn_id = started["turn"]["id"]; input_ids = [first["id"]]; completed = False; completed_turn = {}
             while not completed:
                 while True:
                     try: extra = controls.get_nowait()
@@ -102,6 +102,7 @@ def main():
                     try: forwarded = bridge.forwarded.get_nowait()
                     except queue.Empty: break
                     if forwarded.get("method") == "turn/completed" and forwarded.get("params", {}).get("turn", {}).get("id") == turn_id:
+                        completed_turn = forwarded.get("params", {}).get("turn", {})
                         completed = True
                 if completed: break
                 try: message = bridge.messages.get(timeout=.05)
@@ -110,8 +111,13 @@ def main():
                 if "id" in message and "method" in message: bridge.respond(message); continue
                 bridge.emit(message)
                 if message.get("method") == "turn/completed" and message.get("params", {}).get("turn", {}).get("id") == turn_id:
+                    completed_turn = message.get("params", {}).get("turn", {})
                     completed = True
-            bridge.emit({"type": "harness.input.completed", "input_ids": input_ids, "thread_id": thread_id})
+            error = completed_turn.get("error") or {}
+            bridge.emit({"type": "harness.input.completed", "input_ids": input_ids, "thread_id": thread_id,
+                "status": completed_turn.get("status", "completed"),
+                "error_code": error.get("codexErrorInfo") or "",
+                "error_detail": error.get("message") or ""})
     except Exception as exc:
         bridge.emit({"type": "error", "message": type(exc).__name__ + ": " + str(exc)}); raise
     finally: bridge.close()

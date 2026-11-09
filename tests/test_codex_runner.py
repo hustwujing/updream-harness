@@ -38,3 +38,4 @@ for line in sys.stdin:
     assert any(row.get("method") == "fake/steered" and row["params"]["text"] == "second" for row in rows)
     completed = next(row for row in rows if row.get("type") == "harness.input.completed")
     assert completed["input_ids"] == ["one", "two"] and completed["thread_id"] == "thread-1"
+    assert completed["status"] == "completed" and completed["error_code"] == ""
