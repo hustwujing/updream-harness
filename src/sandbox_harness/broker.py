@@ -98,7 +98,10 @@ class Broker:
     async def _recovery_loop(self) -> None:
         while True:
             await asyncio.sleep(self.settings.recovery_scan_seconds)
-            await self.reconcile()
+            try:
+                await self.reconcile()
+            except Exception:
+                logger.exception("Expired Turn reconciliation failed")
 
     async def _reaper_loop(self) -> None:
         while True:

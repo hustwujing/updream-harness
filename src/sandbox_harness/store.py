@@ -143,10 +143,11 @@ class Store:
             input_columns = await connection.run_sync(lambda value: {column["name"] for column in inspect(value).get_columns("turn_inputs")})
             if "delivery_mode" not in input_columns:
                 await connection.execute(text("ALTER TABLE turn_inputs ADD COLUMN delivery_mode VARCHAR(30) NOT NULL DEFAULT 'pending'"))
-            turn_columns = await connection.run_sync(lambda value: {column["name"] for column in inspect(value).get_columns("turns")})
+            inspected_turn_columns = await connection.run_sync(lambda value: inspect(value).get_columns("turns"))
+            turn_columns = {column["name"] for column in inspected_turn_columns}
             additions = {
                 "lease_owner": "VARCHAR(64) NOT NULL DEFAULT ''",
-                "lease_expires_at": "TIMESTAMP NULL",
+                "lease_expires_at": "TIMESTAMP WITH TIME ZONE NULL",
                 "recovery_generation": "INTEGER NOT NULL DEFAULT 0",
                 "runtime_sequence": "INTEGER NOT NULL DEFAULT 0",
                 "runtime_execution_id": "VARCHAR(160) NOT NULL DEFAULT ''",
@@ -156,6 +157,14 @@ class Store:
             for name, definition in additions.items():
                 if name not in turn_columns:
                     await connection.execute(text(f"ALTER TABLE turns ADD COLUMN {name} {definition}"))
+            lease_column = next((column for column in inspected_turn_columns
+                if column["name"] == "lease_expires_at"), None)
+            if (connection.dialect.name == "postgresql" and lease_column is not None
+                    and not getattr(lease_column["type"], "timezone", False)):
+                await connection.execute(text(
+                    "ALTER TABLE turns ALTER COLUMN lease_expires_at TYPE TIMESTAMP WITH TIME ZONE "
+                    "USING lease_expires_at AT TIME ZONE current_setting('TIMEZONE')"
+                ))
             event_columns = await connection.run_sync(lambda value: {column["name"] for column in inspect(value).get_columns("events")})
             if "source_execution_id" not in event_columns:
                 await connection.execute(text("ALTER TABLE events ADD COLUMN source_execution_id VARCHAR(160) NOT NULL DEFAULT ''"))
