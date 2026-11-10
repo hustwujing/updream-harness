@@ -50,6 +50,8 @@ Uploaded Turn attachments are versioned as managed project assets and exported o
 
 The Workspace panel also supports direct project uploads, rename, deletion and version history. Deletion creates an auditable tombstone; each Turn resets managed directories before materializing the current manifest, so stale files cannot survive in an attached Sandbox.
 
+The browser keeps the selected Thread in `?thread=<id>`, restores it after refresh and supports history navigation. Users may delete terminal Threads; deletion first removes any retained Session Sandbox, then removes the owner's conversation records. Images, videos and text files open in an ownership-checked inline preview, while every file retains an explicit download action.
+
 ## Development
 
 ```bash
@@ -74,4 +76,4 @@ The final 21-case capability, interaction, Workspace, background execution, reco
 
 ## Runtime Toolchain
 
-Every Harness image inherits the same immutable foundation with Python, Node.js, ffmpeg/ffprobe, Git, curl, jq, ripgrep, file inspection, GCC/G++, Make, CMake, pkg-config, archive tools and CJK fonts. [toolchain.lock.json](runtime/toolchain.lock.json) records the observed command and package versions; image builds fail when the foundation no longer matches it. The deployed Harness images are referenced by registry digest rather than mutable tag.
+Every Harness image inherits the same immutable foundation with Python, Node.js, ffmpeg/ffprobe, Chromium, Playwright, Three.js, Git, curl, jq, ripgrep, file inspection, GCC/G++, Make, CMake, pkg-config, archive tools and CJK fonts. The common Runtime layer additionally carries NumPy, Pillow, OpenCV, SciPy, scikit-image, librosa, SoundFile, Matplotlib, MoviePy, PyAV, ImageIO, CairoSVG, PSD Tools, rembg/ONNX Runtime, Trimesh and related media libraries. `runtime/media_probe.py` imports the declared modules during every image build. [toolchain.lock.json](runtime/toolchain.lock.json) records the observed foundation command and package versions; image builds fail when the foundation no longer matches it. The deployed Harness images are referenced by registry digest rather than mutable tag.

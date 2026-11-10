@@ -52,3 +52,12 @@ class RedisEventBus:
         except RedisError:
             self.available = False
             logger.warning("Redis event wait failed; falling back to database polling", exc_info=True)
+
+    async def delete(self, turn_ids: list[str]) -> None:
+        if not turn_ids:
+            return
+        try:
+            await self.redis.delete(*(self.key(turn_id) for turn_id in turn_ids))
+        except RedisError:
+            self.available = False
+            logger.warning("Redis event cleanup failed; keys will expire automatically", exc_info=True)

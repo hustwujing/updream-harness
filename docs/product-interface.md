@@ -64,9 +64,11 @@ The transcript follows streaming output only while the user is already near the 
 
 ## File and Artifact Review
 
-Selecting an artifact opens a side sheet with preview, metadata and download. Media uses native playback; HTML uses a sandboxed document viewport; large or unsupported files remain downloadable. The sheet can show workspace files and outputs without exposing runtime credentials or private Harness state.
+Images and videos are rendered directly in the transcript and open into a full-screen ownership-checked preview. The Workspace opens images, videos and text files in the same preview; unsupported types download directly. Transcript artifacts and every Workspace row retain an explicit download action without exposing object-store URLs, runtime credentials or private Harness state.
 
 The Workspace side sheet lists current project assets and artifacts, version history and active supervised background jobs. It supports direct asset upload, rename, deletion, download and background-job cancellation.
+
+The current Thread ID is stored in the page query string. Refresh and browser history restore only Threads owned by the signed browser identity. Terminal Threads can be deleted from the sidebar; active Threads must first finish or be stopped.
 
 ## Responsive Behavior
 

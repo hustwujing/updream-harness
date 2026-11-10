@@ -11,9 +11,11 @@ GET    /api/threads/{thread_id}
 PATCH  /api/threads/{thread_id}
 POST   /api/threads/{thread_id}/archive
 POST   /api/threads/{thread_id}/resume
+DELETE /api/threads/{thread_id}
 ```
 
 Creating a Thread freezes the default Harness, model and reasoning effort. A Turn may explicitly select another configured profile.
+Deleting a Thread is owner-scoped and rejects active work. The broker deletes any retained Sandbox before atomically removing the Thread's Turns, events, interactions, project-file records and artifact indexes.
 
 ## Turns
 

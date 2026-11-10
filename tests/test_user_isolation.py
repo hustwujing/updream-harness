@@ -24,6 +24,7 @@ def test_threads_and_uploads_are_scoped_to_signed_browser_owner(tmp_path):
         client.cookies.set(COOKIE, token_b)
         assert client.get("/api/threads").json() == []
         assert client.get(f"/api/threads/{thread_a['id']}").status_code == 404
+        assert client.delete(f"/api/threads/{thread_a['id']}").status_code == 404
         thread_b = client.post("/api/threads", json={"harness":"claude", "model":"claude-4.6-sonnet",
             "reasoning_level":"standard", "title":"private-b"}).json()
         response = client.post(f"/api/threads/{thread_b['id']}/turns", json={"message":"try foreign attachment",
@@ -32,6 +33,8 @@ def test_threads_and_uploads_are_scoped_to_signed_browser_owner(tmp_path):
 
         client.cookies.set(COOKIE, token_a)
         assert [row["id"] for row in client.get("/api/threads").json()] == [thread_a["id"]]
+        assert client.delete(f"/api/threads/{thread_a['id']}").status_code == 204
+        assert client.get("/api/threads").json() == []
 
 
 def test_project_file_mutations_are_owner_scoped_versioned_and_path_checked(tmp_path):
@@ -48,6 +51,8 @@ def test_project_file_mutations_are_owner_scoped_versioned_and_path_checked(tmp_
             params={"path":"assets/reference.txt", "mime":"text/plain"}, content=b"one")
         assert response.status_code == 200; first = response.json()
         assert "object_ref" not in first
+        preview = client.get(f"/api/project-files/{first['id']}?inline=true")
+        assert preview.content == b"one" and preview.headers["content-disposition"].startswith("inline;")
         assert client.post(f"/api/threads/{thread['id']}/project-files",
             params={"path":"../escape"}, content=b"x").status_code == 422
         client.cookies.set(COOKIE, token_b)

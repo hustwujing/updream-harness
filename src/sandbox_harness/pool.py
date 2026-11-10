@@ -191,6 +191,18 @@ class SandboxPool:
             await self.backend.delete(sandbox)
             self._user_slots.release()
 
+    async def discard_thread(self, thread_id: str) -> None:
+        async with self._lock:
+            expiry = self._expiry.pop(thread_id, None)
+            sandbox = self._attached.pop(thread_id, None)
+            self._idle_since.pop(thread_id, None)
+        if expiry:
+            expiry.cancel()
+            await asyncio.gather(expiry, return_exceptions=True)
+        if sandbox:
+            await self.backend.delete(sandbox)
+            self._user_slots.release()
+
     async def _expire(self, thread_id: str, sandbox: Sandbox, seconds: int) -> None:
         try:
             await asyncio.sleep(max(0, seconds))

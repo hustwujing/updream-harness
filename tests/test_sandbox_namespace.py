@@ -156,6 +156,17 @@ async def test_reacquiring_attached_sandbox_cancels_expiration():
     await pool.close()
 
 
+async def test_deleting_thread_discards_its_retained_sandbox():
+    backend = FakeSandboxBackend()
+    pool = SandboxPool(backend, {harness: "" for harness in Harness}, {harness: 0 for harness in Harness})
+    sandbox = await pool.acquire(thread_id="delete-thread", turn_id="done", harness=Harness.CODEX, environment={})
+    await pool.release(sandbox, keep_attached=True, keepalive_seconds=60)
+    await pool.discard_thread("delete-thread")
+    assert sandbox.id not in backend.items
+    assert "delete-thread" not in pool._attached and "delete-thread" not in pool._expiry
+    await pool.close()
+
+
 async def test_warm_pool_refills_after_claim():
     backend = FakeSandboxBackend()
     targets = {harness: (2 if harness == Harness.CODEX else 0) for harness in Harness}

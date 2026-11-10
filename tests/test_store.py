@@ -1,6 +1,7 @@
 from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.domain import EventKind, Harness, ItemType, ThreadCreate, TurnCreate, TurnInputCreate, TurnState
 from sandbox_harness.store import Store
+import pytest
 
 
 async def test_thread_turn_items_and_idempotency(tmp_path):
@@ -157,5 +158,31 @@ async def test_thread_summaries_include_latest_turn_state(tmp_path):
         rows = await store.list_thread_summaries(owner)
         assert rows[0]["latest_turn_state"] == "RUNNING"
         assert rows[0]["latest_turn_updated_at"] is not None
+    finally:
+        await store.close()
+
+
+async def test_thread_deletion_rejects_active_work_and_removes_owned_records(tmp_path):
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "delete-thread.db")); await store.initialize()
+    try:
+        catalog = HarnessCatalog(); profile = catalog.resolve("codex", "gpt-5.6", "standard")
+        owner = "a" * 64
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CODEX, model=profile.model,
+            reasoning_level="standard", title="Delete"), profile, owner)
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="hello", idempotency_key="delete-thread-key"), profile, owner)
+        await store.append_event(turn.id, EventKind.STATE, {"state":"QUEUED"})
+        await store.register_project_file(thread.id, path="assets/input.txt", source_type="upload",
+            source_turn_id=turn.id, sha256="1" * 64, size=1, mime="text/plain", object_ref="sha256:one")
+        with pytest.raises(RuntimeError, match="active_thread"):
+            await store.delete_thread(thread.id, owner)
+        with pytest.raises(KeyError):
+            await store.delete_thread(thread.id, "b" * 64)
+        await store.set_turn_state(turn.id, TurnState.COMPLETED)
+        assert await store.delete_thread(thread.id, owner) == [turn.id]
+        assert await store.get_thread(thread.id, owner) is None
+        assert await store.get_turn(turn.id) is None
+        assert await store.events_after(turn.id, 0) == []
+        assert await store.current_project_files(thread.id, owner) == []
     finally:
         await store.close()

@@ -259,6 +259,17 @@ class Broker:
             self._schedule(turn.id)
         return turn
 
+    async def delete_thread(self, thread_id: str, owner_id: str) -> None:
+        async with self.locks[thread_id]:
+            thread = await self.store.get_thread(thread_id, owner_id)
+            if not thread:
+                raise KeyError("thread_not_found")
+            turns = await self.store.list_turns(thread_id, owner_id)
+            if any(turn.id in self.tasks or turn.id in self.active_sandboxes for turn in turns):
+                raise RuntimeError("active_thread_cannot_be_deleted")
+            await self.pool.discard_thread(thread_id)
+            await self.store.delete_thread(thread_id, owner_id)
+
     async def cancel(self, turn_id: str) -> None:
         self.cancelled.add(turn_id)
         turn = await self.store.get_turn(turn_id)

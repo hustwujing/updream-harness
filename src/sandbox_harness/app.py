@@ -187,6 +187,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "Thread not found")
         return value
 
+    @app.delete("/api/threads/{thread_id}", status_code=204)
+    async def delete_thread(thread_id: str, request: Request):
+        try:
+            await broker.delete_thread(thread_id, request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404, "Thread not found")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+        return Response(status_code=204)
+
     @app.post("/api/threads/{thread_id}/turns")
     async def create_turn(thread_id: str, value: TurnCreate, request: Request):
         if not await store.get_thread(thread_id, request.state.owner_id):
@@ -360,22 +370,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return attachment
 
     @app.get("/api/artifacts/{artifact_id}")
-    async def artifact(artifact_id: str, request: Request):
+    async def artifact(artifact_id: str, request: Request, inline: bool = False):
         value = await store.get_artifact_for_owner(artifact_id, request.state.owner_id)
         if not value:
             raise HTTPException(404, "Artifact not found")
         data = objects.get(value.object_ref, maximum=settings.max_artifact_bytes)
-        return Response(data, media_type=value.mime, headers={"Content-Disposition": f'attachment; filename="{Path(value.path).name}"'})
+        disposition = "inline" if inline else "attachment"
+        return Response(data, media_type=value.mime, headers={"Content-Disposition": f'{disposition}; filename="{Path(value.path).name}"'})
 
     @app.get("/api/project-files/{file_id}")
-    async def project_file(file_id: str, request: Request):
+    async def project_file(file_id: str, request: Request, inline: bool = False):
         value = await store.get_project_file_for_owner(file_id, request.state.owner_id)
         if not value:
             raise HTTPException(404, "Project file not found")
         maximum = settings.max_attachment_bytes if value.source_type == "upload" else settings.max_artifact_bytes
         data = objects.get(value.object_ref, maximum=maximum)
+        disposition = "inline" if inline else "attachment"
         return Response(data, media_type=value.mime,
-            headers={"Content-Disposition": f'attachment; filename="{Path(value.path).name}"'})
+            headers={"Content-Disposition": f'{disposition}; filename="{Path(value.path).name}"'})
 
     @app.post("/api/project-files/{file_id}/rename")
     async def rename_project_file(file_id: str, value: ProjectFileRename, request: Request):

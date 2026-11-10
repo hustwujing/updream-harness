@@ -5,7 +5,7 @@ import asyncio
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, UniqueConstraint, inspect, select, text, update
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, UniqueConstraint, delete, inspect, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -269,6 +269,33 @@ class Store:
                 query = query.where(ThreadRow.owner_id == owner_id)
             row = (await db.execute(query)).scalar_one_or_none()
         return self.thread_view(row) if row else None
+
+    async def delete_thread(self, thread_id: str, owner_id: str) -> list[str]:
+        terminal = {state.value for state in {
+            TurnState.COMPLETED, TurnState.WAITING_USER, TurnState.FAILED, TurnState.CANCELLED,
+        }}
+        async with self.connections.begin() as db:
+            thread = (await db.execute(select(ThreadRow).where(
+                ThreadRow.id == thread_id, ThreadRow.owner_id == owner_id,
+            ).with_for_update())).scalar_one_or_none()
+            if not thread:
+                raise KeyError("thread_not_found")
+            turns = (await db.execute(select(TurnRow).where(TurnRow.thread_id == thread_id))).scalars().all()
+            if any(turn.state not in terminal for turn in turns):
+                raise RuntimeError("active_thread_cannot_be_deleted")
+            turn_ids = [turn.id for turn in turns]
+            await db.execute(delete(InteractionRow).where(InteractionRow.thread_id == thread_id))
+            await db.execute(delete(ProjectFileRow).where(ProjectFileRow.thread_id == thread_id))
+            await db.execute(delete(ItemRow).where(ItemRow.thread_id == thread_id))
+            if turn_ids:
+                await db.execute(delete(EventRow).where(EventRow.turn_id.in_(turn_ids)))
+                await db.execute(delete(TurnInputRow).where(TurnInputRow.turn_id.in_(turn_ids)))
+                await db.execute(delete(ArtifactRow).where(ArtifactRow.turn_id.in_(turn_ids)))
+                await db.execute(delete(TurnRow).where(TurnRow.id.in_(turn_ids)))
+            await db.delete(thread)
+        if self.events:
+            await self.events.delete(turn_ids)
+        return turn_ids
 
     async def create_turn(self, thread_id: str, value: TurnCreate, resolved: ResolvedProfile, owner_id: str) -> tuple[TurnView, bool, bool]:
         async with self.connections.begin() as db:
