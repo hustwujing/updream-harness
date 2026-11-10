@@ -25,6 +25,10 @@ ROUTES = {
 logger = logging.getLogger(__name__)
 
 
+class CheckpointRestoreError(RuntimeError):
+    pass
+
+
 class Broker:
     def __init__(self, settings: Settings, store: Store, objects: ObjectStore, pool: SandboxPool, runtime: RuntimeClient, catalog: HarnessCatalog):
         self.settings = settings
@@ -472,9 +476,12 @@ class Broker:
                         model_start_timeout_seconds=self.settings.runtime_model_start_timeout_seconds,
                         event_idle_timeout_seconds=self.settings.runtime_event_idle_timeout_seconds,
                     )
-                    if thread.checkpoint_ref:
+                    if thread.checkpoint_ref and not sandbox.reused:
                         archive = self.objects.get(thread.checkpoint_ref, maximum=self.settings.max_checkpoint_bytes)
-                        await self.runtime.restore(sandbox, archive)
+                        try:
+                            await self.runtime.restore(sandbox, archive)
+                        except httpx.HTTPStatusError as exc:
+                            raise CheckpointRestoreError("Runtime rejected the saved workspace checkpoint") from exc
                     await self._register_project_attachments(thread.id, turn.id, turn.attachments)
                     await self.runtime.reset_project_files(sandbox)
                     await self._materialize_project_files(sandbox,
@@ -644,6 +651,7 @@ class Broker:
                 if final_state == TurnState.FAILED:
                     public_detail = {
                         "HTTPStatusError": "沙箱运行环境暂时不可用，请重新发送消息。",
+                        "CheckpointRestoreError": "会话工作区恢复失败，请重新发送消息。",
                         "ConnectError": "沙箱运行环境暂时无法连接，请重新发送消息。",
                         "harness_exit": "Harness 执行失败，请重试或切换模型。",
                         "model_response_timeout": "模型服务在规定时间内没有返回，请稍后重试或切换模型。",

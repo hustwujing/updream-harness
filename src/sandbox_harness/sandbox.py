@@ -25,6 +25,7 @@ class Sandbox:
     warm: bool = False
     thread_id: str = ""
     turn_id: str = ""
+    reused: bool = False
 
 
 class SandboxBackend(Protocol):

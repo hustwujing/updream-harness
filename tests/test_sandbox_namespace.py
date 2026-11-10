@@ -149,6 +149,7 @@ async def test_reacquiring_attached_sandbox_cancels_expiration():
     await pool.release(sandbox, keep_attached=True, keepalive_seconds=1)
     same = await pool.acquire(thread_id="thread", turn_id="two", harness=Harness.CLAUDE, environment={})
     assert same is sandbox
+    assert same.reused is True
     await __import__('asyncio').sleep(.02)
     assert sandbox.id in backend.items
     await pool.release(sandbox, keep_attached=False)

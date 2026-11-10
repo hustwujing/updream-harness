@@ -184,6 +184,33 @@ def test_checkpoint_excludes_object_backed_managed_project_files(tmp_path, monke
     assert not any(name.startswith("project/assets") or name.startswith("project/artifacts") for name in names)
 
 
+def test_checkpoint_excludes_runtime_links_and_restore_ignores_existing_links(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
+    monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")
+    monkeypatch.setattr(runtime_app, "OUTPUTS", tmp_path / "workspace" / "outputs")
+    monkeypatch.setattr(runtime_app, "PERSISTENT", ("project", "state"))
+    app = runtime_app.create_app(); state = tmp_path / "workspace/state/codex/tmp"
+    state.mkdir(parents=True); (state / "target").write_text("kept"); (state / "runtime-link").symlink_to("/opt/codex")
+    with TestClient(app) as client:
+        exported = client.get("/v1/checkpoint")
+        assert exported.status_code == 200
+        with tarfile.open(fileobj=io.BytesIO(exported.content), mode="r:") as archive:
+            assert "state/codex/tmp/target" in archive.getnames()
+            assert "state/codex/tmp/runtime-link" not in archive.getnames()
+
+        crafted = io.BytesIO()
+        with tarfile.open(fileobj=crafted, mode="w") as archive:
+            payload = b"restored"
+            member = tarfile.TarInfo("state/restored.txt"); member.size = len(payload)
+            archive.addfile(member, io.BytesIO(payload))
+            link = tarfile.TarInfo("state/ignored-link"); link.type = tarfile.SYMTYPE; link.linkname = "/opt/runtime"
+            archive.addfile(link)
+        restored = client.put("/v1/checkpoint", content=crafted.getvalue())
+    assert restored.status_code == 200
+    assert (tmp_path / "workspace/state/restored.txt").read_text() == "restored"
+    assert not (tmp_path / "workspace/state/ignored-link").exists()
+
+
 def test_runtime_delivers_native_interaction_response_to_control_harness(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
     monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")

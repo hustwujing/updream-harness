@@ -88,6 +88,7 @@ class SandboxPool:
                 try:
                     await self.backend.bind(attached, thread_id, turn_id)
                     attached.turn_id = turn_id
+                    attached.reused = True
                     return attached
                 except SandboxNotFound:
                     self._attached.pop(thread_id, None)
@@ -121,6 +122,7 @@ class SandboxPool:
                     self._idle_since.pop(thread_id, None)
                     await self.backend.bind(attached, thread_id, turn_id)
                     attached.turn_id = turn_id
+                    attached.reused = True
                     return attached
                 sandbox = self._warm[harness].pop() if self._warm[harness] else None
                 if sandbox:
@@ -146,6 +148,7 @@ class SandboxPool:
                     )
                 sandbox.thread_id = thread_id
                 sandbox.turn_id = turn_id
+                sandbox.reused = False
                 self._attached[thread_id] = sandbox
         except BaseException:
             self._user_slots.release()

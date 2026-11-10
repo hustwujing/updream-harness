@@ -385,11 +385,15 @@ def create_app() -> FastAPI:
         with NamedTemporaryFile() as stream:
             stream.write(data); stream.flush()
             with tarfile.open(stream.name, "r:*") as archive:
+                safe_members = []
                 for member in archive.getmembers():
                     path = safe_relative(member.name)
-                    if path.parts[0] not in PERSISTENT or member.issym() or member.islnk() or member.isdev():
+                    if path.parts[0] not in PERSISTENT:
                         raise HTTPException(400, "Invalid checkpoint member")
-                archive.extractall(WORKSPACE, filter="data")
+                    if member.issym() or member.islnk() or member.isdev():
+                        continue
+                    safe_members.append(member)
+                archive.extractall(WORKSPACE, members=safe_members, filter="data")
         load_jobs()
         return {"restored": True}
 
@@ -444,7 +448,9 @@ def create_app() -> FastAPI:
     @app.get("/v1/checkpoint")
     async def checkpoint():
         target = WORKSPACE / "tmp" / "checkpoint.tar"
-        def include_unmanaged(member: tarfile.TarInfo):
+        def include_safe(member: tarfile.TarInfo):
+            if member.issym() or member.islnk() or member.isdev():
+                return None
             parts = PurePosixPath(member.name).parts
             if len(parts) >= 2 and parts[0] == "project" and parts[1] in {"assets", "artifacts"}:
                 return None
@@ -452,7 +458,7 @@ def create_app() -> FastAPI:
         with tarfile.open(target, "w") as archive:
             for name in PERSISTENT:
                 archive.add(WORKSPACE / name, arcname=name, recursive=True,
-                    filter=include_unmanaged if name == "project" else None)
+                    filter=include_safe)
         return FileResponse(target, media_type="application/x-tar")
 
     @app.post("/v1/turns")
