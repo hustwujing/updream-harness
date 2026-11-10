@@ -18,6 +18,8 @@ from .capability import CapabilityCodec
 from .config import Settings, load_settings, validate_service_settings
 from .domain import Harness
 from .model_routes import ModelRoutes
+from .model_activity import ModelActivity
+from .store import Store
 from .public_proxy import start_proxy
 
 
@@ -75,6 +77,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     public_connections: dict[str, set[asyncio.Task]] = defaultdict(set)
     clients: dict[str, httpx.AsyncClient] = {}
     model_routes = ModelRoutes(settings)
+    activity_store = Store(settings.database_url, settings.redis_url, settings.redis_prefix)
     upstreams = {
         "/v1/models/codex": (settings.upstream_codex, os.environ.get("SANDBOX_HARNESS_UPSTREAM_CODEX_KEY", "")),
         "/v1/models/claude": (settings.upstream_claude, os.environ.get("SANDBOX_HARNESS_UPSTREAM_CLAUDE_KEY", "")),
@@ -87,6 +90,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await redis.ping()
+        await activity_store.initialize()
 
         async def authorize_public(token: str):
             try:
@@ -112,6 +116,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             proxy.close()
             await proxy.wait_closed()
             await redis.aclose()
+            await activity_store.close()
             await asyncio.gather(*(client.aclose() for client in clients.values()))
 
     app = FastAPI(title="Sandbox Capability Gateway", lifespan=lifespan)
@@ -192,8 +197,20 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             payload["model"] = claims.model
             body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
         upstream = client.build_request(request.method, suffix, params=request.query_params, headers=headers, content=body)
+        observe_model = prefix.startswith("/v1/models/") and suffix.rstrip("/") in {
+            "/responses", "/messages", "/chat/completions"}
+        activity = ModelActivity(activity_store, claims) if observe_model else None
+        if activity:
+            await activity.start()
         started = time.monotonic()
-        response = await send_with_start_timeout(client, upstream, settings.gateway_model_start_timeout_seconds)
+        try:
+            response = await send_with_start_timeout(client, upstream, settings.gateway_model_start_timeout_seconds)
+        except BaseException as exc:
+            if activity:
+                await activity.finish(error_code=type(exc).__name__)
+            raise
+        if activity:
+            activity.header_ms = round((time.monotonic() - started) * 1000)
         log = logger.warning if response.status_code >= 400 else logger.info
         log("Upstream response turn=%s model=%s status=%s header_seconds=%.3f request_bytes=%s request_id=%s",
             claims.turn_id, claims.model, response.status_code, time.monotonic() - started,
@@ -201,15 +218,27 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         if (int(time.time()) >= claims.expires_at or
                 await redis.exists(settings.redis_prefix + "capability:revoked:" + claims.nonce)):
             await response.aclose()
+            if activity:
+                await activity.finish(error_code="capability_revoked")
             raise HTTPException(401, "Capability token expired or revoked")
         active[claims.nonce].add(response)
 
         async def content():
+            stream_error = ""
             try:
                 async with asyncio.timeout(max(0, claims.expires_at - time.time())):
                     async for chunk in bytes_with_idle_timeout(response, settings.gateway_model_idle_timeout_seconds):
+                        if activity:
+                            await activity.observe(chunk)
                         yield chunk
+            except BaseException as exc:
+                stream_error = "" if activity and activity.probe.completed and isinstance(exc, asyncio.CancelledError) else type(exc).__name__
+                raise
             finally:
+                if activity:
+                    if response.status_code == 200 and "text/event-stream" in response.headers.get("content-type", "") and not activity.probe.completed:
+                        stream_error = stream_error or "stream_incomplete"
+                    await activity.finish(response.status_code, stream_error)
                 active[claims.nonce].discard(response)
                 if not active[claims.nonce]:
                     active.pop(claims.nonce, None)

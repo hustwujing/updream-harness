@@ -273,3 +273,7 @@
 .message-file-pending small { font-size:10px }
 .message-image { display:block;border:0;padding:0;background:none;cursor:zoom-in }
 .message-image img { display:block;max-width:100%;max-height:360px;border-radius:8px }
+
+.harness-icon {display:block;width:18px;height:18px;object-fit:contain;flex:none}
+.agent-avatar {border-color:#e5e5df;background:#fff}
+.thread-status .harness-icon {width:14px;height:14px}

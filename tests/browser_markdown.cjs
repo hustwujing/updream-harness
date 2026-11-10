@@ -22,6 +22,7 @@ const assert=require('node:assert/strict');
   await page.goto('http://127.0.0.1:22892/?thread=markdown-thread');
   await page.waitForSelector('.markdown-copy strong');
   assert.equal(await page.locator('.markdown-copy strong').innerText(),'海豚');
+  assert(await page.locator('.agent-avatar img[alt=Codex]').evaluate(img=>img.complete&&img.naturalWidth>0));
   assert.equal(await page.locator('.markdown-copy li').count(),2);
   assert.match(await page.locator('.markdown-copy pre code').innerText(),/image.save/);
   const link=page.locator('.markdown-copy a').filter({hasText:'查看合成结果'});

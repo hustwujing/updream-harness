@@ -82,3 +82,16 @@ The transcript renders Markdown without raw HTML and resolves sandbox file links
 only against the current Thread's exported artifacts/managed files. Step timers
 use persisted Item timestamps: live steps tick once a second, completed steps
 retain their duration, and terminal cleanup stops unfinished step timers.
+
+## Visible model wait steps
+
+The Gateway creates one transcript step per actual model-generation HTTP request,
+bound to the capability's model and Turn. It records request start, response headers,
+first effective output and completion/failure, without storing prompts, credentials
+or model output in telemetry. An SSE metadata/start frame alone does not count as
+output. Waiting and streaming phases share one Item, so elapsed time remains continuous.
+Retries appear as distinct HTTP-request steps; a failed request does not by itself
+mark the entire active Turn failed. Token-count and catalog endpoints are excluded.
+Timing writes are bounded and best effort so an observability outage does not fail
+an otherwise valid model request. The existing Redis event bus notifies clients;
+PostgreSQL remains the durable replay source.

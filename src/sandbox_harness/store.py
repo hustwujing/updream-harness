@@ -749,7 +749,7 @@ class Store:
                         item_id=previous.item_id, payload=json.loads(previous.payload_json), created_at=previous.created_at)
             payload = dict(value.payload)
             timestamp = now()
-            if value.kind in {EventKind.TOOL_STARTED, EventKind.STEP_STARTED}:
+            if value.kind in {EventKind.TOOL_STARTED, EventKind.STEP_STARTED} and not payload.get("model_request_id"):
                 await db.execute(update(ItemRow).where(ItemRow.turn_id == turn_id,
                     ItemRow.type == ItemType.AGENT_MESSAGE.value, ItemRow.status == "in_progress")
                     .values(status="completed", updated_at=timestamp))
@@ -826,6 +826,20 @@ class Store:
         if self.events:
             await self.events.publish(event)
         return event
+
+    async def update_model_activity(self, item_id: str, *, phase: str, status: str, payload: dict) -> None:
+        async with self.connections.begin() as db:
+            row = await db.get(ItemRow, item_id, with_for_update=True)
+            if not row or row.status not in {"in_progress", "interrupted"}:
+                return
+            model = payload["model"]
+            row.summary = {"streaming": f"{model} 正在输出", "failed": f"{model} 请求失败",
+                           "completed": f"{model} 响应完成"}.get(phase, f"等待 {model} 响应")
+            row.payload_json = json.dumps({**json.loads(row.payload_json), **payload, "phase": phase}, ensure_ascii=False)
+            row.status = status; row.updated_at = now()
+            turn_id = row.turn_id
+        await self.append_event(turn_id, EventKind.STEP_PROGRESS if status == "in_progress" else EventKind.STEP_FINISHED,
+            {"model_request_id": payload["model_request_id"], "phase": phase}, item_id=item_id)
 
     async def runtime_event_recorded(self, turn_id: str, execution_id: str, source_sequence: int) -> bool:
         if not execution_id or source_sequence <= 0:
