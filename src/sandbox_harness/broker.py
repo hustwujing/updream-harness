@@ -391,7 +391,7 @@ class Broker:
                                     execution_id: str = "") -> None:
         generation = self.leases.get(turn_id)
         if value.kind not in {EventKind.TEXT_DELTA, EventKind.TOOL_OUTPUT}:
-            event("runtime.event.received",thread_id=thread_id,turn_id=turn_id,execution_id=execution_id,runtime_sequence=value.runtime_sequence,reason=value.kind.value)
+            event("runtime.event.received",thread_id=thread_id,turn_id=turn_id,execution_id=execution_id,runtime_sequence=value.runtime_sequence,tool_id=value.payload.get("tool_use_id"),reason=value.kind.value)
         await self.store.persist_runtime_event(thread_id, turn_id, value, execution_id,
             lease_owner=self.instance_id if generation is not None else None,
             recovery_generation=generation)
@@ -690,6 +690,8 @@ class Broker:
                             {"code": "partial_workspace_save_failed", "detail": "本轮中间文件未能完整保存。"})
         except asyncio.CancelledError:
             if self.closing:
+                enrich(outcome="abandoned")
+                event("turn.processing.abandoned",turn_id=turn.id,reason="broker_shutdown")
                 abandoned = True
                 return
             final_state = TurnState.CANCELLED

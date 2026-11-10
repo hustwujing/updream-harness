@@ -33,7 +33,7 @@ Key event groups:
 - Turn submission/deduplication, lease claim/loss, state commits, recovery/reattachment and cancellation.
 - Sandbox acquire/reuse/create/bind/adopt/release/delete and orphan cleanup.
 - Input acceptance, replay, delivery and unknown receipt outcomes; interaction replies.
-- Runtime process lifecycle, input acknowledgements, background jobs and cancellation.
+- Runtime process lifecycle, input acknowledgements, background jobs and cancellation. Native tool IDs produce source-side `harness.tool` spans and monotonic duration logs; replay does not recalculate execution time from Broker receipt time. Missing native IDs are explicit `runtime.tool.unidentified` events, and unfinished tool spans end as interrupted.
 - Model request start, response headers, first effective output, terminal status and total duration. Header arrival and effective output are distinct. Provider-reported input/output token values preserve zero; absent values remain absent with `usage_source=unavailable`. Counts are observations, not budget reconciliation.
 - Object reads/writes, checkpoint transfer and durable commit, artifact transfer/persistence.
 - Redis fallback, model-catalog/probe failures, telemetry queue/drop/export/disk status.

@@ -119,7 +119,7 @@ class ModelActivity:
         self.finished = True
         failed = bool(error_code or self.probe.failed or status_code is None or status_code >= 400)
         if self.span:
-            self.span.set_attributes(obs.sanitize({'header_ms':self.header_ms,'first_output_ms':self.first_output_ms,'outcome':'failed' if failed else 'success'}))
+            self.span.set_attributes(obs.sanitize({'duration_ms':round((time.monotonic()-self.started)*1000,3),'header_ms':self.header_ms,'first_output_ms':self.first_output_ms,'outcome':'failed' if failed else 'success'}))
             if failed:self.span.set_status(Status(StatusCode.ERROR))
             with trace.use_span(self.span,end_on_exit=False):
                 obs.event('model.request.finished',level=logging.ERROR if failed else logging.INFO,turn_id=self.claims.turn_id,model=self.claims.model,model_request_id=self.request_id,input_tokens=self.probe.input_tokens,output_tokens=self.probe.output_tokens,usage_source='provider_reported' if self.probe.input_tokens is not None or self.probe.output_tokens is not None else 'unavailable',header_ms=self.header_ms,first_output_ms=self.first_output_ms,duration_ms=round((time.monotonic()-self.started)*1000),outcome='failed' if failed else 'success',error_code=error_code,failure_origin=obs.failure_origin(error_code or ('model_response_failed' if self.probe.failed else ''),status_code) if failed else None,**{'http.response.status_code':status_code})

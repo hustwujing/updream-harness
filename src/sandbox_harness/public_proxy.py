@@ -5,7 +5,7 @@ import base64
 import ipaddress
 import socket
 import time
-from .observability import event,bind,operation,enrich,add_link
+from .observability import event,bind,operation,enrich,add_link,observed
 import logging
 from urllib.parse import urlsplit
 
@@ -54,6 +54,7 @@ def proxy_token(headers: dict[str, str]) -> str:
     return token
 
 
+@observed("public_proxy.request",new_trace=True)
 async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, authorize, *, connections=None) -> None:
     upstream_writer = None
     registered_nonce = None
@@ -87,6 +88,7 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
             headers.append((name.strip(), value.strip()))
         claims = await authorize(proxy_token(header_map))
         log_context={key:getattr(claims,key,"") for key in ("turn_id","thread_id","sandbox_id")}
+        enrich(**log_context);add_link(getattr(claims,"traceparent",""))
         event("public_proxy.authorized",**log_context)
         if connections is not None:
             registered_nonce = claims.nonce

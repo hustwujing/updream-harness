@@ -238,3 +238,19 @@ async def test_shutdown_does_not_start_queued_successor(tmp_path,monkeypatch):
         assert not broker.heartbeats
         assert second.id in {turn.id for turn in await store.recoverable_turns()}
     finally:await broker.close();await pool.close();await store.close()
+
+
+def test_source_tool_timing_pairs_ids_and_interrupts_unfinished_tools(telemetry):
+    tools=obs.ToolObservations()
+    with obs.operation('runtime.execution',turn_id='turn-tool'):
+        tools.observe('tool_started',{'tool_use_id':'tool-1','name':'Bash','detail':{'command':'PRIVATE_COMMAND'}},'execution-1')
+        time.sleep(.02)
+        tools.observe('tool_finished',{'tool_use_id':'tool-1','is_error':False},'execution-1')
+        tools.observe('tool_started',{'tool_use_id':'tool-2','name':'Read'},'execution-1')
+        tools.close()
+    records=rows(telemetry)
+    first=next(row for row in records if row['event_name']=='runtime.tool.finished' and row['attributes']['updream.tool_id']=='tool-1')
+    second=next(row for row in records if row['event_name']=='runtime.tool.finished' and row['attributes']['updream.tool_id']=='tool-2')
+    assert first['attributes']['updream.duration_ms']>=20 and first['attributes']['updream.outcome']=='success'
+    assert second['attributes']['updream.outcome']=='interrupted'
+    assert 'PRIVATE_COMMAND' not in json.dumps(records)

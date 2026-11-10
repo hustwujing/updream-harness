@@ -34,7 +34,7 @@ _PROVIDER = TracerProvider(shutdown_on_exit=False)
 _TELEMETRY = None
 # Payloads and arbitrary extras never cross this allowlist. Business IDs have a namespace.
 BUSINESS = {'thread_id','turn_id','input_id','execution_id','sandbox_id','broker_id','request_id',
-    'model_request_id','upstream_request_id','interaction_id','job_id','artifact_id','item_id',
+    'tool_id','tool_name','model_request_id','upstream_request_id','interaction_id','job_id','artifact_id','item_id',
     'generation','runtime_sequence','attempt','partial','reused','keep_attached','harness','model',
     'state','previous_state','outcome','reason','error_code','failure_origin','count','bytes',
     'input_tokens','output_tokens','usage_source','duration_ms','first_output_ms','header_ms','queue_ms','namespace','dropped_count','gap_count',
@@ -145,11 +145,13 @@ def operation(name, *, parent=None, new_trace=False, kind=SpanKind.INTERNAL, **f
             cancelled = isinstance(exc, asyncio.CancelledError)
             if not cancelled: span.set_status(Status(StatusCode.ERROR))
             span.set_attribute('updream.outcome', 'cancelled' if cancelled else 'failed')
+            span.set_attribute('updream.duration_ms',round((time.monotonic()-start)*1000,3))
             event(name+'.cancelled' if cancelled else name+'.failed',
                 level=logging.INFO if cancelled else logging.ERROR, exc=exc,
                 duration_ms=round((time.monotonic()-start)*1000,3))
             raise
         else:
+            span.set_attribute('updream.duration_ms',round((time.monotonic()-start)*1000,3))
             event(name+'.completed', duration_ms=round((time.monotonic()-start)*1000,3))
 
 def observed(name, *, new_trace=False):
@@ -176,6 +178,38 @@ def observed(name, *, new_trace=False):
         wrapped.__signature__=inspect.signature(fn,eval_str=True)
         return wrapped
     return decorate
+
+class ToolObservations:
+    """Source-side timing survives stream replay; holds only bounded active spans."""
+    def __init__(self):self.active={}
+    def observe(self,kind,payload,execution_id):
+        tool_id=payload.get('tool_use_id')
+        if not isinstance(tool_id,str) or not tool_id:
+            if kind in {'tool_started','tool_finished'}:event('runtime.tool.unidentified',execution_id=execution_id,reason='missing_native_tool_id',state=kind)
+            return
+        if kind=='tool_started':
+            if tool_id in self.active:self._finish(tool_id,'interrupted')
+            if len(self.active)>=512:
+                event('runtime.tool.tracking_limit',level=logging.WARNING,execution_id=execution_id);return
+            name=payload.get('name','tool')
+            if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}',name):name='tool'
+            attrs={**_CONTEXT.get(),**sanitize({'execution_id':execution_id,'tool_id':tool_id,'tool_name':name})}
+            span=_PROVIDER.get_tracer('updream-harness').start_span('harness.tool',attributes=attrs)
+            self.active[tool_id]=(span,time.monotonic(),execution_id,name)
+            with trace.use_span(span,end_on_exit=False):event('runtime.tool.started',execution_id=execution_id,tool_id=tool_id,tool_name=name)
+        elif kind=='tool_finished':self._finish(tool_id,'failed' if payload.get('is_error') else 'success')
+    def _finish(self,tool_id,outcome):
+        value=self.active.pop(tool_id,None)
+        if not value:return
+        span,start,execution_id,name=value
+        span.set_attribute('updream.outcome',outcome)
+        span.set_attribute('updream.duration_ms',round((time.monotonic()-start)*1000,3))
+        if outcome=='failed':span.set_status(Status(StatusCode.ERROR))
+        with trace.use_span(span,end_on_exit=False):event('runtime.tool.finished',execution_id=execution_id,
+            tool_id=tool_id,tool_name=name,outcome=outcome,duration_ms=round((time.monotonic()-start)*1000,3))
+        span.end()
+    def close(self):
+        for tool_id in list(self.active):self._finish(tool_id,'interrupted')
 
 def observed_sync(name):
     def decorate(fn):
@@ -291,7 +325,7 @@ class Telemetry:
             'event_name':span.name,'trace_id':f'{context.trace_id:032x}','span_id':f'{context.span_id:016x}',
             'parent_span_id':f'{span.parent.span_id:016x}' if span.parent else None,
             'links':[{'trace_id':f'{link.context.trace_id:032x}','span_id':f'{link.context.span_id:016x}'} for link in span.links],
-            'duration_ms':round((span.end_time-span.start_time)/1e6,3),'status':span.status.status_code.name,
+            'duration_ms':(span.attributes or {}).get('updream.duration_ms',round((span.end_time-span.start_time)/1e6,3)),'status':span.status.status_code.name,
             'resource':resource,'attributes':sanitize(dict(span.attributes or {}))}
     def _work(self):
         last_dropped=0

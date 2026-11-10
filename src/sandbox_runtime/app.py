@@ -21,7 +21,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from sandbox_harness.observability import RequestLoggingMiddleware, observed, event, enrich, telemetry
+from sandbox_harness.observability import RequestLoggingMiddleware, observed, event, enrich, telemetry, ToolObservations
 
 from .adapters import command, control_interaction_response, control_user_message, normalize, streaming_user_message
 
@@ -123,6 +123,7 @@ class Execution:
     saw_text_delta: bool = False
     condition: asyncio.Condition = field(default_factory=asyncio.Condition)
     reader_task: asyncio.Task | None = None
+    tools: ToolObservations = field(default_factory=ToolObservations)
     journal_bytes: int = 0
     protocol_state: dict[str, Any] = field(default_factory=dict)
 
@@ -248,6 +249,7 @@ def create_app() -> FastAPI:
                 result = {**result, "status": "cancelled", "error_code": "cancelled"}
             append_event_locked(execution, {"type": "result", "result": result})
             execution.result = result
+            execution.tools.close()
             event("runtime.execution.terminal",execution_id=execution.id,state=result.get("status"),error_code=result.get("error_code"),runtime_sequence=execution.sequence)
             for native_id in execution.interaction_ids.values():
                 waiter = app.state.interaction_waiters.get(native_id)
@@ -333,6 +335,7 @@ def create_app() -> FastAPI:
                     if execution.selected.control_input else native.get("type") == "result"
                 )
                 if event is not None:
+                    execution.tools.observe(event.get("kind"),event.get("payload",{}),execution.id)
                     execution.native_thread_id = event.get("payload", {}).get("thread_id") or execution.native_thread_id
                     if event.get("kind") != "text_delta" or not (
                         event.get("payload", {}).get("snapshot") and execution.saw_text_delta
