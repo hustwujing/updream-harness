@@ -610,6 +610,14 @@ def create_app() -> FastAPI:
                 execution.process.stdin.close()
             return True
 
+    def reset_outputs() -> None:
+        OUTPUTS.mkdir(parents=True, exist_ok=True)
+        for path in OUTPUTS.iterdir():
+            if path.is_symlink() or not path.is_dir():
+                path.unlink(missing_ok=True)
+            else:
+                shutil.rmtree(path)
+
     @app.post("/v1/turns")
     async def run_turn(value: TurnRequest):
         async with app.state.execution_lock:
@@ -618,6 +626,7 @@ def create_app() -> FastAPI:
                 raise HTTPException(409, "Another Harness execution is already running")
             created = execution is None or execution.id != value.execution_id
             if created:
+                reset_outputs()
                 harness = os.environ.get("HARNESS_KIND", "claude")
                 model = os.environ.get("HARNESS_MODEL", "default")
                 os.environ["HARNESS_REASONING_EFFORT"] = value.reasoning_effort

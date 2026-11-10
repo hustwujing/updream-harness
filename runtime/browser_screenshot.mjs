@@ -35,10 +35,13 @@ async function browserProxy() {
   if (parsed.protocol !== 'http:' || !parsed.hostname) throw new Error('Invalid sandbox proxy URL');
   if (!parsed.username) return {value: {server: `${parsed.protocol}//${parsed.host}`}, close: async () => {}};
   const authorization = `Basic ${Buffer.from(`${decodeURIComponent(parsed.username)}:${decodeURIComponent(parsed.password)}`).toString('base64')}`;
+  const sockets = new Set();
   const server = net.createServer(client => {
+    sockets.add(client);
     let buffered = Buffer.alloc(0);
     const fail = () => client.destroy();
     client.once('error', () => {});
+    client.once('close', () => sockets.delete(client));
     const receive = chunk => {
       buffered = Buffer.concat([buffered, chunk]);
       if (buffered.length > 64 * 1024) return fail();
@@ -53,7 +56,9 @@ async function browserProxy() {
         upstream.write(buffered.subarray(boundary + 4));
         client.pipe(upstream); upstream.pipe(client);
       });
+      sockets.add(upstream);
       upstream.once('error', fail);
+      upstream.once('close', () => sockets.delete(upstream));
     };
     client.on('data', receive);
   });
@@ -63,7 +68,10 @@ async function browserProxy() {
   });
   const address = server.address();
   return {value: {server: `http://127.0.0.1:${address.port}`},
-    close: () => new Promise(resolve => server.close(resolve))};
+    close: async () => {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }};
 }
 
 const value = options(process.argv.slice(2));

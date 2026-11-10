@@ -158,6 +158,34 @@ for line in sys.stdin:
     assert rows[-1]["result"]["error_detail"] == "native failure"
 
 
+def test_new_execution_clears_previous_turn_outputs(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
+    monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")
+    monkeypatch.setattr(runtime_app, "OUTPUTS", tmp_path / "workspace" / "outputs")
+    monkeypatch.setattr(runtime_app, "PERSISTENT", ("project", "state"))
+    runner = tmp_path / "output.py"
+    runner.write_text("""import json,pathlib,sys
+state=pathlib.Path('""" + str(tmp_path / "workspace/state/count") + """')
+number=int(state.read_text())+1 if state.exists() else 1
+state.parent.mkdir(parents=True,exist_ok=True);state.write_text(str(number))
+out=pathlib.Path('""" + str(tmp_path / "workspace/outputs") + """');out.mkdir(parents=True,exist_ok=True)
+(out/f'artifact-{number}.txt').write_text(str(number))
+sys.stdin.read();print(json.dumps({'type':'result','result':'done'}),flush=True)
+""")
+    monkeypatch.setenv("HARNESS_COMMAND_JSON", json.dumps({name: [sys.executable, str(runner)]
+        for name in ("codex", "claude", "deepseek")}))
+    app = runtime_app.create_app()
+    with TestClient(app) as client:
+        assert client.post("/v1/configure", json={"capability_token":"x"*32,"gateway_url":"http://gateway:28600",
+            "harness":"codex","model":"model","proxy_url":"http://172.31.0.1:28601"}).status_code == 200
+        first = client.post("/v1/turns", json={"message":"first","execution_id":"first"})
+        assert json.loads(first.text.splitlines()[-1])["result"]["status"] == "completed"
+        assert [item["path"] for item in client.get("/v1/artifacts").json()["items"]] == ["artifact-1.txt"]
+        second = client.post("/v1/turns", json={"message":"second","execution_id":"second"})
+        assert json.loads(second.text.splitlines()[-1])["result"]["status"] == "completed"
+        assert [item["path"] for item in client.get("/v1/artifacts").json()["items"]] == ["artifact-2.txt"]
+
+
 def test_runtime_materializes_only_managed_project_file_namespaces(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
     monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")

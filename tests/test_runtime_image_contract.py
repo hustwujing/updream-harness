@@ -24,3 +24,4 @@ def test_runtime_installs_supported_public_browser_helper():
     assert "HTTPS_PROXY" in text
     assert "Proxy-Authorization: ${authorization}" in text
     assert "server.listen(0, '127.0.0.1'" in text
+    assert "for (const socket of sockets) socket.destroy()" in text
