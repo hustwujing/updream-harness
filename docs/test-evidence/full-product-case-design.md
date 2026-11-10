@@ -22,6 +22,7 @@ This matrix adapts the risk-first campaign discipline from `distributed-agent-sa
 | R03 | Recovery | Gateway restart during model activity | bounded Harness behavior, scanner remains alive |
 | R04 | Recovery | Sandbox deletion during active Turn | safe terminal state, no replay, no leaked lease |
 | R05 | Recovery | cleanup interruption after intended final state | final-state recovery and capability revocation attempt |
+| R06 | Recovery | warm or attached Sandbox expires before claim | replace stale ID; reconciliation tolerates concurrent deletion |
 | U01 | Browser | desktop interaction, jobs and Workspace | screenshot, no page errors or overlap |
 | U02 | Browser | mobile interaction, jobs and Workspace | screenshot, controls inside viewport |
 | U03 | Browser | refresh/re-entry while waiting | pending decision and transcript preserved |

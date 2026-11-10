@@ -37,6 +37,7 @@ The matrix follows the risk-first and first-failure retention discipline used by
 | R03 | Gateway restart during Turn | passed | Turn completed, recovery scanner stayed alive |
 | R04 | Sandbox deletion during active Turn | passed | safe failed state, lease released, no replay |
 | R05 | cleanup interrupted after intended result | passed | intended terminal state recovered, no pending cleanup |
+| R06 | warm/attached Sandbox expires in OpenSandbox before Pool claim | passed | stale IDs replaced; concurrent deletion skipped during reconciliation |
 | U01 | desktop interaction and Workspace | passed | pending card, file commands and background cancellation |
 | U02 | mobile interaction and Workspace | passed | resolved state after re-entry, panel within viewport |
 | U03 | refresh/re-entry while waiting | passed | durable Interaction and transcript, no duplicate response |
@@ -53,6 +54,9 @@ H04 contains separate Codex, Claude and DeepSeek executions. The stable browser-
 | Codex B03 failed upstream before creating a job | model/upstream failure; boundary not triggered | retained original result; driver now exits immediately on terminal state | Claude B03 triggered and passed cancellation protocol |
 | Workspace history browser assertion ran before async response | test program error | explicit DOM wait | desktop/mobile Workspace test passed |
 | Parallel smoke drivers lost HTTP while W02 intentionally restarted API | test orchestration error | mark drivers as conflicting; rerun in stable window | all three model smokes and browser cases passed |
+| A user received “sandbox environment unavailable” after an overnight idle period | program error | normalize bind/detail 404 as `SandboxNotFound`, replace stale warm/attached entries, tolerate deletion between list and detail | 14 Pool/namespace tests; real deletion of two warm IDs produced two new Sandbox IDs and no metadata 404 |
+
+The real R06 allocation test deliberately deleted both Claude warm Sandboxes before submitting two new Turns. Both Turns received newly created Sandbox IDs and entered `RUNNING`, proving the original metadata-bind 404 was removed. Their later Claude requests did not reach a prompt terminal state during the bounded observation window and were explicitly cancelled; that external/model tail is not presented as a conversational-success case.
 
 No case-specific production branch was added. Prompt changes are limited to a short Runtime contract describing Workspace paths, output publication, `sandbox-background`, `sandbox-interact`, casual-chat behavior and the rule against redundant confirmation. Programmatic schema, ownership, fencing and lifecycle checks remain authoritative.
 
