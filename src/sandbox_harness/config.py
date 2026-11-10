@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     upstream_image: str = ""
     upstream_video: str = ""
     upstream_audio: str = ""
+    model_routes_json: str = ""
     harness_catalog_json: str = ""
     model_catalog_discovery: bool = True
     model_catalog_refresh_seconds: int = Field(default=300, ge=30, le=86400)

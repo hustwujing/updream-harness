@@ -15,6 +15,8 @@ import uvicorn
 
 from .capability import CapabilityCodec
 from .config import Settings, load_settings
+from .domain import Harness
+from .model_routes import ModelRoutes
 from .public_proxy import start_proxy
 
 
@@ -66,6 +68,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     active: dict[str, set[httpx.Response]] = defaultdict(set)
     clients: dict[str, httpx.AsyncClient] = {}
+    model_routes = ModelRoutes(settings)
     upstreams = {
         "/v1/models/codex": (settings.upstream_codex, os.environ.get("SANDBOX_HARNESS_UPSTREAM_CODEX_KEY", "")),
         "/v1/models/claude": (settings.upstream_claude, os.environ.get("SANDBOX_HARNESS_UPSTREAM_CLAUDE_KEY", "")),
@@ -149,9 +152,14 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         if not prefix:
             raise HTTPException(404, "Gateway route is not configured")
         base_url, credential = upstreams[prefix]
+        if prefix.startswith("/v1/models/"):
+            harness = Harness(prefix.rsplit("/", 1)[-1])
+            selected_route = model_routes.resolve(harness, claims.model)
+            base_url, credential = selected_route.base_url, selected_route.credential
         if not base_url:
             raise HTTPException(503, "Gateway upstream is not configured")
-        client = clients.setdefault(prefix, httpx.AsyncClient(base_url=base_url.rstrip("/"),
+        client_key = prefix + "\0" + base_url
+        client = clients.setdefault(client_key, httpx.AsyncClient(base_url=base_url.rstrip("/"),
             timeout=httpx.Timeout(None, connect=20), trust_env=False))
         suffix = upstream_suffix(route, prefix)
         headers = {key: value for key, value in request.headers.items() if key.lower() not in HOP_HEADERS | {"authorization", "x-api-key", "anthropic-api-key"}}

@@ -1,4 +1,5 @@
 from sandbox_harness.config import Settings
+from sandbox_harness.model_routes import ModelRoutes
 
 
 def test_opensandbox_environment_contract(monkeypatch):
@@ -9,3 +10,14 @@ def test_opensandbox_environment_contract(monkeypatch):
 
     assert settings.opensandbox_url == "http://opensandbox:8080"
     assert settings.opensandbox_api_key == "secret-key"
+
+
+def test_model_routes_allow_distinct_upstreams_and_credential_references(monkeypatch):
+    monkeypatch.setenv("CODEX_FAST_KEY", "fast-secret")
+    settings = Settings(_env_file=None, upstream_codex="http://default.example",
+        model_routes_json='{"codex/gpt-6-sol":{"base_url":"http://fast.example/v1","credential_env":"CODEX_FAST_KEY"}}')
+    routes = ModelRoutes(settings)
+    assert routes.resolve("codex", "gpt-6-sol").base_url == "http://fast.example/v1"
+    assert routes.resolve("codex", "gpt-6-sol").credential == "fast-secret"
+    assert routes.resolve("codex", "gpt-6-astra").base_url == "http://default.example"
+    assert routes.configured_models("codex") == ["gpt-6-sol"]

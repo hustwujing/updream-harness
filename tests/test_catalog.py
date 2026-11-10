@@ -101,3 +101,25 @@ async def test_probe_disables_failed_models_and_restores_status(tmp_path, monkey
     assert ModelDiscovery(settings, restored).load_snapshot()
     with pytest.raises(ValueError, match="temporarily unavailable"):
         restored.resolve("codex", "gpt-5.6", "standard")
+
+
+async def test_discovery_probes_explicit_model_on_its_own_route(tmp_path, monkeypatch):
+    settings = Settings(data_root=tmp_path, upstream_codex="https://default.example",
+        upstream_claude="", upstream_deepseek="", model_routes_json=json.dumps({
+            "codex/gpt-6-sol":{"base_url":"https://sol.example/v1","credential_env":"SOL_KEY"}}))
+    monkeypatch.setenv("SANDBOX_HARNESS_UPSTREAM_CODEX_KEY", "default-secret")
+    monkeypatch.setenv("SOL_KEY", "sol-secret")
+
+    def handler(request: httpx.Request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"data":[{"id":"gpt-5.6"}]})
+        body = json.loads(request.content)
+        if body["model"] == "gpt-6-sol":
+            assert request.url.host == "sol.example" and request.headers["authorization"] == "Bearer sol-secret"
+        else:
+            assert request.url.host == "default.example"
+        return httpx.Response(200, json={"ok":True})
+
+    catalog = HarnessCatalog(); discovery = ModelDiscovery(settings, catalog, httpx.MockTransport(handler))
+    await discovery.refresh()
+    assert [model.id for model in catalog.options[Harness.CODEX].models] == ["gpt-5.6", "gpt-6-sol"]

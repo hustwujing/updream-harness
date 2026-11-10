@@ -4,7 +4,6 @@ import asyncio
 from datetime import datetime, timezone
 import json
 import logging
-import os
 from pathlib import Path
 import time
 from typing import Any
@@ -14,6 +13,7 @@ import httpx
 from .catalog import HarnessCatalog
 from .config import Settings
 from .domain import Harness
+from .model_routes import ModelRoutes
 
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,7 @@ class ModelDiscovery:
         self.catalog = catalog
         self.transport = transport
         self.snapshot = settings.data_root / "model-catalog.json"
+        self.routes = ModelRoutes(settings)
         self.last_refresh_at: str | None = None
         self.last_discovered = 0
         self.last_available = 0
@@ -118,15 +119,16 @@ class ModelDiscovery:
                 "available": self.last_available}
 
     async def _fetch(self, client: httpx.AsyncClient, harness: Harness) -> list[str]:
-        base = getattr(self.settings, "upstream_" + harness.value).rstrip("/")
+        route = self.routes.default(harness)
+        base = route.base_url
         if not base:
-            return []
-        key = os.environ.get("SANDBOX_HARNESS_UPSTREAM_" + harness.value.upper() + "_KEY", "")
+            return self.routes.configured_models(harness)
+        key = route.credential
         headers = {"authorization": "Bearer " + key, "x-api-key": key} if key else {}
         url = base + ("/models" if base.endswith("/v1") else "/v1/models")
         response = await client.get(url, headers=headers)
         response.raise_for_status()
-        models = compatible_models(harness, parse_model_ids(response.json()))
+        models = compatible_models(harness, parse_model_ids(response.json()) + self.routes.configured_models(harness))
         if not models:
             raise ValueError("Upstream returned no compatible models")
         return models
@@ -147,8 +149,9 @@ class ModelDiscovery:
         return dict(rows)
 
     async def _probe(self, client: httpx.AsyncClient, harness: Harness, model: str) -> dict[str, Any]:
-        base = getattr(self.settings, "upstream_" + harness.value).rstrip("/")
-        key = os.environ.get("SANDBOX_HARNESS_UPSTREAM_" + harness.value.upper() + "_KEY", "")
+        route = self.routes.resolve(harness, model)
+        base = route.base_url
+        key = route.credential
         headers = {"authorization": "Bearer " + key, "x-api-key": key} if key else {}
         if harness == Harness.CODEX:
             url = base + "/responses"
