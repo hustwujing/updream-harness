@@ -711,7 +711,8 @@ class Store:
                 row.lease_owner != lease_owner or row.recovery_generation != recovery_generation
             ):
                 raise RuntimeError("stale_turn_lease")
-            if row.cancel_requested and state in {TurnState.COMPLETED, TurnState.WAITING_USER, TurnState.FAILED}:
+            if (row.cancel_requested and error_code != "cleanup_failed"
+                    and state in {TurnState.COMPLETED, TurnState.WAITING_USER, TurnState.FAILED}):
                 state, error_code, error_detail = TurnState.CANCELLED, "cancelled", "Turn was cancelled"
             row.state = state.value
             if sandbox_id is not None:

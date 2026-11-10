@@ -462,6 +462,7 @@ class Broker:
             self.tasks.pop(turn_id, None)
             return
         sandbox = None
+        extra_sandboxes = []
         final_state = TurnState.FAILED
         error_code = "turn_failed"
         error_detail = "Turn failed before the Harness returned a result"
@@ -473,10 +474,10 @@ class Broker:
                     matches = await self.pool.backend.find_by_turn(turn.id)
                     if matches:
                         sandbox = matches[0]
-                        # Extra matches cannot be resumed; cleanup the owned resources.
-                        for extra in matches[1:]:
+                        # Stop every owned process, then revoke before deleting any match.
+                        extra_sandboxes = matches[1:]
+                        for extra in extra_sandboxes:
                             await self.runtime.cancel(extra)
-                            await self.pool.backend.delete(extra)
                     raise asyncio.CancelledError()
                 recovering = turn.state in {
                     TurnState.RUNNING, TurnState.AWAITING_USER, TurnState.DRAINING_INPUTS, TurnState.CHECKPOINTING,
@@ -668,8 +669,10 @@ class Broker:
                     self.tasks.pop(turn.id, None)
                     return
                 try:
-                    await self.store.begin_turn_cleanup(turn.id, final_state, error_code=error_code,
+                    cleaning = await self.store.begin_turn_cleanup(turn.id, final_state, error_code=error_code,
                         error_detail=error_detail, owner=self.instance_id, generation=generation)
+                    final_state = TurnState(cleaning.pending_final_state)
+                    error_code, error_detail = cleaning.error_code, cleaning.error_detail
                     await self.store.fail_unapplied_inputs(turn.id,
                         lease_owner=self.instance_id, recovery_generation=generation)
                     await self.store.complete_agent_item(turn.id,
@@ -705,6 +708,8 @@ class Broker:
                             and final_state in {TurnState.COMPLETED, TurnState.WAITING_USER}
                             and self.settings.session_keepalive_seconds > 0
                         )
+                        for extra in extra_sandboxes:
+                            await self.pool.backend.delete(extra)
                         await self.pool.release(sandbox, keep_attached=keep_attached,
                             keepalive_seconds=self.settings.session_keepalive_seconds)
                 except Exception as exc:

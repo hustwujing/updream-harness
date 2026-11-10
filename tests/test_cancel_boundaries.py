@@ -81,6 +81,8 @@ async def test_queued_stop_is_atomic_with_claim_and_completion_cannot_override_s
         await store.request_turn_cancel(first.id)
         done=await store.set_turn_state(first.id,TurnState.COMPLETED,lease_owner='worker',recovery_generation=claim.recovery_generation)
         assert done.state == TurnState.CANCELLED
+        failed=await store.set_turn_state(first.id,TurnState.FAILED,error_code='cleanup_failed')
+        assert failed.state == TurnState.FAILED and failed.error_code=='cleanup_failed'
         with pytest.raises(RuntimeError,match='turn_already_terminal'):
             await store.request_turn_cancel(first.id)
     finally:

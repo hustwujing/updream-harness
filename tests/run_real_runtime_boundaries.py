@@ -1,0 +1,97 @@
+"""Opt-in real OpenSandbox fault injection, with no model calls and isolated metadata.
+
+SANDBOX_HARNESS_ENV_FILE can point to a candidate image configuration.
+"""
+import asyncio
+import json
+import os
+import time
+import uuid
+from pathlib import Path
+
+import httpx
+from dotenv import dotenv_values
+from sandbox_harness.config import Settings
+from sandbox_harness.domain import Harness
+from sandbox_harness.runtime import RuntimeClient
+from sandbox_harness.sandbox import OpenSandboxBackend
+
+FIXTURE = '''import sys,json,time
+from pathlib import Path
+value=json.loads(sys.stdin.readline())
+text=value['message']['content'][0]['text']
+with Path('/workspace/project/receipts.txt').open('a') as f: f.write('received\\n')
+if 'EOF_CASE' in text:
+ print('[]',flush=True)
+ sys.exit(0)
+if 'HOLD_CASE' in text:
+ time.sleep(60)
+time.sleep(.3)
+print(json.dumps({'type':'result','result':'done'}),flush=True)
+'''
+
+async def main():
+    for key,value in dotenv_values(os.environ.get('SANDBOX_HARNESS_ENV_FILE','/etc/sandbox-harness/platform.env')).items():
+        if value is not None: os.environ[key]=value
+    settings=Settings();identity=uuid.uuid4().hex
+    namespace='sandbox-harness-boundary-'+identity
+    backend=OpenSandboxBackend(settings.opensandbox_url,settings.opensandbox_api_key,300,namespace,
+        settings.gateway_url,settings.gateway_proxy_port)
+    sandbox=None;started=time.monotonic()
+    try:
+        sandbox=await backend.create(Harness.CLAUDE,settings.image_for('claude'),{
+            'sandbox-harness.io/namespace':namespace,'sandbox-harness.io/turn':identity,
+            'sandbox-harness.io/harness':'claude'}, {'HARNESS_COMMAND_JSON':json.dumps({'claude':['python','-c',FIXTURE]})})
+        await RuntimeClient().inject(sandbox,capability_token='synthetic-fixture-no-provider-access',
+            gateway_url=settings.gateway_url,proxy_url=settings.gateway_url.rsplit(':',1)[0]+':'+str(settings.gateway_proxy_port),
+            harness='claude',model='synthetic')
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url,headers=sandbox.runtime_headers,trust_env=False,timeout=30) as client:
+            body={'message':'one invocation','execution_id':'concurrent','input_id':'first'}
+            responses=await asyncio.gather(*(client.post('/v1/turns',json=body) for _ in range(12)))
+            for response in responses:
+                response.raise_for_status()
+                assert json.loads(response.text.splitlines()[-1])['result']['status']=='completed'
+            conflict=await client.post('/v1/turns',json={**body,'message':'different'})
+            assert conflict.status_code==409
+            response=await client.post('/v1/turns',json={'message':'EOF_CASE','execution_id':'eof'})
+            assert json.loads(response.text.splitlines()[-1])['result']['error_code']=='harness_result_missing'
+            held=asyncio.create_task(client.post('/v1/turns',json={'message':'HOLD_CASE','execution_id':'hold'}))
+            for _ in range(100):
+                r=await client.get('/v1/executions/hold')
+                if r.status_code==200:break
+                await asyncio.sleep(.05)
+            else:raise AssertionError('hold execution did not start')
+            job=await client.post('/v1/background-jobs',json={'name':'ignore-term','argv':['python','-c',
+                'import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);print("ready",flush=True);time.sleep(60)']})
+            job.raise_for_status();job_id=job.json()['id']
+            for _ in range(100):
+                jobs=(await client.get('/v1/background-jobs')).json()['items']
+                if any(j['id']==job_id and 'ready' in j['log_tail'] for j in jobs):break
+                await asyncio.sleep(.05)
+            else:raise AssertionError('background job did not become ready')
+            cancelled_at=time.monotonic()
+            response=await client.post('/v1/cancel');response.raise_for_status()
+            cancel_elapsed=time.monotonic()-cancelled_at
+            response=await held
+            assert json.loads(response.text.splitlines()[-1])['result']['status']=='cancelled'
+            jobs=(await client.get('/v1/background-jobs')).json()['items']
+            assert next(j for j in jobs if j['id']==job_id)['status']=='cancelled'
+            archive=await client.get('/v1/checkpoint');archive.raise_for_status()
+            import io,tarfile
+            with tarfile.open(fileobj=io.BytesIO(archive.content)) as tar:
+                receipts=tar.extractfile('project/receipts.txt').read().decode().splitlines()
+            assert len(receipts)==3, receipts
+        await backend.delete(sandbox);sandbox=None
+        assert not await backend.list_namespace()
+        report={'passed':True,'real_opensandbox':True,'model':'synthetic fixture, no model request',
+            'parallel_start_requests':12,'actual_executions':len(receipts),
+            'eof_rejected':True,'conflicting_replay_rejected':True,'background_cancelled':True,
+            'cancel_seconds':round(cancel_elapsed,2),'elapsed_seconds':round(time.monotonic()-started,2),
+            'sandbox_deleted':True,'image':settings.image_for('claude')}
+        target=settings.data_root/'self-review3'/'real-runtime-result.json';target.parent.mkdir(parents=True,exist_ok=True)
+        target.write_text(json.dumps(report,indent=2));print(json.dumps(report),flush=True)
+    finally:
+        if sandbox:await backend.delete(sandbox)
+        await backend.client.aclose()
+
+if __name__=='__main__':asyncio.run(main())
