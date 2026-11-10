@@ -54,6 +54,23 @@ async def test_opensandbox_lookup_sends_namespace_and_rejects_unscoped_rows():
         await backend.client.aclose()
 
 
+async def test_namespace_scan_skips_sandbox_deleted_between_list_and_detail():
+    def respond(request: httpx.Request):
+        if request.url.path == "/v1/sandboxes":
+            return httpx.Response(200, json={"items":[{"id":"gone",
+                "image":{"uri":"image@sha256:" + "0" * 64},
+                "metadata":{"sandbox-harness.io/namespace":"sandbox-harness",
+                    "sandbox-harness.io/turn":"gone-turn","sandbox-harness.io/harness":"claude"}}]})
+        return httpx.Response(404)
+    backend = OpenSandboxBackend("http://opensandbox", "", 3600, "sandbox-harness")
+    await backend.client.aclose(); backend.client = httpx.AsyncClient(
+        base_url="http://opensandbox", transport=httpx.MockTransport(respond))
+    try:
+        assert await backend.list_namespace() == []
+    finally:
+        await backend.client.aclose()
+
+
 async def test_warm_sandbox_binding_persists_turn_metadata():
     backend = FakeSandboxBackend()
     sandbox = await backend.create(

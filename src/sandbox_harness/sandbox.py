@@ -60,6 +60,8 @@ class OpenSandboxBackend:
     async def _ready(self, sandbox: Sandbox) -> Sandbox:
         for _ in range(80):
             status = await self.client.get(f"/v1/sandboxes/{sandbox.id}")
+            if status.status_code == 404:
+                raise SandboxNotFound("OpenSandbox no longer has sandbox " + sandbox.id)
             status.raise_for_status()
             state = ((status.json().get("status") or {}).get("state") or "").lower()
             if state in {"failed", "terminated"}:
