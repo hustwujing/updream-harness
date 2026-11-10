@@ -146,6 +146,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
+        elif request.url.path == "/":
+            response.headers["Cache-Control"] = "no-store, max-age=0"
+        elif request.url.path.startswith("/assets/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return response
 
     @app.get("/api/health")

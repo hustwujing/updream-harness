@@ -64,6 +64,7 @@ The real R06 allocation test deliberately deleted both Claude warm Sandboxes bef
 - The new-conversation view exposes Harness, model and reasoning controls. Once a Thread exists, Harness is hidden and frozen; model and reasoning remain selectable between Turns.
 - Thread summaries now include their latest Turn state. The sidebar renders a spinner for nonterminal work and a green completion dot.
 - Claude was observed opening both Sandbox-to-Gateway and Gateway-to-`llmapi.bilibili.co` connections correctly. The upstream produced no response headers for 120 seconds. Gateway now returns a bounded 504, and Runtime stops a still-silent Harness at 150 seconds with `model_response_timeout`. A real verification Turn failed deterministically after 156.347 seconds, released its lease and removed its Sandbox.
+- Public-browser verification loaded `index-CMXQOEOq.js`; an existing Thread contained zero Harness controls and one model plus one reasoning control. HTML is now served `no-store`, while content-hashed assets are immutable.
 
 No case-specific production branch was added. Prompt changes are limited to a short Runtime contract describing Workspace paths, output publication, `sandbox-background`, `sandbox-interact`, casual-chat behavior and the rule against redundant confirmation. Programmatic schema, ownership, fencing and lifecycle checks remain authoritative.
 
