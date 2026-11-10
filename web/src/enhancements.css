@@ -279,3 +279,8 @@
 .thread-status .harness-icon {width:14px;height:14px}
 
 .model-health-note {padding:8px 14px 0;color:#796544;font-size:11px;line-height:1.5}
+
+/* Shared brand mark: browser icon, navigation and empty conversation. */
+.brand-mark{display:block;width:27px;height:27px;flex:none}
+.welcome-mark{border:0;background:transparent}
+.welcome-mark img{display:block;width:100%;height:100%}
