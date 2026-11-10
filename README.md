@@ -91,8 +91,8 @@ Sandboxes have no direct public route. The Runtime injects a short-lived Turn ca
 The Gateway permits only public addresses on ports 80 and 443, rejects private, loopback, link-local, reserved and cloud-metadata addresses, and applies configurable destination rules after DNS resolution:
 
 ```dotenv
-SANDBOX_HARNESS_PUBLIC_PROXY_ALLOWLIST=["bilibili.com","*.bilibili.com"]
-SANDBOX_HARNESS_PUBLIC_PROXY_DENYLIST=[]
+SANDBOX_HARNESS_PUBLIC_PROXY_ALLOWLIST='["bilibili.com","*.bilibili.com"]'
+SANDBOX_HARNESS_PUBLIC_PROXY_DENYLIST='[]'
 ```
 
 Rules may be exact domains, wildcard subdomains, individual IPs or CIDRs. An empty allowlist permits every otherwise-valid public destination; a non-empty allowlist changes the default to deny. The denylist always takes precedence, including over a permitted domain whose resolved address is denied. HTTPS encryption means policy can filter hosts and resolved addresses, but not URL paths. See [gateway.md](docs/gateway.md) for the complete contract.

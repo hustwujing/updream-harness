@@ -42,8 +42,8 @@ configure both when both are intended. `*` matches all destinations. Only ports
 Lists are JSON environment values:
 
 ```dotenv
-SANDBOX_HARNESS_PUBLIC_PROXY_ALLOWLIST=["example.com","*.example.com"]
-SANDBOX_HARNESS_PUBLIC_PROXY_DENYLIST=["blocked.example.com","203.0.113.0/24"]
+SANDBOX_HARNESS_PUBLIC_PROXY_ALLOWLIST='["example.com","*.example.com"]'
+SANDBOX_HARNESS_PUBLIC_PROXY_DENYLIST='["blocked.example.com","203.0.113.0/24"]'
 ```
 
 Validate configuration before restart, confirm no active model/public streams
