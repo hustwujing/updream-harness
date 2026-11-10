@@ -14,15 +14,20 @@ import tempfile
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--env-file',default='/etc/sandbox-harness/platform.env')
+    parser.add_argument('--code-root',type=Path,help='Clean checkout to deploy; defaults to this repository')
+    parser.add_argument('--record-file',type=Path,help='Override release manifest path')
     args=parser.parse_args()
     root=Path(__file__).resolve().parents[1]
-    subprocess.run(['git','diff','--quiet'],cwd=root,check=True)
-    subprocess.run(['git','diff','--cached','--quiet'],cwd=root,check=True)
-    revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
+    code_root=(args.code_root or root).resolve()
+    if not (code_root/'src/sandbox_harness/main.py').is_file():raise ValueError('Invalid code root')
+    subprocess.run(['git','diff','--quiet'],cwd=code_root,check=True)
+    subprocess.run(['git','diff','--cached','--quiet'],cwd=code_root,check=True)
+    revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=code_root,text=True).strip()
     if not re.fullmatch('[0-9a-f]{40}',revision):raise ValueError('Invalid Git revision')
     target=Path(args.env_file);info=target.stat();source=target.read_text()
-    key='SANDBOX_HARNESS_RELEASE';line=key+'='+revision[:12]
-    source=re.sub('^'+key+'=.*$',line,source,flags=re.M) if re.search('^'+key+'=',source,re.M) else source.rstrip()+'\n'+line+'\n'
+    for key,value in {'SANDBOX_HARNESS_RELEASE':revision[:12],'PYTHONPATH':str(code_root/'src')}.items():
+        line=key+'='+value
+        source=re.sub('^'+key+'=.*$',lambda match:line,source,flags=re.M) if re.search('^'+key+'=',source,re.M) else source.rstrip()+'\n'+line+'\n'
     with tempfile.NamedTemporaryFile(mode='w',dir=target.parent,delete=False) as out:
         temporary=Path(out.name)
         try:
@@ -30,8 +35,9 @@ def main():
             os.fchmod(out.fileno(),stat.S_IMODE(info.st_mode));os.fchown(out.fileno(),info.st_uid,info.st_gid)
             temporary.replace(target)
         finally:temporary.unlink(missing_ok=True)
-    record=root/'.data'/'release.json'
-    record.write_text(json.dumps({'revision':revision,'service_version':revision[:12],
+    record=args.record_file or root/'.data'/'release.json'
+    record.parent.mkdir(parents=True,exist_ok=True)
+    record.write_text(json.dumps({'revision':revision,'service_version':revision[:12],'code_root':str(code_root),
         'recorded_at':datetime.now(timezone.utc).isoformat()},indent=2))
     print('Service version pinned to '+revision[:12])
 
