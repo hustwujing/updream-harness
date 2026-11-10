@@ -6,7 +6,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from pathlib import Path
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def now() -> datetime:
@@ -114,14 +114,11 @@ class Attachment(BaseModel):
     size: int = Field(ge=0)
     mime: str = Field(default="application/octet-stream", max_length=200)
 
-    @field_validator("name")
-    @classmethod
-    def safe_name(cls, value: str) -> str:
-        if (value in {".", ".."} or Path(value).name != value
-                or any(character in value for character in '/\\"\r\n\0')
-                or any(ord(character) < 32 or ord(character) == 127 for character in value)):
-            raise ValueError("Invalid attachment filename")
-        return value
+
+def valid_attachment_name(value: str) -> bool:
+    return bool(value and len(value) <= 255 and value not in {".", ".."} and Path(value).name == value
+        and not any(character in value for character in '/\\"\r\n\0')
+        and not any(ord(character) < 32 or ord(character) == 127 for character in value))
 
 
 class TurnCreate(BaseModel):
@@ -133,11 +130,23 @@ class TurnCreate(BaseModel):
     reasoning_level: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,31}$")
     delivery_mode: Literal["start", "queue", "steer"] = "start"
 
+    @model_validator(mode="after")
+    def safe_attachment_names(self):
+        if any(not valid_attachment_name(item.name) for item in self.attachments):
+            raise ValueError("Invalid attachment filename")
+        return self
+
 
 class TurnInputCreate(BaseModel):
     message: str = Field(min_length=1, max_length=200_000)
     idempotency_key: str = Field(min_length=8, max_length=160)
     attachments: list[Attachment] = Field(default_factory=list, max_length=64)
+
+    @model_validator(mode="after")
+    def safe_attachment_names(self):
+        if any(not valid_attachment_name(item.name) for item in self.attachments):
+            raise ValueError("Invalid attachment filename")
+        return self
 
 
 class TurnInputView(BaseModel):

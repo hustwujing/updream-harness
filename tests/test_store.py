@@ -1,6 +1,6 @@
 from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.domain import EventKind, Harness, ItemType, ThreadCreate, TurnCreate, TurnInputCreate, TurnState
-from sandbox_harness.store import Store, valid_project_file_path
+from sandbox_harness.store import Store, ThreadRow, TurnRow, valid_project_file_path
 import pytest
 
 
@@ -191,6 +191,29 @@ async def test_concurrent_thread_items_receive_unique_contiguous_sequences(tmp_p
             status="completed", summary=f"tool-{index}") for index in range(20)))
         sequences = [item.sequence for item in await store.items_after(thread.id)]
         assert sequences == list(range(1, 22))
+    finally:
+        await store.close()
+
+
+async def test_legacy_unsafe_attachment_name_remains_readable_but_cannot_be_submitted(tmp_path):
+    import json
+    from sandbox_harness.domain import identifier, now
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "legacy-attachment.db")); await store.initialize()
+    try:
+        thread_id, turn_id, timestamp = identifier(), identifier(), now()
+        unsafe = [{"name":"..", "object_ref":"sha256:" + "a" * 64,
+            "sha256":"a" * 64, "size":1, "mime":"text/plain"}]
+        async with store.connections.begin() as db:
+            db.add(ThreadRow(id=thread_id, owner_id="a" * 64, harness="codex", model="gpt-5.6",
+                reasoning_level="standard", reasoning_effort="medium", title="Legacy",
+                next_item_sequence=0, created_at=timestamp, updated_at=timestamp))
+            db.add(TurnRow(id=turn_id, thread_id=thread_id, idempotency_key="legacy-unsafe-key",
+                message="old", attachments_json=json.dumps(unsafe), harness="codex", model="gpt-5.6",
+                reasoning_level="standard", reasoning_effort="medium", delivery_mode="start",
+                state=TurnState.COMPLETED.value, created_at=timestamp, updated_at=timestamp))
+        assert (await store.get_turn(turn_id)).attachments[0].name == ".."
+        with pytest.raises(ValueError, match="attachment filename"):
+            TurnCreate(message="new", idempotency_key="new-unsafe-key", attachments=unsafe)
     finally:
         await store.close()
 

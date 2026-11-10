@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from .broker import Broker
 from .catalog import HarnessCatalog
 from .config import Settings, load_settings, validate_service_settings
-from .domain import Attachment, Harness, InteractionResponse, ProjectFileRename, ThreadCreate, TurnCreate, TurnInputCreate
+from .domain import Attachment, Harness, InteractionResponse, ProjectFileRename, ThreadCreate, TurnCreate, TurnInputCreate, valid_attachment_name
 from .model_discovery import ModelDiscovery
 from .objects import object_store
 from .pool import SandboxPool
@@ -36,11 +36,7 @@ SAFE_INLINE_MIMES = {
 
 
 def valid_filename(value: str) -> bool:
-    try:
-        Attachment(name=value, object_ref="sha256:x", sha256="0" * 64, size=0)
-        return True
-    except ValueError:
-        return False
+    return valid_attachment_name(value)
 
 
 def content_disposition(filename: str, *, inline: bool) -> str:
