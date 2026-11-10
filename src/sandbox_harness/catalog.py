@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -90,6 +91,7 @@ class HarnessCatalog:
             harness: {model.id: model for model in option.models}
             for harness, option in self.options.items()
         }
+        self.availability: dict[tuple[Harness, str], dict[str, Any]] = {}
 
     def replace_models(self, discovered: dict[Harness | str, list[str]]) -> None:
         for raw_harness, identifiers in discovered.items():
@@ -112,11 +114,25 @@ class HarnessCatalog:
             models.sort(key=lambda model: (model.id != default_model, model.id))
             self.options[harness] = option.model_copy(update={"default_model": default_model, "models": models})
 
+    def replace_availability(self, results: dict[tuple[Harness, str], dict[str, Any]]) -> None:
+        self.availability.update(results)
+        for harness, option in self.options.items():
+            available = [model.id for model in option.models if self.is_available(harness, model.id)]
+            if available and option.default_model not in available:
+                self.options[harness] = option.model_copy(update={"default_model": available[0]})
+
+    def is_available(self, harness: Harness | str, model: str) -> bool:
+        state = self.availability.get((Harness(harness), model))
+        return state is None or state.get("status") == "available"
+
     def public(self) -> list[dict]:
         result = []
         for harness, option in self.options.items():
+            available = any(self.is_available(harness, model.id) for model in option.models)
             result.append({"id": harness.value, "label": option.label, "default_model": option.default_model,
+                "available": available,
                 "models": [{"id": model.id, "label": model.label,
+                            **self.availability.get((harness, model.id), {"status": "unknown", "available": True}),
                             "reasoning": [{"id": level.id, "label": level.label} for level in model.reasoning]}
                            for model in option.models]})
         return result
@@ -125,9 +141,11 @@ class HarnessCatalog:
         harness = Harness(harness)
         option = self.options[harness]
         model_id = model or option.default_model
-        selected = next((item for item in option.models if item.id == model_id), None) or self.known_models[harness].get(model_id)
+        selected = next((item for item in option.models if item.id == model_id), None)
         if not selected:
             raise ValueError("Model is not configured for the selected Harness")
+        if not self.is_available(harness, selected.id):
+            raise ValueError("Model is temporarily unavailable; refresh the model list or select another model")
         level_id = reasoning_level or selected.reasoning[min(1, len(selected.reasoning) - 1)].id
         level = next((item for item in selected.reasoning if item.id == level_id), None)
         if not level:

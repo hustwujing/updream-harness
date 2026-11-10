@@ -45,6 +45,11 @@ async def test_model_discovery_refreshes_catalog_and_persists_snapshot(tmp_path,
 
     def handler(request: httpx.Request):
         assert request.headers.get("authorization")
+        if request.method == "POST":
+            body = json.loads(request.content)
+            assert body["model"]
+            assert request.url.path in {"/responses", "/v1/messages"}
+            return httpx.Response(200, json={"ok": True})
         models = {
             "codex.example": ["gpt-6-sol", "gpt-image-2", "claude-4.6-sonnet"],
             "claude.example": ["claude-4.6-sonnet", "claude-sonnet-5-5", "deepseek-v4.1-flash"],
@@ -61,7 +66,38 @@ async def test_model_discovery_refreshes_catalog_and_persists_snapshot(tmp_path,
     ]
     assert catalog.resolve("deepseek", "deepseek-r1", "deep").model == "deepseek-r1"
     assert discovery.snapshot.is_file()
+    assert catalog.public()[0]["models"][0]["status"] == "available"
 
     restored = HarnessCatalog()
     assert ModelDiscovery(settings, restored).load_snapshot()
     assert restored.resolve("codex", "gpt-6-sol", "maximum").reasoning_effort == "xhigh"
+
+
+async def test_probe_disables_failed_models_and_restores_status(tmp_path, monkeypatch):
+    settings = Settings(data_root=tmp_path, upstream_codex="https://codex.example",
+                        upstream_claude="", upstream_deepseek="")
+    monkeypatch.setenv("SANDBOX_HARNESS_UPSTREAM_CODEX_KEY", "secret")
+
+    def handler(request: httpx.Request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": [{"id": "gpt-5.6"}, {"id": "gpt-6-astra"}]})
+        body = json.loads(request.content)
+        return httpx.Response(200 if body["model"] == "gpt-6-astra" else 502, json={"ok": True})
+
+    catalog = HarnessCatalog()
+    discovery = ModelDiscovery(settings, catalog, httpx.MockTransport(handler))
+    await discovery.refresh()
+    assert discovery.status()["available"] == 1
+    assert discovery.status()["discovered"] == 2
+    assert discovery.status()["last_refresh_at"]
+    models = {row["id"]: row for row in catalog.public()[0]["models"]}
+    assert models["gpt-6-astra"]["available"] is True
+    assert models["gpt-5.6"]["error_code"] == "http_502"
+    assert catalog.options[Harness.CODEX].default_model == "gpt-6-astra"
+    with pytest.raises(ValueError, match="temporarily unavailable"):
+        catalog.resolve("codex", "gpt-5.6", "standard")
+
+    restored = HarnessCatalog()
+    assert ModelDiscovery(settings, restored).load_snapshot()
+    with pytest.raises(ValueError, match="temporarily unavailable"):
+        restored.resolve("codex", "gpt-5.6", "standard")

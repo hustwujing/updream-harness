@@ -156,7 +156,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health():
         pool_status = app.state.pool_status
         payload = {"status": "ok" if pool_status in {"ready", "disabled"} else "degraded",
-                   "backend": settings.backend, "warm_pool": pool_status, "broker": broker.status()}
+                   "backend": settings.backend, "warm_pool": pool_status, "broker": broker.status(),
+                   "model_catalog": discovery.status()}
         return JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
 
     @app.get("/api/catalog/harnesses")
