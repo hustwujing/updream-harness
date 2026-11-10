@@ -26,6 +26,7 @@ find "$root/src" -type d -exec setfacl -m d:u:sandbox-harness:rX {} +
 setfacl -m d:u:sandbox-harness:rX "$root/web/dist"
 chmod 0755 "$root/deploy/network-rule.sh"
 install -m 0644 "$root"/deploy/systemd/*.service /etc/systemd/system/
+python3 "$root/deploy/record-release.py"
 systemctl daemon-reload
 systemctl enable sandbox-harness-network.service sandbox-harness-gateway.service sandbox-harness-api.service
 echo "units installed but not started"

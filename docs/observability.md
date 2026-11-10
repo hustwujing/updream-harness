@@ -10,7 +10,7 @@ This is the implemented contract for updream-harness. Logs diagnose execution; P
 | `resource.service.namespace` | `updream-harness`. |
 | `resource.service.name` | `api`, `gateway`, or `runtime`. Broker and storage code run inside the API service. |
 | `resource.service.instance.id` | Unique process-start identity, including after restarts. |
-| `resource.service.version` | Git revision on the host, immutable build revision in Runtime images. |
+| `resource.service.version` | Deployment-pinned Git revision on the host, immutable build revision in Runtime images. |
 | `attributes.updream.thread_id` | Conversation identity. |
 | `attributes.updream.turn_id` | One business Turn, unchanged across recovery. |
 | `attributes.updream.input_id` | A particular appended input, unchanged on replay. |
@@ -65,11 +65,15 @@ Authoritative local telemetry files live at `<data_root>/logs`, deployed under `
 | `SANDBOX_HARNESS_LOG_MAX_BYTES` | Host aggregate 2 GiB; Runtime temporary storage 16 MiB. |
 | `SANDBOX_HARNESS_LOG_RETENTION_DAYS` | 7, configurable 1–3650. |
 | `SANDBOX_HARNESS_ENVIRONMENT` | `local`, included as resource metadata. |
-| `SANDBOX_HARNESS_RELEASE` | Build revision in Runtime; host discovers its Git revision when unset. |
+| `SANDBOX_HARNESS_RELEASE` | Build revision in Runtime; deploy/record-release.py pins the host revision. Root-run development processes can discover Git when unset. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional external OTLP/HTTP base URL. SDK sends `/v1/logs` and `/v1/traces`. Without it, host files and the Runtime-to-Gateway pipeline remain active. |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Optional external exporter headers, never logged. Direct connection; ambient HTTP proxy credentials are not used. |
 
 Runtime export endpoint/credential is replaced on configure using the sandbox's current short-lived token. No long-lived observability credential is sent into the sandbox. External OTLP export is implemented and protocol-tested; an organization-specific collector address is deployment configuration, not a hardcoded dependency.
+
+## Deploying a logging change
+
+After tests and committing tracked changes, run `bash deploy/check-service-access.sh` and `python3 deploy/record-release.py` before restarting API/Gateway. The latter atomically changes only the release field in the existing env file, preserves its permissions, and records `.data/release.json`. It refuses dirty tracked code. The service account does not need access to `.git`; deployment verification must reject an `unknown` version. Runtime image revisions remain independently pinned in their image environment and digest.
 
 ## Troubleshooting
 
