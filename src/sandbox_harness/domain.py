@@ -156,7 +156,7 @@ class TurnInputView(BaseModel):
     idempotency_key: str
     message: str
     attachments: list[Attachment]
-    status: Literal["pending", "delivered", "applied", "failed"]
+    status: Literal["pending", "delivered", "unknown", "applied", "failed"]
     delivery_mode: str = "pending"
     created_at: datetime
     updated_at: datetime

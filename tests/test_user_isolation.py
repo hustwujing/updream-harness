@@ -101,7 +101,7 @@ def test_append_input_delivery_error_is_controlled_and_visible(tmp_path):
     app = create_app(settings)
 
     async def failing_delivery(value):
-        raise httpx.ConnectError("runtime connection reset")
+        raise ValueError("attachment verification failed")
 
     app.state.broker.try_deliver_input = failing_delivery
     with TestClient(app, raise_server_exceptions=False) as client:

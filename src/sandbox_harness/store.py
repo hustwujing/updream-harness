@@ -7,11 +7,11 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, UniqueConstraint, delete, func, inspect, select, text, update
+from sqlalchemy import case, or_, Boolean, DateTime, Integer, String, Text, UniqueConstraint, delete, func, inspect, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from .domain import Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, identifier, now
+from .domain import RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, identifier, now
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
 
@@ -353,8 +353,10 @@ class Store:
 
     async def create_turn(self, thread_id: str, value: TurnCreate, resolved: ResolvedProfile, owner_id: str) -> tuple[TurnView, bool, bool]:
         async with self.connections.begin() as db:
-            thread = await db.get(ThreadRow, thread_id, with_for_update=True)
-            if not thread or thread.owner_id != owner_id:
+            thread = (await db.execute(update(ThreadRow).where(ThreadRow.id == thread_id,
+                ThreadRow.owner_id == owner_id).values(updated_at=ThreadRow.updated_at)
+                .returning(ThreadRow))).scalar_one_or_none()
+            if not thread:
                 raise KeyError("thread_not_found")
             existing = (await db.execute(select(TurnRow).where(TurnRow.thread_id == thread_id, TurnRow.idempotency_key == value.idempotency_key))).scalar_one_or_none()
             if existing:
@@ -369,6 +371,13 @@ class Store:
             if thread.active_turn_id:
                 active = await db.get(TurnRow, thread.active_turn_id)
                 if active and TurnState(active.state) not in {TurnState.COMPLETED, TurnState.WAITING_USER, TurnState.FAILED, TurnState.CANCELLED}:
+                    active_running = True
+            if not active_running:
+                queued = (await db.execute(select(TurnRow).where(TurnRow.thread_id == thread_id,
+                    TurnRow.state.not_in(["COMPLETED", "WAITING_USER", "FAILED", "CANCELLED"]))
+                    .order_by(TurnRow.created_at, TurnRow.id).limit(1))).scalar_one_or_none()
+                if queued:
+                    thread.active_turn_id = queued.id
                     active_running = True
             if active_running and value.delivery_mode == "start":
                 raise RuntimeError("thread_busy")
@@ -409,16 +418,36 @@ class Store:
             row = await db.get(TurnRow, turn_id)
         return self.turn_view(row) if row else None
 
-    async def recoverable_turns(self) -> list[TurnView]:
-        terminal = [state.value for state in {
-            TurnState.WAITING_USER, TurnState.COMPLETED, TurnState.FAILED, TurnState.CANCELLED,
-        }]
-        timestamp = now()
+    async def repair_thread_heads(self) -> None:
+        terminal = [state.value for state in (TurnState.COMPLETED, TurnState.WAITING_USER, TurnState.FAILED, TurnState.CANCELLED)]
         async with self.connections() as db:
-            rows = (await db.execute(select(TurnRow).where(
-                TurnRow.state.not_in(terminal),
-                (TurnRow.lease_expires_at.is_(None)) | (TurnRow.lease_expires_at <= timestamp),
-            ).order_by(TurnRow.created_at))).scalars().all()
+            candidates = (await db.execute(select(ThreadRow.id, ThreadRow.active_turn_id)
+                .outerjoin(TurnRow, TurnRow.id == ThreadRow.active_turn_id)
+                .where(or_(TurnRow.id.is_(None), TurnRow.state.in_(terminal)),
+                    or_(ThreadRow.active_turn_id != "", ThreadRow.id.in_(select(TurnRow.thread_id)
+                        .where(TurnRow.state.not_in(terminal)).correlate(None)))))).all()
+        for thread_id, expected_head in candidates:
+            async with self.connections.begin() as db:
+                locked = (await db.execute(update(ThreadRow).where(ThreadRow.id == thread_id,
+                    ThreadRow.active_turn_id == expected_head).values(updated_at=ThreadRow.updated_at)
+                    .returning(ThreadRow.id))).scalar_one_or_none()
+                if locked is None:
+                    continue
+                next_id = (await db.execute(select(TurnRow.id).where(TurnRow.thread_id == thread_id,
+                    TurnRow.state.not_in(terminal)).order_by(TurnRow.created_at, TurnRow.id).limit(1))).scalar_one_or_none()
+                await db.execute(update(ThreadRow).where(ThreadRow.id == thread_id)
+                    .values(active_turn_id=next_id or ""))
+
+    async def recoverable_turns(self) -> list[TurnView]:
+        # Repair the crash window between committing a terminal Turn and advancing
+        # its Thread, before selecting work. Queued followers are never claimable.
+        await self.repair_thread_heads()
+        terminal = [state.value for state in (TurnState.WAITING_USER, TurnState.COMPLETED, TurnState.FAILED, TurnState.CANCELLED)]
+        async with self.connections() as db:
+            rows = (await db.execute(select(TurnRow).join(ThreadRow,
+                ThreadRow.active_turn_id == TurnRow.id).where(TurnRow.state.not_in(terminal),
+                or_(TurnRow.lease_expires_at.is_(None), TurnRow.lease_expires_at <= now()))
+                .order_by(TurnRow.created_at))).scalars().all()
         return [self.turn_view(row) for row in rows]
 
     async def nonterminal_turn_ids(self) -> set[str]:
@@ -431,31 +460,33 @@ class Store:
 
     async def claim_turn(self, turn_id: str, owner: str, lease_seconds: int) -> TurnView | None:
         timestamp = now()
+        terminal = [state.value for state in (TurnState.WAITING_USER, TurnState.COMPLETED, TurnState.FAILED, TurnState.CANCELLED)]
         async with self.connections.begin() as db:
-            row = await db.get(TurnRow, turn_id, with_for_update=True)
-            if not row or TurnState(row.state) in {
-                TurnState.WAITING_USER, TurnState.COMPLETED, TurnState.FAILED, TurnState.CANCELLED,
-            }:
-                return None
-            if (row.lease_owner and row.lease_owner != owner and row.lease_expires_at
-                    and utc_datetime(row.lease_expires_at) > timestamp):
-                return None
-            if row.lease_owner != owner:
-                row.recovery_generation += 1
-            row.lease_owner = owner
-            row.lease_expires_at = timestamp + timedelta(seconds=lease_seconds)
-            row.updated_at = timestamp
-        return self.turn_view(row)
+            row = (await db.execute(update(TurnRow).where(
+                TurnRow.id == turn_id, TurnRow.state.not_in(terminal),
+                TurnRow.id.in_(select(ThreadRow.active_turn_id).where(ThreadRow.id == TurnRow.thread_id)),
+                or_(TurnRow.lease_owner == owner, TurnRow.lease_owner == "",
+                    TurnRow.lease_expires_at.is_(None), TurnRow.lease_expires_at <= timestamp)
+            ).values(lease_owner=owner, lease_expires_at=timestamp + timedelta(seconds=lease_seconds),
+                recovery_generation=case((TurnRow.lease_owner == owner, TurnRow.recovery_generation),
+                    else_=TurnRow.recovery_generation + 1), updated_at=timestamp)
+                .returning(TurnRow))).scalar_one_or_none()
+        return self.turn_view(row) if row else None
+
+    async def owns_turn_lease(self, turn_id: str, owner: str, generation: int) -> bool:
+        async with self.connections() as db:
+            return (await db.execute(select(TurnRow.id).where(TurnRow.id == turn_id,
+                TurnRow.lease_owner == owner, TurnRow.recovery_generation == generation,
+                TurnRow.lease_expires_at > now()))).scalar_one_or_none() is not None
 
     async def renew_turn_lease(self, turn_id: str, owner: str, generation: int, lease_seconds: int) -> bool:
         timestamp = now()
         async with self.connections.begin() as db:
-            row = await db.get(TurnRow, turn_id, with_for_update=True)
-            if not row or row.lease_owner != owner or row.recovery_generation != generation:
-                return False
-            row.lease_expires_at = timestamp + timedelta(seconds=lease_seconds)
-            row.updated_at = timestamp
-        return True
+            result = await db.execute(update(TurnRow).where(TurnRow.id == turn_id,
+                TurnRow.lease_owner == owner, TurnRow.recovery_generation == generation,
+                TurnRow.lease_expires_at > timestamp).values(
+                    lease_expires_at=timestamp + timedelta(seconds=lease_seconds), updated_at=timestamp))
+            return result.rowcount == 1
 
     async def release_turn_lease(self, turn_id: str, owner: str, generation: int) -> None:
         async with self.connections.begin() as db:
@@ -473,11 +504,18 @@ class Store:
             row.runtime_sequence = max(row.runtime_sequence, sequence)
             row.updated_at = now()
 
-    async def start_runtime_execution(self, turn_id: str, execution_id: str, owner: str, generation: int) -> None:
+    async def start_runtime_execution(self, turn_id: str, execution_id: str, owner: str, generation: int,
+                                      *, input_id: str | None = None) -> None:
         async with self.connections.begin() as db:
             row = await db.get(TurnRow, turn_id, with_for_update=True)
             if not row or row.lease_owner != owner or row.recovery_generation != generation:
                 raise RuntimeError("stale_turn_lease")
+            if input_id and input_id != turn_id:
+                pending = await db.get(TurnInputRow, input_id, with_for_update=True)
+                if not pending or pending.turn_id != turn_id or pending.status != "pending":
+                    raise RuntimeError("input_not_pending")
+                pending.status = "delivered"; pending.delivery_mode = "deferred_safe_point"
+                pending.updated_at = now()
             row.runtime_execution_id = execution_id
             row.runtime_sequence = 0
             row.updated_at = now()
@@ -547,13 +585,16 @@ class Store:
                 TurnInputRow.status == "pending").order_by(TurnInputRow.sequence).limit(1).with_for_update(skip_locked=True))).scalar_one_or_none()
             if not row:
                 return None
-            row.status = "delivered"; row.delivery_mode = "deferred_safe_point"; row.updated_at = now()
+            # Selection is not delivery. start_runtime_execution marks the input
+            # only when its execution identity is durably assigned.
         return self.input_view(row)
 
     async def set_input_status(self, input_id: str, status: str, delivery_mode: str | None = None) -> None:
         async with self.connections.begin() as db:
             row = await db.get(TurnInputRow, input_id, with_for_update=True)
             if row:
+                if row.status == "applied" and status != "applied":
+                    return
                 row.status = status; row.updated_at = now()
                 if delivery_mode:
                     row.delivery_mode = delivery_mode
@@ -583,7 +624,7 @@ class Store:
                 raise RuntimeError("stale_turn_lease")
             rows = (await db.execute(select(TurnInputRow).where(
                 TurnInputRow.turn_id == turn_id,
-                TurnInputRow.status.in_(["pending", "delivered"]),
+                TurnInputRow.status.in_(["pending", "delivered", "unknown"]),
             ).with_for_update())).scalars().all()
             if not rows:
                 return
@@ -638,7 +679,7 @@ class Store:
             if state in {TurnState.WAITING_USER, TurnState.COMPLETED, TurnState.FAILED, TurnState.CANCELLED}:
                 row.pending_final_state = ""
                 inputs = (await db.execute(select(TurnInputRow).where(
-                    TurnInputRow.turn_id == turn_id, TurnInputRow.status.in_(["pending", "delivered"])
+                    TurnInputRow.turn_id == turn_id, TurnInputRow.status.in_(["pending", "delivered", "unknown"])
                 ).with_for_update())).scalars().all()
                 ids = {value.id for value in inputs}
                 for value in inputs:
@@ -647,6 +688,8 @@ class Store:
                     InteractionRow.status.in_(["pending", "responding"])).values(status="expired", updated_at=now()))
                 items = (await db.execute(select(ItemRow).where(ItemRow.turn_id == turn_id))).scalars().all()
                 for item in items:
+                    if item.status == "in_progress" and item.type not in {ItemType.USER_MESSAGE.value, ItemType.APPROVAL.value}:
+                        item.status = "interrupted"; item.updated_at = now()
                     if (json.loads(item.payload_json).get("input_id") in ids
                             or item.type == ItemType.APPROVAL.value and item.status == "in_progress"):
                         item.status = "failed"; item.updated_at = now()
@@ -666,14 +709,123 @@ class Store:
             row.updated_at = now()
         return self.turn_view(row)
 
-    async def update_thread_checkpoint(self, thread_id: str, checkpoint_ref: str, native_thread_id: str) -> None:
+    async def update_thread_checkpoint(self, thread_id: str, checkpoint_ref: str, native_thread_id: str,
+                                       *, turn_id: str | None = None, lease_owner: str | None = None,
+                                       recovery_generation: int | None = None) -> None:
         async with self.connections.begin() as db:
+            if lease_owner is not None:
+                fence = (await db.execute(update(TurnRow).where(TurnRow.id == turn_id,
+                    TurnRow.thread_id == thread_id, TurnRow.lease_owner == lease_owner,
+                    TurnRow.recovery_generation == recovery_generation, TurnRow.lease_expires_at > now())
+                    .values(updated_at=TurnRow.updated_at).returning(TurnRow.id))).scalar_one_or_none()
+                if fence is None:
+                    raise RuntimeError("stale_turn_lease")
             row = await db.get(ThreadRow, thread_id, with_for_update=True)
             if not row:
                 raise KeyError("thread_not_found")
             row.checkpoint_ref = checkpoint_ref
             row.native_thread_id = native_thread_id
             row.updated_at = now()
+
+    async def persist_runtime_event(self, thread_id: str, turn_id: str, value: RuntimeEvent,
+                                    execution_id: str, *, lease_owner: str | None = None,
+                                    recovery_generation: int | None = None) -> Event:
+        """Commit transcript mutation and replay receipt together; no crash gap."""
+        async with self.connections.begin() as db:
+            await db.execute(update(ThreadRow).where(ThreadRow.id == thread_id)
+                .values(updated_at=ThreadRow.updated_at))
+            turn = await db.get(TurnRow, turn_id, with_for_update=True)
+            if not turn or turn.thread_id != thread_id:
+                raise KeyError("turn_not_found")
+            if lease_owner is not None and (turn.lease_owner != lease_owner or
+                    turn.recovery_generation != recovery_generation):
+                raise RuntimeError("stale_turn_lease")
+            if execution_id and value.runtime_sequence:
+                previous = (await db.execute(select(EventRow).where(EventRow.turn_id == turn_id,
+                    EventRow.source_execution_id == execution_id,
+                    EventRow.source_sequence == value.runtime_sequence))).scalar_one_or_none()
+                if previous:
+                    return Event(turn_id=turn_id, sequence=previous.sequence, kind=EventKind(previous.kind),
+                        item_id=previous.item_id, payload=json.loads(previous.payload_json), created_at=previous.created_at)
+            payload = dict(value.payload)
+            timestamp = now()
+            if value.kind in {EventKind.TOOL_STARTED, EventKind.STEP_STARTED}:
+                await db.execute(update(ItemRow).where(ItemRow.turn_id == turn_id,
+                    ItemRow.type == ItemType.AGENT_MESSAGE.value, ItemRow.status == "in_progress")
+                    .values(status="completed", updated_at=timestamp))
+            item = None
+            if value.kind != EventKind.TOOL_OUTPUT:
+                item_type = {EventKind.TEXT_DELTA: ItemType.AGENT_MESSAGE,
+                    EventKind.TOOL_STARTED: ItemType.TOOL, EventKind.TOOL_FINISHED: ItemType.TOOL,
+                    EventKind.STEP_STARTED: ItemType.PLAN, EventKind.STEP_PROGRESS: ItemType.PLAN,
+                    EventKind.STEP_FINISHED: ItemType.PLAN, EventKind.WARNING: ItemType.WARNING,
+                    EventKind.ERROR: ItemType.ERROR, EventKind.WAITING_USER: ItemType.APPROVAL,
+                    EventKind.ARTIFACT_CREATED: ItemType.ARTIFACT}.get(value.kind, ItemType.REASONING)
+                status = "failed" if payload.get("is_error") or value.kind == EventKind.ERROR else (
+                    "completed" if value.kind in {EventKind.TOOL_FINISHED, EventKind.STEP_FINISHED, EventKind.WARNING} else "in_progress")
+                summary = str(payload.get("name") or payload.get("text") or value.kind.value)
+                if value.kind == EventKind.TEXT_DELTA:
+                    item = (await db.execute(select(ItemRow).where(ItemRow.turn_id == turn_id,
+                        ItemRow.type == ItemType.AGENT_MESSAGE.value, ItemRow.status == "in_progress")
+                        .order_by(ItemRow.sequence.desc()).limit(1))).scalar_one_or_none()
+                    if item:
+                        item.summary += str(payload.get("text", "")); item.updated_at = timestamp
+                elif value.kind == EventKind.TOOL_FINISHED and payload.get("tool_use_id"):
+                    candidates = (await db.execute(select(ItemRow).where(ItemRow.turn_id == turn_id,
+                        ItemRow.type == ItemType.TOOL.value).order_by(ItemRow.sequence.desc()))).scalars().all()
+                    item = next((row for row in candidates if
+                        json.loads(row.payload_json).get("tool_use_id") == payload["tool_use_id"] and
+                        json.loads(row.payload_json).get("_execution_id", execution_id) == execution_id), None)
+                    if item:
+                        item.status = status
+                        if payload.get("name") not in (None, "", "tool"):
+                            item.summary = summary
+                        item.payload_json = json.dumps({**json.loads(item.payload_json), **payload, "name": item.summary}, ensure_ascii=False)
+                        item.updated_at = timestamp
+                elif value.kind == EventKind.WAITING_USER:
+                    native_id = str(payload.get("interaction_id") or "")
+                    kind = payload.get("interaction_kind", "approval")
+                    if not native_id or kind not in {"approval", "question"}:
+                        raise ValueError("Invalid Runtime interaction")
+                    interaction = (await db.execute(select(InteractionRow).where(InteractionRow.turn_id == turn_id,
+                        InteractionRow.runtime_interaction_id == native_id))).scalar_one_or_none()
+                    if interaction is None:
+                        interaction = InteractionRow(id=identifier(), thread_id=thread_id, turn_id=turn_id,
+                            runtime_execution_id=execution_id, runtime_interaction_id=native_id, kind=kind,
+                            status="pending", request_json=json.dumps(payload), response_json="{}", response_key="",
+                            created_at=timestamp, updated_at=timestamp)
+                        db.add(interaction)
+                    elif interaction.runtime_execution_id != execution_id:
+                        raise RuntimeError("interaction_execution_mismatch")
+                    payload["interaction_id"] = interaction.id
+                    summary = str(payload.get("prompt") or "需要用户确认")
+                    approvals = (await db.execute(select(ItemRow).where(ItemRow.turn_id == turn_id,
+                        ItemRow.type == ItemType.APPROVAL.value))).scalars().all()
+                    item = next((row for row in approvals if json.loads(row.payload_json).get("interaction_id") == interaction.id), None)
+                    if interaction.status == "pending":
+                        turn.state = TurnState.AWAITING_USER.value
+                if item is None:
+                    sequence = await self.next_item_sequence(db, thread_id)
+                    item = ItemRow(id=identifier(), thread_id=thread_id, turn_id=turn_id, sequence=sequence,
+                        type=item_type.value, status=status, summary=summary,
+                        payload_json=json.dumps({**payload, "_execution_id": execution_id}, ensure_ascii=False),
+                        created_at=timestamp, updated_at=timestamp)
+                    db.add(item)
+            if payload.get("input_completed"):
+                await db.execute(update(ItemRow).where(ItemRow.turn_id == turn_id,
+                    ItemRow.type == ItemType.AGENT_MESSAGE.value, ItemRow.status == "in_progress")
+                    .values(status="interrupted" if payload.get("is_error") else "completed", updated_at=timestamp))
+            last = (await db.execute(select(func.max(EventRow.sequence)).where(EventRow.turn_id == turn_id))).scalar() or 0
+            event = Event(turn_id=turn_id, sequence=last + 1, kind=value.kind, payload=payload,
+                item_id=item.id if item else "", created_at=timestamp)
+            db.add(EventRow(turn_id=turn_id, sequence=event.sequence, kind=value.kind.value,
+                item_id=event.item_id, payload_json=json.dumps(payload, ensure_ascii=False),
+                source_execution_id=execution_id, source_sequence=value.runtime_sequence, created_at=timestamp))
+            if value.runtime_sequence:
+                turn.runtime_sequence = max(turn.runtime_sequence, value.runtime_sequence)
+        if self.events:
+            await self.events.publish(event)
+        return event
 
     async def runtime_event_recorded(self, turn_id: str, execution_id: str, source_sequence: int) -> bool:
         if not execution_id or source_sequence <= 0:
@@ -737,6 +889,8 @@ class Store:
                           lease_owner: str | None = None, recovery_generation: int | None = None) -> Item:
         timestamp = now()
         async with self.connections.begin() as db:
+            await db.execute(update(ThreadRow).where(ThreadRow.id == thread_id)
+                .values(updated_at=ThreadRow.updated_at))
             turn = await db.get(TurnRow, turn_id, with_for_update=True)
             if not turn:
                 raise KeyError("turn_not_found")
@@ -812,9 +966,21 @@ class Store:
             type=ItemType(row.type), status=row.status, summary=row.summary, payload=json.loads(row.payload_json),
             created_at=row.created_at, updated_at=row.updated_at) for row in rows]
 
-    async def add_artifact(self, turn_id: str, *, path: str, sha256: str, size: int, mime: str, object_ref: str) -> Artifact:
+    @staticmethod
+    async def require_lease(db, turn_id: str, owner: str, generation: int) -> None:
+        owned = (await db.execute(update(TurnRow).where(TurnRow.id == turn_id,
+            TurnRow.lease_owner == owner, TurnRow.recovery_generation == generation,
+            TurnRow.lease_expires_at > now()).values(updated_at=TurnRow.updated_at)
+            .returning(TurnRow.id))).scalar_one_or_none()
+        if owned is None:
+            raise RuntimeError("stale_turn_lease")
+
+    async def add_artifact(self, turn_id: str, *, path: str, sha256: str, size: int, mime: str, object_ref: str,
+                           lease_owner: str | None = None, recovery_generation: int | None = None) -> Artifact:
         value = Artifact(id=identifier(), turn_id=turn_id, path=path, sha256=sha256, size=size, mime=mime, object_ref=object_ref, created_at=now())
         async with self.connections.begin() as db:
+            if lease_owner is not None:
+                await self.require_lease(db, turn_id, lease_owner, recovery_generation)
             db.add(ArtifactRow(**value.model_dump()))
         return value
 
@@ -836,10 +1002,14 @@ class Store:
 
     async def register_project_file(self, thread_id: str, *, path: str, source_type: str,
                                     source_turn_id: str, sha256: str, size: int, mime: str,
-                                    object_ref: str) -> tuple[ProjectFile, bool]:
+                                    object_ref: str, lease_owner: str | None = None,
+                                    recovery_generation: int | None = None) -> tuple[ProjectFile, bool]:
         if not valid_project_file_path(path, source_type):
             raise ValueError("Invalid managed project path")
         async with self.connections.begin() as db:
+            await db.execute(update(ThreadRow).where(ThreadRow.id == thread_id).values(updated_at=ThreadRow.updated_at))
+            if lease_owner is not None:
+                await self.require_lease(db, source_turn_id, lease_owner, recovery_generation)
             latest = (await db.execute(select(ProjectFileRow).where(
                 ProjectFileRow.thread_id == thread_id, ProjectFileRow.path == path,
             ).order_by(ProjectFileRow.version.desc()).limit(1).with_for_update())).scalar_one_or_none()

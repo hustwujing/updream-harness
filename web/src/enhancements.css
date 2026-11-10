@@ -249,3 +249,27 @@
 
 .input-status {display:block;font-size:12px;margin-top:6px;color:#7b8493}
 .input-status.failed {color:#bd4545}
+
+.activity-row { grid-template-columns: 18px minmax(0,1fr) auto; align-items: start; }
+.activity-duration {font-size:10px;line-height:1.5;color:#83867f;white-space:nowrap;font-variant-numeric:tabular-nums;padding-left:8px}
+.activity-duration.running {color:#527d53}
+@media(max-width:480px){.activity-duration{font-size:9px;padding-left:2px}}
+
+.markdown-copy { white-space:normal;line-height:1.75;min-width:0 }
+.markdown-copy p { margin:0 0 12px }
+.markdown-copy p:last-child { margin-bottom:0 }
+.markdown-copy h1,.markdown-copy h2,.markdown-copy h3 { font-size:15px;line-height:1.5;margin:18px 0 8px;font-weight:600 }
+.markdown-copy ul,.markdown-copy ol { padding-left:22px;margin:8px 0 14px }
+.markdown-copy li { margin:4px 0 }
+.markdown-copy a { color:#3569a4;text-decoration:underline;text-underline-offset:3px;overflow-wrap:anywhere }
+.markdown-copy pre { white-space:pre;overflow:auto;border:1px solid #e6e6e0;border-radius:8px;background:#f7f7f4;padding:12px;margin:12px 0;font-size:12px }
+.markdown-copy :not(pre)>code { background:#f0f0ec;border-radius:4px;padding:2px 4px;font-size:.92em;overflow-wrap:anywhere }
+.markdown-copy blockquote { margin:12px 0;padding-left:12px;border-left:3px solid #d5d9d2;color:#6d756b }
+.markdown-copy table { display:block;max-width:100%;overflow:auto;border-collapse:collapse;margin:12px 0 }
+.markdown-copy th,.markdown-copy td { padding:6px 10px;border:1px solid #e0e2dd;text-align:left }
+.message-file { display:inline-flex;align-items:center;gap:8px;max-width:100% }
+.message-download { display:inline-flex;align-items:center;padding:3px }
+.message-file-pending { color:#777b75 }
+.message-file-pending small { font-size:10px }
+.message-image { display:block;border:0;padding:0;background:none;cursor:zoom-in }
+.message-image img { display:block;max-width:100%;max-height:360px;border-radius:8px }

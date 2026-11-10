@@ -47,10 +47,17 @@ class AppendedInputRuntime(Runtime):
 
 class LiveInputRuntime(AppendedInputRuntime):
     def __init__(self):
-        super().__init__(); self.live_inputs = []
+        super().__init__(); self.live_inputs = []; self.live_input_ids = []
 
     async def append_input(self, sandbox, **kwargs):
-        self.live_inputs.append(kwargs["message"]); self.release.set(); return "native_stream"
+        self.live_inputs.append(kwargs["message"]); self.live_input_ids.append(kwargs["input_id"])
+        self.release.set(); return "native_stream"
+
+    async def run(self, sandbox, **kwargs):
+        async for value in super().run(sandbox, **kwargs):
+            if isinstance(value, RuntimeResult):
+                value = value.model_copy(update={"input_ids": list(self.live_input_ids)})
+            yield value
 
 
 class RecoverableRuntime(Runtime):

@@ -62,3 +62,23 @@ Object storage calls run outside the asyncio event loop so slow BOSS transfers d
 not block lease heartbeats. Sandbox deletions retain their capacity reservation and
 retry record until absence is confirmed. Namespace cleanup includes unhealthy
 sandboxes; exact Turn lookup validates metadata returned by OpenSandbox.
+
+## Concurrent recovery and event commits
+
+Only the Turn referenced by a Thread's active pointer may acquire an execution
+lease. Claims use one conditional UPDATE, including on SQLite. The recovery scan
+repairs stale terminal pointers before selecting eligible work; queued followers
+cannot bypass the active Turn. Heartbeats continue during cleanup. A worker that
+lost its lease does not cancel the Runtime now owned by its replacement.
+
+Runtime transcript mutations, event receipts and replay cursors commit together.
+Duplicate source coordinates are idempotent, including a retry after a failed
+transaction. Checkpoint and artifact publication also check the worker's lease.
+Unknown input delivery receipts remain explicitly `unknown`; only explicit input
+completion receipts can mark them applied. Selecting a pending deferred input is
+not itself evidence of delivery.
+
+The transcript renders Markdown without raw HTML and resolves sandbox file links
+only against the current Thread's exported artifacts/managed files. Step timers
+use persisted Item timestamps: live steps tick once a second, completed steps
+retain their duration, and terminal cleanup stops unfinished step timers.

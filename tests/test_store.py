@@ -32,7 +32,7 @@ async def test_thread_turn_items_and_idempotency(tmp_path):
             await store.create_turn_input(turn.id,
                 TurnInputCreate(message="different", idempotency_key="input-key-1"), owner)
         claimed = await store.next_pending_input(turn.id)
-        assert claimed.id == appended.id and claimed.status == "delivered" and claimed.delivery_mode == "deferred_safe_point"
+        assert claimed.id == appended.id and claimed.status == "pending" and claimed.delivery_mode == "pending"
         await store.set_input_status(claimed.id, "applied")
         assert (await store.list_turn_inputs(turn.id))[0].status == "applied"
         assert (await store.items_after(thread.id))[1].status == "completed"

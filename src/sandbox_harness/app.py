@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import httpx
 import asyncio
 import hashlib
 import json
@@ -339,6 +340,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if created:
                 try:
                     await broker.try_deliver_input(result)
+                except httpx.TransportError:
+                    # The Runtime may have accepted the input before the reply
+                    # was lost. Do not retry it as a fresh execution.
+                    await store.set_input_status(result.id, "unknown", "delivery_unconfirmed")
                 except Exception as exc:
                     await store.set_input_status(result.id, "failed", "delivery_failed")
                     raise HTTPException(409, "input_delivery_failed") from exc

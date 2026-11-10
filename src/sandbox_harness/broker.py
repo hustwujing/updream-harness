@@ -168,51 +168,63 @@ class Broker:
         if not claimed:
             return
         self.leases[turn.id] = claimed.recovery_generation
-        if claimed.state == TurnState.QUEUED:
-            self._schedule(turn.id); return
-        if claimed.state == TurnState.CLEANING and claimed.pending_final_state:
-            if claimed.capability_nonce:
-                try:
-                    async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
-                        response = await client.post(self.settings.gateway_url.rstrip('/') + '/internal/revoke/' + claimed.capability_nonce,
-                            headers={"X-Sandbox-Harness-Control": self.settings.gateway_control_key})
-                        response.raise_for_status()
-                except Exception as exc:
-                    await self.store.append_event(turn.id, EventKind.WARNING, {
-                        "code": "recovery_capability_revoke_failed", "detail": type(exc).__name__})
-            for sandbox in await self.pool.backend.find_by_turn(turn.id):
-                await self.pool.backend.delete(sandbox)
-            target = TurnState(claimed.pending_final_state)
-            await self.store.append_event(turn.id, EventKind.WARNING, {"code": "turn_cleanup_recovered",
-                "generation": claimed.recovery_generation, "final_state": target.value})
-            logger.warning("Recovered cleanup turn=%s generation=%s final=%s", turn.id, claimed.recovery_generation, target.value)
-            await self._state(turn.id, target, sandbox_id="", error_code=claimed.error_code, error_detail=claimed.error_detail)
-            await self.store.release_turn_lease(turn.id, self.instance_id, claimed.recovery_generation)
-            self.leases.pop(turn.id, None); return
-        if claimed.state in {TurnState.RESTORING, TurnState.STARTING}:
-            for sandbox in await self.pool.backend.find_by_turn(turn.id):
-                await self.pool.backend.delete(sandbox)
-            await self.store.append_event(turn.id, EventKind.WARNING, {
-                "code": "turn_recovered_before_harness_start", "generation": claimed.recovery_generation})
-            await self._state(turn.id, TurnState.QUEUED, sandbox_id=""); self._schedule(turn.id); return
-        if claimed.state in {TurnState.RUNNING, TurnState.AWAITING_USER, TurnState.DRAINING_INPUTS, TurnState.CHECKPOINTING} and claimed.runtime_execution_id:
-            matches = await self.pool.backend.find_by_turn(turn.id)
-            if len(matches) == 1 and await self.runtime.execution_status(matches[0], claimed.runtime_execution_id) is not None:
-                await self.store.append_event(turn.id, EventKind.WARNING, {"code": "turn_runtime_reattached",
-                    "generation": claimed.recovery_generation, "runtime_sequence": claimed.runtime_sequence})
-                logger.warning("Reattaching runtime turn=%s generation=%s sequence=%s", turn.id, claimed.recovery_generation, claimed.runtime_sequence)
+        heartbeat = asyncio.create_task(self._heartbeat(turn.id, claimed.recovery_generation))
+        try:
+            if claimed.state == TurnState.QUEUED:
                 self._schedule(turn.id); return
-            for sandbox in matches:
-                await self.pool.backend.delete(sandbox)
-        await self.store.append_event(turn.id, EventKind.ERROR, {"code": "turn_interrupted_during_harness_execution",
-            "detail": "The previous broker lease expired after Harness execution began; automatic replay was suppressed.",
-            "generation": claimed.recovery_generation})
-        logger.error("Runtime recovery unavailable turn=%s generation=%s", turn.id, claimed.recovery_generation)
-        await self.store.complete_agent_item(turn.id, "interrupted")
-        await self._state(turn.id, TurnState.FAILED, sandbox_id="", error_code="turn_interrupted_during_harness_execution",
-            error_detail="Harness execution was interrupted and was not replayed because external side effects may already exist")
-        await self.store.release_turn_lease(turn.id, self.instance_id, claimed.recovery_generation)
-        self.leases.pop(turn.id, None)
+            if claimed.state == TurnState.CLEANING and claimed.pending_final_state:
+                if claimed.capability_nonce:
+                    try:
+                        async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
+                            response = await client.post(self.settings.gateway_url.rstrip('/') + '/internal/revoke/' + claimed.capability_nonce,
+                                headers={"X-Sandbox-Harness-Control": self.settings.gateway_control_key})
+                            response.raise_for_status()
+                    except Exception as exc:
+                        await self.store.append_event(turn.id, EventKind.WARNING, {
+                            "code": "recovery_capability_revoke_failed", "detail": type(exc).__name__})
+                for sandbox in await self.pool.backend.find_by_turn(turn.id):
+                    await self.pool.backend.delete(sandbox)
+                target = TurnState(claimed.pending_final_state)
+                await self.store.append_event(turn.id, EventKind.WARNING, {"code": "turn_cleanup_recovered",
+                    "generation": claimed.recovery_generation, "final_state": target.value})
+                logger.warning("Recovered cleanup turn=%s generation=%s final=%s", turn.id, claimed.recovery_generation, target.value)
+                await self._state(turn.id, target, sandbox_id="", error_code=claimed.error_code, error_detail=claimed.error_detail)
+                await self.store.release_turn_lease(turn.id, self.instance_id, claimed.recovery_generation)
+                self.leases.pop(turn.id, None)
+                next_turn = await self.store.claim_next_turn(turn.thread_id, turn.id)
+                if next_turn:
+                    self._schedule(next_turn.id)
+                return
+            if claimed.state in {TurnState.RESTORING, TurnState.STARTING}:
+                for sandbox in await self.pool.backend.find_by_turn(turn.id):
+                    await self.pool.backend.delete(sandbox)
+                await self.store.append_event(turn.id, EventKind.WARNING, {
+                    "code": "turn_recovered_before_harness_start", "generation": claimed.recovery_generation})
+                await self._state(turn.id, TurnState.QUEUED, sandbox_id=""); self._schedule(turn.id); return
+            if claimed.state in {TurnState.RUNNING, TurnState.AWAITING_USER, TurnState.DRAINING_INPUTS, TurnState.CHECKPOINTING} and claimed.runtime_execution_id:
+                matches = await self.pool.backend.find_by_turn(turn.id)
+                if len(matches) == 1 and await self.runtime.execution_status(matches[0], claimed.runtime_execution_id) is not None:
+                    await self.store.append_event(turn.id, EventKind.WARNING, {"code": "turn_runtime_reattached",
+                        "generation": claimed.recovery_generation, "runtime_sequence": claimed.runtime_sequence})
+                    logger.warning("Reattaching runtime turn=%s generation=%s sequence=%s", turn.id, claimed.recovery_generation, claimed.runtime_sequence)
+                    self._schedule(turn.id); return
+                for sandbox in matches:
+                    await self.pool.backend.delete(sandbox)
+            await self.store.append_event(turn.id, EventKind.ERROR, {"code": "turn_interrupted_during_harness_execution",
+                "detail": "The previous broker lease expired after Harness execution began; automatic replay was suppressed.",
+                "generation": claimed.recovery_generation})
+            logger.error("Runtime recovery unavailable turn=%s generation=%s", turn.id, claimed.recovery_generation)
+            await self.store.complete_agent_item(turn.id, "interrupted")
+            await self._state(turn.id, TurnState.FAILED, sandbox_id="", error_code="turn_interrupted_during_harness_execution",
+                error_detail="Harness execution was interrupted and was not replayed because external side effects may already exist")
+            await self.store.release_turn_lease(turn.id, self.instance_id, claimed.recovery_generation)
+            self.leases.pop(turn.id, None)
+            next_turn = await self.store.claim_next_turn(turn.thread_id, turn.id)
+            if next_turn:
+                self._schedule(next_turn.id)
+        finally:
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
 
     async def try_deliver_input(self, value) -> bool:
         async with self.input_lock(value.turn_id):
@@ -230,8 +242,10 @@ class Broker:
                 execution_id=turn.runtime_execution_id, input_id=value.id)
             if delivery_mode:
                 current = await self.store.get_turn(value.turn_id)
-                await self.store.set_input_status(value.id,
-                    "delivered" if current and current.state == TurnState.RUNNING else "applied", delivery_mode)
+                # An HTTP acceptance is not a completion receipt. The result's
+                # explicit input_ids determine whether this input was applied.
+                if current and current.state in {TurnState.RUNNING, TurnState.AWAITING_USER}:
+                    await self.store.set_input_status(value.id, "delivered", delivery_mode)
             return bool(delivery_mode)
 
     async def respond_interaction(self, interaction_id: str, owner_id: str, value) -> object:
@@ -335,7 +349,9 @@ class Broker:
         turn = await self.store.set_turn_state(turn_id, state, **kwargs,
             lease_owner=self.instance_id if generation is not None else None,
             recovery_generation=generation)
-        await self.store.append_event(turn_id, EventKind.STATE, {"state": state.value})
+        await self.store.append_event(turn_id, EventKind.STATE, {"state": state.value},
+            lease_owner=self.instance_id if generation is not None else None,
+            recovery_generation=generation)
         return turn
 
     async def _heartbeat(self, turn_id: str, generation: int) -> None:
@@ -352,62 +368,10 @@ class Broker:
 
     async def _record_runtime_event(self, thread_id: str, turn_id: str, value: RuntimeEvent,
                                     execution_id: str = "") -> None:
-        if await self.store.runtime_event_recorded(turn_id, execution_id, value.runtime_sequence):
-            return
-        if value.kind == EventKind.TOOL_OUTPUT:
-            await self.store.append_event(turn_id, value.kind, value.payload,
-                source_execution_id=execution_id, source_sequence=value.runtime_sequence)
-            return
-        if value.kind == EventKind.WAITING_USER:
-            runtime_id = str(value.payload.get("interaction_id") or "")
-            if not runtime_id:
-                raise ValueError("Runtime interaction has no ID")
-            kind = str(value.payload.get("interaction_kind") or "approval")
-            if kind not in {"approval", "question"}:
-                raise ValueError("Runtime interaction kind is invalid")
-            interaction, created = await self.store.upsert_interaction(
-                thread_id, turn_id, execution_id, runtime_id, kind, value.payload,
-            )
-            if created:
-                item = await self.store.append_item(thread_id, turn_id, ItemType.APPROVAL,
-                    status="in_progress", summary=str(value.payload.get("prompt") or "需要用户确认"),
-                    payload={**value.payload, "interaction_id": interaction.id})
-            else:
-                item = next((candidate for candidate in await self.store.items_after(thread_id)
-                    if candidate.turn_id == turn_id and candidate.payload.get("interaction_id") == interaction.id), None)
-                if item is None:
-                    item = await self.store.append_item(thread_id, turn_id, ItemType.APPROVAL,
-                        status="in_progress", summary=str(value.payload.get("prompt") or "需要用户确认"),
-                        payload={**value.payload, "interaction_id": interaction.id})
-            await self.store.append_event(turn_id, value.kind, value.payload, item_id=item.id,
-                source_execution_id=execution_id, source_sequence=value.runtime_sequence)
-            await self._state(turn_id, TurnState.AWAITING_USER)
-            return
-        if value.kind == EventKind.TEXT_DELTA:
-            item = await self.store.append_agent_delta(thread_id, turn_id, str(value.payload.get("text", "")))
-        elif value.kind == EventKind.TOOL_FINISHED and value.payload.get("tool_use_id"):
-            item = await self.store.finish_tool_item(turn_id, str(value.payload["tool_use_id"]), value.payload)
-            if item is None:
-                item = await self.store.append_item(thread_id, turn_id, ItemType.TOOL,
-                    status="failed" if value.payload.get("is_error") else "completed",
-                    summary=str(value.payload.get("name") or "tool"), payload=value.payload)
-        else:
-            item_type = {
-                EventKind.TOOL_STARTED: ItemType.TOOL, EventKind.TOOL_OUTPUT: ItemType.TOOL,
-                EventKind.TOOL_FINISHED: ItemType.TOOL, EventKind.STEP_STARTED: ItemType.PLAN,
-                EventKind.STEP_PROGRESS: ItemType.PLAN, EventKind.STEP_FINISHED: ItemType.PLAN,
-                EventKind.ARTIFACT_CREATED: ItemType.ARTIFACT, EventKind.WARNING: ItemType.WARNING,
-                EventKind.ERROR: ItemType.ERROR, EventKind.WAITING_USER: ItemType.APPROVAL,
-            }.get(value.kind, ItemType.REASONING)
-            item = await self.store.append_item(thread_id, turn_id, item_type,
-                status="failed" if value.payload.get("is_error") or value.kind == EventKind.ERROR else "completed" if value.kind in {
-                    EventKind.TOOL_FINISHED, EventKind.STEP_FINISHED, EventKind.WARNING, EventKind.ERROR,
-                } else "in_progress",
-                summary=str(value.payload.get("name") or value.payload.get("text") or value.kind.value), payload=value.payload)
-        await self.store.append_event(turn_id, value.kind, value.payload, item_id=item.id,
-            source_execution_id=execution_id, source_sequence=value.runtime_sequence)
-        if value.payload.get("input_completed"):
-            await self.store.complete_agent_item(turn_id, "interrupted" if value.payload.get("is_error") else "completed")
+        generation = self.leases.get(turn_id)
+        await self.store.persist_runtime_event(thread_id, turn_id, value, execution_id,
+            lease_owner=self.instance_id if generation is not None else None,
+            recovery_generation=generation)
 
     async def _materialize_attachments(self, sandbox, attachments) -> None:
         for attachment in attachments:
@@ -435,11 +399,13 @@ class Broker:
 
     async def _save_workspace(self, sandbox, thread_id: str, turn_id: str,
                               native_thread_id: str, *, partial: bool = False) -> None:
+        generation = self.leases.get(turn_id)
         archive = await self.runtime.checkpoint(sandbox)
         if len(archive) > self.settings.max_checkpoint_bytes:
             raise ValueError("Checkpoint exceeds byte limit")
         checkpoint_ref, _ = await asyncio.to_thread(self.objects.put, archive)
-        await self.store.update_thread_checkpoint(thread_id, checkpoint_ref, native_thread_id)
+        await self.store.update_thread_checkpoint(thread_id, checkpoint_ref, native_thread_id,
+            turn_id=turn_id, lease_owner=self.instance_id, recovery_generation=generation)
         total = 0
         for item in await self.runtime.artifacts(sandbox):
             path = item["path"]
@@ -450,12 +416,15 @@ class Broker:
             object_ref, digest = await asyncio.to_thread(self.objects.put, data)
             artifact = await self.store.artifact_by_identity(turn_id, path, digest)
             if artifact is None:
-                artifact = await self.store.add_artifact(turn_id, path=path, sha256=digest, size=len(data), mime=item.get("mime") or mimetypes.guess_type(path)[0] or "application/octet-stream", object_ref=object_ref)
+                artifact = await self.store.add_artifact(turn_id, path=path, sha256=digest, size=len(data), mime=item.get("mime") or mimetypes.guess_type(path)[0] or "application/octet-stream", object_ref=object_ref,
+                    lease_owner=self.instance_id, recovery_generation=generation)
                 await self.store.append_item(thread_id, turn_id, ItemType.ARTIFACT, status="completed", summary=path,
-                    payload={"artifact_id": artifact.id, "mime": artifact.mime, "size": artifact.size, "partial": partial})
+                    payload={"artifact_id": artifact.id, "mime": artifact.mime, "size": artifact.size, "partial": partial},
+                    lease_owner=self.instance_id, recovery_generation=generation)
             await self.store.register_project_file(thread_id,
                 path="artifacts/" + path, source_type="artifact", source_turn_id=turn_id,
-                sha256=digest, size=len(data), mime=artifact.mime, object_ref=object_ref)
+                sha256=digest, size=len(data), mime=artifact.mime, object_ref=object_ref,
+                lease_owner=self.instance_id, recovery_generation=generation)
 
     async def _process(self, turn_id: str) -> None:
         claimed = await self.store.claim_turn(
@@ -583,7 +552,7 @@ class Broker:
                         input_id = current_input_id or turn.id
                         execution_id = turn.id + ":" + input_id
                         await self.store.start_runtime_execution(
-                            turn.id, execution_id, self.instance_id, generation,
+                            turn.id, execution_id, self.instance_id, generation, input_id=input_id,
                         )
                         async for value in self.runtime.run(sandbox, message=message, attachments=attachments,
                             native_thread_id=native_thread_id, reasoning_effort=turn.reasoning_effort,
@@ -601,7 +570,6 @@ class Broker:
                     if result.status in ("completed", "waiting_user"):
                         async with self.input_lock(turn.id):
                             await self._state(turn.id, TurnState.DRAINING_INPUTS, sandbox_id=sandbox.id)
-                            await self.store.apply_delivered_inputs(turn.id)
                     if current_input_id:
                         await self.store.set_input_status(current_input_id,
                             "applied" if result.status in ("completed", "waiting_user") else "failed")
@@ -614,7 +582,6 @@ class Broker:
                     native_thread_id = result.native_thread_id or native_thread_id
                     pending = await self.store.next_pending_input(turn.id)
                     if not pending:
-                        await self.store.apply_delivered_inputs(turn.id)
                         break
                     try:
                         await self.store.complete_agent_item(turn.id, "completed")
@@ -660,7 +627,8 @@ class Broker:
             final_state = TurnState.CANCELLED
             error_code = "cancelled"
             error_detail = "Turn was cancelled"
-            if sandbox:
+            lost_lease = not await self.store.owns_turn_lease(turn.id, self.instance_id, generation)
+            if sandbox and not lost_lease:
                 try:
                     await self.runtime.cancel(sandbox)
                 except Exception:
@@ -678,91 +646,96 @@ class Broker:
                     raise
                 lost_lease = True
         finally:
-            heartbeat.cancel()
-            await asyncio.gather(heartbeat, return_exceptions=True)
-            self.heartbeats.pop(turn_id, None)
-            if abandoned:
-                await self.store.release_turn_lease(turn_id, self.instance_id, generation)
-                self.leases.pop(turn_id, None)
-                self.tasks.pop(turn.id, None)
-                return
             try:
-                await self.store.begin_turn_cleanup(turn.id, final_state, error_code=error_code,
-                    error_detail=error_detail, owner=self.instance_id, generation=generation)
-                await self.store.fail_unapplied_inputs(turn.id,
-                    lease_owner=self.instance_id, recovery_generation=generation)
-                await self.store.complete_agent_item(turn.id,
-                    "completed" if final_state in {TurnState.COMPLETED, TurnState.WAITING_USER} else "interrupted",
-                    lease_owner=self.instance_id, recovery_generation=generation)
-                await self.store.append_event(turn.id, EventKind.STATE, {"state": TurnState.CLEANING.value},
-                    lease_owner=self.instance_id, recovery_generation=generation)
-                if sandbox:
-                    revoked = False
-                    capability_nonce = claims.nonce if 'claims' in locals() else turn.capability_nonce
-                    if capability_nonce:
-                        for attempt in range(3):
-                            try:
-                                async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
-                                    response = await client.post(
-                                        self.settings.gateway_url.rstrip('/') + '/internal/revoke/' + capability_nonce,
-                                        headers={"X-Sandbox-Harness-Control": self.settings.gateway_control_key},
-                                    )
-                                    response.raise_for_status()
-                                revoked = True
-                                break
-                            except Exception as exc:
-                                if attempt == 2:
-                                    await self.store.append_event(turn.id, EventKind.WARNING, {
-                                        "code": "capability_revoke_failed",
-                                        "detail": type(exc).__name__,
-                                        "action": "delete_sandbox",
-                                    }, lease_owner=self.instance_id, recovery_generation=generation)
-                                else:
-                                    await asyncio.sleep(0.2 * (attempt + 1))
-                    keep_attached = (
-                        revoked
-                        and final_state in {TurnState.COMPLETED, TurnState.WAITING_USER}
-                        and self.settings.session_keepalive_seconds > 0
-                    )
-                    await self.pool.release(sandbox, keep_attached=keep_attached,
-                        keepalive_seconds=self.settings.session_keepalive_seconds)
-            except Exception as exc:
-                if isinstance(exc, RuntimeError) and str(exc) == "stale_turn_lease":
-                    lost_lease = True
-                else:
-                    final_state = TurnState.FAILED
-                    error_code = "cleanup_failed"
-                    error_detail = type(exc).__name__ + ": " + str(exc)
-                    try:
-                        await self.store.append_event(turn.id, EventKind.ERROR, {
-                            "code": error_code,
-                            "detail": error_detail[:1000],
-                        }, lease_owner=self.instance_id, recovery_generation=generation)
-                    except RuntimeError as fence_error:
-                        if str(fence_error) != "stale_turn_lease":
-                            raise
-                        lost_lease = True
-            finally:
-                if lost_lease:
-                    if sandbox:
-                        await self.pool.detach(sandbox)
-                    self.active_sandboxes.pop(turn.id, None)
-                    self.leases.pop(turn.id, None)
+                if abandoned:
+                    await self.store.release_turn_lease(turn_id, self.instance_id, generation)
+                    self.leases.pop(turn_id, None)
                     self.tasks.pop(turn.id, None)
                     return
-                if final_state == TurnState.FAILED:
-                    error_code, public_detail = public_failure(error_code, error_detail)
-                    item = await self.store.append_item(thread.id, turn.id, ItemType.ERROR, status="failed",
-                        summary=public_detail, payload={"code": error_code, "detail": public_detail},
+                try:
+                    await self.store.begin_turn_cleanup(turn.id, final_state, error_code=error_code,
+                        error_detail=error_detail, owner=self.instance_id, generation=generation)
+                    await self.store.fail_unapplied_inputs(turn.id,
                         lease_owner=self.instance_id, recovery_generation=generation)
-                    await self.store.append_event(turn.id, EventKind.ERROR,
-                        {"code": error_code, "detail": public_detail}, item_id=item.id,
+                    await self.store.complete_agent_item(turn.id,
+                        "completed" if final_state in {TurnState.COMPLETED, TurnState.WAITING_USER} else "interrupted",
                         lease_owner=self.instance_id, recovery_generation=generation)
-                await self._state(turn.id, final_state, sandbox_id=sandbox.id if sandbox else "", error_code=error_code, error_detail=error_detail)
-                self.active_sandboxes.pop(turn.id, None)
-                next_turn = await self.store.claim_next_turn(turn.thread_id, turn.id)
-                if next_turn:
-                    self._schedule(next_turn.id)
-                await self.store.release_turn_lease(turn.id, self.instance_id, generation)
-                self.leases.pop(turn.id, None)
-                self.tasks.pop(turn.id, None)
+                    await self.store.append_event(turn.id, EventKind.STATE, {"state": TurnState.CLEANING.value},
+                        lease_owner=self.instance_id, recovery_generation=generation)
+                    if sandbox:
+                        revoked = False
+                        capability_nonce = claims.nonce if 'claims' in locals() else turn.capability_nonce
+                        if capability_nonce:
+                            for attempt in range(3):
+                                try:
+                                    async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
+                                        response = await client.post(
+                                            self.settings.gateway_url.rstrip('/') + '/internal/revoke/' + capability_nonce,
+                                            headers={"X-Sandbox-Harness-Control": self.settings.gateway_control_key},
+                                        )
+                                        response.raise_for_status()
+                                    revoked = True
+                                    break
+                                except Exception as exc:
+                                    if attempt == 2:
+                                        await self.store.append_event(turn.id, EventKind.WARNING, {
+                                            "code": "capability_revoke_failed",
+                                            "detail": type(exc).__name__,
+                                            "action": "delete_sandbox",
+                                        }, lease_owner=self.instance_id, recovery_generation=generation)
+                                    else:
+                                        await asyncio.sleep(0.2 * (attempt + 1))
+                        keep_attached = (
+                            revoked
+                            and final_state in {TurnState.COMPLETED, TurnState.WAITING_USER}
+                            and self.settings.session_keepalive_seconds > 0
+                        )
+                        await self.pool.release(sandbox, keep_attached=keep_attached,
+                            keepalive_seconds=self.settings.session_keepalive_seconds)
+                except Exception as exc:
+                    if isinstance(exc, RuntimeError) and str(exc) == "stale_turn_lease":
+                        lost_lease = True
+                    else:
+                        final_state = TurnState.FAILED
+                        error_code = "cleanup_failed"
+                        error_detail = type(exc).__name__ + ": " + str(exc)
+                        try:
+                            await self.store.append_event(turn.id, EventKind.ERROR, {
+                                "code": error_code,
+                                "detail": error_detail[:1000],
+                            }, lease_owner=self.instance_id, recovery_generation=generation)
+                        except RuntimeError as fence_error:
+                            if str(fence_error) != "stale_turn_lease":
+                                raise
+                            lost_lease = True
+                finally:
+                    if lost_lease:
+                        if sandbox:
+                            await self.pool.detach(sandbox)
+                        self.active_sandboxes.pop(turn.id, None)
+                        self.leases.pop(turn.id, None)
+                        self.tasks.pop(turn.id, None)
+                        return
+                    if final_state == TurnState.FAILED:
+                        error_code, public_detail = public_failure(error_code, error_detail)
+                        item = await self.store.append_item(thread.id, turn.id, ItemType.ERROR, status="failed",
+                            summary=public_detail, payload={"code": error_code, "detail": public_detail},
+                            lease_owner=self.instance_id, recovery_generation=generation)
+                        await self.store.append_event(turn.id, EventKind.ERROR,
+                            {"code": error_code, "detail": public_detail}, item_id=item.id,
+                            lease_owner=self.instance_id, recovery_generation=generation)
+                    await self._state(turn.id, final_state, sandbox_id=sandbox.id if sandbox else "", error_code=error_code, error_detail=error_detail)
+                    self.active_sandboxes.pop(turn.id, None)
+                    next_turn = await self.store.claim_next_turn(turn.thread_id, turn.id)
+                    if next_turn:
+                        self._schedule(next_turn.id)
+                    await self.store.release_turn_lease(turn.id, self.instance_id, generation)
+                    self.leases.pop(turn.id, None)
+                    self.tasks.pop(turn.id, None)
+            finally:
+                heartbeat.cancel()
+                await asyncio.gather(heartbeat, return_exceptions=True)
+                self.heartbeats.pop(turn_id, None)
+                self.active_sandboxes.pop(turn_id, None)
+                self.leases.pop(turn_id, None)
+                self.tasks.pop(turn_id, None)
