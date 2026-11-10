@@ -22,6 +22,7 @@ setfacl -R -m u:sandbox-harness:rX /data/wujing03/miniforge3/lib/python3.13
 setfacl -m u:sandbox-harness:rx "$root/web"
 setfacl -m d:u:sandbox-harness:rX "$root/web"
 setfacl -R -m u:sandbox-harness:rX "$root/.venv" "$root/src" "$root/web/dist"
+find "$root/src" -type d -exec setfacl -m d:u:sandbox-harness:rX {} +
 setfacl -m d:u:sandbox-harness:rX "$root/web/dist"
 chmod 0755 "$root/deploy/network-rule.sh"
 install -m 0644 "$root"/deploy/systemd/*.service /etc/systemd/system/
