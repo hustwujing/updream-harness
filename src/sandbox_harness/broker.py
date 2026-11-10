@@ -329,7 +329,7 @@ class Broker:
         resolved = self.catalog.resolve(thread.harness, value.model or thread.model,
             value.reasoning_level or thread.reasoning_level)
         turn, created, start_now = await self.store.create_turn(thread_id, value, resolved, thread.owner_id, traceparent=carrier().get("traceparent", ""))
-        event("turn.accepted",thread_id=thread_id,turn_id=turn.id,harness=turn.harness,model=turn.model,reused=not created,state=turn.state)
+        event("turn.accepted",thread_id=thread_id,turn_id=turn.id,harness=turn.harness,model=turn.model,reasoning_effort=turn.reasoning_effort,reused=not created,state=turn.state)
         if created and start_now:
             self._schedule(turn.id)
         return turn
@@ -485,7 +485,7 @@ class Broker:
             self.tasks.pop(turn_id, None)
             return
         generation = claimed.recovery_generation
-        enrich(thread_id=claimed.thread_id,turn_id=turn_id,harness=claimed.harness,model=claimed.model,generation=generation)
+        enrich(thread_id=claimed.thread_id,turn_id=turn_id,harness=claimed.harness,model=claimed.model,reasoning_effort=claimed.reasoning_effort,generation=generation)
         add_link(claimed.submit_traceparent);add_link(claimed.last_traceparent)
         event("turn.lease.claimed",generation=generation)
         self.leases[turn_id] = generation
@@ -609,6 +609,7 @@ class Broker:
                         await self.store.current_project_files(thread.id))
                     await self._materialize_attachments(sandbox, turn.attachments)
                     await self._state(turn.id, TurnState.RUNNING, sandbox_id=sandbox.id)
+                enrich(sandbox_id=sandbox.id,image_digest=sandbox.image.rsplit("@",1)[-1])
                 self.active_sandboxes[turn.id] = sandbox
                 message, attachments, native_thread_id = turn.message, turn.attachments, thread.native_thread_id
                 result, current_input_id = None, None

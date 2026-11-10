@@ -110,22 +110,25 @@ def test_retention_is_bounded_and_does_not_remove_other_files(tmp_path):
     assert not old.exists() and other.read_text()=='keep'
 
 
-def test_otlp_exports_both_signals_and_ingest_checks_business_scope(telemetry):
-    captured=[]
+def test_otlp_exports_both_signals_and_ingest_checks_business_scope(telemetry,monkeypatch):
+    captured=[];authorizations=[]
     class Handler(BaseHTTPRequestHandler):
         status=200
         def do_POST(self):
+            authorizations.append(self.headers.get('Authorization'))
             captured.append((self.path,self.rfile.read(int(self.headers['Content-Length']))))
             self.send_response(self.status);self.end_headers()
         def log_message(self,*args):pass
     server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
     worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()
     try:
-        telemetry.set_remote('http://127.0.0.1:'+str(server.server_port)+'/v1')
+        monkeypatch.setenv('OTEL_EXPORTER_OTLP_HEADERS','Authorization=Bearer%20test-observability')
+        telemetry.set_remote('http://127.0.0.1:'+str(server.server_port)+'/v1',obs.export_headers())
         with obs.operation('runtime.execution',turn_id='turn-1',thread_id='thread-1',sandbox_id='box-1'):
             obs.event('runtime.finished')
         assert telemetry.flush(5)
         assert {p for p,_ in captured}=={'/v1/logs','/v1/traces'}
+        assert set(authorizations)=={'Bearer test-observability'}
         claims=SimpleNamespace(turn_id='turn-1',thread_id='thread-1',sandbox_id='box-1')
         for path,data in captured:
             decoded=decode_otlp(path.rsplit('/',1)[-1],data,claims)

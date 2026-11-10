@@ -35,7 +35,7 @@ _TELEMETRY = None
 # Payloads and arbitrary extras never cross this allowlist. Business IDs have a namespace.
 BUSINESS = {'thread_id','turn_id','input_id','execution_id','sandbox_id','broker_id','request_id',
     'tool_id','tool_name','model_request_id','upstream_request_id','interaction_id','job_id','artifact_id','item_id',
-    'generation','runtime_sequence','attempt','partial','reused','keep_attached','harness','model',
+    'reasoning_effort','generation','runtime_sequence','attempt','partial','reused','keep_attached','harness','model',
     'state','previous_state','outcome','reason','error_code','failure_origin','count','bytes',
     'input_tokens','output_tokens','usage_source','duration_ms','first_output_ms','header_ms','queue_ms','namespace','dropped_count','gap_count',
     'last_sequence','retained_from','source_service','source_instance','origin','source_event_id',
@@ -170,6 +170,8 @@ def observed(name, *, new_trace=False):
                 if hasattr(obj,'runtime_url'): fields['sandbox_id']=obj.id
                 elif hasattr(obj,'thread_id'): fields['turn_id']=obj.id
                 elif hasattr(obj,'process'):fields['execution_id']=obj.id
+            image=values.get('image') or getattr(obj,'image','')
+            if isinstance(image,str) and re.search(r'@sha256:[0-9a-f]{64}$',image):fields['image_digest']=image.rsplit('@',1)[-1]
             metadata = values.get('metadata') or {}
             for key in ('thread','turn'):
                 if metadata.get('sandbox-harness.io/'+key): fields[key+'_id']=metadata['sandbox-harness.io/'+key]
@@ -382,6 +384,10 @@ class Telemetry:
         self.logs.shutdown();self.provider.shutdown()
 
 
+def export_headers():
+    from opentelemetry.util.re import parse_env_headers
+    return parse_env_headers(os.getenv("OTEL_EXPORTER_OTLP_HEADERS",""),liberal=True)
+
 def configure(service,root):
     global _PROVIDER,_TELEMETRY
     if _TELEMETRY:return _TELEMETRY
@@ -400,7 +406,7 @@ def configure(service,root):
         log=logging.getLogger(name);log.handlers=[];log.propagate=True
     endpoint=os.getenv('OTEL_EXPORTER_OTLP_ENDPOINT','')
     if endpoint:
-        headers=dict(pair.split('=',1) for pair in os.getenv('OTEL_EXPORTER_OTLP_HEADERS','').split(',') if '=' in pair)
+        headers=export_headers()
         _TELEMETRY.set_remote(endpoint.rstrip('/')+'/v1',headers)
     import sys
     def exception_hook(kind,exc,tb):
