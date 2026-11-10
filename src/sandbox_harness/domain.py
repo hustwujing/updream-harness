@@ -183,6 +183,7 @@ class TurnView(BaseModel):
     runtime_sequence: int = 0
     runtime_execution_id: str = ""
     capability_nonce: str = ""
+    cancel_requested: bool = False
     pending_final_state: str = ""
     created_at: datetime
     updated_at: datetime

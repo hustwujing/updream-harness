@@ -44,7 +44,7 @@ def test_runtime_stream_accepts_bounded_large_native_json_lines(tmp_path, monkey
     monkeypatch.setattr(runtime_app, "PERSISTENT", ("project", "state"))
     payload = json.dumps({"type": "assistant_delta", "text": "x" * 100_000})
     emitter = tmp_path / "emit.py"
-    emitter.write_text("print(" + repr(payload) + ")\n")
+    emitter.write_text("print(" + repr(payload) + ")\nprint('{\"type\":\"result\"}')\n")
     monkeypatch.setenv("HARNESS_COMMAND_JSON", json.dumps({
         "codex": [sys.executable, str(emitter)],
         "claude": [sys.executable, str(emitter)],
@@ -371,7 +371,7 @@ def test_runtime_stream_emits_transport_heartbeat_during_long_silence(tmp_path, 
     runner = tmp_path / "slow_tool.py"
     runner.write_text("import json,time\nprint(json.dumps({'type':'tool_started','name':'slow'}),flush=True)\ntime.sleep(.15)\nprint(json.dumps({'type':'harness.input.completed','input_ids':['initial'],'thread_id':'native'}),flush=True)\n")
     monkeypatch.setattr(runtime_app, "command", lambda *args, **kwargs: HarnessCommand(
-        [sys.executable, str(runner)], {}, streaming_input=True, batched_completion=True))
+        [sys.executable, str(runner)], {}, streaming_input=True, control_input=True, batched_completion=True))
     app = runtime_app.create_app(); app.state.stream_heartbeat_seconds = .03
     with TestClient(app) as client:
         assert client.post("/v1/configure", json={"capability_token":"x"*32,"gateway_url":"http://gateway:28600",

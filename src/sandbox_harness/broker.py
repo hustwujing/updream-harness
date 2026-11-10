@@ -170,6 +170,8 @@ class Broker:
         self.leases[turn.id] = claimed.recovery_generation
         heartbeat = asyncio.create_task(self._heartbeat(turn.id, claimed.recovery_generation))
         try:
+            if claimed.cancel_requested and claimed.state != TurnState.CLEANING:
+                self._schedule(turn.id); return
             if claimed.state == TurnState.QUEUED:
                 self._schedule(turn.id); return
             if claimed.state == TurnState.CLEANING and claimed.pending_final_state:
@@ -332,24 +334,23 @@ class Broker:
             await self.store.delete_thread(thread_id, owner_id)
 
     async def cancel(self, turn_id: str) -> None:
-        turn = await self.store.get_turn(turn_id)
-        if not turn:
-            raise KeyError("turn_not_found")
-        if turn.state in {TurnState.COMPLETED, TurnState.WAITING_USER, TurnState.FAILED, TurnState.CANCELLED}:
-            raise RuntimeError("turn_already_terminal")
+        turn = await self.store.request_turn_cancel(turn_id)
         await self.store.append_event(turn_id, EventKind.WARNING, {"code": "cancel_requested"})
         task = self.tasks.get(turn_id)
-        if task:
+        if task and not task.cancelling() and turn.state != TurnState.CLEANING:
             task.cancel()
-        elif turn.state == TurnState.QUEUED:
-            await self._state(turn_id, TurnState.CANCELLED, error_code="cancelled", error_detail="Queued Turn was cancelled")
+        if turn.state == TurnState.CANCELLED:
+            await self.store.append_event(turn_id, EventKind.STATE, {"state": turn.state.value})
+            next_turn = await self.store.claim_next_turn(turn.thread_id, turn.id)
+            if next_turn:
+                self._schedule(next_turn.id)
 
     async def _state(self, turn_id: str, state: TurnState, **kwargs) -> TurnView:
         generation = self.leases.get(turn_id)
         turn = await self.store.set_turn_state(turn_id, state, **kwargs,
             lease_owner=self.instance_id if generation is not None else None,
             recovery_generation=generation)
-        await self.store.append_event(turn_id, EventKind.STATE, {"state": state.value},
+        await self.store.append_event(turn_id, EventKind.STATE, {"state": turn.state.value},
             lease_owner=self.instance_id if generation is not None else None,
             recovery_generation=generation)
         return turn
@@ -365,6 +366,11 @@ class Broker:
                 if task:
                     task.cancel()
                 return
+            turn = await self.store.get_turn(turn_id)
+            task = self.tasks.get(turn_id)
+            if (turn and turn.cancel_requested and turn.state != TurnState.CLEANING
+                    and task and not task.cancelling()):
+                task.cancel()
 
     async def _record_runtime_event(self, thread_id: str, turn_id: str, value: RuntimeEvent,
                                     execution_id: str = "") -> None:
@@ -463,6 +469,15 @@ class Broker:
         lost_lease = False
         try:
             async with self.thread_lock(thread.id):
+                if turn.cancel_requested:
+                    matches = await self.pool.backend.find_by_turn(turn.id)
+                    if matches:
+                        sandbox = matches[0]
+                        # Extra matches cannot be resumed; cleanup the owned resources.
+                        for extra in matches[1:]:
+                            await self.runtime.cancel(extra)
+                            await self.pool.backend.delete(extra)
+                    raise asyncio.CancelledError()
                 recovering = turn.state in {
                     TurnState.RUNNING, TurnState.AWAITING_USER, TurnState.DRAINING_INPUTS, TurnState.CHECKPOINTING,
                 } and bool(turn.runtime_execution_id)

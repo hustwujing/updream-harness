@@ -98,6 +98,8 @@ def normalize(harness: str, line: str, state: dict | None = None) -> dict:
         value = json.loads(line)
     except (ValueError, TypeError):
         return {"kind": "text_delta", "payload": {"text": line + "\n"}}
+    if not isinstance(value, dict):
+        return {"kind": "tool_output", "payload": {"text": line}}
     kind = value.get("type") or value.get("event") or "tool_output"
     method = value.get("method", "")
     params = value.get("params") or {}

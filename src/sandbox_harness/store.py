@@ -71,6 +71,7 @@ class TurnRow(Base):
     runtime_sequence: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     runtime_execution_id: Mapped[str] = mapped_column(String(160), default="", server_default="")
     capability_nonce: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     pending_final_state: Mapped[str] = mapped_column(String(24), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -226,6 +227,7 @@ class Store:
                 "runtime_execution_id": "VARCHAR(160) NOT NULL DEFAULT ''",
                 "capability_nonce": "VARCHAR(64) NOT NULL DEFAULT ''",
                 "pending_final_state": "VARCHAR(24) NOT NULL DEFAULT ''",
+                "cancel_requested": "BOOLEAN NOT NULL DEFAULT FALSE",
             }
             for name, definition in additions.items():
                 if name not in turn_columns:
@@ -562,7 +564,7 @@ class Store:
                 if existing.message != value.message or json.loads(existing.attachments_json) != attachments:
                     raise RuntimeError("idempotency_conflict")
                 return self.input_view(existing), False
-            if turn.state not in accepting:
+            if turn.state not in accepting or turn.cancel_requested:
                 raise RuntimeError("turn_not_accepting_input")
             timestamp = now()
             sequence = (await db.execute(select(TurnInputRow.sequence).where(TurnInputRow.turn_id == turn_id)
@@ -662,6 +664,44 @@ class Store:
                 .order_by(TurnInputRow.sequence))).scalars().all()
         return [self.input_view(row) for row in rows]
 
+    async def _finish_turn_records(self, db, turn_id: str) -> None:
+        inputs = (await db.execute(select(TurnInputRow).where(
+            TurnInputRow.turn_id == turn_id, TurnInputRow.status.in_(["pending", "delivered", "unknown"])
+        ).with_for_update())).scalars().all()
+        ids = {value.id for value in inputs}
+        for value in inputs:
+            value.status = "failed"; value.updated_at = now()
+        await db.execute(update(InteractionRow).where(InteractionRow.turn_id == turn_id,
+            InteractionRow.status.in_(["pending", "responding"])).values(status="expired", updated_at=now()))
+        items = (await db.execute(select(ItemRow).where(ItemRow.turn_id == turn_id))).scalars().all()
+        for item in items:
+            if item.status == "in_progress" and item.type not in {ItemType.USER_MESSAGE.value, ItemType.APPROVAL.value}:
+                item.status = "interrupted"; item.updated_at = now()
+            if (json.loads(item.payload_json).get("input_id") in ids
+                    or item.type == ItemType.APPROVAL.value and item.status == "in_progress"):
+                item.status = "failed"; item.updated_at = now()
+
+    async def request_turn_cancel(self, turn_id: str) -> TurnView:
+        terminal = [state.value for state in (TurnState.COMPLETED, TurnState.WAITING_USER,
+            TurnState.FAILED, TurnState.CANCELLED)]
+        async with self.connections.begin() as db:
+            # Conditional UPDATE serializes cancellation with completion and lease claims
+            # on PostgreSQL and SQLite alike.
+            row = (await db.execute(update(TurnRow).where(TurnRow.id == turn_id,
+                TurnRow.state.not_in(terminal)).values(cancel_requested=True, updated_at=now())
+                .returning(TurnRow))).scalar_one_or_none()
+            if row is None:
+                if await db.get(TurnRow, turn_id) is None:
+                    raise KeyError("turn_not_found")
+                raise RuntimeError("turn_already_terminal")
+            if row.state == TurnState.QUEUED.value and (not row.lease_expires_at
+                    or utc_datetime(row.lease_expires_at) <= now()):
+                row.state = TurnState.CANCELLED.value
+                row.error_code = "cancelled"
+                row.error_detail = "Queued Turn was cancelled"
+                await self._finish_turn_records(db, turn_id)
+        return self.turn_view(row)
+
     async def set_turn_state(self, turn_id: str, state: TurnState, *, sandbox_id: str | None = None, error_code: str = "", error_detail: str = "", lease_owner: str | None = None, recovery_generation: int | None = None) -> TurnView:
         async with self.connections.begin() as db:
             row = await db.get(TurnRow, turn_id, with_for_update=True)
@@ -671,6 +711,8 @@ class Store:
                 row.lease_owner != lease_owner or row.recovery_generation != recovery_generation
             ):
                 raise RuntimeError("stale_turn_lease")
+            if row.cancel_requested and state in {TurnState.COMPLETED, TurnState.WAITING_USER, TurnState.FAILED}:
+                state, error_code, error_detail = TurnState.CANCELLED, "cancelled", "Turn was cancelled"
             row.state = state.value
             if sandbox_id is not None:
                 row.sandbox_id = sandbox_id
@@ -678,21 +720,7 @@ class Store:
             row.error_detail = error_detail[:4000]
             if state in {TurnState.WAITING_USER, TurnState.COMPLETED, TurnState.FAILED, TurnState.CANCELLED}:
                 row.pending_final_state = ""
-                inputs = (await db.execute(select(TurnInputRow).where(
-                    TurnInputRow.turn_id == turn_id, TurnInputRow.status.in_(["pending", "delivered", "unknown"])
-                ).with_for_update())).scalars().all()
-                ids = {value.id for value in inputs}
-                for value in inputs:
-                    value.status = "failed"; value.updated_at = now()
-                await db.execute(update(InteractionRow).where(InteractionRow.turn_id == turn_id,
-                    InteractionRow.status.in_(["pending", "responding"])).values(status="expired", updated_at=now()))
-                items = (await db.execute(select(ItemRow).where(ItemRow.turn_id == turn_id))).scalars().all()
-                for item in items:
-                    if item.status == "in_progress" and item.type not in {ItemType.USER_MESSAGE.value, ItemType.APPROVAL.value}:
-                        item.status = "interrupted"; item.updated_at = now()
-                    if (json.loads(item.payload_json).get("input_id") in ids
-                            or item.type == ItemType.APPROVAL.value and item.status == "in_progress"):
-                        item.status = "failed"; item.updated_at = now()
+                await self._finish_turn_records(db, turn_id)
             row.updated_at = now()
         return self.turn_view(row)
 
@@ -702,6 +730,8 @@ class Store:
             row = await db.get(TurnRow, turn_id, with_for_update=True)
             if not row or row.lease_owner != owner or row.recovery_generation != generation:
                 raise RuntimeError("stale_turn_lease")
+            if row.cancel_requested:
+                final_state, error_code, error_detail = TurnState.CANCELLED, "cancelled", "Turn was cancelled"
             row.state = TurnState.CLEANING.value
             row.pending_final_state = final_state.value
             row.error_code = error_code

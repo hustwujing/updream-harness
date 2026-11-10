@@ -108,6 +108,9 @@ class Execution:
     pending_input_ids: list[str] = field(default_factory=list)
     completed_input_ids: list[str] = field(default_factory=list)
     received_input_ids: set[str] = field(default_factory=set)
+    input_fingerprints: dict[str, str] = field(default_factory=dict)
+    stop_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    cancel_requested: bool = False
     accepting_inputs: bool = True
     result: dict | None = None
     saw_text_delta: bool = False
@@ -153,24 +156,56 @@ def create_app() -> FastAPI:
                 continue
     load_jobs()
     app.state.write_lock = asyncio.Lock()
+    app.state.execution_lock = asyncio.Lock()
     for name in (*PERSISTENT, "inbox", "outputs", "tmp"):
         (WORKSPACE / name).mkdir(parents=True, exist_ok=True)
     RUN.mkdir(parents=True, exist_ok=True)
 
-    async def stop_process() -> None:
-        process = app.state.process
-        app.state.process = None
-        app.state.process_command = None
-        app.state.pending_inputs = 0
-        if not process or process.returncode is not None:
+    async def terminate_group(process, *, grace: float = 2.0) -> None:
+        # A shell may exit while its descendants still own stdout or mutate files.
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(process.pid, sig)
+            except ProcessLookupError:
+                break
+            if sig == signal.SIGTERM:
+                try:
+                    await asyncio.wait_for(asyncio.shield(process.wait()), grace)
+                except asyncio.TimeoutError:
+                    pass
+        await process.wait()
+
+    async def stop_process(execution: Execution) -> None:
+        async with execution.stop_lock:
+            process = execution.process
+            if process.stdin and not process.stdin.is_closing():
+                process.stdin.close()
+            if process.returncode is None:
+                try:
+                    await asyncio.wait_for(asyncio.shield(process.wait()), 1)
+                except asyncio.TimeoutError:
+                    pass
+            await terminate_group(process)
+            if app.state.process is process:
+                app.state.process = None
+                app.state.process_command = None
+                app.state.pending_inputs = 0
+
+    async def cancel_job(job: BackgroundJob) -> None:
+        if job.status not in {"running", "cancelling"} or not job.process:
             return
-        if process.stdin and not process.stdin.is_closing():
-            process.stdin.close()
-        try:
-            await asyncio.wait_for(process.wait(), 5)
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
+        job.status = "cancelling"
+        persist_job(job)
+        await terminate_group(job.process)
+        if job.task:
+            await asyncio.shield(job.task)
+
+    async def abort_execution(execution: Execution) -> None:
+        async with app.state.write_lock:
+            execution.accepting_inputs = False
+        await stop_process(execution)
+        await asyncio.gather(*(cancel_job(job) for job in list(app.state.background_jobs.values())
+            if job.execution_id == execution.id))
 
     def append_event_locked(execution: Execution, value: dict) -> None:
         row = {**value, "runtime_sequence": execution.sequence + 1}
@@ -190,6 +225,9 @@ def create_app() -> FastAPI:
         async with execution.condition:
             if execution.result is not None:
                 return
+            execution.accepting_inputs = False
+            if execution.cancel_requested:
+                result = {**result, "status": "cancelled", "error_code": "cancelled"}
             append_event_locked(execution, {"type": "result", "result": result})
             execution.result = result
 
@@ -246,7 +284,7 @@ def create_app() -> FastAPI:
                 try:
                     line = await asyncio.wait_for(process.stdout.readline(), timeout=timeout)
                 except TimeoutError:
-                    await stop_process()
+                    await abort_execution(execution)
                     await finish_execution(execution, {"status": "failed",
                         "native_thread_id": execution.native_thread_id,
                         "error_code": "harness_idle_timeout" if substantive else "model_response_timeout",
@@ -261,6 +299,8 @@ def create_app() -> FastAPI:
                 try:
                     native = json.loads(decoded)
                 except (TypeError, ValueError):
+                    native = {}
+                if not isinstance(native, dict):
                     native = {}
                 event = normalize(harness, decoded, execution.protocol_state)
                 terminal_input = (
@@ -297,7 +337,7 @@ def create_app() -> FastAPI:
                         if done:
                             execution.accepting_inputs = False
                     if done:
-                        await stop_process()
+                        await stop_process(execution)
                         background = await wait_background(execution)
                         failed = (
                             native.get("status") == "failed"
@@ -317,9 +357,21 @@ def create_app() -> FastAPI:
                         })
                         return
             code = await process.wait()
-            app.state.process = None
-            app.state.process_command = None
-            app.state.pending_inputs = 0
+            execution.accepting_inputs = False
+            missing_result = execution.selected.streaming_input
+            if missing_result or code != 0 or execution.cancel_requested:
+                await abort_execution(execution)
+            else:
+                await stop_process(execution)
+            if missing_result or execution.cancel_requested:
+                await finish_execution(execution, {
+                    "status": "cancelled" if execution.cancel_requested else "failed",
+                    "native_thread_id": execution.native_thread_id,
+                    "error_code": "cancelled" if execution.cancel_requested else "harness_result_missing",
+                    "error_detail": "Harness stopped before acknowledging all pending inputs",
+                    "input_ids": list(execution.pending_input_ids),
+                })
+                return
             background = await wait_background(execution)
             background_failed = any(job.status != "completed" for job in background)
             await finish_execution(execution, {
@@ -335,9 +387,10 @@ def create_app() -> FastAPI:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            await abort_execution(execution)
             await finish_execution(execution, {
                 "status": "failed", "native_thread_id": execution.native_thread_id,
-                "error_code": type(exc).__name__, "error_detail": str(exc),
+                "error_code": "harness_protocol_error", "error_detail": f"{type(exc).__name__}: {exc}",
                 "input_ids": list(execution.pending_input_ids),
             })
 
@@ -479,44 +532,74 @@ def create_app() -> FastAPI:
                     filter=include_safe)
         return FileResponse(target, media_type="application/x-tar")
 
+    def fingerprint(value: TurnRequest) -> str:
+        body = value.model_dump(exclude={"execution_id", "input_id", "after_sequence"})
+        return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+    async def submit_input(execution: Execution, value: TurnRequest, *, initial: bool) -> bool:
+        async with app.state.write_lock:
+            digest = fingerprint(value)
+            if value.input_id in execution.received_input_ids:
+                if execution.input_fingerprints.get(value.input_id) != digest:
+                    raise HTTPException(409, "Input ID already has different content")
+                return False
+            if (not execution.accepting_inputs or execution.result is not None
+                    or execution.process.returncode is not None):
+                raise HTTPException(409, "Execution is no longer accepting input")
+            if not initial and not execution.selected.streaming_input:
+                raise HTTPException(409, "Harness does not have a live input stream")
+            prompt = (RUNTIME_GUIDANCE if initial else "") + value.message
+            if value.attachments:
+                prompt += "\n\nAttached files are available in /workspace/inbox. Their immutable records are listed in attachments.json."
+                (WORKSPACE / "inbox" / "attachments.json").write_text(json.dumps(value.attachments, ensure_ascii=False))
+            selected = execution.selected
+            payload = (control_user_message(prompt, value.input_id) if selected.control_input else
+                streaming_user_message(prompt) if selected.streaming_input else prompt.encode())
+            # Reserve before drain: a failed transport acknowledgement cannot authorize replay.
+            execution.process.stdin.write(payload)
+            execution.received_input_ids.add(value.input_id)
+            execution.input_fingerprints[value.input_id] = digest
+            execution.pending_input_ids.append(value.input_id)
+            app.state.pending_inputs = len(execution.pending_input_ids)
+            await execution.process.stdin.drain()
+            if not selected.streaming_input:
+                execution.process.stdin.close()
+            return True
+
     @app.post("/v1/turns")
     async def run_turn(value: TurnRequest):
-        harness = os.environ.get("HARNESS_KIND", "claude")
-        model = os.environ.get("HARNESS_MODEL", "default")
-        os.environ["HARNESS_REASONING_EFFORT"] = value.reasoning_effort
-        selected = command(harness, model, value.native_thread_id)
-        environment = {**os.environ, **selected.environment, "HOME": "/workspace/state/home", "PWD": "/workspace/project"}
-        Path(environment["HOME"]).mkdir(parents=True, exist_ok=True)
-        prompt = RUNTIME_GUIDANCE + value.message
-        if value.attachments:
-            prompt += "\n\nAttached files are available in /workspace/inbox. Their immutable records are listed in attachments.json."
-            (WORKSPACE / "inbox" / "attachments.json").write_text(json.dumps(value.attachments, ensure_ascii=False))
-
-        execution = app.state.execution
-        if execution is not None and execution.id != value.execution_id and execution.result is None:
-            raise HTTPException(409, "Another Harness execution is already running")
-        if execution is None or execution.id != value.execution_id:
-            process = await asyncio.create_subprocess_exec(*selected.argv, cwd=WORKSPACE / "project", env=environment,
-                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-                limit=HARNESS_JSONL_LIMIT)
-            execution = Execution(id=value.execution_id, process=process, selected=selected,
-                native_thread_id=value.native_thread_id)
-            app.state.execution = execution
-            app.state.process = process
-            app.state.process_command = selected
-            execution.reader_task = asyncio.create_task(read_execution(execution, harness),
-                name="harness-reader-" + value.execution_id)
-        if value.input_id not in execution.received_input_ids:
-            async with app.state.write_lock:
-                execution.process.stdin.write(control_user_message(prompt, value.input_id) if selected.control_input else
-                    streaming_user_message(prompt) if selected.streaming_input else prompt.encode())
-                await execution.process.stdin.drain()
-                execution.received_input_ids.add(value.input_id)
-                execution.pending_input_ids.append(value.input_id)
-                app.state.pending_inputs += 1
-                if not selected.streaming_input:
-                    execution.process.stdin.close()
-        return StreamingResponse(stream_execution(execution, value.after_sequence), media_type="application/x-ndjson")
+        async with app.state.execution_lock:
+            execution = app.state.execution
+            if execution is not None and execution.id != value.execution_id and execution.result is None:
+                raise HTTPException(409, "Another Harness execution is already running")
+            created = execution is None or execution.id != value.execution_id
+            if created:
+                harness = os.environ.get("HARNESS_KIND", "claude")
+                model = os.environ.get("HARNESS_MODEL", "default")
+                os.environ["HARNESS_REASONING_EFFORT"] = value.reasoning_effort
+                selected = command(harness, model, value.native_thread_id)
+                environment = {**os.environ, **selected.environment, "HOME": "/workspace/state/home", "PWD": "/workspace/project"}
+                Path(environment["HOME"]).mkdir(parents=True, exist_ok=True)
+                process = await asyncio.create_subprocess_exec(*selected.argv, cwd=WORKSPACE / "project", env=environment,
+                    stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                    start_new_session=True, limit=HARNESS_JSONL_LIMIT)
+                execution = Execution(id=value.execution_id, process=process, selected=selected,
+                    native_thread_id=value.native_thread_id)
+                app.state.execution = execution
+                app.state.process = process
+                app.state.process_command = selected
+            try:
+                await submit_input(execution, value, initial=created)
+            except Exception:
+                if created:
+                    await abort_execution(execution)
+                    await finish_execution(execution, {"status": "failed", "error_code": "input_delivery_failed",
+                        "error_detail": "Initial input could not be delivered", "input_ids": list(execution.pending_input_ids)})
+                raise
+            if created:
+                execution.reader_task = asyncio.create_task(read_execution(execution, harness),
+                    name="harness-reader-" + value.execution_id)
+            return StreamingResponse(stream_execution(execution, value.after_sequence), media_type="application/x-ndjson")
 
     @app.get("/v1/executions/{execution_id}")
     async def execution_status(execution_id: str):
@@ -535,33 +618,14 @@ def create_app() -> FastAPI:
 
     @app.post("/v1/inputs")
     async def append_input(value: TurnRequest):
-        process = app.state.process
-        selected = app.state.process_command
-        if not process or process.returncode is not None or not selected or not selected.streaming_input:
-            raise HTTPException(409, "Harness does not have a live input stream")
-        prompt = value.message
-        input_id = value.input_id
-        execution = app.state.execution
-        if value.attachments:
-            prompt += "\n\nAttached files are available in /workspace/inbox. Their immutable records are listed in attachments.json."
-            (WORKSPACE / "inbox" / "attachments.json").write_text(json.dumps(value.attachments, ensure_ascii=False))
-        async with app.state.write_lock:
+        async with app.state.execution_lock:
             execution = app.state.execution
-            if (not execution or execution.id != value.execution_id
-                    or not execution.accepting_inputs or execution.result is not None):
+            if not execution or execution.id != value.execution_id:
                 raise HTTPException(409, "Execution is no longer accepting input")
-            if input_id in execution.received_input_ids:
-                mode = "native_steer" if os.environ.get("HARNESS_KIND") == "codex" else (
-                    "native_safe_point" if os.environ.get("HARNESS_KIND") == "deepseek" else "native_stream")
-                return {"accepted": True, "mode": mode, "replayed": True}
-            if execution:
-                execution.received_input_ids.add(input_id)
-                execution.pending_input_ids.append(input_id)
-            process.stdin.write(control_user_message(prompt, value.input_id) if selected.control_input else streaming_user_message(prompt)); await process.stdin.drain()
-            app.state.pending_inputs += 1
-        mode = "native_steer" if os.environ.get("HARNESS_KIND") == "codex" else (
-            "native_safe_point" if os.environ.get("HARNESS_KIND") == "deepseek" else "native_stream")
-        return {"accepted": True, "mode": mode}
+            submitted = await submit_input(execution, value, initial=False)
+            mode = "native_steer" if os.environ.get("HARNESS_KIND") == "codex" else (
+                "native_safe_point" if os.environ.get("HARNESS_KIND") == "deepseek" else "native_stream")
+            return {"accepted": True, "mode": mode, "replayed": not submitted}
 
     @app.post("/v1/interactions/{interaction_id}")
     async def respond_interaction(interaction_id: str, request: Request):
@@ -615,22 +679,23 @@ def create_app() -> FastAPI:
         cwd = Path(value.cwd).resolve()
         if not cwd.is_relative_to(project) or not cwd.is_dir():
             raise HTTPException(422, "Background job cwd must be inside /workspace/project")
-        execution = app.state.execution
-        if execution is None or execution.result is not None:
-            raise HTTPException(409, "No active Harness execution")
-        identity = uuid.uuid4().hex
-        process = await asyncio.create_subprocess_exec(*value.argv, cwd=cwd, env=os.environ.copy(),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True, limit=HARNESS_JSONL_LIMIT)
-        job = BackgroundJob(id=identity, name=value.name, argv=value.argv, cwd=str(cwd),
-            execution_id=execution.id, pid=process.pid, log_path=str(jobs_root / (identity + ".log")),
-            process=process)
-        app.state.background_jobs[job.id] = job; persist_job(job)
-        await publish(execution, {"kind": "step_started", "payload": {
-            "name": "后台任务 · " + job.name, "background_job_id": job.id, "pid": job.pid,
-        }})
-        job.task = asyncio.create_task(watch_job(job), name="background-job-" + job.id)
-        return job.public()
+        async with app.state.write_lock:
+            execution = app.state.execution
+            if execution is None or execution.result is not None or not execution.accepting_inputs:
+                raise HTTPException(409, "No active Harness execution")
+            identity = uuid.uuid4().hex
+            process = await asyncio.create_subprocess_exec(*value.argv, cwd=cwd, env=os.environ.copy(),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True, limit=HARNESS_JSONL_LIMIT)
+            job = BackgroundJob(id=identity, name=value.name, argv=value.argv, cwd=str(cwd),
+                execution_id=execution.id, pid=process.pid, log_path=str(jobs_root / (identity + ".log")),
+                process=process)
+            app.state.background_jobs[job.id] = job; persist_job(job)
+            await publish(execution, {"kind": "step_started", "payload": {
+                "name": "后台任务 · " + job.name, "background_job_id": job.id, "pid": job.pid,
+            }})
+            job.task = asyncio.create_task(watch_job(job), name="background-job-" + job.id)
+            return job.public()
 
     @app.get("/v1/background-jobs")
     async def list_background_jobs():
@@ -642,21 +707,20 @@ def create_app() -> FastAPI:
         job = app.state.background_jobs.get(job_id)
         if not job:
             raise HTTPException(404, "Background job not found")
-        if job.status == "running" and job.process and job.process.returncode is None:
-            job.status = "cancelling"; persist_job(job)
-            try:
-                os.killpg(job.process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+        await cancel_job(job)
         return job.public(log_tail=job_log_tail(job))
 
     @app.post("/v1/cancel")
     async def cancel():
-        process = app.state.process
-        if process and process.returncode is None:
-            process.send_signal(signal.SIGTERM)
-        await stop_process()
-        return {"cancelled": True}
+        async with app.state.execution_lock:
+            execution = app.state.execution
+            if execution and execution.result is None:
+                execution.cancel_requested = True
+                await abort_execution(execution)
+                await finish_execution(execution, {"status": "cancelled", "error_code": "cancelled",
+                    "native_thread_id": execution.native_thread_id,
+                    "input_ids": list(execution.pending_input_ids)})
+            return {"cancelled": True}
 
     def artifact_path(value: str) -> Path:
         relative = safe_relative(value)

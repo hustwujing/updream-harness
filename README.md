@@ -1,4 +1,4 @@
-# Sandbox Harness Platform
+# updream-harness
 
 A thin, stateful OpenSandbox platform that sends every user message to a Codex, Claude or DeepSeek Harness. The platform restores the Harness workspace, streams its public output and steps, exports files, checkpoints the environment and removes the sandbox. It contains no DAG, planner, reviewer or media workflow engine.
 
@@ -77,3 +77,7 @@ The final 21-case capability, interaction, Workspace, background execution, reco
 ## Runtime Toolchain
 
 Every Harness image inherits the same immutable foundation with Python, Node.js, ffmpeg/ffprobe, Chromium, Playwright, Three.js, Git, curl, jq, ripgrep, file inspection, GCC/G++, Make, CMake, pkg-config, archive tools and CJK fonts. The common Runtime layer additionally carries NumPy, Pillow, OpenCV, SciPy, scikit-image, librosa, SoundFile, Matplotlib, MoviePy, PyAV, ImageIO, CairoSVG, PSD Tools, rembg/ONNX Runtime, Trimesh and related media libraries. `runtime/media_probe.py` imports the declared modules during every image build. [toolchain.lock.json](runtime/toolchain.lock.json) records the observed foundation command and package versions; image builds fail when the foundation no longer matches it. The deployed Harness images are referenced by registry digest rather than mutable tag.
+
+Runtime boundary handling: execution creation and stdin submission are serialized. An input ID is bound to its original body; a replay returns the existing execution and conflicting content is rejected before attachment metadata changes. Streaming Harnesses must acknowledge their pending inputs: EOF alone is not success. Protocol failures and cancellation quiesce the Harness process group and supervised background jobs before publishing a terminal result; jobs ignoring SIGTERM are killed after a bounded grace period.
+
+Stop requests are persisted on the Turn. The lease owner observes them through its heartbeat, and a replacement Broker honors them without replaying the Harness. Stop and final completion are serialized in the database; a stop accepted before completion prevents a later success from overriding it. The UI displays “正在停止” and disables further input while cleanup finishes. Targeted regression cases are in `tests/test_runtime_boundaries.py` and `tests/test_cancel_boundaries.py`.
