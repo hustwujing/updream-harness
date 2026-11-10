@@ -3,7 +3,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 from getpass import getpass
+import os
 from pathlib import Path
+
+from dotenv import dotenv_values
 
 from .auth import AccountAuth, normalize_username
 from .config import load_settings
@@ -22,6 +25,10 @@ def password_value(path: str) -> str:
 
 
 async def run(args) -> None:
+    env_file = Path(args.env_file) if args.env_file else Path.cwd()/'.data/config/platform.env'
+    if env_file.is_file():
+        for key,value in dotenv_values(env_file).items():
+            if value is not None:os.environ[key]=value
     settings = load_settings();store = Store(settings.database_url);await store.initialize()
     auth = AccountAuth(store, settings.auth_session_ttl_seconds)
     try:
@@ -45,6 +52,7 @@ async def run(args) -> None:
 
 def main() -> None:
     parser=argparse.ArgumentParser(description="Manage updream-harness accounts")
+    parser.add_argument('--env-file',default=os.getenv('SANDBOX_HARNESS_ENV_FILE',''))
     sub=parser.add_subparsers(dest="action",required=True)
     sub.add_parser("list")
     for action in ("create","reset-password","disable","enable"):
