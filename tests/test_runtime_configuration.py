@@ -327,8 +327,14 @@ def test_runtime_generic_interaction_blocks_any_harness_until_user_response(tmp_
         assert identity.startswith("runtime-")
         response = client.post(f"/v1/interactions/{identity}",
             json={"action":"answer","answers":{"format":"mp4"}})
+        replay = client.post(f"/v1/interactions/{identity}",
+            json={"action":"answer","answers":{"format":"mp4"}})
+        conflict = client.post(f"/v1/interactions/{identity}",
+            json={"action":"answer","answers":{"format":"webm"}})
         interaction_worker.join(timeout=5); turn_worker.join(timeout=5)
     assert response.status_code == 200
+    assert replay.status_code == 200 and replay.json()["replayed"] is True
+    assert conflict.status_code == 409
     assert interaction_result["response"].json()["answers"] == {"format":"mp4"}
     assert turn_result["response"].status_code == 200
 

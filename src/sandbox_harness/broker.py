@@ -45,6 +45,8 @@ class Broker:
         self.lock_users: dict[str, int] = defaultdict(int)
         self.lock_guard = asyncio.Lock()
         self.input_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.input_lock_users: dict[str, int] = defaultdict(int)
+        self.input_lock_guard = asyncio.Lock()
         self.active_sandboxes = {}
         self.instance_id = "broker-" + __import__("uuid").uuid4().hex
         self.leases: dict[str, int] = {}
@@ -67,6 +69,21 @@ class Broker:
                 if self.lock_users[thread_id] == 0:
                     self.lock_users.pop(thread_id, None)
                     self.locks.pop(thread_id, None)
+
+    @asynccontextmanager
+    async def input_lock(self, turn_id: str):
+        async with self.input_lock_guard:
+            lock = self.input_locks[turn_id]
+            self.input_lock_users[turn_id] += 1
+        try:
+            async with lock:
+                yield
+        finally:
+            async with self.input_lock_guard:
+                self.input_lock_users[turn_id] -= 1
+                if self.input_lock_users[turn_id] == 0:
+                    self.input_lock_users.pop(turn_id, None)
+                    self.input_locks.pop(turn_id, None)
 
     def _schedule(self, turn_id: str) -> None:
         task = self.tasks.get(turn_id)
@@ -197,7 +214,7 @@ class Broker:
         self.leases.pop(turn.id, None)
 
     async def try_deliver_input(self, value) -> bool:
-        async with self.input_locks[value.turn_id]:
+        async with self.input_lock(value.turn_id):
             sandbox = self.active_sandboxes.get(value.turn_id)
             turn = await self.store.get_turn(value.turn_id)
             if not sandbox or not turn or turn.state != TurnState.RUNNING:
@@ -220,24 +237,34 @@ class Broker:
         response = {"action": value.action, "answers": value.answers}
         interaction, claimed = await self.store.claim_interaction_response(
             interaction_id, owner_id, value.idempotency_key, response,
+            claim_owner=self.instance_id,
         )
         if not claimed:
             return interaction
         turn = await self.store.get_turn(interaction.turn_id)
         sandbox = self.active_sandboxes.get(interaction.turn_id)
         if (not turn or not sandbox or turn.runtime_execution_id != interaction.runtime_execution_id):
-            await self.store.finish_interaction_response(interaction_id, delivered=False)
+            await self.store.finish_interaction_response(
+                interaction_id, delivered=False, claim_owner=self.instance_id)
             raise RuntimeError("interaction_runtime_unavailable")
         if interaction.kind == "approval" and value.action not in {"approve", "reject"}:
-            await self.store.finish_interaction_response(interaction_id, delivered=False)
+            await self.store.finish_interaction_response(
+                interaction_id, delivered=False, claim_owner=self.instance_id)
             raise ValueError("Approval requires approve or reject")
         if interaction.kind == "question" and (value.action != "answer" or not value.answers):
-            await self.store.finish_interaction_response(interaction_id, delivered=False)
+            await self.store.finish_interaction_response(
+                interaction_id, delivered=False, claim_owner=self.instance_id)
             raise ValueError("Question requires at least one answer")
-        delivered = await self.runtime.respond_interaction(
-            sandbox, interaction.runtime_interaction_id, response,
-        )
-        current = await self.store.finish_interaction_response(interaction_id, delivered=delivered)
+        try:
+            delivered = await self.runtime.respond_interaction(
+                sandbox, interaction.runtime_interaction_id, response,
+            )
+        except Exception as exc:
+            await self.store.finish_interaction_response(
+                interaction_id, delivered=False, claim_owner=self.instance_id)
+            raise RuntimeError("interaction_delivery_failed") from exc
+        current = await self.store.finish_interaction_response(
+            interaction_id, delivered=delivered, claim_owner=self.instance_id)
         if not delivered:
             raise RuntimeError("interaction_transport_unsupported")
         await self.store.finish_interaction_item(interaction.turn_id, interaction.id, response)
@@ -440,6 +467,7 @@ class Broker:
         error_code = "turn_failed"
         error_detail = "Turn failed before the Harness returned a result"
         abandoned = False
+        lost_lease = False
         try:
             async with self.thread_lock(thread.id):
                 recovering = turn.state in {
@@ -547,7 +575,7 @@ class Broker:
                     if result is None:
                         raise RuntimeError("Runtime stream ended without a result")
                     if result.status in ("completed", "waiting_user"):
-                        async with self.input_locks[turn.id]:
+                        async with self.input_lock(turn.id):
                             await self._state(turn.id, TurnState.DRAINING_INPUTS, sandbox_id=sandbox.id)
                             await self.store.apply_delivered_inputs(turn.id)
                     if current_input_id:
@@ -626,7 +654,14 @@ class Broker:
         except Exception as exc:
             error_code = type(exc).__name__
             error_detail = str(exc)
-            await self.store.append_event(turn.id, EventKind.ERROR, {"code": error_code, "detail": error_detail[:1000]})
+            try:
+                await self.store.append_event(turn.id, EventKind.ERROR,
+                    {"code": error_code, "detail": error_detail[:1000]},
+                    lease_owner=self.instance_id, recovery_generation=generation)
+            except RuntimeError as fence_error:
+                if str(fence_error) != "stale_turn_lease":
+                    raise
+                lost_lease = True
         finally:
             heartbeat.cancel()
             await asyncio.gather(heartbeat, return_exceptions=True)
@@ -637,10 +672,13 @@ class Broker:
                 self.tasks.pop(turn.id, None)
                 return
             try:
-                await self.store.complete_agent_item(turn.id, "completed" if final_state in {TurnState.COMPLETED, TurnState.WAITING_USER} else "interrupted")
                 await self.store.begin_turn_cleanup(turn.id, final_state, error_code=error_code,
                     error_detail=error_detail, owner=self.instance_id, generation=generation)
-                await self.store.append_event(turn.id, EventKind.STATE, {"state": TurnState.CLEANING.value})
+                await self.store.complete_agent_item(turn.id,
+                    "completed" if final_state in {TurnState.COMPLETED, TurnState.WAITING_USER} else "interrupted",
+                    lease_owner=self.instance_id, recovery_generation=generation)
+                await self.store.append_event(turn.id, EventKind.STATE, {"state": TurnState.CLEANING.value},
+                    lease_owner=self.instance_id, recovery_generation=generation)
                 if sandbox:
                     revoked = False
                     capability_nonce = claims.nonce if 'claims' in locals() else turn.capability_nonce
@@ -661,7 +699,7 @@ class Broker:
                                         "code": "capability_revoke_failed",
                                         "detail": type(exc).__name__,
                                         "action": "delete_sandbox",
-                                    })
+                                    }, lease_owner=self.instance_id, recovery_generation=generation)
                                 else:
                                     await asyncio.sleep(0.2 * (attempt + 1))
                     keep_attached = (
@@ -672,14 +710,30 @@ class Broker:
                     await self.pool.release(sandbox, keep_attached=keep_attached,
                         keepalive_seconds=self.settings.session_keepalive_seconds)
             except Exception as exc:
-                final_state = TurnState.FAILED
-                error_code = "cleanup_failed"
-                error_detail = type(exc).__name__ + ": " + str(exc)
-                await self.store.append_event(turn.id, EventKind.ERROR, {
-                    "code": error_code,
-                    "detail": error_detail[:1000],
-                })
+                if isinstance(exc, RuntimeError) and str(exc) == "stale_turn_lease":
+                    lost_lease = True
+                else:
+                    final_state = TurnState.FAILED
+                    error_code = "cleanup_failed"
+                    error_detail = type(exc).__name__ + ": " + str(exc)
+                    try:
+                        await self.store.append_event(turn.id, EventKind.ERROR, {
+                            "code": error_code,
+                            "detail": error_detail[:1000],
+                        }, lease_owner=self.instance_id, recovery_generation=generation)
+                    except RuntimeError as fence_error:
+                        if str(fence_error) != "stale_turn_lease":
+                            raise
+                        lost_lease = True
             finally:
+                if lost_lease:
+                    if sandbox:
+                        await self.pool.detach(sandbox)
+                    self.active_sandboxes.pop(turn.id, None)
+                    self.leases.pop(turn.id, None)
+                    self.tasks.pop(turn.id, None)
+                    self.cancelled.discard(turn.id)
+                    return
                 if final_state == TurnState.FAILED:
                     public_detail = {
                         "HTTPStatusError": "沙箱运行环境暂时不可用，请重新发送消息。",
@@ -691,12 +745,13 @@ class Broker:
                         "cleanup_failed": "运行结果保存或环境清理失败，请重试。",
                     }.get(error_code, "本轮执行失败，请重试；如果持续失败，可以切换模型。")
                     item = await self.store.append_item(thread.id, turn.id, ItemType.ERROR, status="failed",
-                        summary=public_detail, payload={"code": error_code, "detail": public_detail})
+                        summary=public_detail, payload={"code": error_code, "detail": public_detail},
+                        lease_owner=self.instance_id, recovery_generation=generation)
                     await self.store.append_event(turn.id, EventKind.ERROR,
-                        {"code": error_code, "detail": public_detail}, item_id=item.id)
+                        {"code": error_code, "detail": public_detail}, item_id=item.id,
+                        lease_owner=self.instance_id, recovery_generation=generation)
                 await self._state(turn.id, final_state, sandbox_id=sandbox.id if sandbox else "", error_code=error_code, error_detail=error_detail)
                 self.active_sandboxes.pop(turn.id, None)
-                self.input_locks.pop(turn.id, None)
                 next_turn = await self.store.claim_next_turn(turn.thread_id, turn.id)
                 if next_turn:
                     self._schedule(next_turn.id)

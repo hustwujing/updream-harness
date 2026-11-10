@@ -1,10 +1,24 @@
+import asyncio
 import json
+import time
 
 import httpx
 
 from sandbox_harness.domain import Harness
 from sandbox_harness.sandbox import FakeSandboxBackend, OpenSandboxBackend
 from sandbox_harness.pool import SandboxPool
+
+
+class SlowCreateBackend(FakeSandboxBackend):
+    def __init__(self, delay: float = 0.15):
+        super().__init__()
+        self.delay = delay
+        self.create_started = asyncio.Event()
+
+    async def create(self, *args, **kwargs):
+        self.create_started.set()
+        await asyncio.sleep(self.delay)
+        return await super().create(*args, **kwargs)
 
 
 async def test_fake_backend_scopes_turn_lookup_to_namespace():
@@ -276,4 +290,36 @@ async def test_expired_attached_sandbox_is_replaced_during_reacquire():
     assert claimed.id != expired.id
     assert claimed.id in backend.items
     await pool.release(claimed, keep_attached=False)
+    await pool.close()
+
+
+async def test_sandbox_creates_for_different_threads_run_concurrently():
+    backend = SlowCreateBackend()
+    pool = SandboxPool(backend, {harness: "" for harness in Harness},
+        {harness: 0 for harness in Harness}, max_sandboxes=8)
+    started = time.monotonic()
+    sandboxes = await asyncio.gather(*(pool.acquire(
+        thread_id=f"thread-{index}", turn_id=f"turn-{index}", harness=Harness.CLAUDE,
+        environment={},
+    ) for index in range(4)))
+    elapsed = time.monotonic() - started
+    assert elapsed < backend.delay * 2.5
+    await asyncio.gather(*(pool.release(sandbox, keep_attached=False) for sandbox in sandboxes))
+    await pool.close()
+
+
+async def test_unrelated_sandbox_create_does_not_block_release():
+    backend = SlowCreateBackend(delay=0.2)
+    pool = SandboxPool(backend, {harness: "" for harness in Harness},
+        {harness: 0 for harness in Harness}, max_sandboxes=4)
+    first = await pool.acquire(thread_id="first", turn_id="first", harness=Harness.CLAUDE, environment={})
+    backend.create_started = asyncio.Event()
+    creating = asyncio.create_task(pool.acquire(
+        thread_id="second", turn_id="second", harness=Harness.CLAUDE, environment={}))
+    await backend.create_started.wait()
+    started = time.monotonic()
+    await pool.release(first, keep_attached=False)
+    assert time.monotonic() - started < 0.1
+    second = await creating
+    await pool.release(second, keep_attached=False)
     await pool.close()

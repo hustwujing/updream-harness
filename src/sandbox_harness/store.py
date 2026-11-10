@@ -4,7 +4,7 @@ import json
 import asyncio
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 
 from sqlalchemy import Boolean, DateTime, Integer, String, Text, UniqueConstraint, delete, func, inspect, select, text, update
@@ -25,6 +25,10 @@ def valid_project_file_path(path: str, source_type: str) -> bool:
     expected_root = "assets" if source_type == "upload" else "artifacts" if source_type == "artifact" else ""
     return bool(expected_root and not pure.is_absolute() and len(pure.parts) >= 2
         and pure.parts[0] == expected_root and not any(part in {"", ".", ".."} for part in pure.parts))
+
+
+def utc_datetime(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
 class ThreadRow(Base):
@@ -167,6 +171,8 @@ class InteractionRow(Base):
     request_json: Mapped[str] = mapped_column(Text, default="{}")
     response_json: Mapped[str] = mapped_column(Text, default="{}")
     response_key: Mapped[str] = mapped_column(String(160), default="")
+    response_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    response_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -240,6 +246,14 @@ class Store:
             project_columns = await connection.run_sync(lambda value: {column["name"] for column in inspect(value).get_columns("project_files")})
             if "deleted" not in project_columns:
                 await connection.execute(text("ALTER TABLE project_files ADD COLUMN deleted BOOLEAN NOT NULL DEFAULT FALSE"))
+            interaction_columns = await connection.run_sync(
+                lambda value: {column["name"] for column in inspect(value).get_columns("interactions")})
+            if "response_owner" not in interaction_columns:
+                await connection.execute(text(
+                    "ALTER TABLE interactions ADD COLUMN response_owner VARCHAR(64) NOT NULL DEFAULT ''"))
+            if "response_expires_at" not in interaction_columns:
+                await connection.execute(text(
+                    "ALTER TABLE interactions ADD COLUMN response_expires_at TIMESTAMP WITH TIME ZONE NULL"))
 
     async def close(self) -> None:
         if self.events:
@@ -423,7 +437,8 @@ class Store:
                 TurnState.WAITING_USER, TurnState.COMPLETED, TurnState.FAILED, TurnState.CANCELLED,
             }:
                 return None
-            if row.lease_owner and row.lease_owner != owner and row.lease_expires_at and row.lease_expires_at > timestamp:
+            if (row.lease_owner and row.lease_owner != owner and row.lease_expires_at
+                    and utc_datetime(row.lease_expires_at) > timestamp):
                 return None
             if row.lease_owner != owner:
                 row.recovery_generation += 1
@@ -609,15 +624,23 @@ class Store:
         return row is not None
 
     async def append_event(self, turn_id: str, kind: EventKind, payload: dict, *, item_id: str = "",
-                           source_execution_id: str = "", source_sequence: int = 0) -> Event:
+                           source_execution_id: str = "", source_sequence: int = 0,
+                           lease_owner: str | None = None, recovery_generation: int | None = None) -> Event:
         async with self.event_lock(turn_id):
             return await self._append_event_locked(turn_id, kind, payload, item_id=item_id,
-                source_execution_id=source_execution_id, source_sequence=source_sequence)
+                source_execution_id=source_execution_id, source_sequence=source_sequence,
+                lease_owner=lease_owner, recovery_generation=recovery_generation)
 
     async def _append_event_locked(self, turn_id: str, kind: EventKind, payload: dict, *, item_id: str,
-                                   source_execution_id: str, source_sequence: int) -> Event:
+                                   source_execution_id: str, source_sequence: int,
+                                   lease_owner: str | None, recovery_generation: int | None) -> Event:
         async with self.connections.begin() as db:
-            await db.get(TurnRow, turn_id, with_for_update=True)
+            turn = await db.get(TurnRow, turn_id, with_for_update=True)
+            if not turn:
+                raise KeyError("turn_not_found")
+            if (lease_owner is not None and (turn.lease_owner != lease_owner
+                    or turn.recovery_generation != recovery_generation)):
+                raise RuntimeError("stale_turn_lease")
             if source_execution_id and source_sequence:
                 existing = (await db.execute(select(EventRow).where(
                     EventRow.turn_id == turn_id,
@@ -646,9 +669,17 @@ class Store:
             rows = (await db.execute(query)).scalars().all()
         return [Event(turn_id=row.turn_id, sequence=row.sequence, kind=EventKind(row.kind), item_id=row.item_id, payload=json.loads(row.payload_json), created_at=row.created_at) for row in rows]
 
-    async def append_item(self, thread_id: str, turn_id: str, item_type: ItemType, *, status: str, summary: str = "", payload: dict | None = None) -> Item:
+    async def append_item(self, thread_id: str, turn_id: str, item_type: ItemType, *, status: str,
+                          summary: str = "", payload: dict | None = None,
+                          lease_owner: str | None = None, recovery_generation: int | None = None) -> Item:
         timestamp = now()
         async with self.connections.begin() as db:
+            turn = await db.get(TurnRow, turn_id, with_for_update=True)
+            if not turn:
+                raise KeyError("turn_not_found")
+            if (lease_owner is not None and (turn.lease_owner != lease_owner
+                    or turn.recovery_generation != recovery_generation)):
+                raise RuntimeError("stale_turn_lease")
             sequence = await self.next_item_sequence(db, thread_id)
             row = ItemRow(id=identifier(), thread_id=thread_id, turn_id=turn_id, sequence=sequence,
                 type=item_type.value, status=status, summary=summary, payload_json=json.dumps(payload or {}, ensure_ascii=False),
@@ -673,8 +704,15 @@ class Store:
         return Item(id=row.id, thread_id=thread_id, turn_id=turn_id, sequence=row.sequence, type=ItemType.AGENT_MESSAGE,
             status=row.status, summary=row.summary, payload=json.loads(row.payload_json), created_at=row.created_at, updated_at=row.updated_at)
 
-    async def complete_agent_item(self, turn_id: str, status: str) -> None:
+    async def complete_agent_item(self, turn_id: str, status: str, *, lease_owner: str | None = None,
+                                  recovery_generation: int | None = None) -> None:
         async with self.connections.begin() as db:
+            turn = await db.get(TurnRow, turn_id, with_for_update=True)
+            if not turn:
+                raise KeyError("turn_not_found")
+            if (lease_owner is not None and (turn.lease_owner != lease_owner
+                    or turn.recovery_generation != recovery_generation)):
+                raise RuntimeError("stale_turn_lease")
             row = (await db.execute(select(ItemRow).where(ItemRow.turn_id == turn_id, ItemRow.type == ItemType.AGENT_MESSAGE.value).order_by(ItemRow.sequence.desc()).limit(1))).scalar_one_or_none()
             if row:
                 row.status = status
@@ -868,8 +906,10 @@ class Store:
         return [self.interaction_view(row) for row in rows]
 
     async def claim_interaction_response(self, interaction_id: str, owner_id: str,
-                                         response_key: str, response: dict) -> tuple[Interaction, bool]:
+                                         response_key: str, response: dict, *, claim_owner: str = "",
+                                         lease_seconds: int = 30) -> tuple[Interaction, bool]:
         expired = False
+        timestamp = now()
         async with self.connections.begin() as db:
             row = (await db.execute(select(InteractionRow).join(ThreadRow,
                 ThreadRow.id == InteractionRow.thread_id).where(
@@ -877,31 +917,52 @@ class Store:
                 ).with_for_update())).scalar_one_or_none()
             if not row:
                 raise KeyError("interaction_not_found")
+            stored_response = json.loads(row.response_json)
+            if row.response_key == response_key and stored_response and stored_response != response:
+                raise RuntimeError("idempotency_conflict")
             if row.status == "responded" and row.response_key == response_key:
                 return self.interaction_view(row), False
+            if row.status == "responding":
+                lease_active = bool(row.response_expires_at
+                    and utc_datetime(row.response_expires_at) > timestamp)
+                if lease_active:
+                    raise RuntimeError("interaction_response_in_progress")
+                if row.response_key != response_key or stored_response != response:
+                    raise RuntimeError("interaction_response_in_progress")
+                row.response_owner = claim_owner
+                row.response_expires_at = timestamp + timedelta(seconds=lease_seconds)
+                row.updated_at = timestamp
+                return self.interaction_view(row), True
             if row.status != "pending":
                 raise RuntimeError("interaction_not_pending")
             turn = await db.get(TurnRow, row.turn_id, with_for_update=True)
             if (not turn or turn.runtime_execution_id != row.runtime_execution_id
                     or TurnState(turn.state) not in {TurnState.RUNNING, TurnState.AWAITING_USER}):
-                row.status = "expired"; row.updated_at = now()
+                row.status = "expired"; row.updated_at = timestamp
                 expired = True
             else:
                 row.status = "responding"; row.response_key = response_key
-                row.response_json = json.dumps(response, ensure_ascii=False); row.updated_at = now()
+                row.response_json = json.dumps(response, ensure_ascii=False)
+                row.response_owner = claim_owner
+                row.response_expires_at = timestamp + timedelta(seconds=lease_seconds)
+                row.updated_at = timestamp
         if expired:
             raise RuntimeError("interaction_expired")
         return self.interaction_view(row), True
 
-    async def finish_interaction_response(self, interaction_id: str, *, delivered: bool) -> Interaction:
+    async def finish_interaction_response(self, interaction_id: str, *, delivered: bool,
+                                          claim_owner: str = "") -> Interaction:
         async with self.connections.begin() as db:
             row = await db.get(InteractionRow, interaction_id, with_for_update=True)
             if not row:
                 raise KeyError("interaction_not_found")
             if row.status == "responding":
+                if claim_owner and row.response_owner != claim_owner:
+                    raise RuntimeError("stale_interaction_response_claim")
                 row.status = "responded" if delivered else "pending"
                 if not delivered:
                     row.response_key = ""; row.response_json = "{}"
+                row.response_owner = ""; row.response_expires_at = None
                 row.updated_at = now()
         return self.interaction_view(row)
 

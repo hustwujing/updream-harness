@@ -85,6 +85,11 @@ class InteractionRuntime(Runtime):
         self.responses.append((interaction_id, response)); self.release.set(); return True
 
 
+class FailingInteractionRuntime(InteractionRuntime):
+    async def respond_interaction(self, sandbox, interaction_id, response):
+        raise httpx.ConnectError("runtime connection reset")
+
+
 async def test_terminal_turn_cannot_be_cancelled(tmp_path):
     settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "cancel.db"),
         backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9")
@@ -372,4 +377,70 @@ async def test_broker_persists_native_question_and_resumes_the_same_runtime(tmp_
         approval = next(item for item in await store.items_after(thread.id) if item.type.value == "approval")
         assert approval.status == "completed" and approval.payload["response"]["answers"]["format"] == "mp4"
     finally:
+        await broker.close(); await pool.close(); await store.close()
+
+
+async def test_interaction_transport_failure_is_retryable_and_returns_domain_error(tmp_path):
+    settings = Settings(data_root=tmp_path,
+        database_url="sqlite+aiosqlite:///" + str(tmp_path / "interaction-failure.db"),
+        backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9",
+        session_keepalive_seconds=0)
+    store = Store(settings.database_url); await store.initialize(); objects = ObjectStore(tmp_path / "objects")
+    backend = FakeSandboxBackend(); pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
+    runtime = FailingInteractionRuntime(); catalog = HarnessCatalog()
+    broker = Broker(settings, store, objects, pool, runtime, catalog)
+    owner = "a" * 64
+    try:
+        profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Interaction failure"), profile, owner)
+        turn = await broker.submit(thread.id,
+            TurnCreate(message="ask", idempotency_key="interaction-failure-turn"))
+        for _ in range(100):
+            if (await store.get_turn(turn.id)).state == TurnState.AWAITING_USER:
+                break
+            await asyncio.sleep(.01)
+        interaction = (await store.list_interactions(thread.id, owner))[0]
+        response = InteractionResponse(idempotency_key="interaction-failure-response",
+            action="answer", answers={"format":"mp4"})
+        with pytest.raises(RuntimeError, match="interaction_delivery_failed"):
+            await broker.respond_interaction(interaction.id, owner, response)
+        current = (await store.list_interactions(thread.id, owner))[0]
+        assert current.status == "pending" and current.response_key == ""
+    finally:
+        runtime.release.set()
+        await broker.close(); await pool.close(); await store.close()
+
+
+async def test_stale_broker_cleanup_does_not_publish_a_false_failure(tmp_path, monkeypatch):
+    settings = Settings(data_root=tmp_path,
+        database_url="sqlite+aiosqlite:///" + str(tmp_path / "stale-cleanup.db"),
+        backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9",
+        session_keepalive_seconds=0)
+    store = Store(settings.database_url); await store.initialize(); objects = ObjectStore(tmp_path / "objects")
+    backend = FakeSandboxBackend(); pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
+    catalog = HarnessCatalog(); broker = Broker(settings, store, objects, pool, Runtime(), catalog)
+
+    async def stale_cleanup(*args, **kwargs):
+        raise RuntimeError("stale_turn_lease")
+
+    monkeypatch.setattr(store, "begin_turn_cleanup", stale_cleanup)
+    try:
+        profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Stale cleanup"), profile, "a" * 64)
+        turn = await broker.submit(thread.id,
+            TurnCreate(message="run", idempotency_key="stale-cleanup-turn"))
+        for _ in range(200):
+            if turn.id not in broker.tasks:
+                break
+            await asyncio.sleep(.01)
+        items = await store.items_after(thread.id)
+        events = await store.events_after(turn.id, 0)
+        assert not any(item.type.value == "error" for item in items)
+        assert not any(event.payload.get("code") == "cleanup_failed" for event in events)
+        assert turn.id not in broker.leases and turn.id not in broker.active_sandboxes
+    finally:
+        for sandbox in await backend.list_namespace():
+            await backend.delete(sandbox)
         await broker.close(); await pool.close(); await store.close()

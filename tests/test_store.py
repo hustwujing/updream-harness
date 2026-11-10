@@ -1,5 +1,7 @@
 from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.domain import EventKind, Harness, ItemType, ThreadCreate, TurnCreate, TurnInputCreate, TurnState
+from datetime import timedelta
+
+from sandbox_harness.domain import EventKind, Harness, ItemType, ThreadCreate, TurnCreate, TurnInputCreate, TurnState, now
 from sandbox_harness.store import Store, ThreadRow, TurnRow, valid_project_file_path
 import pytest
 
@@ -73,6 +75,53 @@ async def test_turn_lease_generation_fences_stale_broker_writes(tmp_path):
             assert str(exc) == "stale_turn_lease"
         else:
             raise AssertionError("A stale broker changed the Turn state")
+    finally:
+        await store.close()
+
+
+async def test_expired_sqlite_lease_can_be_claimed_without_timezone_error(tmp_path):
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "expired-lease.db"))
+    await store.initialize()
+    try:
+        catalog = HarnessCatalog(); profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+        owner = "a" * 64
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Expired lease"), profile, owner)
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="hello", idempotency_key="expired-lease-key"), profile, owner)
+        first = await store.claim_turn(turn.id, "dead-broker", 30)
+        async with store.connections.begin() as db:
+            row = await db.get(TurnRow, turn.id, with_for_update=True)
+            row.lease_expires_at = now() - timedelta(seconds=120)
+        second = await store.claim_turn(turn.id, "new-broker", 30)
+        assert second is not None
+        assert second.lease_owner == "new-broker"
+        assert second.recovery_generation > first.recovery_generation
+    finally:
+        await store.close()
+
+
+async def test_item_and_event_writes_can_be_fenced_by_turn_lease(tmp_path):
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "output-fence.db"))
+    await store.initialize()
+    try:
+        catalog = HarnessCatalog(); profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+        owner = "a" * 64
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Output fence"), profile, owner)
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="hello", idempotency_key="output-fence-key"), profile, owner)
+        first = await store.claim_turn(turn.id, "first", 30)
+        await store.release_turn_lease(turn.id, "first", first.recovery_generation)
+        await store.claim_turn(turn.id, "second", 30)
+        with pytest.raises(RuntimeError, match="stale_turn_lease"):
+            await store.append_item(thread.id, turn.id, ItemType.ERROR, status="failed",
+                lease_owner="first", recovery_generation=first.recovery_generation)
+        with pytest.raises(RuntimeError, match="stale_turn_lease"):
+            await store.append_event(turn.id, EventKind.ERROR, {"code":"stale"},
+                lease_owner="first", recovery_generation=first.recovery_generation)
+        assert [item.type for item in await store.items_after(thread.id)] == [ItemType.USER_MESSAGE]
+        assert await store.events_after(turn.id, 0) == []
     finally:
         await store.close()
 
@@ -172,6 +221,43 @@ async def test_expired_interaction_status_is_committed_before_error(tmp_path):
         assert (await store.list_interactions(thread.id, owner))[0].status == "expired"
         with pytest.raises(RuntimeError, match="interaction_not_pending"):
             await store.claim_interaction_response(interaction.id, owner, "second-response-key", {"action":"approve"})
+    finally:
+        await store.close()
+
+
+async def test_interaction_response_claim_expires_and_preserves_idempotency(tmp_path):
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "interaction-claim.db")); await store.initialize()
+    try:
+        catalog = HarnessCatalog(); profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+        owner = "a" * 64
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Response claim"), profile, owner)
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="hello", idempotency_key="response-claim-turn"), profile, owner)
+        await store.set_turn_state(turn.id, TurnState.AWAITING_USER)
+        async with store.connections.begin() as db:
+            row = await db.get(TurnRow, turn.id, with_for_update=True)
+            row.runtime_execution_id = "execution-one"
+        interaction, _ = await store.upsert_interaction(thread.id, turn.id, "execution-one",
+            "native-response", "question", {"prompt":"Format?"})
+        response = {"action":"answer", "answers":{"format":"mp4"}}
+        claimed, accepted = await store.claim_interaction_response(interaction.id, owner,
+            "response-claim-key", response, claim_owner="broker-one", lease_seconds=30)
+        assert accepted and claimed.status == "responding"
+        with pytest.raises(RuntimeError, match="interaction_response_in_progress"):
+            await store.claim_interaction_response(interaction.id, owner,
+                "response-claim-key", response, claim_owner="broker-two", lease_seconds=30)
+        async with store.connections.begin() as db:
+            from sandbox_harness.store import InteractionRow
+            row = await db.get(InteractionRow, interaction.id, with_for_update=True)
+            row.response_expires_at = now() - timedelta(seconds=1)
+        reclaimed, accepted = await store.claim_interaction_response(interaction.id, owner,
+            "response-claim-key", response, claim_owner="broker-two", lease_seconds=30)
+        assert accepted and reclaimed.status == "responding"
+        await store.finish_interaction_response(interaction.id, delivered=True, claim_owner="broker-two")
+        with pytest.raises(RuntimeError, match="idempotency_conflict"):
+            await store.claim_interaction_response(interaction.id, owner,
+                "response-claim-key", {"action":"answer", "answers":{"format":"webm"}})
     finally:
         await store.close()
 

@@ -130,6 +130,8 @@ def create_app() -> FastAPI:
     app.state.execution = None
     app.state.background_jobs = {}
     app.state.interaction_waiters = {}
+    app.state.interaction_responses = {}
+    app.state.interaction_response_lock = asyncio.Lock()
     app.state.model_start_timeout_seconds = 150.0
     app.state.event_idle_timeout_seconds = 900.0
     app.state.stream_heartbeat_seconds = 15.0
@@ -544,23 +546,31 @@ def create_app() -> FastAPI:
 
     @app.post("/v1/interactions/{interaction_id}")
     async def respond_interaction(interaction_id: str, request: Request):
-        waiter = app.state.interaction_waiters.get(interaction_id)
         response = await request.json()
         if response.get("action") not in {"approve", "reject", "answer"}:
             raise HTTPException(422, "Invalid interaction action")
-        if waiter is not None:
-            if not waiter.done():
-                waiter.set_result(response)
+        async with app.state.interaction_response_lock:
+            recorded = app.state.interaction_responses.get(interaction_id)
+            if recorded is not None:
+                if recorded != response:
+                    raise HTTPException(409, "Interaction already has a different response")
+                return {"accepted": True, "replayed": True}
+            waiter = app.state.interaction_waiters.get(interaction_id)
+            if waiter is not None:
+                if not waiter.done():
+                    waiter.set_result(response)
+                app.state.interaction_responses[interaction_id] = response
+                return {"accepted": True}
+            process = app.state.process
+            selected = app.state.process_command
+            if (os.environ.get("HARNESS_KIND") != "codex" or not process or process.returncode is not None
+                    or not selected or not selected.control_input):
+                raise HTTPException(409, "Harness does not support a live native interaction")
+            async with app.state.write_lock:
+                process.stdin.write(control_interaction_response(interaction_id, response))
+                await process.stdin.drain()
+            app.state.interaction_responses[interaction_id] = response
             return {"accepted": True}
-        process = app.state.process
-        selected = app.state.process_command
-        if (os.environ.get("HARNESS_KIND") != "codex" or not process or process.returncode is not None
-                or not selected or not selected.control_input):
-            raise HTTPException(409, "Harness does not support a live native interaction")
-        async with app.state.write_lock:
-            process.stdin.write(control_interaction_response(interaction_id, response))
-            await process.stdin.drain()
-        return {"accepted": True}
 
     @app.post("/v1/native-interactions")
     async def start_native_interaction(value: NativeInteractionCreate):
