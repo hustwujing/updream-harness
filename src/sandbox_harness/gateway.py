@@ -42,6 +42,24 @@ def upstream_suffix(route: str, prefix: str) -> str:
     return suffix
 
 
+async def send_with_start_timeout(client, request, timeout_seconds: float):
+    try:
+        return await asyncio.wait_for(client.send(request, stream=True), timeout=timeout_seconds)
+    except TimeoutError as exc:
+        raise HTTPException(504, "Model upstream did not start responding before the timeout") from exc
+
+
+async def bytes_with_idle_timeout(response, timeout_seconds: float):
+    iterator = response.aiter_bytes().__aiter__()
+    while True:
+        try:
+            yield await asyncio.wait_for(iterator.__anext__(), timeout=timeout_seconds)
+        except StopAsyncIteration:
+            return
+        except TimeoutError:
+            return
+
+
 def create_gateway(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     codec = CapabilityCodec(settings.gateway_signing_key)
@@ -133,7 +151,8 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         base_url, credential = upstreams[prefix]
         if not base_url:
             raise HTTPException(503, "Gateway upstream is not configured")
-        client = clients.setdefault(prefix, httpx.AsyncClient(base_url=base_url.rstrip("/"), timeout=None, trust_env=False))
+        client = clients.setdefault(prefix, httpx.AsyncClient(base_url=base_url.rstrip("/"),
+            timeout=httpx.Timeout(None, connect=20), trust_env=False))
         suffix = upstream_suffix(route, prefix)
         headers = {key: value for key, value in request.headers.items() if key.lower() not in HOP_HEADERS | {"authorization", "x-api-key", "anthropic-api-key"}}
         if credential:
@@ -151,12 +170,12 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             payload["model"] = claims.model
             body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
         upstream = client.build_request(request.method, suffix, params=request.query_params, headers=headers, content=body)
-        response = await client.send(upstream, stream=True)
+        response = await send_with_start_timeout(client, upstream, settings.gateway_model_start_timeout_seconds)
         active[claims.nonce].add(response)
 
         async def content():
             try:
-                async for chunk in response.aiter_bytes():
+                async for chunk in bytes_with_idle_timeout(response, settings.gateway_model_idle_timeout_seconds):
                     yield chunk
             finally:
                 active[claims.nonce].discard(response)
