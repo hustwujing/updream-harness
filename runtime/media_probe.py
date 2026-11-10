@@ -5,9 +5,9 @@ import importlib
 
 
 MODULES = (
-    "av", "cairosvg", "cv2", "ffmpeg", "imagehash", "imageio", "jsonschema",
+    "av", "bs4", "cairosvg", "cv2", "ffmpeg", "imagehash", "imageio", "jsonschema",
     "librosa", "matplotlib", "moviepy", "mutagen", "networkx", "numpy",
-    "onnxruntime", "piexif", "PIL", "psd_tools", "pydub", "pymupdf", "rembg",
+    "onnxruntime", "piexif", "PIL", "psd_tools", "psutil", "pydub", "pymupdf", "rembg",
     "reportlab", "scipy", "shapely", "skimage", "sklearn", "soundfile",
     "svgwrite", "sympy", "trimesh", "xmltodict", "yaml",
 )

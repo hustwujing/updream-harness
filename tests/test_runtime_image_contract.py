@@ -25,3 +25,15 @@ def test_runtime_installs_supported_public_browser_helper():
     assert "Proxy-Authorization: ${authorization}" in text
     assert "server.listen(0, '127.0.0.1'" in text
     assert "for (const socket of sockets) socket.destroy()" in text
+
+
+def test_runtime_installs_patch_helper_and_probes_recovered_dependencies():
+    dockerfile = (ROOT / "runtime/base.Dockerfile").read_text()
+    probe = (ROOT / "runtime/media_probe.py").read_text()
+    dependencies = (ROOT / "pyproject.toml").read_text()
+    assert "runtime/apply_patch.py /usr/local/bin/apply_patch" in dockerfile
+    assert (ROOT / "runtime/apply_patch.py").is_file()
+    assert '"beautifulsoup4>=4.12,<5"' in dependencies
+    assert '"psutil>=6,<8"' in dependencies
+    assert '"bs4"' in probe
+    assert '"psutil"' in probe

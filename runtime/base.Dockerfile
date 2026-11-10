@@ -8,6 +8,7 @@ COPY . /opt/platform
 RUN pip install --no-cache-dir --trusted-host mirrors.cloud.aliyuncs.com --index-url ${PYPI_INDEX} '.[runtime-media]' && \
     python runtime/toolchain_probe.py --verify runtime/toolchain.lock.json && \
     python runtime/media_probe.py && \
+    install -m 0755 runtime/apply_patch.py /usr/local/bin/apply_patch && \
     install -m 0755 runtime/browser_render.mjs /usr/local/bin/sandbox-browser-render && \
     install -m 0755 runtime/browser_screenshot.mjs /usr/local/bin/sandbox-browser-screenshot && \
     mkdir -p /workspace/project /workspace/state /workspace/inbox /workspace/outputs /workspace/tmp /run/harness && \

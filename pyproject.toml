@@ -24,6 +24,7 @@ test = ["pytest>=8.3,<9", "pytest-asyncio>=0.25,<1"]
 runtime-media = [
   "audioop-lts>=0.2,<1; python_version >= '3.13'",
   "av>=14,<17",
+  "beautifulsoup4>=4.12,<5",
   "cairosvg>=2.7,<3",
   "ffmpeg-python>=0.2,<1",
   "imagehash>=4.3,<5",
@@ -40,6 +41,7 @@ runtime-media = [
   "onnxruntime>=1.21,<2",
   "piexif>=1.1,<2",
   "pillow>=11,<13",
+  "psutil>=6,<8",
   "psd-tools>=1.10,<2",
   "pymupdf>=1.25,<2",
   "pydub>=0.25,<1",
