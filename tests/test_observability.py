@@ -73,12 +73,13 @@ async def test_http_correlation_headers_and_template_path_do_not_leak_query(tele
         from fastapi.responses import JSONResponse
         return JSONResponse({'ok':True},headers={'X-Request-ID':'upstream-id','X-Trace-ID':'untrusted'})
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app),base_url='http://test') as client:
-        response=await client.post('/items/private-file?token=VERY_PRIVATE',headers={'traceparent':'malformed','Authorization':'Bearer VERY_PRIVATE'})
+        response=await client.post('/items/private-file?token=VERY_PRIVATE',headers={'traceparent':'malformed','Authorization':'Bearer VERY_PRIVATE','X-Updream-Ingress':'frpc'})
     assert response.status_code==200 and len(response.headers['x-trace-id'])==32 and len(response.headers['x-request-id'])==32
     records=rows(telemetry);serialized=json.dumps(records)
     assert 'VERY_PRIVATE' not in serialized and 'private-file' not in serialized
     log=next(r for r in records if r['event_name']=='http.request.completed')
     assert log['attributes']['http.route']=='/items/{item_id}' and log['attributes']['updream.turn_id']=='turn-http'
+    assert log['attributes']['updream.ingress']=='frpc'
     assert log['trace_id']==response.headers['x-trace-id']
 
 

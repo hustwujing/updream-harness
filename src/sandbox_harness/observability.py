@@ -39,7 +39,7 @@ BUSINESS = {'thread_id','turn_id','input_id','execution_id','sandbox_id','broker
     'state','previous_state','outcome','reason','error_code','failure_origin','count','bytes',
     'input_tokens','output_tokens','usage_source','duration_ms','first_output_ms','header_ms','queue_ms','namespace','dropped_count','gap_count',
     'export_failures','disk_errors','last_export_http_status','last_sequence','retained_from','source_service','source_instance','origin','source_event_id',
-    'source_trace_id','source_span_id','object_digest','image_digest','exit_code','request_bytes','response_bytes'}
+    'source_trace_id','source_span_id','object_digest','image_digest','exit_code','request_bytes','response_bytes','ingress'}
 STANDARD = {'http.request.method','http.route','http.response.status_code','http.request.resend_count',
     'error.type','exception.type','exception.stacktrace','code.function.name','code.file.path','code.line.number'}
 EVENT = re.compile(r'^[a-z][a-z0-9_.-]{0,119}$')
@@ -432,10 +432,11 @@ class RequestLoggingMiddleware:
     def __init__(self,app,service):self.app=app;self.service=service
     async def __call__(self,scope,receive,send):
         if scope['type']!='http' or scope.get('path','').startswith('/v1/telemetry/') or scope.get('path')=='/v1/diagnostics':return await self.app(scope,receive,send)
-        headers={k.decode().lower():v.decode() for k,v in scope.get('headers',[]) if k.lower() in {b'traceparent',b'tracestate'}}
+        headers={k.decode().lower():v.decode() for k,v in scope.get('headers',[]) if k.lower() in {b'traceparent',b'tracestate',b'x-updream-ingress'}}
         request_id=uuid.uuid4().hex;status=0;response_bytes=0;started=time.monotonic()
         quiet=scope['method']=='GET' and not scope['path'].endswith('/events')
         ctx=scope.setdefault('state',{}).setdefault('log_context',{})
+        if headers.get('x-updream-ingress') in {'direct','frpc'}:ctx['ingress']=headers['x-updream-ingress']
         if self.service=='runtime':ctx.update(getattr(getattr(scope.get('app'),'state',None),'log_context',{}))
         with bind(request_id=request_id,**ctx),_PROVIDER.get_tracer('updream-harness').start_as_current_span(
             'HTTP '+scope['method'],context=remote_context(headers),kind=SpanKind.SERVER,

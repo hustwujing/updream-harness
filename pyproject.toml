@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "A thin stateful OpenSandbox session broker for Codex, Claude and DeepSeek harnesses"
 requires-python = ">=3.12"
 dependencies = [
+  "argon2-cffi==25.1.0",
   "opentelemetry-sdk==1.45.2",
   "opentelemetry-exporter-otlp-proto-http==1.45.2",
   "aiosqlite>=0.20,<1",
@@ -60,6 +61,7 @@ runtime-media = [
 sandbox-harness-api = "sandbox_harness.main:run"
 sandbox-harness-gateway = "sandbox_harness.gateway:run"
 sandbox-harness-logs = "sandbox_harness.log_query:main"
+sandbox-harness-user = "sandbox_harness.auth_cli:main"
 sandbox-harness-runtime = "sandbox_runtime.main:run"
 sandbox-background = "sandbox_runtime.background_cli:main"
 sandbox-interact = "sandbox_runtime.interaction_cli:main"

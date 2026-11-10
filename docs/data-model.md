@@ -76,6 +76,17 @@ idempotency key, responding owner and response lease expiry. The unique native
 identity is `(turn_id, runtime_interaction_id)`. Only the matching active Runtime
 execution can receive a response.
 
+## Users and account Sessions
+
+`users` stores stable account ID/owner ID, normalized unique username, Argon2id
+password hash, disabled flag and timestamps. Username changes do not change the
+owner ID used by Threads and uploads.
+
+`auth_sessions` stores only the SHA-256 hash of a random Cookie token, account
+ID, expiry, creation and last-seen timestamps. Password reset/disable revokes
+Sessions by deleting rows. Anonymous browser identities remain stateless signed
+Cookies and do not create `users` rows.
+
 ## Schema upgrades
 
 `Store.initialize` creates missing tables and performs explicit additive ALTERs

@@ -96,6 +96,33 @@ class ThreadRead(BaseModel):
     turn_id: str = Field(pattern=r"^[0-9a-f]{32}$")
 
 
+class AccountView(BaseModel):
+    id: str
+    owner_id: str = Field(exclude=True)
+    username: str
+    disabled: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+
+class LoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(min_length=3, max_length=64)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class ChangeUsernameRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    current_password: str = Field(min_length=1, max_length=256)
+    username: str = Field(min_length=3, max_length=64)
+
+
+class ChangePasswordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=12, max_length=256)
+
+
 class ThreadView(BaseModel):
     id: str
     harness: Harness

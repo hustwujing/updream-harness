@@ -11,6 +11,23 @@ GET /api/session
 GET /api/catalog/harnesses
 ```
 
+`GET /api/session` reports ingress, whether account authentication is required,
+and the current account when present. FRPC ingress requires login; direct
+ingress may continue with its signed anonymous browser owner.
+
+## Account authentication
+
+```text
+POST /api/auth/login
+POST /api/auth/logout
+POST /api/auth/change-username
+POST /api/auth/change-password
+```
+
+There is no public registration endpoint. Account administration uses the host
+CLI. Username/password changes require the current password; password change
+revokes other account Sessions.
+
 ## Threads
 
 ```text

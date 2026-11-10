@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+import hashlib
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -9,10 +10,11 @@ from pathlib import PurePosixPath
 
 from sqlalchemy import case, or_, Boolean, DateTime, Integer, String, Text, UniqueConstraint, delete, func, inspect, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .observability import observed
-from .domain import RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, identifier, now
+from .domain import AccountView, RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, identifier, now
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
 
@@ -183,6 +185,26 @@ class InteractionRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class UserRow(Base):
+    __tablename__ = "users"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(Text)
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AuthSessionRow(Base):
+    __tablename__ = "auth_sessions"
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class Store:
     def __init__(self, database_url: str, redis_url: str = "", redis_prefix: str = "sandbox-harness:"):
         self.engine = create_async_engine(database_url)
@@ -277,6 +299,94 @@ class Store:
     @staticmethod
     def thread_view(row: ThreadRow) -> ThreadView:
         return ThreadView.model_validate({key: getattr(row, key) for key in ThreadView.model_fields})
+
+    @staticmethod
+    def account_view(row: UserRow) -> AccountView:
+        return AccountView.model_validate({key: getattr(row, key) for key in AccountView.model_fields})
+
+    async def create_user(self, username: str, password_hash: str) -> AccountView:
+        timestamp = now();identity = identifier()
+        row = UserRow(id=identity, owner_id=hashlib.sha256(("account:" + identity).encode()).hexdigest(),
+            username=username, password_hash=password_hash, created_at=timestamp, updated_at=timestamp)
+        try:
+            async with self.connections.begin() as db:
+                if (await db.execute(select(UserRow.id).where(UserRow.username == username))).scalar_one_or_none():
+                    raise RuntimeError("username_taken")
+                db.add(row)
+        except IntegrityError as exc:
+            raise RuntimeError("username_taken") from exc
+        return self.account_view(row)
+
+    async def get_user_by_username(self, username: str) -> tuple[AccountView, str] | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(UserRow).where(UserRow.username == username))).scalar_one_or_none()
+        return (self.account_view(row), row.password_hash) if row else None
+
+    async def get_user(self, user_id: str) -> AccountView | None:
+        async with self.connections() as db:
+            row = await db.get(UserRow, user_id)
+        return self.account_view(row) if row else None
+
+    async def create_auth_session(self, token_hash: str, user_id: str, expires_at: datetime) -> None:
+        timestamp = now()
+        async with self.connections.begin() as db:
+            if not await db.get(UserRow, user_id):
+                raise KeyError("user_not_found")
+            db.add(AuthSessionRow(token_hash=token_hash, user_id=user_id, expires_at=expires_at,
+                created_at=timestamp, last_seen_at=timestamp))
+
+    async def resolve_auth_session(self, token_hash: str) -> AccountView | None:
+        timestamp = now()
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(AuthSessionRow, UserRow).join(UserRow,
+                UserRow.id == AuthSessionRow.user_id).where(AuthSessionRow.token_hash == token_hash,
+                AuthSessionRow.expires_at > timestamp, UserRow.disabled.is_(False)))).first()
+            if not row:
+                await db.execute(delete(AuthSessionRow).where(AuthSessionRow.token_hash == token_hash))
+                return None
+            session, user = row
+            if utc_datetime(session.last_seen_at) < timestamp - timedelta(minutes=5):
+                session.last_seen_at = timestamp
+            return self.account_view(user)
+
+    async def delete_auth_session(self, token_hash: str) -> None:
+        async with self.connections.begin() as db:
+            await db.execute(delete(AuthSessionRow).where(AuthSessionRow.token_hash == token_hash))
+
+    async def update_username(self, user_id: str, username: str) -> AccountView:
+        try:
+            async with self.connections.begin() as db:
+                if (await db.execute(select(UserRow.id).where(
+                        UserRow.username == username, UserRow.id != user_id))).scalar_one_or_none():
+                    raise RuntimeError("username_taken")
+                row = await db.get(UserRow, user_id, with_for_update=True)
+                if not row: raise KeyError("user_not_found")
+                row.username = username;row.updated_at = now()
+        except IntegrityError as exc:
+            raise RuntimeError("username_taken") from exc
+        return self.account_view(row)
+
+    async def update_password(self, user_id: str, password_hash: str, *, keep_token_hash: str = "") -> None:
+        async with self.connections.begin() as db:
+            row = await db.get(UserRow, user_id, with_for_update=True)
+            if not row: raise KeyError("user_not_found")
+            row.password_hash = password_hash;row.updated_at = now()
+            query = delete(AuthSessionRow).where(AuthSessionRow.user_id == user_id)
+            if keep_token_hash:query = query.where(AuthSessionRow.token_hash != keep_token_hash)
+            await db.execute(query)
+
+    async def set_user_disabled(self, user_id: str, disabled: bool) -> AccountView:
+        async with self.connections.begin() as db:
+            row = await db.get(UserRow, user_id, with_for_update=True)
+            if not row: raise KeyError("user_not_found")
+            row.disabled = disabled;row.updated_at = now()
+            if disabled:await db.execute(delete(AuthSessionRow).where(AuthSessionRow.user_id == user_id))
+        return self.account_view(row)
+
+    async def list_users(self) -> list[AccountView]:
+        async with self.connections() as db:
+            rows = (await db.execute(select(UserRow).order_by(UserRow.created_at))).scalars().all()
+        return [self.account_view(row) for row in rows]
 
     @staticmethod
     async def next_item_sequence(db: AsyncSession, thread_id: str) -> int:

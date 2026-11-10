@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     gateway_signing_key: str = Field(default="development-only-change-me", min_length=16)
     gateway_control_key: str = Field(default="development-control-change-me", min_length=16)
     session_signing_key: str = Field(default="development-session-change-me", min_length=16)
+    auth_session_ttl_seconds: int = Field(default=30 * 86400, ge=300, le=365 * 86400)
     gateway_model_start_timeout_seconds: float = Field(default=120, ge=5, le=600)
     gateway_model_idle_timeout_seconds: float = Field(default=300, ge=10, le=1800)
     runtime_model_start_timeout_seconds: float = Field(default=150, ge=10, le=900)

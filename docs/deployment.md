@@ -14,6 +14,7 @@ The product has its own API, Gateway, PostgreSQL cluster and data namespace. It 
 | web/API | this product | `127.0.0.1:22766`, route `/sandbox-harness/` at the reverse proxy |
 | capability Gateway | this product | sandbox bridge `172.31.0.1:28600` |
 | public HTTP/S proxy | this product | sandbox bridge `172.31.0.1:28601` |
+| FRPC web ingress | existing FRPS/FRPC | PROXY v2 to nginx `127.0.0.1:18090`, marker `frpc` |
 
 The deployment must not start another Redis, Docker daemon, registry, object store or OpenSandbox server. It must not change the configuration, storage directory or lifecycle of those shared dependencies. The PostgreSQL process is project-owned so its data and logs never use the root filesystem.
 
@@ -50,3 +51,8 @@ Before restarting API/Gateway after adding source files or building the frontend
 run `bash deploy/check-service-access.sh`. It grants the service user read/traverse
 access only to `src` and `web/dist`, then imports both services and reads every web
 asset as that user. Root-only unit tests do not detect unreadable new modules.
+
+Install `deploy/nginx.conf` for the direct route and
+`deploy/nginx-frpc.conf` as a separate loopback PROXY Protocol listener. FRPC
+must target port 18090 with `transport.proxyProtocolVersion = "v2"`; do not send
+PROXY frames to the shared port 80 listener.

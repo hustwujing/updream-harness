@@ -5,6 +5,8 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
+from collections import defaultdict, deque
 from contextlib import suppress
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
@@ -17,10 +19,11 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .broker import Broker
+from .auth import AUTH_COOKIE, AccountAuth, normalize_username
 from .catalog import HarnessCatalog
 from .config import Settings, load_settings, validate_service_settings
 from .observability import RequestLoggingMiddleware, telemetry, event
-from .domain import Attachment, Harness, InteractionResponse, ProjectFileRename, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, valid_attachment_name
+from .domain import Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, ProjectFileRename, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, valid_attachment_name
 from .model_discovery import ModelDiscovery
 from .objects import object_store
 from .pool import SandboxPool
@@ -111,6 +114,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     validate_service_settings(settings)
     store, objects, pool, catalog, discovery, broker = components(settings)
     sessions = Sessions(settings.session_signing_key)
+    account_auth = AccountAuth(store, settings.auth_session_ttl_seconds)
+    login_failures: dict[str, deque[float]] = defaultdict(deque)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -162,6 +167,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.objects = objects
     app.state.pool = pool
     app.state.broker = broker
+    app.state.account_auth = account_auth
+
+    def cookie_path(request: Request) -> str:
+        prefix = request.headers.get("x-forwarded-prefix", "").rstrip("/")
+        return (prefix or "") + "/"
+
+    def secure_cookie(request: Request) -> bool:
+        return request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
 
     @app.middleware("http")
     async def browser_identity(request: Request, call_next):
@@ -169,16 +182,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             origin = request.headers.get("origin")
             if origin and urlsplit(origin).netloc != request.headers.get("host"):
                 return JSONResponse({"detail": "Cross-site operations are not accepted"}, status_code=403)
-        if request.url.path == "/api/health":
-            owner_id, token, new_session = "", "", False
-        else:
-            owner_id, token, new_session = sessions.resolve(request.cookies.get(COOKIE))
+        ingress = request.headers.get("x-updream-ingress", "direct").strip().lower()
+        if ingress not in {"direct", "frpc"}:ingress = "direct"
+        account, auth_token_hash = await account_auth.resolve(request.cookies.get(AUTH_COOKIE))
+        if request.url.path == "/api/health":owner_id, token, new_session = "", "", False
+        elif account:owner_id, token, new_session = account.owner_id, "", False
+        elif ingress == "frpc":owner_id, token, new_session = "", "", False
+        else:owner_id, token, new_session = sessions.resolve(request.cookies.get(COOKIE))
+        request.state.ingress = ingress
+        request.state.account = account
+        request.state.auth_token_hash = auth_token_hash
         request.state.owner_id = owner_id
+        public_auth = request.url.path in {"/api/health", "/api/session", "/api/auth/login"}
+        if ingress == "frpc" and not account and request.url.path.startswith("/api/") and not public_auth:
+            return JSONResponse({"detail":"authentication_required"},status_code=401,
+                headers={"Cache-Control":"no-store"})
         response = await call_next(request)
         if new_session:
-            prefix = request.headers.get("x-forwarded-prefix", "").rstrip("/")
-            response.set_cookie(COOKIE, token, httponly=True, samesite="lax", secure=request.url.scheme == "https",
-                max_age=365 * 86400, path=(prefix or "") + "/")
+            response.set_cookie(COOKIE, token, httponly=True, samesite="lax", secure=secure_cookie(request),
+                max_age=365 * 86400, path=cookie_path(request))
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
@@ -203,8 +225,66 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return catalog.public()
 
     @app.get("/api/session")
-    async def session_ready():
-        return {"ready": True}
+    async def session_ready(request: Request):
+        account = request.state.account
+        return {"ready": True, "ingress": request.state.ingress,
+            "authentication_required": request.state.ingress == "frpc" and not account,
+            "authenticated": bool(account),
+            "user": account.model_dump(mode="json") if account else None}
+
+    @app.post("/api/auth/login")
+    async def login(value: LoginRequest, request: Request):
+        source = request.headers.get("x-real-ip", "") if request.state.ingress == "frpc" else ""
+        source = source or (request.client.host if request.client else "unknown")
+        identity = hashlib.sha256((source + "\0" + value.username.strip().casefold()).encode()).hexdigest()
+        current = time.monotonic()
+        if len(login_failures) > 10_000:
+            for key, values in list(login_failures.items()):
+                if not values or values[-1] < current - 300:login_failures.pop(key,None)
+            if len(login_failures) > 10_000:raise HTTPException(429,"login_rate_limited")
+        failures = login_failures[identity]
+        while failures and failures[0] < current - 300:failures.popleft()
+        if len(failures) >= 5:raise HTTPException(429,"login_rate_limited")
+        account = await account_auth.authenticate(value.username, value.password)
+        if not account:
+            failures.append(current)
+            raise HTTPException(401,"invalid_credentials")
+        login_failures.pop(identity,None)
+        token, _ = await account_auth.create_session(account.id)
+        response = JSONResponse({"authenticated":True,"user":account.model_dump(mode="json")})
+        response.set_cookie(AUTH_COOKIE, token, httponly=True, samesite="lax", secure=secure_cookie(request),
+            max_age=settings.auth_session_ttl_seconds, path=cookie_path(request))
+        return response
+
+    @app.post("/api/auth/logout")
+    async def logout(request: Request):
+        if request.state.auth_token_hash:await store.delete_auth_session(request.state.auth_token_hash)
+        response = JSONResponse({"authenticated":False})
+        response.delete_cookie(AUTH_COOKIE,path=cookie_path(request))
+        return response
+
+    @app.post("/api/auth/change-username")
+    async def change_username(value: ChangeUsernameRequest, request: Request):
+        account = request.state.account
+        if not account:raise HTTPException(401,"authentication_required")
+        if not await account_auth.verify_account(account,value.current_password):
+            raise HTTPException(401,"invalid_credentials")
+        try:username = normalize_username(value.username)
+        except ValueError as exc:raise HTTPException(422,str(exc))
+        try:updated = await store.update_username(account.id,username)
+        except RuntimeError as exc:raise HTTPException(409,str(exc))
+        return {"authenticated":True,"user":updated.model_dump(mode="json")}
+
+    @app.post("/api/auth/change-password")
+    async def change_password(value: ChangePasswordRequest, request: Request):
+        account = request.state.account
+        if not account:raise HTTPException(401,"authentication_required")
+        if not await account_auth.verify_account(account,value.current_password):
+            raise HTTPException(401,"invalid_credentials")
+        try:password_hash = await account_auth.hash_password(value.new_password)
+        except ValueError as exc:raise HTTPException(422,str(exc))
+        await store.update_password(account.id,password_hash,keep_token_hash=request.state.auth_token_hash)
+        return {"changed":True}
 
     @app.post("/api/threads")
     async def create_thread(value: ThreadCreate, request: Request):

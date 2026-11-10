@@ -198,6 +198,31 @@
 .media-preview img,.media-preview video { display:block; max-width:100%; max-height:calc(94vh - 46px); margin:auto; object-fit:contain; }
 .media-preview pre { max-height:calc(94vh - 46px); margin:0; overflow:auto; padding:20px; background:#fff; color:#252622; font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; }
 
+.auth-loading { display:grid; place-items:center; width:100vw; height:100dvh; background:#f7f7f5; }
+.auth-loading img { width:38px; height:38px; }
+.auth-overlay { position:fixed; inset:0; z-index:120; display:grid; place-items:center; padding:18px; background:#17181799; }
+.auth-overlay.required { background:#f5f5f3; }
+.auth-panel { position:relative; width:min(390px,100%); max-height:calc(100dvh - 36px); overflow:auto; border:1px solid #d8d8d3; border-radius:8px; background:#fff; box-shadow:0 22px 70px #0003; }
+.auth-close { position:absolute; right:9px; top:9px; z-index:1; display:grid; place-items:center; width:30px; height:30px; border:0; border-radius:6px; background:transparent; }
+.auth-close:hover { background:#f0f0ed; }
+.auth-form,.account-settings { padding:26px; }
+.auth-title { display:flex; align-items:center; gap:11px; margin-bottom:23px; }
+.auth-title img { width:34px; height:34px; }
+.auth-title h1 { margin:0; font-size:16px; font-weight:650; }
+.auth-title p { margin:3px 0 0; color:#858680; font-size:10px; }
+.auth-form label,.account-settings label { display:grid; gap:5px; margin:0 0 11px; color:#656660; font-size:10px; }
+.auth-form input,.account-settings input { width:100%; height:36px; border:1px solid #d5d5d0; border-radius:6px; padding:0 10px; outline:0; background:#fff; font-size:12px; }
+.auth-form input:focus,.account-settings input:focus { border-color:#74756f; box-shadow:0 0 0 2px #74756f1a; }
+.auth-primary,.account-settings form button,.auth-logout { display:flex; align-items:center; justify-content:center; gap:6px; min-height:34px; border-radius:6px; padding:0 12px; font-size:11px; }
+.auth-primary { width:100%; margin-top:17px; border:1px solid #292a27; background:#292a27; color:#fff; }
+.auth-primary:disabled,.account-settings button:disabled { opacity:.45; }
+.account-settings form { padding:15px 0; border-top:1px solid #ecece8; }
+.account-settings form h2 { margin:0 0 12px; font-size:11px; }
+.account-settings form button { margin-left:auto; border:1px solid #292a27; background:#292a27; color:#fff; }
+.auth-logout { border:1px solid #d5d5d0; background:#fff; color:#555650; }
+.auth-error { margin:10px 0; color:#a1443d; font-size:10px; line-height:1.5; }
+.auth-notice { margin:10px 0; color:#4f7b4c; font-size:10px; }
+
 .activity-history > summary { padding: 8px 0; color: #858680; font-size: 9px; cursor: pointer; }
 
 .interaction-card { margin: 10px 0 14px 39px; padding: 12px; border: 1px solid #d9d9d4; border-radius: 7px; background: #fafaf8; }

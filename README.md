@@ -18,6 +18,12 @@ Production runs a dedicated PostgreSQL cluster on `127.0.0.1:25432` and reuses t
 
 The Capability Gateway is an infrastructure proxy. It injects model and Provider credentials after validating a Turn-scoped token. It does not understand prompts, plans or media quality.
 
+Direct browser access keeps the existing signed anonymous identity. The FRPC
+entry is identified through PROXY Protocol/nginx and requires an account; an
+account Cookie resolves to the same stable owner from either entry. Users can
+change username/password from the UI, while account creation/reset/disable uses
+the `sandbox-harness-user` host CLI.
+
 ## Turn Lifecycle
 
 ```text

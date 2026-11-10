@@ -91,6 +91,11 @@ title, Harness, model and current status. Matching is case-insensitive and uses
 Unicode compatibility normalization; an empty query restores the Today/Previous
 grouping and a query with no matches shows an explicit empty result.
 
+FRPC ingress shows the account login surface before loading user data. Direct
+ingress remains anonymous by default and exposes optional login from the top
+bar. Authenticated users can change username/password or log out from the same
+account dialog. Username changes preserve all account-owned conversations.
+
 ## Responsive Behavior
 
 On narrow screens the thread list and artifact viewer are independent drawers. The composer and transcript remain the main surface. Tool details default to collapsed, long lines wrap, and controls retain stable dimensions.
