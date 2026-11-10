@@ -35,6 +35,7 @@ async def test_thread_turn_items_and_idempotency(tmp_path):
         assert claimed.id == appended.id and claimed.status == "delivered" and claimed.delivery_mode == "deferred_safe_point"
         await store.set_input_status(claimed.id, "applied")
         assert (await store.list_turn_inputs(turn.id))[0].status == "applied"
+        assert (await store.items_after(thread.id))[1].status == "completed"
         agent = await store.append_agent_delta(thread.id, turn.id, "hel")
         agent = await store.append_agent_delta(thread.id, turn.id, "lo")
         assert agent.summary == "hello"
@@ -252,12 +253,32 @@ async def test_interaction_response_claim_expires_and_preserves_idempotency(tmp_
             row = await db.get(InteractionRow, interaction.id, with_for_update=True)
             row.response_expires_at = now() - timedelta(seconds=1)
         reclaimed, accepted = await store.claim_interaction_response(interaction.id, owner,
-            "response-claim-key", response, claim_owner="broker-two", lease_seconds=30)
+            "fresh-browser-key", response, claim_owner="broker-two", lease_seconds=30)
         assert accepted and reclaimed.status == "responding"
+        assert reclaimed.response_key == "fresh-browser-key"
         await store.finish_interaction_response(interaction.id, delivered=True, claim_owner="broker-two")
         with pytest.raises(RuntimeError, match="idempotency_conflict"):
             await store.claim_interaction_response(interaction.id, owner,
-                "response-claim-key", {"action":"answer", "answers":{"format":"webm"}})
+                "fresh-browser-key", {"action":"answer", "answers":{"format":"webm"}})
+    finally:
+        await store.close()
+
+
+async def test_unapplied_inputs_are_failed_with_their_transcript_items(tmp_path):
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "unapplied-input.db")); await store.initialize()
+    try:
+        catalog = HarnessCatalog(); profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+        owner = "a" * 64
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Unapplied input"), profile, owner)
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="hello", idempotency_key="unapplied-turn-key"), profile, owner)
+        value, _ = await store.create_turn_input(turn.id,
+            TurnInputCreate(message="follow up", idempotency_key="unapplied-input-key"), owner)
+        assert (await store.items_after(thread.id))[-1].status == "in_progress"
+        await store.fail_unapplied_inputs(turn.id)
+        assert (await store.get_turn_input(value.id)).status == "failed"
+        assert (await store.items_after(thread.id))[-1].status == "failed"
     finally:
         await store.close()
 

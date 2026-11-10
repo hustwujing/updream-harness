@@ -336,8 +336,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             result, created = await store.create_turn_input(turn_id, value, request.state.owner_id)
             if created:
-                await broker.try_deliver_input(result)
-            return result
+                try:
+                    await broker.try_deliver_input(result)
+                except Exception as exc:
+                    await store.set_input_status(result.id, "failed", "delivery_failed")
+                    raise HTTPException(409, "input_delivery_failed") from exc
+            return await store.get_turn_input(result.id)
         except RuntimeError as exc:
             raise HTTPException(409, str(exc))
 

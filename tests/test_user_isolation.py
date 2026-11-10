@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import httpx
 
 from sandbox_harness.app import create_app
 from sandbox_harness.config import Settings
@@ -90,3 +91,29 @@ def test_upload_names_dispositions_inline_policy_and_body_limits(tmp_path):
         assert unsafe.headers["content-disposition"].startswith("attachment;")
         assert unsafe.headers["content-type"].startswith("application/octet-stream")
         assert unsafe.headers["content-security-policy"].startswith("sandbox;")
+
+
+def test_append_input_delivery_error_is_controlled_and_visible(tmp_path):
+    settings = Settings(data_root=tmp_path,
+        database_url="sqlite+aiosqlite:///" + str(tmp_path / "input-delivery.db"),
+        redis_url="", backend="fake", object_backend="local", model_catalog_discovery=False,
+        session_signing_key="input-delivery-secret")
+    app = create_app(settings)
+
+    async def failing_delivery(value):
+        raise httpx.ConnectError("runtime connection reset")
+
+    app.state.broker.try_deliver_input = failing_delivery
+    with TestClient(app, raise_server_exceptions=False) as client:
+        thread = client.post("/api/threads", json={"harness":"claude", "model":"claude-4.6-sonnet",
+            "reasoning_level":"standard", "title":"input failure"}).json()
+        turn = client.post(f"/api/threads/{thread['id']}/turns", json={"message":"initial",
+            "idempotency_key":"input-delivery-turn", "delivery_mode":"queue"}).json()
+        response = client.post(f"/api/turns/{turn['id']}/inputs", json={"message":"follow up",
+            "idempotency_key":"input-delivery-failure"})
+        assert response.status_code == 409
+        assert response.json()["detail"] == "input_delivery_failed"
+        inputs = client.get(f"/api/turns/{turn['id']}/inputs").json()
+        assert inputs[-1]["status"] == "failed"
+        items = client.get(f"/api/threads/{thread['id']}/items").json()
+        assert items[-1]["summary"] == "follow up" and items[-1]["status"] == "failed"

@@ -535,7 +535,11 @@ def create_app() -> FastAPI:
             (WORKSPACE / "inbox" / "attachments.json").write_text(json.dumps(value.attachments, ensure_ascii=False))
         async with app.state.write_lock:
             execution = app.state.execution
-            if execution and input_id not in execution.received_input_ids:
+            if execution and input_id in execution.received_input_ids:
+                mode = "native_steer" if os.environ.get("HARNESS_KIND") == "codex" else (
+                    "native_safe_point" if os.environ.get("HARNESS_KIND") == "deepseek" else "native_stream")
+                return {"accepted": True, "mode": mode, "replayed": True}
+            if execution:
                 execution.received_input_ids.add(input_id)
                 execution.pending_input_ids.append(input_id)
             process.stdin.write(control_user_message(prompt) if selected.control_input else streaming_user_message(prompt)); await process.stdin.drain()

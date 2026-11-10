@@ -536,7 +536,7 @@ class Store:
             db.add(row)
             item_sequence = await self.next_item_sequence(db, turn.thread_id)
             db.add(ItemRow(id=identifier(), thread_id=turn.thread_id, turn_id=turn_id, sequence=item_sequence,
-                type=ItemType.USER_MESSAGE.value, status="completed", summary=value.message,
+                type=ItemType.USER_MESSAGE.value, status="in_progress", summary=value.message,
                 payload_json=json.dumps({"input_id": row.id, "attachments": [item.model_dump(mode="json") for item in value.attachments]}),
                 created_at=timestamp, updated_at=timestamp))
         return self.input_view(row), True
@@ -557,6 +557,47 @@ class Store:
                 row.status = status; row.updated_at = now()
                 if delivery_mode:
                     row.delivery_mode = delivery_mode
+                items = (await db.execute(select(ItemRow).where(
+                    ItemRow.turn_id == row.turn_id,
+                    ItemRow.type == ItemType.USER_MESSAGE.value,
+                ))).scalars().all()
+                item = next((candidate for candidate in items
+                    if json.loads(candidate.payload_json).get("input_id") == input_id), None)
+                if item:
+                    item.status = {"applied":"completed", "failed":"failed"}.get(status, "in_progress")
+                    item.updated_at = now()
+
+    async def get_turn_input(self, input_id: str) -> TurnInputView | None:
+        async with self.connections() as db:
+            row = await db.get(TurnInputRow, input_id)
+        return self.input_view(row) if row else None
+
+    async def fail_unapplied_inputs(self, turn_id: str, *, lease_owner: str | None = None,
+                                    recovery_generation: int | None = None) -> None:
+        async with self.connections.begin() as db:
+            turn = await db.get(TurnRow, turn_id, with_for_update=True)
+            if not turn:
+                raise KeyError("turn_not_found")
+            if (lease_owner is not None and (turn.lease_owner != lease_owner
+                    or turn.recovery_generation != recovery_generation)):
+                raise RuntimeError("stale_turn_lease")
+            rows = (await db.execute(select(TurnInputRow).where(
+                TurnInputRow.turn_id == turn_id,
+                TurnInputRow.status.in_(["pending", "delivered"]),
+            ).with_for_update())).scalars().all()
+            if not rows:
+                return
+            input_ids = {row.id for row in rows}
+            timestamp = now()
+            for row in rows:
+                row.status = "failed"; row.updated_at = timestamp
+            items = (await db.execute(select(ItemRow).where(
+                ItemRow.turn_id == turn_id,
+                ItemRow.type == ItemType.USER_MESSAGE.value,
+            ))).scalars().all()
+            for item in items:
+                if json.loads(item.payload_json).get("input_id") in input_ids:
+                    item.status = "failed"; item.updated_at = timestamp
 
     async def apply_delivered_inputs(self, turn_id: str) -> None:
         async with self.connections.begin() as db:
@@ -564,6 +605,15 @@ class Store:
                 TurnInputRow.status == "delivered").with_for_update())).scalars().all()
             for row in rows:
                 row.status = "applied"; row.updated_at = now()
+            input_ids = {row.id for row in rows}
+            if input_ids:
+                items = (await db.execute(select(ItemRow).where(
+                    ItemRow.turn_id == turn_id,
+                    ItemRow.type == ItemType.USER_MESSAGE.value,
+                ))).scalars().all()
+                for item in items:
+                    if json.loads(item.payload_json).get("input_id") in input_ids:
+                        item.status = "completed"; item.updated_at = now()
 
     async def list_turn_inputs(self, turn_id: str) -> list[TurnInputView]:
         async with self.connections() as db:
@@ -927,8 +977,8 @@ class Store:
                     and utc_datetime(row.response_expires_at) > timestamp)
                 if lease_active:
                     raise RuntimeError("interaction_response_in_progress")
-                if row.response_key != response_key or stored_response != response:
-                    raise RuntimeError("interaction_response_in_progress")
+                row.response_key = response_key
+                row.response_json = json.dumps(response, ensure_ascii=False)
                 row.response_owner = claim_owner
                 row.response_expires_at = timestamp + timedelta(seconds=lease_seconds)
                 row.updated_at = timestamp

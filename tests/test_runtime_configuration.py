@@ -85,9 +85,13 @@ for index,line in enumerate(sys.stdin,1):
         worker = threading.Thread(target=lambda: result.setdefault("response", client.post("/v1/turns",
             json={"message":"first","reasoning_effort":"high"})))
         worker.start(); time.sleep(.08)
-        appended = client.post("/v1/inputs", json={"message":"second","reasoning_effort":"high"})
+        appended = client.post("/v1/inputs", json={"message":"second","reasoning_effort":"high",
+            "execution_id":"legacy", "input_id":"append-one"})
+        replayed = client.post("/v1/inputs", json={"message":"second","reasoning_effort":"high",
+            "execution_id":"legacy", "input_id":"append-one"})
         worker.join(timeout=5)
     assert appended.status_code == 200 and appended.json()["mode"] == "native_stream"
+    assert replayed.status_code == 200 and replayed.json()["replayed"] is True
     rows = [json.loads(line) for line in result["response"].text.splitlines()]
     assert [row["payload"]["text"] for row in rows if row.get("kind") == "text_delta"] == ["reply-1", "reply-2"]
     assert rows[-1]["type"] == "result" and rows[-1]["result"]["native_thread_id"] == "native-live"

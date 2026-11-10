@@ -105,7 +105,6 @@ async def test_terminal_turn_cannot_be_cancelled(tmp_path):
         await store.set_turn_state(turn.id, TurnState.COMPLETED)
         with pytest.raises(RuntimeError, match="already_terminal"):
             await broker.cancel(turn.id)
-        assert turn.id not in broker.cancelled
     finally:
         await broker.close(); await pool.close(); await store.close()
 

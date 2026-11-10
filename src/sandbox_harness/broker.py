@@ -40,7 +40,6 @@ class Broker:
         self.codec = CapabilityCodec(settings.gateway_signing_key)
         self.catalog = catalog
         self.tasks: dict[str, asyncio.Task] = {}
-        self.cancelled: set[str] = set()
         self.locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.lock_users: dict[str, int] = defaultdict(int)
         self.lock_guard = asyncio.Lock()
@@ -321,14 +320,12 @@ class Broker:
             raise KeyError("turn_not_found")
         if turn.state in {TurnState.COMPLETED, TurnState.WAITING_USER, TurnState.FAILED, TurnState.CANCELLED}:
             raise RuntimeError("turn_already_terminal")
-        self.cancelled.add(turn_id)
         await self.store.append_event(turn_id, EventKind.WARNING, {"code": "cancel_requested"})
         task = self.tasks.get(turn_id)
         if task:
             task.cancel()
         elif turn.state == TurnState.QUEUED:
             await self._state(turn_id, TurnState.CANCELLED, error_code="cancelled", error_detail="Queued Turn was cancelled")
-            self.cancelled.discard(turn_id)
 
     async def _state(self, turn_id: str, state: TurnState, **kwargs) -> TurnView:
         generation = self.leases.get(turn_id)
@@ -674,6 +671,8 @@ class Broker:
             try:
                 await self.store.begin_turn_cleanup(turn.id, final_state, error_code=error_code,
                     error_detail=error_detail, owner=self.instance_id, generation=generation)
+                await self.store.fail_unapplied_inputs(turn.id,
+                    lease_owner=self.instance_id, recovery_generation=generation)
                 await self.store.complete_agent_item(turn.id,
                     "completed" if final_state in {TurnState.COMPLETED, TurnState.WAITING_USER} else "interrupted",
                     lease_owner=self.instance_id, recovery_generation=generation)
@@ -732,7 +731,6 @@ class Broker:
                     self.active_sandboxes.pop(turn.id, None)
                     self.leases.pop(turn.id, None)
                     self.tasks.pop(turn.id, None)
-                    self.cancelled.discard(turn.id)
                     return
                 if final_state == TurnState.FAILED:
                     public_detail = {
@@ -758,4 +756,3 @@ class Broker:
                 await self.store.release_turn_lease(turn.id, self.instance_id, generation)
                 self.leases.pop(turn.id, None)
                 self.tasks.pop(turn.id, None)
-                self.cancelled.discard(turn.id)
