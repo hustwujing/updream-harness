@@ -19,6 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=8.3,<9", "pytest-asyncio>=0.25,<1"]
 runtime-media = [
+  "audioop-lts>=0.2,<1; python_version >= '3.13'",
   "av>=14,<17",
   "cairosvg>=2.7,<3",
   "ffmpeg-python>=0.2,<1",
