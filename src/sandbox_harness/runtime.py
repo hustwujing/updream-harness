@@ -65,13 +65,16 @@ class RuntimeClient:
         body = {"message": message, "attachments": [item.model_dump(mode="json") for item in attachments],
                 "native_thread_id": native_thread_id, "reasoning_effort": reasoning_effort,
                 "execution_id": execution_id, "input_id": input_id, "after_sequence": after_sequence}
-        async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers, timeout=self.timeout, trust_env=False) as client:
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers,
+            timeout=self.timeout, trust_env=False, transport=self.transport) as client:
             async with client.stream("POST", "/v1/turns", json=body) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if not line:
                         continue
                     value = json.loads(line)
+                    if value.get("type") == "heartbeat":
+                        continue
                     if value.get("type") == "result":
                         yield RuntimeResult.model_validate({**value["result"], "runtime_sequence": value.get("runtime_sequence", 0)})
                     else:
@@ -130,7 +133,7 @@ class RuntimeClient:
 
     async def resume(self, sandbox: Sandbox, execution_id: str, after_sequence: int) -> AsyncIterator[RuntimeEvent | RuntimeResult]:
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers,
-            timeout=self.timeout, trust_env=False) as client:
+            timeout=self.timeout, trust_env=False, transport=self.transport) as client:
             async with client.stream("GET", f"/v1/executions/{execution_id}/events",
                 params={"after": after_sequence}) as response:
                 response.raise_for_status()
@@ -138,6 +141,8 @@ class RuntimeClient:
                     if not line:
                         continue
                     value = json.loads(line)
+                    if value.get("type") == "heartbeat":
+                        continue
                     if value.get("type") == "result":
                         yield RuntimeResult.model_validate({**value["result"], "runtime_sequence": value.get("runtime_sequence", 0)})
                     else:

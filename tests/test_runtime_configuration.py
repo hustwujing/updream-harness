@@ -315,3 +315,22 @@ def test_runtime_fails_when_model_never_emits_a_substantive_event(tmp_path, monk
     rows = [json.loads(line) for line in response.text.splitlines()]
     assert rows[-1]["result"]["status"] == "failed"
     assert rows[-1]["result"]["error_code"] == "model_response_timeout"
+
+
+def test_runtime_stream_emits_transport_heartbeat_during_long_silence(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
+    monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")
+    monkeypatch.setattr(runtime_app, "OUTPUTS", tmp_path / "workspace" / "outputs")
+    monkeypatch.setattr(runtime_app, "PERSISTENT", ("project", "state"))
+    runner = tmp_path / "slow_tool.py"
+    runner.write_text("import json,time\nprint(json.dumps({'type':'tool_started','name':'slow'}),flush=True)\ntime.sleep(.15)\nprint(json.dumps({'type':'harness.input.completed','input_ids':['initial'],'thread_id':'native'}),flush=True)\n")
+    monkeypatch.setattr(runtime_app, "command", lambda *args, **kwargs: HarnessCommand(
+        [sys.executable, str(runner)], {}, streaming_input=True, batched_completion=True))
+    app = runtime_app.create_app(); app.state.stream_heartbeat_seconds = .03
+    with TestClient(app) as client:
+        assert client.post("/v1/configure", json={"capability_token":"x"*32,"gateway_url":"http://gateway:28600",
+            "harness":"claude","model":"model","proxy_url":"http://172.31.0.1:28601"}).status_code == 200
+        response = client.post("/v1/turns", json={"message":"first","execution_id":"heartbeat-execution"})
+    rows = [json.loads(line) for line in response.text.splitlines()]
+    assert sum(row.get("type") == "heartbeat" for row in rows) >= 2
+    assert rows[-1]["type"] == "result" and rows[-1]["result"]["status"] == "completed"

@@ -131,6 +131,7 @@ def create_app() -> FastAPI:
     app.state.interaction_waiters = {}
     app.state.model_start_timeout_seconds = 150.0
     app.state.event_idle_timeout_seconds = 900.0
+    app.state.stream_heartbeat_seconds = 15.0
     jobs_root = WORKSPACE / "state" / "background-jobs"
     jobs_root.mkdir(parents=True, exist_ok=True)
     def load_jobs() -> None:
@@ -326,13 +327,21 @@ def create_app() -> FastAPI:
     async def stream_execution(execution: Execution, after: int):
         sequence = after
         while True:
+            heartbeat = False
             async with execution.condition:
                 rows = [row for row in execution.events if row["runtime_sequence"] > sequence]
                 if not rows:
                     if execution.result is not None and sequence >= execution.sequence:
                         return
-                    await execution.condition.wait()
-                    continue
+                    try:
+                        await asyncio.wait_for(execution.condition.wait(), app.state.stream_heartbeat_seconds)
+                    except TimeoutError:
+                        heartbeat = True
+                    if not heartbeat:
+                        continue
+            if heartbeat:
+                yield json.dumps({"type": "heartbeat"}) + "\n"
+                continue
             for row in rows:
                 sequence = row["runtime_sequence"]
                 yield json.dumps(row, ensure_ascii=False) + "\n"

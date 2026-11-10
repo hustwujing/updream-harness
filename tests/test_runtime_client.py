@@ -23,3 +23,14 @@ async def test_runtime_configuration_retries_transient_proxy_startup_errors():
 
     assert len(requests) == 3
     assert json.loads(requests[-1].content)["model"] == "claude-opus-5-5"
+
+
+async def test_runtime_client_ignores_transport_heartbeats():
+    def respond(request: httpx.Request):
+        return httpx.Response(200, text='{"type":"heartbeat"}\n{"type":"result","runtime_sequence":2,"result":{"status":"completed","native_thread_id":"native","input_ids":["initial"]}}\n')
+
+    runtime = RuntimeClient(transport=httpx.MockTransport(respond))
+    sandbox = Sandbox(id="sandbox", harness=Harness.DEEPSEEK, image="image", runtime_url="http://runtime", metadata={})
+    rows = [row async for row in runtime.run(sandbox, message="hello", attachments=[], native_thread_id="",
+        reasoning_effort="high")]
+    assert len(rows) == 1 and rows[0].status == "completed"
