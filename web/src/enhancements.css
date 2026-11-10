@@ -282,6 +282,7 @@
 
 .harness-icon {display:block;width:18px;height:18px;object-fit:contain;flex:none}
 .agent-avatar {border-color:#e5e5df;background:#fff}
+.agent-avatar-spacer {width:26px;height:1px}
 .thread-status .harness-icon {width:14px;height:14px}
 
 .model-health-note {padding:8px 14px 0;color:#796544;font-size:11px;line-height:1.5}
