@@ -293,9 +293,9 @@ class Telemetry:
     def increment(self,key,count=1):
         with self.guard:self.stats[key]=self.stats.get(key,0)+count
     def put(self,kind,value):
-        if self.stopping:self.increment('dropped_records');return
-        try:self.queue.put_nowait((kind,value))
-        except queue.Full:self.increment('dropped_records')
+        if self.stopping:self.increment('dropped_records');return False
+        try:self.queue.put_nowait((kind,value));return True
+        except queue.Full:self.increment('dropped_records');return False
     def status(self):
         with self.guard:return {**self.stats,'service':self.service,'instance_id':self.instance,'version':self.resource.attributes['service.version'],'queue_depth':self.queue.qsize(),'queue_capacity':self.queue.maxsize,'writer_alive':self.worker.is_alive()}
     def set_remote(self,endpoint,headers=None):
@@ -428,7 +428,7 @@ class RequestLoggingMiddleware:
                 nonlocal status,response_bytes
                 if message["type"]=="http.response.body":response_bytes+=len(message.get("body",b""))
                 if message['type']=='http.response.start':
-                    status=message['status'];message={**message,'headers':list(message.get('headers',[]))+[
+                    status=message['status'];message={**message,'headers':[(key,value) for key,value in message.get('headers',[]) if key.lower() not in {b'x-request-id',b'x-trace-id'}]+[
                         (b'x-request-id',request_id.encode()),(b'x-trace-id',f'{span.get_span_context().trace_id:032x}'.encode())]}
                 await send(message)
             try:await self.app(scope,receive,logged_send)

@@ -170,10 +170,18 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         except Exception:raise HTTPException(422,"Invalid telemetry batch")
         target=telemetry()
         if target is None:raise HTTPException(503,"Telemetry receiver unavailable")
-        for kind,row in rows:target.put(kind,row)
-        # Empty protobuf is a valid successful Export*ServiceResponse.
+        rejected=sum(not target.put(kind,row) for kind,row in rows)
         from fastapi.responses import Response
-        return Response(content=b"",media_type="application/x-protobuf")
+        if signal=="logs":
+            from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import ExportLogsServiceResponse
+            result=ExportLogsServiceResponse()
+            if rejected:result.partial_success.rejected_log_records=rejected
+        else:
+            from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceResponse
+            result=ExportTraceServiceResponse()
+            if rejected:result.partial_success.rejected_spans=rejected
+        if rejected:result.partial_success.error_message="Telemetry queue capacity exceeded"
+        return Response(content=result.SerializeToString(),status_code=503 if rows and rejected==len(rows) else 200,media_type="application/x-protobuf")
 
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
     async def proxy(path: str, request: Request):

@@ -69,7 +69,9 @@ async def test_http_correlation_headers_and_template_path_do_not_leak_query(tele
     app=FastAPI();app.add_middleware(obs.RequestLoggingMiddleware,service='api')
     @app.post('/items/{item_id}')
     async def handler(item_id:str,request:Request):
-        request.state.log_context.update({'turn_id':'turn-http'});obs.event('test.handler');return {'ok':True}
+        request.state.log_context.update({'turn_id':'turn-http'});obs.event('test.handler')
+        from fastapi.responses import JSONResponse
+        return JSONResponse({'ok':True},headers={'X-Request-ID':'upstream-id','X-Trace-ID':'untrusted'})
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app),base_url='http://test') as client:
         response=await client.post('/items/private-file?token=VERY_PRIVATE',headers={'traceparent':'malformed','Authorization':'Bearer VERY_PRIVATE'})
     assert response.status_code==200 and len(response.headers['x-trace-id'])==32 and len(response.headers['x-request-id'])==32
@@ -173,6 +175,14 @@ async def test_gateway_receiver_requires_scope_and_does_not_consume_model_budget
         assert (await client.post('/v1/telemetry/logs',headers=headers,content=message.SerializeToString())).status_code==200
         record.attributes[0].value.string_value='other-turn'
         assert (await client.post('/v1/telemetry/logs',headers=headers,content=message.SerializeToString())).status_code==422
+        record.attributes[0].value.string_value='turn'
+        with monkeypatch.context() as patch:
+            patch.setattr(telemetry,'put',lambda *args:False)
+            overloaded=await client.post('/v1/telemetry/logs',headers=headers,content=message.SerializeToString())
+            assert overloaded.status_code==503
+            from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import ExportLogsServiceResponse
+            receipt=ExportLogsServiceResponse();receipt.ParseFromString(overloaded.content)
+            assert receipt.partial_success.rejected_log_records==1
     assert keys and all('telemetry:rate:' in key for key in keys)
     imported=next(row for row in rows(telemetry) if row['event_name']=='runtime.test')
     assert imported['attributes']['updream.origin']=='sandbox_reported'
