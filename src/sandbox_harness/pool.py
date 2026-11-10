@@ -202,6 +202,10 @@ class SandboxPool:
         if sandbox:
             await self.backend.delete(sandbox)
             self._user_slots.release()
+            return
+        for candidate in await self.backend.list_namespace():
+            if candidate.metadata.get("sandbox-harness.io/thread") == thread_id:
+                await self.backend.delete(candidate)
 
     async def _expire(self, thread_id: str, sandbox: Sandbox, seconds: int) -> None:
         try:

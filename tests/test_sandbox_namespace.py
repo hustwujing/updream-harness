@@ -164,6 +164,12 @@ async def test_deleting_thread_discards_its_retained_sandbox():
     await pool.discard_thread("delete-thread")
     assert sandbox.id not in backend.items
     assert "delete-thread" not in pool._attached and "delete-thread" not in pool._expiry
+    orphan = await backend.create(Harness.CODEX, "", {
+        "sandbox-harness.io/thread":"orphan-thread", "sandbox-harness.io/turn":"done",
+        "sandbox-harness.io/harness":"codex",
+    }, {})
+    await pool.discard_thread("orphan-thread")
+    assert orphan.id not in backend.items
     await pool.close()
 
 
