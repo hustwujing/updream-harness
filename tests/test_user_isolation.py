@@ -20,11 +20,14 @@ def test_threads_and_uploads_are_scoped_to_signed_browser_owner(tmp_path):
             "reasoning_level":"standard", "title":"private-a"})
         assert response.status_code == 200
         thread_a = response.json()
+        assert client.post(f"/api/threads/{thread_a['id']}/read", json={"turn_id":"0"*32}).json()=={"read_turn_id":""}
+        assert client.post(f"/api/threads/{thread_a['id']}/read", json={"turn_id":"invalid"}).status_code==422
         uploaded = client.post("/api/uploads?name=private.txt&mime=text/plain", content=b"private-a").json()
 
         client.cookies.set(COOKIE, token_b)
         assert client.get("/api/threads").json() == []
         assert client.get(f"/api/threads/{thread_a['id']}").status_code == 404
+        assert client.post(f"/api/threads/{thread_a['id']}/read", json={"turn_id":"0"*32}).status_code==404
         assert client.delete(f"/api/threads/{thread_a['id']}").status_code == 404
         thread_b = client.post("/api/threads", json={"harness":"claude", "model":"claude-4.6-sonnet",
             "reasoning_level":"standard", "title":"private-b"}).json()

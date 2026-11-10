@@ -43,6 +43,7 @@ class ThreadRow(Base):
     checkpoint_ref: Mapped[str] = mapped_column(Text, default="")
     native_thread_id: Mapped[str] = mapped_column(String(300), default="")
     active_turn_id: Mapped[str] = mapped_column(String(32), default="")
+    last_read_turn_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
     next_item_sequence: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -210,6 +211,8 @@ class Store:
             columns = await connection.run_sync(lambda value: {column["name"] for column in inspect(value).get_columns("threads")})
             if "owner_id" not in columns:
                 await connection.execute(text("ALTER TABLE threads ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT 'legacy-unowned'"))
+            if "last_read_turn_id" not in columns:
+                await connection.execute(text("ALTER TABLE threads ADD COLUMN last_read_turn_id VARCHAR(32) NOT NULL DEFAULT ''"))
             if "next_item_sequence" not in columns:
                 await connection.execute(text("ALTER TABLE threads ADD COLUMN next_item_sequence INTEGER NOT NULL DEFAULT 0"))
                 await connection.execute(text("UPDATE threads SET next_item_sequence = COALESCE((SELECT MAX(items.sequence) FROM items WHERE items.thread_id = threads.id), 0)"))
@@ -306,17 +309,35 @@ class Store:
     async def list_thread_summaries(self, owner_id: str) -> list[dict]:
         threads = await self.list_threads(owner_id)
         async with self.connections() as db:
-            ranked = select(TurnRow.thread_id, TurnRow.state, TurnRow.updated_at,
+            ranked = select(TurnRow.id, TurnRow.thread_id, TurnRow.state, TurnRow.updated_at,
                 func.row_number().over(partition_by=TurnRow.thread_id,
-                    order_by=TurnRow.created_at.desc()).label("rank")).join(
+                    order_by=(TurnRow.created_at.desc(), TurnRow.id.desc())).label("rank")).join(
                 ThreadRow, ThreadRow.id == TurnRow.thread_id).where(ThreadRow.owner_id == owner_id).subquery()
-            rows = (await db.execute(select(ranked.c.thread_id, ranked.c.state, ranked.c.updated_at)
+            rows = (await db.execute(select(ranked.c.id, ranked.c.thread_id, ranked.c.state, ranked.c.updated_at)
                 .where(ranked.c.rank == 1))).all()
         latest = {row.thread_id: row for row in rows}
         return [{**thread.model_dump(mode="json"),
+            "latest_turn_id": latest[thread.id].id if thread.id in latest else "",
+            "unread_completion": bool(thread.id in latest and latest[thread.id].state == TurnState.COMPLETED.value
+                and latest[thread.id].id != thread.last_read_turn_id),
             "latest_turn_state": latest[thread.id].state if thread.id in latest else "",
             "latest_turn_updated_at": latest[thread.id].updated_at if thread.id in latest else None,
         } for thread in threads]
+
+    async def mark_thread_read(self, thread_id: str, turn_id: str, owner_id: str) -> str:
+        async with self.connections.begin() as db:
+            thread = (await db.execute(update(ThreadRow).where(ThreadRow.id == thread_id,
+                ThreadRow.owner_id == owner_id).values(last_read_turn_id=ThreadRow.last_read_turn_id)
+                .returning(ThreadRow))).scalar_one_or_none()
+            if thread is None:
+                raise KeyError("thread_not_found")
+            latest = (await db.execute(select(TurnRow).where(TurnRow.thread_id == thread_id)
+                .order_by(TurnRow.created_at.desc(), TurnRow.id.desc()).limit(1))).scalar_one_or_none()
+            # A stale read may only acknowledge the completion actually displayed.
+            # It must not consume a newer completion or pre-read a running Turn.
+            if latest and latest.id == turn_id and latest.state == TurnState.COMPLETED.value:
+                thread.last_read_turn_id = turn_id
+            return thread.last_read_turn_id
 
     async def get_thread(self, thread_id: str, owner_id: str | None = None) -> ThreadView | None:
         async with self.connections() as db:
@@ -535,7 +556,7 @@ class Store:
             query = select(TurnRow).join(ThreadRow, ThreadRow.id == TurnRow.thread_id).where(TurnRow.thread_id == thread_id)
             if owner_id is not None:
                 query = query.where(ThreadRow.owner_id == owner_id)
-            rows = (await db.execute(query.order_by(TurnRow.created_at))).scalars().all()
+            rows = (await db.execute(query.order_by(TurnRow.created_at, TurnRow.id))).scalars().all()
         return [self.turn_view(row) for row in rows]
 
     async def get_turn_for_owner(self, turn_id: str, owner_id: str) -> TurnView | None:

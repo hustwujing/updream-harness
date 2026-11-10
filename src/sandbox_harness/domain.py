@@ -91,6 +91,10 @@ class ThreadCreate(BaseModel):
     title: str = Field(default="New session", min_length=1, max_length=200)
 
 
+class ThreadRead(BaseModel):
+    turn_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
 class ThreadView(BaseModel):
     id: str
     harness: Harness
@@ -101,6 +105,7 @@ class ThreadView(BaseModel):
     checkpoint_ref: str = ""
     native_thread_id: str = ""
     active_turn_id: str = ""
+    last_read_turn_id: str = ""
     created_at: datetime
     updated_at: datetime
     owner_id: str = Field(default="", exclude=True)

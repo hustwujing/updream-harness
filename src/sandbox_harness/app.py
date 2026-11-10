@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from .broker import Broker
 from .catalog import HarnessCatalog
 from .config import Settings, load_settings, validate_service_settings
-from .domain import Attachment, Harness, InteractionResponse, ProjectFileRename, ThreadCreate, TurnCreate, TurnInputCreate, valid_attachment_name
+from .domain import Attachment, Harness, InteractionResponse, ProjectFileRename, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, valid_attachment_name
 from .model_discovery import ModelDiscovery
 from .objects import object_store
 from .pool import SandboxPool
@@ -222,6 +222,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not value:
             raise HTTPException(404, "Thread not found")
         return value
+
+    @app.post("/api/threads/{thread_id}/read")
+    async def mark_thread_read(thread_id: str, value: ThreadRead, request: Request):
+        try:
+            turn_id = await store.mark_thread_read(thread_id, value.turn_id, request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404, "Thread not found")
+        return {"read_turn_id": turn_id}
 
     @app.delete("/api/threads/{thread_id}", status_code=204)
     async def delete_thread(thread_id: str, request: Request):
