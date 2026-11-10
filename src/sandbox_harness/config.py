@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     session_signing_key: str = Field(default="development-session-change-me", min_length=16)
     gateway_model_start_timeout_seconds: float = Field(default=120, ge=5, le=600)
     gateway_model_idle_timeout_seconds: float = Field(default=300, ge=10, le=1800)
+    runtime_model_start_timeout_seconds: float = Field(default=150, ge=10, le=900)
+    runtime_event_idle_timeout_seconds: float = Field(default=900, ge=60, le=3600)
 
     @property
     def public_proxy_url(self) -> str:

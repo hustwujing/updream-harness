@@ -469,6 +469,8 @@ class Broker:
                         proxy_url=self.settings.public_proxy_url,
                         harness=turn.harness.value,
                         model=turn.model,
+                        model_start_timeout_seconds=self.settings.runtime_model_start_timeout_seconds,
+                        event_idle_timeout_seconds=self.settings.runtime_event_idle_timeout_seconds,
                     )
                     if thread.checkpoint_ref:
                         archive = self.objects.get(thread.checkpoint_ref, maximum=self.settings.max_checkpoint_bytes)

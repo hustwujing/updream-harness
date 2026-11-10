@@ -35,6 +35,12 @@
   border-radius: 8px 8px 0 0;
 }
 
+.composer-config.thread-config { grid-template-columns: minmax(150px,1.4fr) minmax(120px,.9fr); }
+.thread-status { position: relative; display: grid; place-items: center; width: 14px; height: 14px; margin-top: 1px; flex: none; }
+.thread-status.running { border: 2px solid #d5d5d0; border-top-color: #4f7550; border-radius: 50%; animation: spin .8s linear infinite; }
+.thread-status.done::after { content:""; position:absolute; right:-1px; top:-1px; width:6px; height:6px; border:2px solid #f5f5f3; border-radius:50%; background:#55a65c; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
 .composer-config label {
   display: grid;
   gap: 4px;
@@ -182,6 +188,9 @@
     grid-column: 2;
     grid-row: 1;
   }
+
+  .composer-config.thread-config { grid-template-columns: 1fr 1fr; }
+  .composer-config.thread-config label:nth-child(2),.composer-config.thread-config label:nth-child(3) { grid-column:auto; grid-row:auto; }
 
   .composer-config label > span {
     font-size: 8px;

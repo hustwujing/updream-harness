@@ -248,6 +248,20 @@ class Store:
             rows = (await db.execute(select(ThreadRow).where(ThreadRow.owner_id == owner_id).order_by(ThreadRow.updated_at.desc()))).scalars().all()
         return [self.thread_view(row) for row in rows]
 
+    async def list_thread_summaries(self, owner_id: str) -> list[dict]:
+        threads = await self.list_threads(owner_id)
+        async with self.connections() as db:
+            turns = (await db.execute(select(TurnRow).join(ThreadRow,
+                ThreadRow.id == TurnRow.thread_id).where(ThreadRow.owner_id == owner_id)
+                .order_by(TurnRow.created_at.desc()))).scalars().all()
+        latest = {}
+        for turn in turns:
+            latest.setdefault(turn.thread_id, turn)
+        return [{**thread.model_dump(mode="json"),
+            "latest_turn_state": latest[thread.id].state if thread.id in latest else "",
+            "latest_turn_updated_at": latest[thread.id].updated_at if thread.id in latest else None,
+        } for thread in threads]
+
     async def get_thread(self, thread_id: str, owner_id: str | None = None) -> ThreadView | None:
         async with self.connections() as db:
             query = select(ThreadRow).where(ThreadRow.id == thread_id)

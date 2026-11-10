@@ -140,3 +140,22 @@ async def test_interaction_response_is_owner_scoped_and_idempotent(tmp_path):
         assert not accepted_again and repeated.status == "responded"
     finally:
         await store.close()
+
+
+async def test_thread_summaries_include_latest_turn_state(tmp_path):
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "summaries.db")); await store.initialize()
+    try:
+        catalog = HarnessCatalog(); profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+        owner = "a" * 64
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Summary"), profile, owner)
+        empty = await store.list_thread_summaries(owner)
+        assert empty[0]["latest_turn_state"] == ""
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="hello", idempotency_key="summary-turn-key"), profile, owner)
+        await store.set_turn_state(turn.id, TurnState.RUNNING)
+        rows = await store.list_thread_summaries(owner)
+        assert rows[0]["latest_turn_state"] == "RUNNING"
+        assert rows[0]["latest_turn_updated_at"] is not None
+    finally:
+        await store.close()

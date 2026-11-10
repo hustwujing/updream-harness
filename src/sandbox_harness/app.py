@@ -173,7 +173,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/threads")
     async def list_threads(request: Request):
-        return await store.list_threads(request.state.owner_id)
+        return await store.list_thread_summaries(request.state.owner_id)
 
     @app.get("/api/threads/{thread_id}")
     async def get_thread(thread_id: str, request: Request):

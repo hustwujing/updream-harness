@@ -46,6 +46,8 @@ class Configure(BaseModel):
     harness: str = Field(pattern=r"^(codex|claude|deepseek)$")
     model: str = Field(min_length=1, max_length=160)
     proxy_url: str = Field(pattern=r"^http://")
+    model_start_timeout_seconds: float = Field(default=150, ge=10, le=900)
+    event_idle_timeout_seconds: float = Field(default=900, ge=60, le=3600)
 
 
 class TurnRequest(BaseModel):
@@ -127,6 +129,8 @@ def create_app() -> FastAPI:
     app.state.execution = None
     app.state.background_jobs = {}
     app.state.interaction_waiters = {}
+    app.state.model_start_timeout_seconds = 150.0
+    app.state.event_idle_timeout_seconds = 900.0
     jobs_root = WORKSPACE / "state" / "background-jobs"
     jobs_root.mkdir(parents=True, exist_ok=True)
     def load_jobs() -> None:
@@ -224,8 +228,25 @@ def create_app() -> FastAPI:
 
     async def read_execution(execution: Execution, harness: str) -> None:
         process = execution.process
+        substantive = False
         try:
-            while line := await process.stdout.readline():
+            while True:
+                timeout = (app.state.event_idle_timeout_seconds if substantive
+                    else app.state.model_start_timeout_seconds)
+                try:
+                    line = await asyncio.wait_for(process.stdout.readline(), timeout=timeout)
+                except TimeoutError:
+                    await stop_process()
+                    await finish_execution(execution, {"status": "failed",
+                        "native_thread_id": execution.native_thread_id,
+                        "error_code": "harness_idle_timeout" if substantive else "model_response_timeout",
+                        "error_detail": ("Harness produced no events before the idle timeout" if substantive
+                            else "The model produced no response before the start timeout"),
+                        "input_ids": list(execution.pending_input_ids)})
+                    execution.pending_input_ids.clear()
+                    return
+                if not line:
+                    break
                 decoded = line.decode(errors="replace").rstrip("\n")
                 try:
                     native = json.loads(decoded)
@@ -243,6 +264,11 @@ def create_app() -> FastAPI:
                     ):
                         execution.saw_text_delta |= event.get("kind") == "text_delta"
                         await publish(execution, event)
+                    substantive = substantive or event.get("kind") in {
+                        "text_delta", "tool_started", "tool_finished", "step_progress",
+                        "waiting_user", "error", "warning",
+                    }
+                substantive = substantive or terminal_input
                 if execution.selected.streaming_input and terminal_input:
                     if execution.selected.batched_completion:
                         completed = list(execution.pending_input_ids)
@@ -328,6 +354,8 @@ def create_app() -> FastAPI:
         os.environ["HARNESS_GATEWAY_URL"] = value.gateway_url
         os.environ["HARNESS_KIND"] = value.harness
         os.environ["HARNESS_MODEL"] = value.model
+        app.state.model_start_timeout_seconds = value.model_start_timeout_seconds
+        app.state.event_idle_timeout_seconds = value.event_idle_timeout_seconds
         proxy = urlsplit(value.proxy_url)
         authenticated_proxy = f"{proxy.scheme}://{quote(value.capability_token, safe='')}:@{proxy.netloc}"
         os.environ["HTTP_PROXY"] = authenticated_proxy
