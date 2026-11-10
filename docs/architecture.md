@@ -30,7 +30,13 @@ The Sandbox Runtime owns the Harness subprocess reader. It continues draining st
 
 If the Runtime execution cannot be found, the Turn fails with an explicit interruption instead of replaying unknown public or Provider side effects. Provider handles are ordinary Harness state under `/workspace/state`; the broker does not interpret or replay them.
 
-Cleanup first persists the intended terminal state, then revokes the capability token, terminates Gateway streams, quiesces the runtime, deletes the exact sandbox ID, confirms absence and only then releases the pool slot. A new Broker can finish an interrupted cleanup without changing that intended result. Artifact registration is idempotent by Turn, path and content hash.
+Cleanup first persists the intended terminal state, then revokes the capability
+token, terminates Gateway streams and quiesces the Runtime. A successful or
+waiting Turn with confirmed revocation may keep that sandbox attached to the
+same Thread for the configured TTL. Every other path deletes the exact sandbox
+ID, confirms absence and only then releases capacity. A new Broker can finish an
+interrupted cleanup without changing the intended result. Artifact registration
+is idempotent by Turn, path and content hash.
 
 Each conversation freezes one Harness. Codex uses app-server `turn/steer`, Claude uses realtime stream-json input, and DeepSeek drains appended input in the same SDK Session at its idle boundary. Inputs are persisted with a sequence and idempotency key before native delivery. A draining state closes the race between the last accepted input and checkpoint publication.
 

@@ -56,7 +56,11 @@ The composer remains visible while a Turn runs. A new prompt can be sent as:
 - `steer`: deliver to the active Turn at the next Harness message boundary.
 - `queue`: create the next Turn after the active Turn completes.
 
-The composer includes attachments, Harness, model and reasoning controls. Harness/model changes create a new frozen Turn configuration; they never mutate an active Turn.
+The new-Thread composer includes Harness, model and reasoning controls. After a
+Thread is created its Harness is fixed; the conversation composer exposes model
+and reasoning controls for the next Turn but does not offer a Harness switch.
+Every Turn persists its selected model and native reasoning effort, and an
+active Turn is never mutated by later UI choices.
 
 ## Scrolling
 

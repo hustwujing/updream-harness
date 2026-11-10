@@ -1,0 +1,82 @@
+# Sandbox and Harness Development
+
+## Applies to
+
+Read this for Runtime APIs, native protocol adapters, images, workspace,
+background jobs, interactions, attachments or outputs.
+
+## Runtime contract
+
+The host starts `sandbox-harness-runtime` in an immutable image digest. Runtime
+owns the Harness subprocess and its stdout reader independently of the Broker's
+stream connection. It journals normalized events, assigns monotonically
+increasing sequence numbers and retains the terminal result for reattachment.
+
+The Runtime HTTP API in `sandbox_runtime/app.py` is the host/data-plane
+contract. Host calls go through `RuntimeClient`; do not make Broker code depend
+on a native Harness protocol.
+
+## Workspace ownership
+
+```text
+/workspace/project   checkpointed user work
+/workspace/state     checkpointed native Harness state
+/workspace/inbox     current input only
+/workspace/outputs   current Turn publication only
+/workspace/tmp       disposable
+/run/harness         capability and Runtime configuration, never checkpointed
+```
+
+`PERSISTENT` in Runtime code is exactly `project` and `state`. Managed assets
+and artifacts are restored from the host manifest. Outputs reset at a new
+execution. Paths must pass `safe_relative`; symlinks, devices and unsafe archive
+members must not become artifacts or checkpoint entries.
+
+## Native Harness implementations
+
+- Codex uses `codex_runner.py` and app-server control messages. It supports
+  native steering and interactions.
+- Claude uses CLI stream-json input/output and resumes with its native session
+  identifier.
+- DeepSeek uses `deepseek_runner.py` and a persistent SDK Session, accepting
+  appended input at its controlled boundary.
+
+`adapters.command` constructs commands and per-Harness environment. `normalize`
+maps native output to the shared Runtime event contract. Unknown plain output is
+public text/tool output; protocol changes must be tested with representative
+native frames.
+
+## Process and input rules
+
+- Execution creation and input submission are serialized.
+- An input ID is bound to a body fingerprint. Exact replay is idempotent;
+  conflicting reuse is rejected.
+- EOF is not success for streaming Harnesses; pending inputs require explicit
+  completion evidence.
+- Cancellation stops the Harness process group and supervised background jobs.
+- Long-lived work uses `sandbox-background`; user decisions use
+  `sandbox-interact`. Both remain bound to the active execution.
+- A completed or waiting outcome is not published until checkpoint succeeds.
+
+## Image rules
+
+OpenSandbox creation rejects mutable image references; deployment uses
+`@sha256:` digests. `foundation.Dockerfile` owns OS/browser tools,
+`base.Dockerfile` owns Runtime and common media dependencies, and Harness
+Dockerfiles add native clients. `toolchain.lock.json` and probe scripts make the
+foundation contract executable.
+
+Use [image dependency guidance](add-image-dependency.md) for package changes and
+[Agent Skill guidance](add-agent-skill.md) for reusable Harness instructions or
+assets. A dependency being present does not make a Skill discoverable, and a
+Skill copied into one checkpoint is not an image-level capability.
+
+## Required checks
+
+- Adapter/native frames: `test_adapters.py`, `test_codex_runner.py`,
+  `test_deepseek_runner.py`.
+- Runtime concurrency and input boundaries: `test_runtime_boundaries.py`,
+  `test_runtime_configuration.py`, `test_runtime_client.py`.
+- Images and paths: `test_runtime_image_contract.py`, `test_runtime_paths.py`.
+- Namespace/reconciliation: `test_sandbox_namespace.py`.
+- A real OpenSandbox case for image, process, checkpoint or networking changes.

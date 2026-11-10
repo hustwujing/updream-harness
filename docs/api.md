@@ -1,111 +1,96 @@
 # Client API
 
-The public API is Harness-neutral. Codex app-server, Claude and DeepSeek native protocols are translated by runtime adapters into these Thread, Turn and Item resources.
+The routes below are implemented by `src/sandbox_harness/app.py`. Every resource
+route is scoped to the signed browser owner; foreign resources return 404.
+
+## Service and catalog
+
+```text
+GET /api/health
+GET /api/session
+GET /api/catalog/harnesses
+```
 
 ## Threads
 
 ```text
 POST   /api/threads
-GET    /api/threads?cursor=&state=active|archived
+GET    /api/threads
 GET    /api/threads/{thread_id}
-PATCH  /api/threads/{thread_id}
-POST   /api/threads/{thread_id}/archive
-POST   /api/threads/{thread_id}/resume
+POST   /api/threads/{thread_id}/read
 DELETE /api/threads/{thread_id}
 ```
 
-Creating a Thread freezes the default Harness, model and reasoning effort. A Turn may explicitly select another configured profile.
-Deleting a Thread is owner-scoped and rejects active work. The broker deletes any retained Sandbox before atomically removing the Thread's Turns, events, interactions, project-file records and artifact indexes.
+Creating a Thread freezes its Harness. A Turn may choose another configured
+model/reasoning level for that Harness, but switching Harness requires a new
+Thread. Deletion rejects nonterminal work and removes the retained Thread
+sandbox before deleting durable records.
 
-## Turns
+The read endpoint acknowledges only the exact latest `COMPLETED` Turn shown to
+the browser; a stale request cannot consume a newer unread marker.
 
-```text
-POST   /api/threads/{thread_id}/turns
-GET    /api/threads/{thread_id}/turns
-GET    /api/turns/{turn_id}
-POST   /api/turns/{turn_id}/interrupt
-POST   /api/turns/{turn_id}/steer
-```
-
-`POST /turns` accepts an idempotency key, message, attachments and frozen Harness configuration. If another Turn is active, `delivery_mode=queue` persists the Turn without starting it; `delivery_mode=steer` writes a steering message to the active Runtime.
-
-## Items and Events
+## Turns, inputs and transcript
 
 ```text
-GET /api/threads/{thread_id}/items?after={sequence}&limit=200
-GET /api/turns/{turn_id}/events?after={sequence}       # SSE
+POST /api/threads/{thread_id}/turns
+GET  /api/threads/{thread_id}/turns
+GET  /api/threads/{thread_id}/items?after=&limit=
+GET  /api/turns/{turn_id}
+POST /api/turns/{turn_id}/cancel
+POST /api/turns/{turn_id}/inputs
+GET  /api/turns/{turn_id}/inputs
 ```
 
-SSE event names:
+Turn creation accepts `start`, `queue` and `steer` in the request model, but an
+actual steer is delivered through the active Turn's `/inputs` endpoint;
+`steer` on the creation endpoint is rejected. Each create/input request has an
+idempotency key. A transport loss after input submission records `unknown`
+instead of automatically replaying it.
+
+## Events
 
 ```text
-item.created
-item.updated
-item.delta
-turn.started
-turn.waiting
-turn.completed
-turn.failed
-turn.interrupted
-approval.requested
-artifact.created
-sandbox.status
+GET /api/turns/{turn_id}/events?after=       # SSE
+GET /api/turns/{turn_id}/events/history?after=&limit=
 ```
 
-Events are replayable by sequence. The UI renders durable Items and applies deltas; reconnecting does not duplicate transcript rows.
+SSE event names are the values of `domain.EventKind`, including text, step,
+tool, artifact, warning/error, waiting, done and state events. The server honors
+both `after` and `Last-Event-ID`, reads PostgreSQL first, uses Redis only to wait
+for new data and closes after terminal state once rows are drained.
 
-## Approvals
-
-```text
-POST /api/approvals/{approval_id}/respond
-```
-
-The implemented endpoints are:
+## Interactions and background jobs
 
 ```text
 GET  /api/threads/{thread_id}/interactions
 POST /api/interactions/{interaction_id}/respond
-```
-
-The platform itself does not invent approvals. It transports native Codex requests or explicit `sandbox-interact` requests from any Harness and returns the user's response to that exact active Turn, Runtime execution and Sandbox. Responses use an idempotency key; foreign owners, old executions and repeated responses with a different key are rejected.
-
-## Attachments and Artifacts
-
-```text
-POST /api/uploads
-GET  /api/artifacts/{artifact_id}
-GET  /api/threads/{thread_id}/project-files
-GET  /api/project-files/{file_id}
-POST /api/threads/{thread_id}/project-files
-GET  /api/threads/{thread_id}/project-files/history?path=
-POST /api/project-files/{file_id}/rename
-DELETE /api/project-files/{file_id}
-```
-
-Uploads are content-addressed before a Turn references them. Artifact downloads validate thread ownership, object hash and byte limits.
-Attachments referenced by a Turn become versioned project assets. Exported Artifacts become versioned project artifacts. Project-file list and download endpoints enforce the same browser owner boundary as Threads and Artifacts.
-
-## Background Jobs
-
-```text
 GET  /api/turns/{turn_id}/background-jobs
 POST /api/turns/{turn_id}/background-jobs/{job_id}/cancel
 ```
 
-Harnesses start jobs inside the Sandbox with `sandbox-background start --name NAME -- argv...`. Runtime uses an explicit argv without a host shell, constrains cwd to the project, owns the process group, drains a bounded log and holds the Turn open until all jobs finish. A failed, interrupted or cancelled job prevents a successful Turn result.
+Interaction responses are execution-bound and idempotent. Background jobs are
+Runtime-supervised processes belonging to the active execution.
 
-## Runtime Metadata
+## Uploads, artifacts and project files
 
 ```text
-GET /api/catalog/harnesses
-GET /api/catalog/models?harness=codex
-GET /api/threads/{thread_id}/sandbox
+POST   /api/uploads?name=&mime=
+GET    /api/artifacts/{artifact_id}?inline=
+GET    /api/threads/{thread_id}/project-files
+POST   /api/threads/{thread_id}/project-files?path=&mime=
+GET    /api/threads/{thread_id}/project-files/history?path=
+GET    /api/project-files/{file_id}?inline=
+POST   /api/project-files/{file_id}/rename
+DELETE /api/project-files/{file_id}
 ```
 
-The host discovers model IDs from each configured upstream at startup and every five minutes, then filters them by native Harness protocol family. It sends a bounded minimal request through each model protocol, records availability, latency, error class and check time, and separates transient probe failures from explicit route rejection. Timeouts, rate limits and temporary service errors remain selectable; three consecutive transient failures mark a model busy, and two consecutive successes restore a degraded model. Explicit unsupported-model, missing-route or authorization responses disable selection. Streaks and stable state persist across restarts. Claude exposes only `claude-*`, DeepSeek only `deepseek-*`, and Codex compatible GPT text/reasoning models. The versioned last successful catalog and probe snapshot is persisted under the isolated data root. Probes reduce predictable routing failures but remain point-in-time observations; a successful Turn is the final proof that the selected route worked for that request.
+Uploads and downloads enforce ownership, safe names/paths, byte limits and
+content-addressed integrity. Inline rendering is limited to approved media/text
+types and uses a sandboxing Content-Security-Policy.
 
-Catalog refreshes do not change the user's selected model or reasoning level. The
-browser preserves choices per conversation (and draft) in session storage. A busy
-model can still be submitted; a hard-rejected model stays visible with its reason
-and requires explicit user selection of another model. Background health changes
-do not block appended input to an already running Turn.
+## Runtime API
+
+The in-sandbox Runtime API is private to `RuntimeClient`; it includes configure,
+checkpoint restore/save, attachment/project materialization, Turn start/resume,
+input, interaction, background job, cancel, diagnostics and artifact endpoints.
+It is not a browser API and must not be exposed through nginx.

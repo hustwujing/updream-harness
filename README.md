@@ -29,7 +29,9 @@ QUEUED → RESTORING → STARTING → RUNNING
 result → CLEANING → terminal state
 ```
 
-Only one Turn may run for a Session. A warm sandbox may stay attached to that Session for a short TTL; after expiry, its workspace is checkpointed and the sandbox is deleted.
+Only one Turn may run for a Thread. A used sandbox may stay attached to that
+same Thread for a short TTL after its workspace checkpoint commits; after
+expiry, the sandbox is deleted and its capacity is released.
 
 Turn ownership is a renewable PostgreSQL lease. The Sandbox Runtime consumes Harness stdout in a background task and keeps a sequenced replay journal independently of the Broker HTTP connection. A replacement Broker can reattach the same namespaced Sandbox, replay only missing Runtime events, checkpoint the result and finish cleanup. If the Runtime or Sandbox itself is lost after Harness execution began, the broker reports an interrupted Turn instead of replaying potentially non-idempotent public side effects.
 
@@ -61,6 +63,10 @@ UV_CACHE_DIR=.data/uv-cache uv sync --extra test
 ```
 
 Set `SANDBOX_HARNESS_BACKEND=fake` only for local UI development and tests. Production accepts only `opensandbox` and never falls back to a host Harness.
+
+Before changing code, read [AGENTS.md](AGENTS.md) and use the
+[development guide index](docs/development/README.md) to load the rules for the
+affected lifecycle, Gateway, Runtime, image, Skill, API or deployment boundary.
 
 See [architecture.md](docs/architecture.md), [client API](docs/api.md), [data model](docs/data-model.md), [product interface](docs/product-interface.md), [gateway.md](docs/gateway.md) and [deployment.md](docs/deployment.md).
 

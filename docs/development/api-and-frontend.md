@@ -1,0 +1,54 @@
+# API and Frontend Development
+
+## Applies to
+
+Read this for FastAPI routes, ownership behavior, SSE, transcript Items, browser
+navigation, composer controls, interactions or file preview.
+
+## API rules
+
+`app.py` is the route authority; `docs/api.md` is descriptive. Every Thread,
+Turn, Item, interaction, artifact and project-file operation is owner-scoped by
+the signed browser identity. Return 404 rather than revealing a foreign object.
+
+Write endpoints require idempotency where retry ambiguity exists. Attachment
+ownership and aggregate byte limits are checked before scheduling. Object reads
+verify size and digest. Inline preview is limited to approved MIME families and
+returns a sandboxing Content-Security-Policy.
+
+SSE reads durable events from PostgreSQL and uses Redis only to wake waiters.
+Honor `Last-Event-ID`, preserve event sequence and close only after a terminal
+Turn has no remaining rows. Do not make reconnect correctness depend on Redis.
+
+## Browser rules
+
+- `api.js` is the API/error mapping layer; do not scatter raw fetch contracts
+  through components.
+- The Thread ID lives in the query string and browser history.
+- The composer remains available during active work for appended input. A
+  Harness is fixed per Thread; model and reasoning behavior follows the current
+  product controls and frozen Turn record.
+- Stream follow occurs only near the bottom. User scrolling must not be pulled
+  back by new output.
+- Only active Items animate. Terminal Items retain a fixed elapsed duration.
+- Activity rows summarize model waits and tools; agent public output belongs in
+  the transcript.
+- Markdown renders no raw HTML. Sandbox paths become links only after resolving
+  to owner-checked artifact/project-file APIs.
+- Preview and download use API URLs, never object-store URLs.
+
+## Error behavior
+
+Public errors are stable and actionable. The browser includes the API request ID
+when available. Do not expose raw Provider messages, credentials, internal URLs
+or stack traces. A failed input receipt remains visible as failed/unknown rather
+than silently creating a duplicate Turn.
+
+## Required checks
+
+- Build: `npm --prefix web run build`.
+- API ownership/state tests relevant to the route.
+- Browser scripts for navigation, IME, input status, interactions, unread
+  markers, Markdown, project files and responsive layout as applicable.
+- Desktop and mobile screenshots when layout or preview behavior changes.
+- Verify no page errors, duplicate SSE streams or terminal animation loops.
