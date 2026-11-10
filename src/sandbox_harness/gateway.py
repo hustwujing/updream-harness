@@ -7,6 +7,7 @@ import os
 import time
 import json
 import logging
+import re
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -134,6 +135,12 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     async def revoke(nonce: str, request: Request):
         if request.headers.get("x-sandbox-harness-control") != settings.gateway_control_key:
             raise HTTPException(403, "Invalid control credential")
+        fields={}
+        for key in ("turn_id","thread_id","sandbox_id"):
+            value=request.headers.get("x-updream-"+key.replace("_","-"),"")
+            if re.fullmatch(r"[0-9a-f]{32}|[0-9a-f-]{36}",value):fields[key]=value
+        if not hasattr(request.state,"log_context"):request.state.log_context={}
+        request.state.log_context.update(fields);enrich(**fields)
         await redis.set(
             settings.redis_prefix + "capability:revoked:" + nonce,
             "1",

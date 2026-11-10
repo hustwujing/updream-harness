@@ -124,6 +124,11 @@ class Broker:
                 event("sandbox.orphan.delete",level=logging.WARNING,sandbox_id=sandbox.id,turn_id=turn_id)
                 await self.pool.backend.delete(sandbox)
 
+    def _revoke_headers(self, turn, sandbox_id="") -> dict:
+        return {**carrier(),"X-Sandbox-Harness-Control":self.settings.gateway_control_key,
+            "X-Updream-Turn-ID":turn.id,"X-Updream-Thread-ID":turn.thread_id,
+            "X-Updream-Sandbox-ID":sandbox_id or turn.sandbox_id}
+
     async def close(self) -> None:
         self.closing = True
         if self.recovery_task:
@@ -187,7 +192,7 @@ class Broker:
                     try:
                         async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
                             response = await client.post(self.settings.gateway_url.rstrip('/') + '/internal/revoke/' + claimed.capability_nonce,
-                                headers={"X-Sandbox-Harness-Control": self.settings.gateway_control_key})
+                                headers=self._revoke_headers(claimed))
                             response.raise_for_status()
                     except Exception as exc:
                         await self.store.append_event(turn.id, EventKind.WARNING, {
@@ -745,9 +750,10 @@ class Broker:
                                     async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
                                         response = await client.post(
                                             self.settings.gateway_url.rstrip('/') + '/internal/revoke/' + capability_nonce,
-                                            headers={"X-Sandbox-Harness-Control": self.settings.gateway_control_key},
+                                            headers=self._revoke_headers(turn,sandbox.id),
                                         )
                                         response.raise_for_status()
+                                    event("capability.revocation.confirmed",turn_id=turn.id,thread_id=turn.thread_id,sandbox_id=sandbox.id)
                                     revoked = True
                                     break
                                 except Exception as exc:

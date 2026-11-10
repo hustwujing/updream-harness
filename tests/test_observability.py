@@ -267,3 +267,24 @@ def test_source_tool_timing_pairs_ids_and_interrupts_unfinished_tools(telemetry)
     assert first['attributes']['updream.duration_ms']>=20 and first['attributes']['updream.outcome']=='success'
     assert second['attributes']['updream.outcome']=='interrupted'
     assert 'PRIVATE_COMMAND' not in json.dumps(records)
+
+
+async def test_revoke_audit_uses_authenticated_business_ids_and_propagated_trace(telemetry,tmp_path,monkeypatch):
+    import sandbox_harness.gateway as gateway
+    from sandbox_harness.config import Settings
+    class Redis:
+        async def set(self,*args,**kwargs):pass
+    monkeypatch.setattr(gateway.Redis,'from_url',lambda *a,**kw:Redis())
+    settings=Settings(backend='fake',data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'revoke.db'))
+    app=gateway.create_gateway(settings);turn_id='a'*32
+    with obs.operation('test.cleanup',turn_id=turn_id):
+        headers={**obs.carrier(),'X-Sandbox-Harness-Control':settings.gateway_control_key,
+            'X-Updream-Turn-ID':turn_id,'X-Updream-Thread-ID':'b'*32,'X-Updream-Sandbox-ID':'c'*32}
+        expected_trace=headers['traceparent'].split('-')[1]
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app),base_url='http://test') as client:
+            assert (await client.post('/internal/revoke/private-nonce',headers=headers)).status_code==200
+            assert (await client.post('/internal/revoke/private-nonce',headers={'X-Updream-Turn-ID':'d'*32})).status_code==403
+    records=rows(telemetry)
+    revoke=next(row for row in records if row['event_name']=='capability.revoked')
+    assert revoke['trace_id']==expected_trace and revoke['attributes']['updream.turn_id']==turn_id
+    assert 'private-nonce' not in json.dumps(records) and settings.gateway_control_key not in json.dumps(records)
