@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .observability import observed, event, enrich, carrier, add_link, telemetry
+
 import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -29,8 +31,11 @@ class Sandbox:
 
 
 class SandboxBackend(Protocol):
+    @observed("sandbox.create")
     async def create(self, harness: Harness, image: str, metadata: dict[str, str], environment: dict[str, str]) -> Sandbox: ...
+    @observed("sandbox.bind")
     async def bind(self, sandbox: Sandbox, thread_id: str, turn_id: str) -> None: ...
+    @observed("sandbox.delete")
     async def delete(self, sandbox: Sandbox) -> None: ...
     async def find_by_turn(self, turn_id: str) -> list[Sandbox]: ...
     async def list_namespace(self) -> list[Sandbox]: ...
@@ -85,6 +90,7 @@ class OpenSandboxBackend:
             await asyncio.sleep(0.25)
         raise RuntimeError("OpenSandbox runtime endpoint did not become ready")
 
+    @observed("sandbox.create")
     async def create(self, harness: Harness, image: str, metadata: dict[str, str], environment: dict[str, str]) -> Sandbox:
         if "@sha256:" not in image:
             raise ValueError("Runtime image must use an immutable manifest digest")
@@ -148,6 +154,7 @@ class OpenSandboxBackend:
                 continue
         return result
 
+    @observed("sandbox.bind")
     async def bind(self, sandbox: Sandbox, thread_id: str, turn_id: str) -> None:
         patch = {
             "sandbox-harness.io/pool": None,
@@ -164,6 +171,7 @@ class OpenSandboxBackend:
             "sandbox-harness.io/turn": turn_id,
         })
 
+    @observed("sandbox.delete")
     async def delete(self, sandbox: Sandbox) -> None:
         response = await self.client.delete(f"/v1/sandboxes/{sandbox.id}")
         if response.status_code not in (204, 404):
@@ -184,6 +192,7 @@ class FakeSandboxBackend:
         self.namespace = namespace
         self.items: dict[str, Sandbox] = {}
 
+    @observed("sandbox.create")
     async def create(self, harness: Harness, image: str, metadata: dict[str, str], environment: dict[str, str]) -> Sandbox:
         metadata = {**metadata, "sandbox-harness.io/namespace": self.namespace}
         value = Sandbox(id=identifier(), harness=harness, image=image or "fake@sha256:" + "0" * 64, runtime_url=self.runtime_url, metadata=metadata)
@@ -201,6 +210,7 @@ class FakeSandboxBackend:
         return [item for item in self.items.values()
             if item.metadata.get("sandbox-harness.io/namespace") == self.namespace]
 
+    @observed("sandbox.bind")
     async def bind(self, sandbox: Sandbox, thread_id: str, turn_id: str) -> None:
         if sandbox.id not in self.items:
             raise SandboxNotFound("Fake backend no longer has sandbox " + sandbox.id)
@@ -210,5 +220,6 @@ class FakeSandboxBackend:
             "sandbox-harness.io/turn": turn_id,
         })
 
+    @observed("sandbox.delete")
     async def delete(self, sandbox: Sandbox) -> None:
         self.items.pop(sandbox.id, None)

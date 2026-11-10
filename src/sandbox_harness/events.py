@@ -7,6 +7,7 @@ import logging
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
+from .observability import event as log_event
 from .domain import Event
 
 logger = logging.getLogger(__name__)
@@ -28,9 +29,9 @@ class RedisEventBus:
         try:
             async with asyncio.timeout(REDIS_IO_TIMEOUT):
                 await self.redis.ping()
-        except (RedisError, TimeoutError):
+        except (RedisError, TimeoutError) as exc:
             self.available = False
-            logger.warning("Redis event bus is unavailable; using database replay polling", exc_info=True)
+            log_event("redis.connection.failed",level=logging.WARNING,exc=exc,reason="database_replay_fallback")
 
     async def close(self) -> None:
         await self.redis.aclose()
@@ -44,9 +45,9 @@ class RedisEventBus:
                 pipeline.expire(key, 86400)
                 await pipeline.execute()
             self.available = True
-        except (RedisError, TimeoutError):
+        except (RedisError, TimeoutError) as exc:
             self.available = False
-            logger.warning("Redis event publish failed; event remains durable in the database", exc_info=True)
+            log_event("redis.publish.failed",level=logging.WARNING,exc=exc,turn_id=event.turn_id,reason="database_replay_fallback")
 
     async def wait(self, turn_id: str, after: int, block_ms: int = 15000) -> None:
         try:
@@ -54,9 +55,9 @@ class RedisEventBus:
             async with asyncio.timeout(block_ms / 1000 + REDIS_IO_TIMEOUT):
                 await self.redis.xread({self.key(turn_id): f"{after}-0"}, count=1, block=block_ms)
             self.available = True
-        except (RedisError, TimeoutError):
+        except (RedisError, TimeoutError) as exc:
             self.available = False
-            logger.warning("Redis event wait failed; falling back to database polling", exc_info=True)
+            log_event("redis.wait.failed",level=logging.WARNING,exc=exc,turn_id=turn_id,reason="database_replay_fallback")
 
     async def delete(self, turn_ids: list[str]) -> None:
         if not turn_ids:
@@ -64,6 +65,6 @@ class RedisEventBus:
         try:
             async with asyncio.timeout(REDIS_IO_TIMEOUT):
                 await self.redis.delete(*(self.key(turn_id) for turn_id in turn_ids))
-        except (RedisError, TimeoutError):
+        except (RedisError, TimeoutError) as exc:
             self.available = False
-            logger.warning("Redis event cleanup failed; keys will expire automatically", exc_info=True)
+            log_event("redis.cleanup.failed",level=logging.WARNING,exc=exc,count=len(turn_ids))

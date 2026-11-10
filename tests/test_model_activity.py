@@ -42,3 +42,13 @@ def test_malformed_observation_frames_do_not_break_model_stream():
     probe=OutputProbe()
     for frame in [[],{'type':[]},{'type':'content_block_delta','delta':'bad'},{'choices':['bad',{}]}]:
         assert not probe.feed(('data: '+json.dumps(frame)+'\n\n').encode())
+
+
+def test_usage_logging_distinguishes_missing_and_reported_zero():
+    probe=OutputProbe()
+    assert probe.input_tokens is None and probe.output_tokens is None
+    probe.feed(b'data: {"type":"message_start","message":{"usage":{"input_tokens":42}}}\n\n')
+    probe.feed(b'data: {"type":"message_delta","usage":{"output_tokens":0}}\n\n')
+    assert probe.input_tokens==42 and probe.output_tokens==0
+    probe.feed(b'data: {"usage":{"input_tokens":"secret","output_tokens":-1}}\n\n')
+    assert probe.input_tokens==42 and probe.output_tokens==0

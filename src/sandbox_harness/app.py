@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from .broker import Broker
 from .catalog import HarnessCatalog
 from .config import Settings, load_settings, validate_service_settings
+from .observability import RequestLoggingMiddleware, telemetry, event
 from .domain import Attachment, Harness, InteractionResponse, ProjectFileRename, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, valid_attachment_name
 from .model_discovery import ModelDiscovery
 from .objects import object_store
@@ -155,6 +156,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await store.close()
 
     app = FastAPI(title="Sandbox Harness Platform", lifespan=lifespan)
+    app.add_middleware(RequestLoggingMiddleware,service="api")
     app.state.settings = settings
     app.state.store = store
     app.state.objects = objects
@@ -193,7 +195,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pool_status = app.state.pool_status
         payload = {"status": "ok" if pool_status in {"ready", "disabled"} else "degraded",
                    "backend": settings.backend, "warm_pool": pool_status, "broker": broker.status(),
-                   "model_catalog": discovery.status()}
+                   "model_catalog": discovery.status(),"observability":telemetry().status() if telemetry() else {"enabled":False}}
         return JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
 
     @app.get("/api/catalog/harnesses")
@@ -248,7 +250,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not await store.attachments_owned(request.state.owner_id, value.attachments):
             raise HTTPException(404, "Attachment not found")
         try:
-            return await broker.submit(thread_id, value)
+            result = await broker.submit(thread_id, value)
+            request.state.log_context.update({"thread_id":thread_id,"turn_id":result.id})
+            return result
         except KeyError:
             raise HTTPException(404, "Thread not found")
         except ValueError as exc:
@@ -345,6 +349,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(413, "Attachments exceed the input byte limit")
         try:
             result, created = await store.create_turn_input(turn_id, value, request.state.owner_id)
+            request.state.log_context.update({"turn_id":turn_id,"thread_id":turn.thread_id,"input_id":result.id})
+            event("input.accepted",turn_id=turn_id,thread_id=turn.thread_id,input_id=result.id,reused=not created)
             if created:
                 try:
                     await broker.try_deliver_input(result)
@@ -352,6 +358,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     # The Runtime may have accepted the input before the reply
                     # was lost. Do not retry it as a fresh execution.
                     await store.set_input_status(result.id, "unknown", "delivery_unconfirmed")
+                    event("input.delivery.unknown",level=logging.WARNING,turn_id=turn_id,input_id=result.id)
                 except Exception as exc:
                     await store.set_input_status(result.id, "failed", "delivery_failed")
                     raise HTTPException(409, "input_delivery_failed") from exc

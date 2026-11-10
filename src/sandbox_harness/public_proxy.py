@@ -5,6 +5,8 @@ import base64
 import ipaddress
 import socket
 import time
+from .observability import event,bind,operation,enrich,add_link
+import logging
 from urllib.parse import urlsplit
 
 
@@ -56,6 +58,7 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
     upstream_writer = None
     registered_nonce = None
     expiry = None
+    started=time.monotonic();log_context={}
     try:
         header = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=10)
         if len(header) > MAX_HEADER:
@@ -83,6 +86,8 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
                     raise ValueError("Proxy request body is too large")
             headers.append((name.strip(), value.strip()))
         claims = await authorize(proxy_token(header_map))
+        log_context={key:getattr(claims,key,"") for key in ("turn_id","thread_id","sandbox_id")}
+        event("public_proxy.authorized",**log_context)
         if connections is not None:
             registered_nonce = claims.nonce
             connections[registered_nonce].add(asyncio.current_task())
@@ -119,15 +124,18 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
         while data := await upstream_reader.read(64 * 1024):
             writer.write(data)
             await writer.drain()
-    except (ValueError, asyncio.IncompleteReadError, asyncio.LimitOverrunError, asyncio.TimeoutError):
+    except (ValueError, asyncio.IncompleteReadError, asyncio.LimitOverrunError, asyncio.TimeoutError) as exc:
+        event("public_proxy.rejected",level=logging.WARNING,exc=exc,**log_context)
         if not writer.is_closing():
             writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             await writer.drain()
-    except (ConnectionError, OSError):
+    except (ConnectionError, OSError) as exc:
+        event("public_proxy.failed",level=logging.ERROR,exc=exc,**log_context)
         if not writer.is_closing():
             writer.write(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             await writer.drain()
     finally:
+        event("public_proxy.closed",duration_ms=round((time.monotonic()-started)*1000),**log_context)
         if expiry:
             expiry.cancel()
         if registered_nonce:

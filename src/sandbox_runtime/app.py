@@ -21,6 +21,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from sandbox_harness.observability import RequestLoggingMiddleware, observed, event, enrich, telemetry
+
 from .adapters import command, control_interaction_response, control_user_message, normalize, streaming_user_message
 
 
@@ -42,6 +44,9 @@ User message:
 
 
 class Configure(BaseModel):
+    thread_id: str = Field(default="",max_length=160)
+    turn_id: str = Field(default="",max_length=160)
+    sandbox_id: str = Field(default="",max_length=200)
     capability_token: str = Field(min_length=20)
     gateway_url: str = Field(pattern=r"^https?://")
     harness: str = Field(pattern=r"^(codex|claude|deepseek)$")
@@ -131,6 +136,8 @@ def safe_relative(value: str) -> Path:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Sandbox Harness Runtime")
+    app.add_middleware(RequestLoggingMiddleware,service="runtime")
+    app.state.log_context = {}
     app.state.process = None
     app.state.process_command = None
     app.state.pending_inputs = 0
@@ -241,6 +248,7 @@ def create_app() -> FastAPI:
                 result = {**result, "status": "cancelled", "error_code": "cancelled"}
             append_event_locked(execution, {"type": "result", "result": result})
             execution.result = result
+            event("runtime.execution.terminal",execution_id=execution.id,state=result.get("status"),error_code=result.get("error_code"),runtime_sequence=execution.sequence)
             for native_id in execution.interaction_ids.values():
                 waiter = app.state.interaction_waiters.get(native_id)
                 if waiter is not None and not waiter.done():
@@ -272,6 +280,7 @@ def create_app() -> FastAPI:
         else:
             job.status = "completed" if job.returncode == 0 else "failed"
         job.completed_at = datetime.now(timezone.utc).isoformat(); persist_job(job)
+        event("runtime.background.finished",job_id=job.id,execution_id=job.execution_id,state=job.status,exit_code=job.returncode)
         execution = app.state.execution
         if execution and execution.id == job.execution_id:
             await publish(execution, {"kind": "step_finished", "payload": {
@@ -289,6 +298,7 @@ def create_app() -> FastAPI:
             await asyncio.gather(*(job.task for job in jobs))
         return [job for job in app.state.background_jobs.values() if job.execution_id == execution.id]
 
+    @observed("runtime.execution")
     async def read_execution(execution: Execution, harness: str) -> None:
         process = execution.process
         substantive = False
@@ -433,12 +443,21 @@ def create_app() -> FastAPI:
                 if row.get("type") == "result":
                     return
 
+    @app.get("/v1/diagnostics")
+    async def diagnostics(after: int = 0, limit: int = 500):
+        if telemetry():await asyncio.to_thread(telemetry().flush,1)
+        return telemetry().snapshot(max(0,after),min(max(limit,1),500)) if telemetry() else {"records":[],"last_sequence":0}
+
     @app.get("/health")
     async def health():
         return {"status": "ok"}
 
     @app.post("/v1/configure")
     async def configure(value: Configure):
+        app.state.log_context={"thread_id":value.thread_id,"turn_id":value.turn_id,"sandbox_id":value.sandbox_id,"harness":value.harness,"model":value.model}
+        enrich(**app.state.log_context)
+        if telemetry():
+            await asyncio.to_thread(telemetry().set_remote,value.gateway_url.rstrip("/")+"/v1/telemetry",{"Authorization":"Bearer "+value.capability_token})
         token = RUN / "capability-token"
         temporary = RUN / ".capability-token.tmp"
         temporary.write_text(value.capability_token)
@@ -557,6 +576,7 @@ def create_app() -> FastAPI:
             if value.input_id in execution.received_input_ids:
                 if execution.input_fingerprints.get(value.input_id) != digest:
                     raise HTTPException(409, "Input ID already has different content")
+                event("runtime.input.replayed",execution_id=execution.id,input_id=value.input_id)
                 return False
             if (not execution.accepting_inputs or execution.result is not None
                     or execution.process.returncode is not None):
@@ -577,6 +597,7 @@ def create_app() -> FastAPI:
             execution.pending_input_ids.append(value.input_id)
             app.state.pending_inputs = len(execution.pending_input_ids)
             await execution.process.stdin.drain()
+            event("runtime.input.submitted",execution_id=execution.id,input_id=value.input_id)
             if not selected.streaming_input:
                 execution.process.stdin.close()
             return True
@@ -712,6 +733,7 @@ def create_app() -> FastAPI:
                 execution_id=execution.id, pid=process.pid, log_path=str(jobs_root / (identity + ".log")),
                 process=process)
             app.state.background_jobs[job.id] = job; persist_job(job)
+            event("runtime.background.started",job_id=job.id,execution_id=job.execution_id)
             await publish(execution, {"kind": "step_started", "payload": {
                 "name": "后台任务 · " + job.name, "background_job_id": job.id, "pid": job.pid,
             }})
@@ -735,6 +757,7 @@ def create_app() -> FastAPI:
     async def cancel():
         async with app.state.execution_lock:
             execution = app.state.execution
+            event("runtime.cancel.requested",execution_id=execution.id if execution else "")
             if execution and execution.result is None:
                 execution.cancel_requested = True
                 await abort_execution(execution)

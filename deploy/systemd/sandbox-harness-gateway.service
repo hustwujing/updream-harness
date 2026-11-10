@@ -19,6 +19,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+ReadWritePaths=/data2/wujing03/sandbox-harness-platform/.data
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true

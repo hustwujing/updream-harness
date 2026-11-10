@@ -7,6 +7,7 @@ import json
 import time
 from collections.abc import Iterable
 
+from .observability import carrier
 from .domain import CapabilityClaims, Harness, identifier
 
 
@@ -38,6 +39,7 @@ class CapabilityCodec:
     ) -> tuple[str, CapabilityClaims]:
         issued = int(time.time())
         claims = CapabilityClaims(
+            traceparent=carrier().get("traceparent", ""),
             thread_id=thread_id,
             turn_id=turn_id,
             sandbox_id=sandbox_id,

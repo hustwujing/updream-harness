@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .observability import observed, event, enrich, carrier, add_link, telemetry
+
 import asyncio
 from collections import defaultdict
 from contextlib import asynccontextmanager
@@ -61,6 +63,7 @@ class SandboxPool:
                 sandbox.id for rows in self._warm.values() for sandbox in rows
             }
 
+    @observed("sandbox.delete_tracked")
     async def _delete_tracked(self, sandbox: Sandbox, *, user_slot: bool = True) -> None:
         async with self._lock:
             self._retiring.setdefault(sandbox.id, (sandbox, user_slot))
@@ -88,7 +91,7 @@ class SandboxPool:
             try:
                 await self._delete_tracked(sandbox, user_slot=user_slot)
             except Exception:
-                logger.exception("Sandbox deletion still pending id=%s", sandbox.id)
+                event("sandbox.deletion.pending",level=logging.ERROR,sandbox_id=sandbox.id)
 
     async def _fill_harness(self, harness: Harness) -> None:
         while True:
@@ -120,6 +123,7 @@ class SandboxPool:
         task.add_done_callback(lambda value: logger.exception("Warm sandbox refill failed", exc_info=value.exception())
             if not value.cancelled() and value.exception() else None)
 
+    @observed("sandbox.acquire")
     async def acquire(self, *, thread_id: str, turn_id: str, harness: Harness, environment: dict[str, str]) -> Sandbox:
         async with self._thread_lock(thread_id):
             slot_reserved = False
@@ -213,6 +217,7 @@ class SandboxPool:
             self._schedule_refill(harness)
             return sandbox
 
+    @observed("sandbox.adopt")
     async def adopt(self, sandbox: Sandbox, *, thread_id: str, turn_id: str) -> Sandbox:
         async with self._thread_lock(thread_id):
             async with self._lock:
@@ -238,6 +243,7 @@ class SandboxPool:
                 self._user_slots.release()
                 raise
 
+    @observed("sandbox.release")
     async def release(self, sandbox: Sandbox, *, keep_attached: bool, keepalive_seconds: int = 0) -> None:
         async with self._thread_lock(sandbox.thread_id):
             async with self._lock:
@@ -300,7 +306,7 @@ class SandboxPool:
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Failed to delete expired sandbox %s", sandbox.id)
+            event("sandbox.expiry.delete_failed",level=logging.ERROR,sandbox_id=sandbox.id)
 
     async def close(self, *, preserve_sandbox_ids: set[str] | None = None) -> None:
         preserve_sandbox_ids = preserve_sandbox_ids or set()
@@ -327,5 +333,5 @@ class SandboxPool:
                 try:
                     await self._delete_tracked(sandbox, user_slot=not sandbox.warm)
                 except Exception:
-                    logger.exception("Sandbox deletion pending on shutdown id=%s", sandbox.id)
+                    event("sandbox.shutdown.delete_pending",level=logging.WARNING,sandbox_id=sandbox.id)
         await self.retry_deletions()

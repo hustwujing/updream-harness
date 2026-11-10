@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from redis.asyncio import Redis
 import uvicorn
 
+from .observability import configure, RequestLoggingMiddleware, event, enrich, add_link, telemetry, operation, carrier
 from .capability import CapabilityCodec
 from .config import Settings, load_settings, validate_service_settings
 from .domain import Harness
@@ -123,10 +124,11 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             await asyncio.gather(*(client.aclose() for client in clients.values()))
 
     app = FastAPI(title="Sandbox Capability Gateway", lifespan=lifespan)
+    app.add_middleware(RequestLoggingMiddleware,service="gateway")
 
     @app.get("/health")
     async def health():
-        return {"status": "ok"}
+        return {"status": "ok","observability":telemetry().status() if telemetry() else {"enabled":False}}
 
     @app.post("/internal/revoke/{nonce}")
     async def revoke(nonce: str, request: Request):
@@ -145,7 +147,33 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         responses = list(active.pop(nonce, set()))
         if responses:
             await asyncio.gather(*(response.aclose() for response in responses), return_exceptions=True)
+        event("capability.revoked",count=len(tunnels)+len(responses))
         return {"revoked": True}
+
+    @app.post("/v1/telemetry/{signal}")
+    async def ingest_telemetry(signal: str, request: Request):
+        from .telemetry_ingest import decode_otlp
+        try:claims=codec.verify(token_from(request),route="/v1/telemetry")
+        except ValueError:raise HTTPException(401,"Invalid telemetry capability")
+        if await redis.exists(settings.redis_prefix+"capability:revoked:"+claims.nonce):
+            raise HTTPException(401,"Telemetry capability revoked")
+        key=settings.redis_prefix+"telemetry:rate:"+claims.nonce+":"+str(int(time.time())//60)
+        count=await redis.eval("local n=redis.call('INCR',KEYS[1]);redis.call('EXPIRE',KEYS[1],120);return n",1,key)
+        if count>600:raise HTTPException(429,"Telemetry rate exceeded")
+        body=bytearray()
+        async for part in request.stream():
+            body.extend(part)
+            if len(body)>4*1024*1024:raise HTTPException(413,"Telemetry batch too large")
+        if request.headers.get("content-encoding") not in (None,"identity"):
+            raise HTTPException(415,"Telemetry compression is not supported")
+        try:rows=decode_otlp(signal,bytes(body),claims)
+        except Exception:raise HTTPException(422,"Invalid telemetry batch")
+        target=telemetry()
+        if target is None:raise HTTPException(503,"Telemetry receiver unavailable")
+        for kind,row in rows:target.put(kind,row)
+        # Empty protobuf is a valid successful Export*ServiceResponse.
+        from fastapi.responses import Response
+        return Response(content=b"",media_type="application/x-protobuf")
 
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
     async def proxy(path: str, request: Request):
@@ -155,6 +183,9 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             claims = codec.verify(token, route=route)
         except ValueError as exc:
             raise HTTPException(401, str(exc))
+        if not hasattr(request.state,"log_context"):request.state.log_context={}
+        request.state.log_context.update({"turn_id":claims.turn_id,"thread_id":claims.thread_id,"sandbox_id":claims.sandbox_id,"model":claims.model,"harness":claims.harness})
+        enrich(**request.state.log_context);add_link(claims.traceparent)
         remaining = max(1, claims.expires_at - int(time.time()))
         count = await redis.eval(
             CONSUME_CAPABILITY,
@@ -205,6 +236,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         activity = ModelActivity(activity_store, claims) if observe_model else None
         if activity:
             await activity.start()
+        upstream.headers.update(carrier(getattr(activity,"span",None)))
         started = time.monotonic()
         try:
             response = await send_with_start_timeout(client, upstream, settings.gateway_model_start_timeout_seconds)
@@ -214,10 +246,10 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             raise
         if activity:
             activity.header_ms = round((time.monotonic() - started) * 1000)
-        log = logger.warning if response.status_code >= 400 else logger.info
-        log("Upstream response turn=%s model=%s status=%s header_seconds=%.3f request_bytes=%s request_id=%s",
-            claims.turn_id, claims.model, response.status_code, time.monotonic() - started,
-            len(body), response.headers.get("x-request-id") or response.headers.get("request-id", ""))
+        event("upstream.response.headers",level=logging.WARNING if response.status_code>=400 else logging.INFO,
+            turn_id=claims.turn_id,model=claims.model,header_ms=round((time.monotonic()-started)*1000,3),
+            **{"http.response.status_code":response.status_code},request_bytes=len(body),
+            upstream_request_id=response.headers.get("x-request-id") or response.headers.get("request-id", ""))
         if (int(time.time()) >= claims.expires_at or
                 await redis.exists(settings.redis_prefix + "capability:revoked:" + claims.nonce)):
             await response.aclose()
@@ -267,7 +299,8 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
 
 def run() -> None:
     settings = load_settings()
-    uvicorn.run(create_gateway(settings), host=settings.gateway_bind_host, port=settings.gateway_bind_port)
+    configure("gateway", settings.data_root / "logs")
+    uvicorn.run(create_gateway(settings), host=settings.gateway_bind_host, port=settings.gateway_bind_port, log_config=None, access_log=False)
 
 
 if __name__ == "__main__":

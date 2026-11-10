@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .observability import observed_sync
+
 import hashlib
 import os
 import re
@@ -18,6 +20,7 @@ class ObjectStore:
     def _path(self, digest: str) -> Path:
         return self.root / digest[:2] / digest[2:]
 
+    @observed_sync("object.put")
     def put(self, data: bytes) -> tuple[str, str]:
         digest = hashlib.sha256(data).hexdigest()
         target = self._path(digest)
@@ -30,6 +33,7 @@ class ObjectStore:
             temporary.replace(target)
         return "sha256:" + digest, digest
 
+    @observed_sync("object.get")
     def get(self, reference: str, *, maximum: int) -> bytes:
         if not reference.startswith("sha256:"):
             raise ValueError("Unknown object reference")
@@ -78,6 +82,7 @@ class S3ObjectStore:
     def _key(self, digest: str) -> str:
         return f"{self.prefix}/objects/{digest[:2]}/{digest[2:]}"
 
+    @observed_sync("object.put")
     def put(self, data: bytes) -> tuple[str, str]:
         digest = hashlib.sha256(data).hexdigest()
         try:
@@ -94,6 +99,7 @@ class S3ObjectStore:
                 raise
         return "sha256:" + digest, digest
 
+    @observed_sync("object.get")
     def get(self, reference: str, *, maximum: int) -> bytes:
         if not reference.startswith("sha256:"):
             raise ValueError("Unknown object reference")

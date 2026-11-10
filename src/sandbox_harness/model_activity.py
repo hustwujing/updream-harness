@@ -4,6 +4,9 @@ import json
 import logging
 import time
 import uuid
+from . import observability as obs
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind,Status,StatusCode
 from .domain import EventKind, RuntimeEvent
 
 logger = logging.getLogger(__name__)
@@ -13,6 +16,8 @@ class OutputProbe:
         self.buffer = b''
         self.failed = False
         self.completed = False
+        self.input_tokens = None
+        self.output_tokens = None
 
     def feed(self, chunk: bytes) -> bool:
         self.buffer += chunk
@@ -28,6 +33,12 @@ class OutputProbe:
                 continue
             if not isinstance(value, dict):
                 continue
+            for candidate in (value,value.get('response'),value.get('message')):
+                usage=candidate.get('usage') if isinstance(candidate,dict) else None
+                if not isinstance(usage,dict):continue
+                for field,alias in (('input_tokens','prompt_tokens'),('output_tokens','completion_tokens')):
+                    count=usage.get(field,usage.get(alias))
+                    if isinstance(count,int) and not isinstance(count,bool) and 0<=count<2**63:setattr(self,field,count)
             kind = value.get('type', '')
             if not isinstance(kind, str):
                 continue
@@ -58,6 +69,7 @@ class ModelActivity:
         self.header_ms = None
         self.probe = OutputProbe()
         self.finished = False
+        self.span = None
 
     async def _observe(self, awaitable):
         try:
@@ -77,11 +89,19 @@ class ModelActivity:
         if event:
             self.item_id = event.item_id
         self.started = time.monotonic()
+        self.span=obs._PROVIDER.get_tracer('updream-harness').start_span('model.request',kind=SpanKind.CLIENT,
+            attributes=obs.sanitize({'turn_id':self.claims.turn_id,'thread_id':self.claims.thread_id,
+                'sandbox_id':getattr(self.claims,'sandbox_id',''),'model':self.claims.model,'model_request_id':self.request_id}))
+        with trace.use_span(self.span,end_on_exit=False):
+            obs.event('model.request.started',turn_id=self.claims.turn_id,model=self.claims.model,model_request_id=self.request_id)
 
     async def observe(self, chunk):
         has_output = self.probe.feed(chunk)
         if self.first_output_ms is None and has_output:
             self.first_output_ms = round((time.monotonic() - self.started) * 1000)
+            if self.span:
+                with trace.use_span(self.span,end_on_exit=False):
+                    obs.event('model.first_output',turn_id=self.claims.turn_id,model=self.claims.model,model_request_id=self.request_id,first_output_ms=self.first_output_ms)
             await self.update('streaming', 'in_progress')
 
     async def update(self, phase, status, **extra):
@@ -98,5 +118,11 @@ class ModelActivity:
             return
         self.finished = True
         failed = bool(error_code or self.probe.failed or status_code is None or status_code >= 400)
+        if self.span:
+            self.span.set_attributes(obs.sanitize({'header_ms':self.header_ms,'first_output_ms':self.first_output_ms,'outcome':'failed' if failed else 'success'}))
+            if failed:self.span.set_status(Status(StatusCode.ERROR))
+            with trace.use_span(self.span,end_on_exit=False):
+                obs.event('model.request.finished',level=logging.ERROR if failed else logging.INFO,turn_id=self.claims.turn_id,model=self.claims.model,model_request_id=self.request_id,input_tokens=self.probe.input_tokens,output_tokens=self.probe.output_tokens,usage_source='provider_reported' if self.probe.input_tokens is not None or self.probe.output_tokens is not None else 'unavailable',header_ms=self.header_ms,first_output_ms=self.first_output_ms,duration_ms=round((time.monotonic()-self.started)*1000),outcome='failed' if failed else 'success',error_code=error_code,failure_origin=obs.failure_origin(error_code or ('model_response_failed' if self.probe.failed else ''),status_code) if failed else None,**{'http.response.status_code':status_code})
+            self.span.end()
         await self.update('failed' if failed else 'completed', 'failed' if failed else 'completed',
                           http_status=status_code, error_code=error_code or ('model_response_failed' if self.probe.failed else ''))

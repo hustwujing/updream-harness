@@ -1,6 +1,8 @@
 ARG FOUNDATION_IMAGE=sandbox-harness-runtime-foundation:build
 FROM ${FOUNDATION_IMAGE}
 ARG PYPI_INDEX=http://mirrors.cloud.aliyuncs.com/pypi/simple/
+ARG RELEASE=unknown
+ENV SANDBOX_HARNESS_RELEASE=${RELEASE}
 WORKDIR /opt/platform
 COPY . /opt/platform
 RUN pip install --no-cache-dir --trusted-host mirrors.cloud.aliyuncs.com --index-url ${PYPI_INDEX} '.[runtime-media]' && \

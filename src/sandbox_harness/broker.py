@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .observability import observed, event, enrich, carrier, add_link, telemetry, failure_origin
+
 import asyncio
 import logging
 import mimetypes
@@ -86,6 +88,7 @@ class Broker:
                     self.input_locks.pop(turn_id, None)
 
     def _schedule(self, turn_id: str) -> None:
+        if self.closing:return
         task = self.tasks.get(turn_id)
         if task and not task.done():
             return
@@ -118,7 +121,7 @@ class Broker:
             if turn_id.startswith("warm-") and not delete_stale_warm:
                 continue
             if sandbox.id not in active_ids and turn_id not in live_turns:
-                logger.warning("Deleting orphan sandbox id=%s turn=%s", sandbox.id, turn_id)
+                event("sandbox.orphan.delete",level=logging.WARNING,sandbox_id=sandbox.id,turn_id=turn_id)
                 await self.pool.backend.delete(sandbox)
 
     async def close(self) -> None:
@@ -132,6 +135,10 @@ class Broker:
         values = [task for task in (self.recovery_task, self.reaper_task) if task] + list(self.tasks.values())
         if values:
             await asyncio.gather(*values, return_exceptions=True)
+        heartbeats=list(self.heartbeats.values())
+        for heartbeat in heartbeats:heartbeat.cancel()
+        if heartbeats:await asyncio.gather(*heartbeats,return_exceptions=True)
+        self.heartbeats.clear()
         for turn_id, generation in list(self.leases.items()):
             await self.store.release_turn_lease(turn_id, self.instance_id, generation)
 
@@ -161,6 +168,7 @@ class Broker:
                 if generation is not None:
                     await self.store.release_turn_lease(turn.id, self.instance_id, generation)
 
+    @observed("turn.recover", new_trace=True)
     async def _reconcile_turn(self, turn) -> None:
         if self.closing or turn.id in self.tasks:
             return
@@ -208,14 +216,14 @@ class Broker:
                 if len(matches) == 1 and await self.runtime.execution_status(matches[0], claimed.runtime_execution_id) is not None:
                     await self.store.append_event(turn.id, EventKind.WARNING, {"code": "turn_runtime_reattached",
                         "generation": claimed.recovery_generation, "runtime_sequence": claimed.runtime_sequence})
-                    logger.warning("Reattaching runtime turn=%s generation=%s sequence=%s", turn.id, claimed.recovery_generation, claimed.runtime_sequence)
+                    event("turn.runtime.reattached",turn_id=turn.id,thread_id=turn.thread_id,generation=claimed.recovery_generation,runtime_sequence=claimed.runtime_sequence)
                     self._schedule(turn.id); return
                 for sandbox in matches:
                     await self.pool.backend.delete(sandbox)
             await self.store.append_event(turn.id, EventKind.ERROR, {"code": "turn_interrupted_during_harness_execution",
                 "detail": "The previous broker lease expired after Harness execution began; automatic replay was suppressed.",
                 "generation": claimed.recovery_generation})
-            logger.error("Runtime recovery unavailable turn=%s generation=%s", turn.id, claimed.recovery_generation)
+            event("turn.recovery.unavailable",level=logging.ERROR,turn_id=turn.id,generation=claimed.recovery_generation)
             await self.store.complete_agent_item(turn.id, "interrupted")
             await self._state(turn.id, TurnState.FAILED, sandbox_id="", error_code="turn_interrupted_during_harness_execution",
                 error_detail="Harness execution was interrupted and was not replayed because external side effects may already exist")
@@ -228,6 +236,7 @@ class Broker:
             heartbeat.cancel()
             await asyncio.gather(heartbeat, return_exceptions=True)
 
+    @observed("input.deliver")
     async def try_deliver_input(self, value) -> bool:
         async with self.input_lock(value.turn_id):
             sandbox = self.active_sandboxes.get(value.turn_id)
@@ -250,6 +259,7 @@ class Broker:
                     await self.store.set_input_status(value.id, "delivered", delivery_mode)
             return bool(delivery_mode)
 
+    @observed("interaction.respond")
     async def respond_interaction(self, interaction_id: str, owner_id: str, value) -> object:
         response = {"action": value.action, "answers": value.answers}
         interaction, claimed = await self.store.claim_interaction_response(
@@ -307,6 +317,7 @@ class Broker:
             raise RuntimeError("background_runtime_unavailable")
         return await self.runtime.cancel_background_job(sandbox, job_id)
 
+    @observed("turn.submit")
     async def submit(self, thread_id: str, value: TurnCreate) -> TurnView:
         if sum(item.size for item in value.attachments) > self.settings.max_attachment_bytes:
             raise ValueError("Attachments exceed the Turn byte limit")
@@ -317,7 +328,8 @@ class Broker:
             raise ValueError("Harness is fixed for this conversation; create a new conversation to switch Harness")
         resolved = self.catalog.resolve(thread.harness, value.model or thread.model,
             value.reasoning_level or thread.reasoning_level)
-        turn, created, start_now = await self.store.create_turn(thread_id, value, resolved, thread.owner_id)
+        turn, created, start_now = await self.store.create_turn(thread_id, value, resolved, thread.owner_id, traceparent=carrier().get("traceparent", ""))
+        event("turn.accepted",thread_id=thread_id,turn_id=turn.id,harness=turn.harness,model=turn.model,reused=not created,state=turn.state)
         if created and start_now:
             self._schedule(turn.id)
         return turn
@@ -333,6 +345,7 @@ class Broker:
             await self.pool.discard_thread(thread_id)
             await self.store.delete_thread(thread_id, owner_id)
 
+    @observed("turn.cancel")
     async def cancel(self, turn_id: str) -> None:
         turn = await self.store.request_turn_cancel(turn_id)
         await self.store.append_event(turn_id, EventKind.WARNING, {"code": "cancel_requested"})
@@ -353,6 +366,7 @@ class Broker:
         await self.store.append_event(turn_id, EventKind.STATE, {"state": turn.state.value},
             lease_owner=self.instance_id if generation is not None else None,
             recovery_generation=generation)
+        event("turn.state.changed",turn_id=turn_id,thread_id=turn.thread_id,state=turn.state,error_code=turn.error_code,failure_origin=failure_origin(turn.error_code) if turn.error_code else None)
         return turn
 
     async def _heartbeat(self, turn_id: str, generation: int) -> None:
@@ -362,6 +376,7 @@ class Broker:
                 turn_id, self.instance_id, generation, self.settings.turn_lease_seconds,
             )
             if not renewed:
+                event("turn.lease.lost",level=logging.WARNING,turn_id=turn_id,generation=generation)
                 task = self.tasks.get(turn_id)
                 if task:
                     task.cancel()
@@ -375,10 +390,13 @@ class Broker:
     async def _record_runtime_event(self, thread_id: str, turn_id: str, value: RuntimeEvent,
                                     execution_id: str = "") -> None:
         generation = self.leases.get(turn_id)
+        if value.kind not in {EventKind.TEXT_DELTA, EventKind.TOOL_OUTPUT}:
+            event("runtime.event.received",thread_id=thread_id,turn_id=turn_id,execution_id=execution_id,runtime_sequence=value.runtime_sequence,reason=value.kind.value)
         await self.store.persist_runtime_event(thread_id, turn_id, value, execution_id,
             lease_owner=self.instance_id if generation is not None else None,
             recovery_generation=generation)
 
+    @observed("input.materialize")
     async def _materialize_attachments(self, sandbox, attachments) -> None:
         for attachment in attachments:
             data = await asyncio.to_thread(self.objects.get, attachment.object_ref, maximum=self.settings.max_attachment_bytes)
@@ -396,6 +414,7 @@ class Broker:
             values.append(value)
         return values
 
+    @observed("workspace.materialize")
     async def _materialize_project_files(self, sandbox, files) -> None:
         for value in files:
             data = await asyncio.to_thread(self.objects.get, value.object_ref, maximum=self.settings.max_artifact_bytes)
@@ -403,6 +422,7 @@ class Broker:
                 raise ValueError("Project file size does not match its immutable record")
             await self.runtime.put_project_file(sandbox, value.path, data, value.mime)
 
+    @observed("workspace.save")
     async def _save_workspace(self, sandbox, thread_id: str, turn_id: str,
                               native_thread_id: str, *, partial: bool = False) -> None:
         generation = self.leases.get(turn_id)
@@ -412,6 +432,7 @@ class Broker:
         checkpoint_ref, _ = await asyncio.to_thread(self.objects.put, archive)
         await self.store.update_thread_checkpoint(thread_id, checkpoint_ref, native_thread_id,
             turn_id=turn_id, lease_owner=self.instance_id, recovery_generation=generation)
+        event("workspace.checkpoint.persisted",bytes=len(archive),partial=partial)
         total = 0
         for item in await self.runtime.artifacts(sandbox):
             path = item["path"]
@@ -427,11 +448,35 @@ class Broker:
                 await self.store.append_item(thread_id, turn_id, ItemType.ARTIFACT, status="completed", summary=path,
                     payload={"artifact_id": artifact.id, "mime": artifact.mime, "size": artifact.size, "partial": partial},
                     lease_owner=self.instance_id, recovery_generation=generation)
+            event("artifact.persisted",artifact_id=artifact.id,bytes=len(data),partial=partial)
             await self.store.register_project_file(thread_id,
                 path="artifacts/" + path, source_type="artifact", source_turn_id=turn_id,
                 sha256=digest, size=len(data), mime=artifact.mime, object_ref=object_ref,
                 lease_owner=self.instance_id, recovery_generation=generation)
 
+    async def _collect_runtime_logs(self, sandbox) -> None:
+        target=telemetry()
+        if target is None or not hasattr(self.runtime,"diagnostics"):return
+        from .telemetry_ingest import import_snapshot
+        after=0;count=0
+        try:
+            async with asyncio.timeout(5):
+                for _ in range(20):
+                    snapshot=await self.runtime.diagnostics(sandbox,after)
+                    if after==0 and snapshot.get("retained_from",1)>1:
+                        event("runtime.logs.window",retained_from=snapshot["retained_from"],reason="older_records_require_live_export")
+                    rows=snapshot.get("records",[])
+                    if not rows:break
+                    count+=import_snapshot(target,snapshot,sandbox)
+                    cursor=max(row.get("sequence",0) for row in rows)
+                    if cursor<=after:break
+                    after=cursor
+                    if after>=snapshot.get("last_sequence",after):break
+            event("runtime.logs.collected",sandbox_id=sandbox.id,count=count,last_sequence=after)
+        except Exception as exc:
+            event("runtime.logs.collection_failed",level=logging.WARNING,exc=exc,sandbox_id=sandbox.id)
+
+    @observed("turn.process", new_trace=True)
     async def _process(self, turn_id: str) -> None:
         claimed = await self.store.claim_turn(
             turn_id, self.instance_id, self.settings.turn_lease_seconds,
@@ -440,6 +485,9 @@ class Broker:
             self.tasks.pop(turn_id, None)
             return
         generation = claimed.recovery_generation
+        enrich(thread_id=claimed.thread_id,turn_id=turn_id,harness=claimed.harness,model=claimed.model,generation=generation)
+        add_link(claimed.submit_traceparent);add_link(claimed.last_traceparent)
+        event("turn.lease.claimed",generation=generation)
         self.leases[turn_id] = generation
         heartbeat = asyncio.create_task(self._heartbeat(turn_id, generation), name="turn-heartbeat-" + turn_id)
         self.heartbeats[turn_id] = heartbeat
@@ -470,6 +518,10 @@ class Broker:
         lost_lease = False
         try:
             async with self.thread_lock(thread.id):
+                try:
+                    await self.store.record_turn_trace(turn_id,carrier().get("traceparent", ""),self.instance_id,generation)
+                except Exception as exc:
+                    event("turn.trace.persist_failed",level=logging.WARNING,exc=exc)
                 if turn.cancel_requested:
                     matches = await self.pool.backend.find_by_turn(turn.id)
                     if matches:
@@ -525,7 +577,7 @@ class Broker:
                         sandbox_id=sandbox.id,
                         harness=turn.harness,
                         model=turn.model,
-                        routes=ROUTES[turn.harness],
+                        routes=[*ROUTES[turn.harness],"/v1/telemetry"],
                         ttl_seconds=self.settings.capability_ttl_seconds,
                         max_requests=self.settings.capability_request_limit,
                         max_public_requests=self.settings.capability_public_request_limit,
@@ -652,7 +704,7 @@ class Broker:
         except Exception as exc:
             error_code = type(exc).__name__
             error_detail = str(exc)
-            logger.exception("Turn execution failed turn=%s execution=%s", turn.id, turn.runtime_execution_id)
+            event("turn.execution.failed",level=logging.ERROR,exc=exc,turn_id=turn.id,execution_id=turn.runtime_execution_id)
             try:
                 await self.store.append_event(turn.id, EventKind.ERROR,
                     {"code": error_code, "detail": error_detail[:1000]},
@@ -681,6 +733,7 @@ class Broker:
                     await self.store.append_event(turn.id, EventKind.STATE, {"state": TurnState.CLEANING.value},
                         lease_owner=self.instance_id, recovery_generation=generation)
                     if sandbox:
+                        await self._collect_runtime_logs(sandbox)
                         revoked = False
                         capability_nonce = claims.nonce if 'claims' in locals() else turn.capability_nonce
                         if capability_nonce:

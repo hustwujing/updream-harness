@@ -31,3 +31,11 @@ Run focused tests first, then the full local suite:
 
 Document what was tested against fakes, a real sandbox, and real Providers separately.
 
+
+## Logging and tracing
+
+- Follow [the observability contract](docs/observability.md) when changing lifecycle, Gateway, persistence, cancellation or recovery code.
+- Use the common structured logging helpers and standard OTel context; keep business IDs separate from Trace IDs and preserve recovery links.
+- Never log prompts, generated content, file contents, credentials, arbitrary headers, raw exception messages or unfiltered URLs. New attributes require explicit allowlisting.
+- Logging/export failures must not change business outcomes. Preserve durable state as the authority; test overload, abrupt interruption and missing receipts for affected flows.
+- Include relevant targeted tests and identify which evidence comes from fakes, a real sandbox, and a real Provider.

@@ -188,6 +188,8 @@ class TurnView(BaseModel):
     runtime_sequence: int = 0
     runtime_execution_id: str = ""
     capability_nonce: str = ""
+    submit_traceparent: str = ""
+    last_traceparent: str = ""
     cancel_requested: bool = False
     pending_final_state: str = ""
     created_at: datetime
@@ -273,6 +275,7 @@ class RuntimeResult(BaseModel):
 class CapabilityClaims(BaseModel):
     model_config = ConfigDict(extra="forbid")
     version: Literal[2] = 2
+    traceparent: str = ""
     thread_id: str
     turn_id: str
     sandbox_id: str

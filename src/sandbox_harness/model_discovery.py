@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 
+from .observability import event
 from .catalog import HarnessCatalog
 from .config import Settings
 from .domain import Harness
@@ -99,7 +100,7 @@ class ModelDiscovery:
             discovered: dict[Harness, list[str]] = {}
             for harness, result in zip(Harness, results, strict=True):
                 if isinstance(result, Exception):
-                    logger.warning("Model catalog discovery failed for %s: %s", harness.value, result)
+                    event("model.catalog.discovery_failed",level=logging.WARNING,harness=harness.value,exc=result)
                     # Discovery is not a health signal. Keep the last inventory and
                     # continue probing explicit per-model routes independently.
                     discovered[harness] = compatible_models(harness,
@@ -186,7 +187,7 @@ class ModelDiscovery:
             return {"status": "busy", "available": True, "checked_at": checked_at,
                     "latency_ms": round((time.monotonic() - started) * 1000), "error_code": "timeout"}
         except httpx.HTTPError as exc:
-            logger.warning("Model availability probe failed for %s/%s: %s", harness.value, model, exc)
+            event("model.probe.failed",level=logging.WARNING,harness=harness.value,model=model,exc=exc)
             return {"status": "busy", "available": True, "checked_at": checked_at,
                     "latency_ms": round((time.monotonic() - started) * 1000), "error_code": "network_error"}
 

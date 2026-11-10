@@ -13,7 +13,7 @@ foundation="sandbox-harness-runtime-foundation:$foundation_hash"
 if ! "$docker" image inspect "$foundation" >/dev/null 2>&1; then
   "$docker" build -f "$root/runtime/foundation.Dockerfile" -t "$foundation" "$root"
 fi
-"$docker" build -f "$root/runtime/base.Dockerfile" --build-arg "FOUNDATION_IMAGE=$foundation" -t "$base" "$root"
+"$docker" build -f "$root/runtime/base.Dockerfile" --build-arg "FOUNDATION_IMAGE=$foundation" --build-arg "RELEASE=$tag" -t "$base" "$root"
 for harness in codex claude deepseek; do
   image="$registry/$harness:$tag"
   "$docker" build -f "$root/runtime/$harness.Dockerfile" --build-arg "BASE_IMAGE=$base" -t "$image" "$root"

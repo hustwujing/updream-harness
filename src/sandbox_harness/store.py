@@ -11,6 +11,7 @@ from sqlalchemy import case, or_, Boolean, DateTime, Integer, String, Text, Uniq
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from .observability import observed
 from .domain import RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, identifier, now
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
@@ -72,6 +73,8 @@ class TurnRow(Base):
     runtime_sequence: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     runtime_execution_id: Mapped[str] = mapped_column(String(160), default="", server_default="")
     capability_nonce: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    submit_traceparent: Mapped[str] = mapped_column(String(128), default="", server_default="")
+    last_traceparent: Mapped[str] = mapped_column(String(128), default="", server_default="")
     cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     pending_final_state: Mapped[str] = mapped_column(String(24), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -231,6 +234,8 @@ class Store:
                 "capability_nonce": "VARCHAR(64) NOT NULL DEFAULT ''",
                 "pending_final_state": "VARCHAR(24) NOT NULL DEFAULT ''",
                 "cancel_requested": "BOOLEAN NOT NULL DEFAULT FALSE",
+                "submit_traceparent": "VARCHAR(128) NOT NULL DEFAULT ''",
+                "last_traceparent": "VARCHAR(128) NOT NULL DEFAULT ''",
             }
             for name, definition in additions.items():
                 if name not in turn_columns:
@@ -374,7 +379,8 @@ class Store:
             await self.events.delete(turn_ids)
         return turn_ids
 
-    async def create_turn(self, thread_id: str, value: TurnCreate, resolved: ResolvedProfile, owner_id: str) -> tuple[TurnView, bool, bool]:
+    @observed("db.turn.create")
+    async def create_turn(self, thread_id: str, value: TurnCreate, resolved: ResolvedProfile, owner_id: str, *, traceparent: str = "") -> tuple[TurnView, bool, bool]:
         async with self.connections.begin() as db:
             thread = (await db.execute(update(ThreadRow).where(ThreadRow.id == thread_id,
                 ThreadRow.owner_id == owner_id).values(updated_at=ThreadRow.updated_at)
@@ -412,7 +418,7 @@ class Store:
                 message=value.message, attachments_json=json.dumps([a.model_dump(mode="json") for a in value.attachments]),
                 harness=resolved.harness.value, model=resolved.model, reasoning_level=resolved.reasoning_level,
                 reasoning_effort=resolved.reasoning_effort, delivery_mode=value.delivery_mode,
-                state=TurnState.QUEUED.value, created_at=timestamp, updated_at=timestamp,
+                state=TurnState.QUEUED.value, submit_traceparent=traceparent, created_at=timestamp, updated_at=timestamp,
             )
             db.add(row)
             item_sequence = await self.next_item_sequence(db, thread_id)
@@ -435,6 +441,13 @@ class Store:
             thread.active_turn_id = row.id if row else ""
             thread.updated_at = now()
         return self.turn_view(row) if row else None
+
+    async def record_turn_trace(self, turn_id: str, traceparent: str, owner: str, generation: int) -> None:
+        async with self.connections.begin() as db:
+            saved = (await db.execute(update(TurnRow).where(TurnRow.id==turn_id,
+                TurnRow.lease_owner==owner,TurnRow.recovery_generation==generation,
+                TurnRow.lease_expires_at>now()).values(last_traceparent=traceparent).returning(TurnRow.id))).scalar_one_or_none()
+            if saved is None: raise RuntimeError("stale_turn_lease")
 
     async def get_turn(self, turn_id: str) -> TurnView | None:
         async with self.connections() as db:
@@ -527,6 +540,7 @@ class Store:
             row.runtime_sequence = max(row.runtime_sequence, sequence)
             row.updated_at = now()
 
+    @observed("db.execution.start")
     async def start_runtime_execution(self, turn_id: str, execution_id: str, owner: str, generation: int,
                                       *, input_id: str | None = None) -> None:
         async with self.connections.begin() as db:
@@ -565,6 +579,7 @@ class Store:
                 TurnRow.id == turn_id, ThreadRow.owner_id == owner_id))).scalar_one_or_none()
         return self.turn_view(row) if row else None
 
+    @observed("db.input.create")
     async def create_turn_input(self, turn_id: str, value: TurnInputCreate, owner_id: str) -> tuple[TurnInputView, bool]:
         accepting = {TurnState.QUEUED.value, TurnState.RESTORING.value, TurnState.STARTING.value,
             TurnState.RUNNING.value, TurnState.AWAITING_USER.value}
@@ -702,6 +717,7 @@ class Store:
                     or item.type == ItemType.APPROVAL.value and item.status == "in_progress"):
                 item.status = "failed"; item.updated_at = now()
 
+    @observed("db.turn.cancel")
     async def request_turn_cancel(self, turn_id: str) -> TurnView:
         terminal = [state.value for state in (TurnState.COMPLETED, TurnState.WAITING_USER,
             TurnState.FAILED, TurnState.CANCELLED)]
@@ -723,6 +739,7 @@ class Store:
                 await self._finish_turn_records(db, turn_id)
         return self.turn_view(row)
 
+    @observed("db.turn.state")
     async def set_turn_state(self, turn_id: str, state: TurnState, *, sandbox_id: str | None = None, error_code: str = "", error_detail: str = "", lease_owner: str | None = None, recovery_generation: int | None = None) -> TurnView:
         async with self.connections.begin() as db:
             row = await db.get(TurnRow, turn_id, with_for_update=True)
@@ -746,6 +763,7 @@ class Store:
             row.updated_at = now()
         return self.turn_view(row)
 
+    @observed("db.turn.cleanup")
     async def begin_turn_cleanup(self, turn_id: str, final_state: TurnState, *, error_code: str,
                                  error_detail: str, owner: str, generation: int) -> TurnView:
         async with self.connections.begin() as db:
@@ -761,6 +779,7 @@ class Store:
             row.updated_at = now()
         return self.turn_view(row)
 
+    @observed("db.checkpoint.commit")
     async def update_thread_checkpoint(self, thread_id: str, checkpoint_ref: str, native_thread_id: str,
                                        *, turn_id: str | None = None, lease_owner: str | None = None,
                                        recovery_generation: int | None = None) -> None:
@@ -1041,6 +1060,7 @@ class Store:
         if owned is None:
             raise RuntimeError("stale_turn_lease")
 
+    @observed("db.artifact.commit")
     async def add_artifact(self, turn_id: str, *, path: str, sha256: str, size: int, mime: str, object_ref: str,
                            lease_owner: str | None = None, recovery_generation: int | None = None) -> Artifact:
         value = Artifact(id=identifier(), turn_id=turn_id, path=path, sha256=sha256, size=size, mime=mime, object_ref=object_ref, created_at=now())
@@ -1204,6 +1224,7 @@ class Store:
                 ).order_by(InteractionRow.created_at))).scalars().all()
         return [self.interaction_view(row) for row in rows]
 
+    @observed("db.interaction.claim")
     async def claim_interaction_response(self, interaction_id: str, owner_id: str,
                                          response_key: str, response: dict, *, claim_owner: str = "",
                                          lease_seconds: int = 30) -> tuple[Interaction, bool]:
@@ -1245,6 +1266,7 @@ class Store:
             raise RuntimeError("interaction_expired")
         return self.interaction_view(row), True
 
+    @observed("db.interaction.finish")
     async def finish_interaction_response(self, interaction_id: str, *, delivered: bool,
                                           claim_owner: str = "") -> Interaction:
         async with self.connections.begin() as db:
