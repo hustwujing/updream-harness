@@ -288,3 +288,29 @@ async def test_revoke_audit_uses_authenticated_business_ids_and_propagated_trace
     revoke=next(row for row in records if row['event_name']=='capability.revoked')
     assert revoke['trace_id']==expected_trace and revoke['attributes']['updream.turn_id']==turn_id
     assert 'private-nonce' not in json.dumps(records) and settings.gateway_control_key not in json.dumps(records)
+
+
+def test_retention_prunes_expired_segments_even_without_new_events(tmp_path):
+    old=tmp_path/'expired.telemetry.jsonl';old.write_text('{}\n');os.utime(old,(1,1))
+    value=obs.Telemetry('idle',tmp_path)
+    try:
+        value.last_prune=0
+        deadline=time.monotonic()+2
+        while old.exists() and time.monotonic()<deadline:time.sleep(.02)
+        assert not old.exists() and value.status()['disk_errors']==0
+    finally:value.close()
+
+
+async def test_reused_runtime_configuration_logs_the_new_turn_not_the_previous_one(telemetry,tmp_path,monkeypatch):
+    import sandbox_runtime.app as runtime
+    monkeypatch.setattr(runtime,'WORKSPACE',tmp_path/'workspace');monkeypatch.setattr(runtime,'RUN',tmp_path/'run')
+    monkeypatch.setattr(runtime,'OUTPUTS',tmp_path/'workspace/outputs')
+    monkeypatch.setattr(telemetry,'set_remote',lambda *args:None)
+    app=runtime.create_app()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app),base_url='http://runtime') as client:
+        for turn_id in ('a'*32,'b'*32):
+            response=await client.post('/v1/configure',json={'capability_token':'x'*32,'gateway_url':'http://gateway:28600',
+                'harness':'codex','model':'model','proxy_url':'http://172.31.0.1:28601','thread_id':'c'*32,'turn_id':turn_id,'sandbox_id':'d'*32})
+            assert response.status_code==200
+    logs=[row for row in rows(telemetry) if row['event_name']=='http.request.completed' and row['attributes']['http.route']=='/v1/configure']
+    assert [row['attributes']['updream.turn_id'] for row in logs]==['a'*32,'b'*32]

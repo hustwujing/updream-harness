@@ -456,8 +456,10 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     @app.post("/v1/configure")
-    async def configure(value: Configure):
+    async def configure(value: Configure, request: Request = None):
         app.state.log_context={"thread_id":value.thread_id,"turn_id":value.turn_id,"sandbox_id":value.sandbox_id,"harness":value.harness,"model":value.model}
+        if request is not None:
+            request.state.log_context.clear();request.state.log_context.update(app.state.log_context)
         enrich(**app.state.log_context)
         if telemetry():
             await asyncio.to_thread(telemetry().set_remote,value.gateway_url.rstrip("/")+"/v1/telemetry",{"Authorization":"Bearer "+value.capability_token})

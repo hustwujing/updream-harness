@@ -38,7 +38,7 @@ BUSINESS = {'thread_id','turn_id','input_id','execution_id','sandbox_id','broker
     'reasoning_effort','generation','runtime_sequence','attempt','partial','reused','keep_attached','harness','model',
     'state','previous_state','outcome','reason','error_code','failure_origin','count','bytes',
     'input_tokens','output_tokens','usage_source','duration_ms','first_output_ms','header_ms','queue_ms','namespace','dropped_count','gap_count',
-    'last_sequence','retained_from','source_service','source_instance','origin','source_event_id',
+    'export_failures','disk_errors','last_export_http_status','last_sequence','retained_from','source_service','source_instance','origin','source_event_id',
     'source_trace_id','source_span_id','object_digest','image_digest','exit_code','request_bytes','response_bytes'}
 STANDARD = {'http.request.method','http.route','http.response.status_code','http.request.resend_count',
     'error.type','exception.type','exception.stacktrace','code.function.name','code.file.path','code.line.number'}
@@ -285,7 +285,7 @@ class Telemetry:
         self.instance=self.resource.attributes['service.instance.id'];self.service=service
         self.sink=JsonSink(root,service,self.instance,max_bytes=max_bytes,days=days)
         self.queue=queue.Queue(queue_size);self.stats={'dropped_records':0,'disk_errors':0,'export_failures':0,'library_warnings':0}
-        self.guard=threading.Lock();self.ring=deque(maxlen=8192);self.sequence=0;self.stopping=False
+        self.guard=threading.Lock();self.ring=deque(maxlen=8192);self.sequence=0;self.stopping=False;self.last_prune=time.monotonic()
         self.remote=None;self.remote_guard=threading.Lock()
         self.provider=TracerProvider(resource=self.resource,shutdown_on_exit=False)
         self.logs=LoggerProvider(resource=self.resource,shutdown_on_exit=False)
@@ -307,7 +307,11 @@ class Telemetry:
         self.flush(3)
         import requests
         def session():
-            value=requests.Session();value.trust_env=False;return value
+            value=requests.Session();value.trust_env=False
+            def status(response,*args,**kwargs):
+                with self.guard:self.stats["last_export_http_status"]=response.status_code
+            value.hooks["response"].append(status)
+            return value
         with self.remote_guard:
             if self.remote:
                 for exporter in self.remote:exporter.shutdown()
@@ -333,9 +337,15 @@ class Telemetry:
         last_dropped=0
         while not self.stopping or not self.queue.empty():
             try:batch=[self.queue.get(timeout=.2)]
-            except queue.Empty:continue
+            except queue.Empty:
+                if time.monotonic()-self.last_prune>=60:
+                    try:self.sink.write([])
+                    except Exception:self.increment("disk_errors")
+                    self.last_prune=time.monotonic()
+                continue
+            deadline=time.monotonic()+.2
             while len(batch)<128:
-                try:batch.append(self.queue.get_nowait())
+                try:batch.append(self.queue.get(timeout=max(0,deadline-time.monotonic())))
                 except queue.Empty:break
             rows=[]
             try:

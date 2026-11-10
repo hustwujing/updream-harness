@@ -463,11 +463,12 @@ class Broker:
         target=telemetry()
         if target is None or not hasattr(self.runtime,"diagnostics"):return
         from .telemetry_ingest import import_snapshot
-        after=0;count=0
+        after=0;count=0;stats={}
         try:
             async with asyncio.timeout(5):
                 for _ in range(20):
                     snapshot=await self.runtime.diagnostics(sandbox,after)
+                    stats=snapshot.get("stats",{})
                     if after==0 and snapshot.get("retained_from",1)>1:
                         event("runtime.logs.window",retained_from=snapshot["retained_from"],reason="older_records_require_live_export")
                     rows=snapshot.get("records",[])
@@ -477,7 +478,7 @@ class Broker:
                     if cursor<=after:break
                     after=cursor
                     if after>=snapshot.get("last_sequence",after):break
-            event("runtime.logs.collected",sandbox_id=sandbox.id,count=count,last_sequence=after)
+            event("runtime.logs.collected",level=logging.WARNING if stats.get("dropped_records",0) or stats.get("export_failures",0) or stats.get("disk_errors",0) else logging.INFO,sandbox_id=sandbox.id,count=count,last_sequence=after,reason="runtime_instance_cumulative",dropped_count=stats.get("dropped_records",0),export_failures=stats.get("export_failures",0),disk_errors=stats.get("disk_errors",0),last_export_http_status=stats.get("last_export_http_status"))
         except Exception as exc:
             event("runtime.logs.collection_failed",level=logging.WARNING,exc=exc,sandbox_id=sandbox.id)
 
