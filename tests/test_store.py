@@ -1,6 +1,6 @@
 from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.domain import EventKind, Harness, ItemType, ThreadCreate, TurnCreate, TurnInputCreate, TurnState
-from sandbox_harness.store import Store
+from sandbox_harness.store import Store, valid_project_file_path
 import pytest
 
 
@@ -18,11 +18,17 @@ async def test_thread_turn_items_and_idempotency(tmp_path):
         assert created and start and turn.reasoning_effort == "high"
         duplicate, created, _ = await store.create_turn(thread.id, value, profile, owner)
         assert not created and duplicate.id == turn.id
+        with pytest.raises(RuntimeError, match="idempotency_conflict"):
+            await store.create_turn(thread.id,
+                TurnCreate(message="different", idempotency_key="idempotency-1"), profile, owner)
         appended, created = await store.create_turn_input(turn.id,
             TurnInputCreate(message="follow up", idempotency_key="input-key-1"), owner)
         repeated, created_again = await store.create_turn_input(turn.id,
             TurnInputCreate(message="follow up", idempotency_key="input-key-1"), owner)
         assert created and not created_again and repeated.id == appended.id
+        with pytest.raises(RuntimeError, match="idempotency_conflict"):
+            await store.create_turn_input(turn.id,
+                TurnInputCreate(message="different", idempotency_key="input-key-1"), owner)
         claimed = await store.next_pending_input(turn.id)
         assert claimed.id == appended.id and claimed.status == "delivered" and claimed.delivery_mode == "deferred_safe_point"
         await store.set_input_status(claimed.id, "applied")
@@ -82,6 +88,12 @@ async def test_project_files_keep_versions_and_return_only_the_current_content(t
         first, created = await store.register_project_file(thread.id, path="assets/reference.png",
             source_type="upload", source_turn_id="one", sha256="1" * 64, size=10,
             mime="image/png", object_ref="sha256:first")
+        with pytest.raises(ValueError, match="managed project path"):
+            await store.register_project_file(thread.id, path="assets/..", source_type="upload",
+                source_turn_id="bad", sha256="3" * 64, size=1,
+                mime="text/plain", object_ref="sha256:bad")
+        assert not valid_project_file_path("assets/..", "upload")
+        assert not valid_project_file_path("../outside", "upload")
         duplicate, duplicate_created = await store.register_project_file(thread.id, path="assets/reference.png",
             source_type="upload", source_turn_id="two", sha256="1" * 64, size=10,
             mime="image/png", object_ref="sha256:first")
@@ -139,6 +151,46 @@ async def test_interaction_response_is_owner_scoped_and_idempotent(tmp_path):
         repeated, accepted_again = await store.claim_interaction_response(interaction.id, owner,
             "response-key", {"action":"approve"})
         assert not accepted_again and repeated.status == "responded"
+    finally:
+        await store.close()
+
+
+async def test_expired_interaction_status_is_committed_before_error(tmp_path):
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "expired-interaction.db")); await store.initialize()
+    try:
+        catalog = HarnessCatalog(); profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+        owner = "a" * 64
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Expired"), profile, owner)
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="hello", idempotency_key="expired-turn-key"), profile, owner)
+        interaction, _ = await store.upsert_interaction(thread.id, turn.id, "old-execution",
+            "native-expired", "approval", {"prompt":"Allow?"})
+        await store.set_turn_state(turn.id, TurnState.COMPLETED)
+        with pytest.raises(RuntimeError, match="interaction_expired"):
+            await store.claim_interaction_response(interaction.id, owner, "expired-response-key", {"action":"approve"})
+        assert (await store.list_interactions(thread.id, owner))[0].status == "expired"
+        with pytest.raises(RuntimeError, match="interaction_not_pending"):
+            await store.claim_interaction_response(interaction.id, owner, "second-response-key", {"action":"approve"})
+    finally:
+        await store.close()
+
+
+async def test_concurrent_thread_items_receive_unique_contiguous_sequences(tmp_path):
+    import asyncio
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "item-sequences.db")); await store.initialize()
+    try:
+        catalog = HarnessCatalog(); profile = catalog.resolve("codex", "gpt-5.6", "standard")
+        owner = "a" * 64
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CODEX, model=profile.model,
+            reasoning_level="standard", title="Items"), profile, owner)
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="initial", idempotency_key="item-sequence-turn"), profile, owner)
+        await store.set_turn_state(turn.id, TurnState.RUNNING)
+        await asyncio.gather(*(store.append_item(thread.id, turn.id, ItemType.TOOL,
+            status="completed", summary=f"tool-{index}") for index in range(20)))
+        sequences = [item.sequence for item in await store.items_after(thread.id)]
+        assert sequences == list(range(1, 22))
     finally:
         await store.close()
 

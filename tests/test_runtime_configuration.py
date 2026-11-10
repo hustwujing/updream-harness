@@ -165,6 +165,15 @@ def test_runtime_materializes_only_managed_project_file_namespaces(tmp_path, mon
         assert not (tmp_path / "workspace/project/assets/reference.txt").exists()
 
 
+def test_runtime_rejects_dotdot_attachment_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
+    monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")
+    monkeypatch.setattr(runtime_app, "OUTPUTS", tmp_path / "workspace" / "outputs")
+    monkeypatch.setattr(runtime_app, "PERSISTENT", ("project", "state"))
+    with TestClient(runtime_app.create_app()) as client:
+        assert client.put("/v1/attachments/file", params={"name":".."}, content=b"x").status_code == 400
+
+
 def test_checkpoint_excludes_object_backed_managed_project_files(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
     monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")

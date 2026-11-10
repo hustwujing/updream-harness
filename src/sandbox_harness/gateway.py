@@ -14,7 +14,7 @@ from redis.asyncio import Redis
 import uvicorn
 
 from .capability import CapabilityCodec
-from .config import Settings, load_settings
+from .config import Settings, load_settings, validate_service_settings
 from .domain import Harness
 from .model_routes import ModelRoutes
 from .public_proxy import start_proxy
@@ -64,6 +64,7 @@ async def bytes_with_idle_timeout(response, timeout_seconds: float):
 
 def create_gateway(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
+    validate_service_settings(settings)
     codec = CapabilityCodec(settings.gateway_signing_key)
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     active: dict[str, set[httpx.Response]] = defaultdict(set)

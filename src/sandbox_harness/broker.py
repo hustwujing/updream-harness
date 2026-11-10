@@ -4,6 +4,7 @@ import asyncio
 import logging
 import mimetypes
 from collections import defaultdict
+from contextlib import asynccontextmanager
 import httpx
 
 from .capability import CapabilityCodec
@@ -41,6 +42,8 @@ class Broker:
         self.tasks: dict[str, asyncio.Task] = {}
         self.cancelled: set[str] = set()
         self.locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.lock_users: dict[str, int] = defaultdict(int)
+        self.lock_guard = asyncio.Lock()
         self.input_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.active_sandboxes = {}
         self.instance_id = "broker-" + __import__("uuid").uuid4().hex
@@ -49,6 +52,21 @@ class Broker:
         self.recovery_task: asyncio.Task | None = None
         self.reaper_task: asyncio.Task | None = None
         self.closing = False
+
+    @asynccontextmanager
+    async def thread_lock(self, thread_id: str):
+        async with self.lock_guard:
+            lock = self.locks[thread_id]
+            self.lock_users[thread_id] += 1
+        try:
+            async with lock:
+                yield
+        finally:
+            async with self.lock_guard:
+                self.lock_users[thread_id] -= 1
+                if self.lock_users[thread_id] == 0:
+                    self.lock_users.pop(thread_id, None)
+                    self.locks.pop(thread_id, None)
 
     def _schedule(self, turn_id: str) -> None:
         task = self.tasks.get(turn_id)
@@ -260,7 +278,7 @@ class Broker:
         return turn
 
     async def delete_thread(self, thread_id: str, owner_id: str) -> None:
-        async with self.locks[thread_id]:
+        async with self.thread_lock(thread_id):
             thread = await self.store.get_thread(thread_id, owner_id)
             if not thread:
                 raise KeyError("thread_not_found")
@@ -271,16 +289,19 @@ class Broker:
             await self.store.delete_thread(thread_id, owner_id)
 
     async def cancel(self, turn_id: str) -> None:
-        self.cancelled.add(turn_id)
         turn = await self.store.get_turn(turn_id)
         if not turn:
             raise KeyError("turn_not_found")
+        if turn.state in {TurnState.COMPLETED, TurnState.WAITING_USER, TurnState.FAILED, TurnState.CANCELLED}:
+            raise RuntimeError("turn_already_terminal")
+        self.cancelled.add(turn_id)
         await self.store.append_event(turn_id, EventKind.WARNING, {"code": "cancel_requested"})
         task = self.tasks.get(turn_id)
         if task:
             task.cancel()
         elif turn.state == TurnState.QUEUED:
             await self._state(turn_id, TurnState.CANCELLED, error_code="cancelled", error_detail="Queued Turn was cancelled")
+            self.cancelled.discard(turn_id)
 
     async def _state(self, turn_id: str, state: TurnState, **kwargs) -> TurnView:
         generation = self.leases.get(turn_id)
@@ -420,7 +441,7 @@ class Broker:
         error_detail = "Turn failed before the Harness returned a result"
         abandoned = False
         try:
-            async with self.locks[thread.id]:
+            async with self.thread_lock(thread.id):
                 recovering = turn.state in {
                     TurnState.RUNNING, TurnState.AWAITING_USER, TurnState.DRAINING_INPUTS, TurnState.CHECKPOINTING,
                 } and bool(turn.runtime_execution_id)
@@ -682,3 +703,4 @@ class Broker:
                 await self.store.release_turn_lease(turn.id, self.instance_id, generation)
                 self.leases.pop(turn.id, None)
                 self.tasks.pop(turn.id, None)
+                self.cancelled.discard(turn.id)

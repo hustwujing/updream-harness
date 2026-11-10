@@ -5,7 +5,8 @@ from enum import StrEnum
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pathlib import Path
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def now() -> datetime:
@@ -112,6 +113,15 @@ class Attachment(BaseModel):
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     size: int = Field(ge=0)
     mime: str = Field(default="application/octet-stream", max_length=200)
+
+    @field_validator("name")
+    @classmethod
+    def safe_name(cls, value: str) -> str:
+        if (value in {".", ".."} or Path(value).name != value
+                or any(character in value for character in '/\\"\r\n\0')
+                or any(ord(character) < 32 or ord(character) == 127 for character in value)):
+            raise ValueError("Invalid attachment filename")
+        return value
 
 
 class TurnCreate(BaseModel):

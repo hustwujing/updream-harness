@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import asyncio
 from collections import defaultdict
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+from pathlib import PurePosixPath
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, UniqueConstraint, delete, inspect, select, text, update
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, UniqueConstraint, delete, func, inspect, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -16,6 +18,13 @@ from .events import RedisEventBus
 
 class Base(DeclarativeBase):
     pass
+
+
+def valid_project_file_path(path: str, source_type: str) -> bool:
+    pure = PurePosixPath(path)
+    expected_root = "assets" if source_type == "upload" else "artifacts" if source_type == "artifact" else ""
+    return bool(expected_root and not pure.is_absolute() and len(pure.parts) >= 2
+        and pure.parts[0] == expected_root and not any(part in {"", ".", ".."} for part in pure.parts))
 
 
 class ThreadRow(Base):
@@ -30,6 +39,7 @@ class ThreadRow(Base):
     checkpoint_ref: Mapped[str] = mapped_column(Text, default="")
     native_thread_id: Mapped[str] = mapped_column(String(300), default="")
     active_turn_id: Mapped[str] = mapped_column(String(32), default="")
+    next_item_sequence: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -167,6 +177,23 @@ class Store:
         self.connections = async_sessionmaker(self.engine, expire_on_commit=False)
         self.events = RedisEventBus(redis_url, redis_prefix) if redis_url else None
         self.event_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.event_lock_users: dict[str, int] = defaultdict(int)
+        self.event_lock_guard = asyncio.Lock()
+
+    @asynccontextmanager
+    async def event_lock(self, turn_id: str):
+        async with self.event_lock_guard:
+            lock = self.event_locks[turn_id]
+            self.event_lock_users[turn_id] += 1
+        try:
+            async with lock:
+                yield
+        finally:
+            async with self.event_lock_guard:
+                self.event_lock_users[turn_id] -= 1
+                if self.event_lock_users[turn_id] == 0:
+                    self.event_lock_users.pop(turn_id, None)
+                    self.event_locks.pop(turn_id, None)
 
     async def initialize(self) -> None:
         if self.events:
@@ -176,6 +203,9 @@ class Store:
             columns = await connection.run_sync(lambda value: {column["name"] for column in inspect(value).get_columns("threads")})
             if "owner_id" not in columns:
                 await connection.execute(text("ALTER TABLE threads ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT 'legacy-unowned'"))
+            if "next_item_sequence" not in columns:
+                await connection.execute(text("ALTER TABLE threads ADD COLUMN next_item_sequence INTEGER NOT NULL DEFAULT 0"))
+                await connection.execute(text("UPDATE threads SET next_item_sequence = COALESCE((SELECT MAX(items.sequence) FROM items WHERE items.thread_id = threads.id), 0)"))
             await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_threads_owner_id ON threads (owner_id)"))
             input_columns = await connection.run_sync(lambda value: {column["name"] for column in inspect(value).get_columns("turn_inputs")})
             if "delivery_mode" not in input_columns:
@@ -221,6 +251,15 @@ class Store:
         return ThreadView.model_validate({key: getattr(row, key) for key in ThreadView.model_fields})
 
     @staticmethod
+    async def next_item_sequence(db: AsyncSession, thread_id: str) -> int:
+        sequence = (await db.execute(update(ThreadRow).where(ThreadRow.id == thread_id)
+            .values(next_item_sequence=ThreadRow.next_item_sequence + 1)
+            .returning(ThreadRow.next_item_sequence))).scalar_one_or_none()
+        if sequence is None:
+            raise KeyError("thread_not_found")
+        return sequence
+
+    @staticmethod
     def turn_view(row: TurnRow) -> TurnView:
         return TurnView.model_validate({
             **{key: getattr(row, key) for key in TurnView.model_fields if key != "attachments"},
@@ -251,12 +290,13 @@ class Store:
     async def list_thread_summaries(self, owner_id: str) -> list[dict]:
         threads = await self.list_threads(owner_id)
         async with self.connections() as db:
-            turns = (await db.execute(select(TurnRow).join(ThreadRow,
-                ThreadRow.id == TurnRow.thread_id).where(ThreadRow.owner_id == owner_id)
-                .order_by(TurnRow.created_at.desc()))).scalars().all()
-        latest = {}
-        for turn in turns:
-            latest.setdefault(turn.thread_id, turn)
+            ranked = select(TurnRow.thread_id, TurnRow.state, TurnRow.updated_at,
+                func.row_number().over(partition_by=TurnRow.thread_id,
+                    order_by=TurnRow.created_at.desc()).label("rank")).join(
+                ThreadRow, ThreadRow.id == TurnRow.thread_id).where(ThreadRow.owner_id == owner_id).subquery()
+            rows = (await db.execute(select(ranked.c.thread_id, ranked.c.state, ranked.c.updated_at)
+                .where(ranked.c.rank == 1))).all()
+        latest = {row.thread_id: row for row in rows}
         return [{**thread.model_dump(mode="json"),
             "latest_turn_state": latest[thread.id].state if thread.id in latest else "",
             "latest_turn_updated_at": latest[thread.id].updated_at if thread.id in latest else None,
@@ -304,6 +344,12 @@ class Store:
                 raise KeyError("thread_not_found")
             existing = (await db.execute(select(TurnRow).where(TurnRow.thread_id == thread_id, TurnRow.idempotency_key == value.idempotency_key))).scalar_one_or_none()
             if existing:
+                attachments = [item.model_dump(mode="json") for item in value.attachments]
+                if (existing.message != value.message or json.loads(existing.attachments_json) != attachments
+                        or existing.harness != resolved.harness.value or existing.model != resolved.model
+                        or existing.reasoning_level != resolved.reasoning_level
+                        or existing.delivery_mode != value.delivery_mode):
+                    raise RuntimeError("idempotency_conflict")
                 return self.turn_view(existing), False, thread.active_turn_id == existing.id
             active_running = False
             if thread.active_turn_id:
@@ -323,8 +369,8 @@ class Store:
                 state=TurnState.QUEUED.value, created_at=timestamp, updated_at=timestamp,
             )
             db.add(row)
-            last_item = (await db.execute(select(ItemRow.sequence).where(ItemRow.thread_id == thread_id).order_by(ItemRow.sequence.desc()).limit(1))).scalar_one_or_none() or 0
-            db.add(ItemRow(id=identifier(), thread_id=thread_id, turn_id=row.id, sequence=last_item + 1,
+            item_sequence = await self.next_item_sequence(db, thread_id)
+            db.add(ItemRow(id=identifier(), thread_id=thread_id, turn_id=row.id, sequence=item_sequence,
                 type=ItemType.USER_MESSAGE.value, status="completed", summary=value.message,
                 payload_json=json.dumps({"attachments":[item.model_dump(mode="json") for item in value.attachments]}),
                 created_at=timestamp, updated_at=timestamp))
@@ -447,13 +493,21 @@ class Store:
         accepting = {TurnState.QUEUED.value, TurnState.RESTORING.value, TurnState.STARTING.value,
             TurnState.RUNNING.value, TurnState.AWAITING_USER.value}
         async with self.connections.begin() as db:
-            turn = (await db.execute(select(TurnRow).join(ThreadRow, ThreadRow.id == TurnRow.thread_id).where(
-                TurnRow.id == turn_id, ThreadRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
-            if not turn:
+            candidate = (await db.execute(select(TurnRow.thread_id).join(ThreadRow,
+                ThreadRow.id == TurnRow.thread_id).where(
+                    TurnRow.id == turn_id, ThreadRow.owner_id == owner_id))).scalar_one_or_none()
+            if not candidate:
+                raise KeyError("turn_not_found")
+            thread = await db.get(ThreadRow, candidate, with_for_update=True)
+            turn = await db.get(TurnRow, turn_id, with_for_update=True)
+            if not thread or thread.owner_id != owner_id or not turn or turn.thread_id != thread.id:
                 raise KeyError("turn_not_found")
             existing = (await db.execute(select(TurnInputRow).where(TurnInputRow.turn_id == turn_id,
                 TurnInputRow.idempotency_key == value.idempotency_key))).scalar_one_or_none()
             if existing:
+                attachments = [item.model_dump(mode="json") for item in value.attachments]
+                if existing.message != value.message or json.loads(existing.attachments_json) != attachments:
+                    raise RuntimeError("idempotency_conflict")
                 return self.input_view(existing), False
             if turn.state not in accepting:
                 raise RuntimeError("turn_not_accepting_input")
@@ -465,9 +519,8 @@ class Store:
                 attachments_json=json.dumps([item.model_dump(mode="json") for item in value.attachments]),
                 status="pending", delivery_mode="pending", created_at=timestamp, updated_at=timestamp)
             db.add(row)
-            item_sequence = (await db.execute(select(ItemRow.sequence).where(ItemRow.thread_id == turn.thread_id)
-                .order_by(ItemRow.sequence.desc()).limit(1))).scalar_one_or_none() or 0
-            db.add(ItemRow(id=identifier(), thread_id=turn.thread_id, turn_id=turn_id, sequence=item_sequence + 1,
+            item_sequence = await self.next_item_sequence(db, turn.thread_id)
+            db.add(ItemRow(id=identifier(), thread_id=turn.thread_id, turn_id=turn_id, sequence=item_sequence,
                 type=ItemType.USER_MESSAGE.value, status="completed", summary=value.message,
                 payload_json=json.dumps({"input_id": row.id, "attachments": [item.model_dump(mode="json") for item in value.attachments]}),
                 created_at=timestamp, updated_at=timestamp))
@@ -557,7 +610,7 @@ class Store:
 
     async def append_event(self, turn_id: str, kind: EventKind, payload: dict, *, item_id: str = "",
                            source_execution_id: str = "", source_sequence: int = 0) -> Event:
-        async with self.event_locks[turn_id]:
+        async with self.event_lock(turn_id):
             return await self._append_event_locked(turn_id, kind, payload, item_id=item_id,
                 source_execution_id=source_execution_id, source_sequence=source_sequence)
 
@@ -584,16 +637,20 @@ class Store:
             await self.events.publish(event)
         return event
 
-    async def events_after(self, turn_id: str, sequence: int) -> list[Event]:
+    async def events_after(self, turn_id: str, sequence: int, limit: int | None = None) -> list[Event]:
         async with self.connections() as db:
-            rows = (await db.execute(select(EventRow).where(EventRow.turn_id == turn_id, EventRow.sequence > sequence).order_by(EventRow.sequence))).scalars().all()
+            query = select(EventRow).where(EventRow.turn_id == turn_id,
+                EventRow.sequence > sequence).order_by(EventRow.sequence)
+            if limit is not None:
+                query = query.limit(limit)
+            rows = (await db.execute(query)).scalars().all()
         return [Event(turn_id=row.turn_id, sequence=row.sequence, kind=EventKind(row.kind), item_id=row.item_id, payload=json.loads(row.payload_json), created_at=row.created_at) for row in rows]
 
     async def append_item(self, thread_id: str, turn_id: str, item_type: ItemType, *, status: str, summary: str = "", payload: dict | None = None) -> Item:
         timestamp = now()
         async with self.connections.begin() as db:
-            last = (await db.execute(select(ItemRow.sequence).where(ItemRow.thread_id == thread_id).order_by(ItemRow.sequence.desc()).limit(1))).scalar_one_or_none() or 0
-            row = ItemRow(id=identifier(), thread_id=thread_id, turn_id=turn_id, sequence=last + 1,
+            sequence = await self.next_item_sequence(db, thread_id)
+            row = ItemRow(id=identifier(), thread_id=thread_id, turn_id=turn_id, sequence=sequence,
                 type=item_type.value, status=status, summary=summary, payload_json=json.dumps(payload or {}, ensure_ascii=False),
                 created_at=timestamp, updated_at=timestamp)
             db.add(row)
@@ -602,12 +659,13 @@ class Store:
 
     async def append_agent_delta(self, thread_id: str, turn_id: str, text: str) -> Item:
         async with self.connections.begin() as db:
+            await db.get(ThreadRow, thread_id, with_for_update=True)
             row = (await db.execute(select(ItemRow).where(ItemRow.turn_id == turn_id,
                 ItemRow.type == ItemType.AGENT_MESSAGE.value, ItemRow.status == "in_progress")
                 .order_by(ItemRow.sequence.desc()).limit(1))).scalar_one_or_none()
             if not row:
-                last = (await db.execute(select(ItemRow.sequence).where(ItemRow.thread_id == thread_id).order_by(ItemRow.sequence.desc()).limit(1))).scalar_one_or_none() or 0
-                row = ItemRow(id=identifier(), thread_id=thread_id, turn_id=turn_id, sequence=last + 1,
+                sequence = await self.next_item_sequence(db, thread_id)
+                row = ItemRow(id=identifier(), thread_id=thread_id, turn_id=turn_id, sequence=sequence,
                     type=ItemType.AGENT_MESSAGE.value, status="in_progress", summary="", payload_json="{}", created_at=now(), updated_at=now())
                 db.add(row)
             row.summary += text
@@ -678,6 +736,8 @@ class Store:
     async def register_project_file(self, thread_id: str, *, path: str, source_type: str,
                                     source_turn_id: str, sha256: str, size: int, mime: str,
                                     object_ref: str) -> tuple[ProjectFile, bool]:
+        if not valid_project_file_path(path, source_type):
+            raise ValueError("Invalid managed project path")
         async with self.connections.begin() as db:
             latest = (await db.execute(select(ProjectFileRow).where(
                 ProjectFileRow.thread_id == thread_id, ProjectFileRow.path == path,
@@ -701,7 +761,8 @@ class Store:
         current = {}
         for row in rows:
             current.setdefault(row.path, row)
-        return [self.project_file_view(current[path]) for path in sorted(current) if not current[path].deleted]
+        return [self.project_file_view(current[path]) for path in sorted(current)
+            if not current[path].deleted and valid_project_file_path(current[path].path, current[path].source_type)]
 
     async def project_file_history(self, thread_id: str, path: str, owner_id: str) -> list[ProjectFile]:
         async with self.connections() as db:
@@ -808,6 +869,7 @@ class Store:
 
     async def claim_interaction_response(self, interaction_id: str, owner_id: str,
                                          response_key: str, response: dict) -> tuple[Interaction, bool]:
+        expired = False
         async with self.connections.begin() as db:
             row = (await db.execute(select(InteractionRow).join(ThreadRow,
                 ThreadRow.id == InteractionRow.thread_id).where(
@@ -823,9 +885,12 @@ class Store:
             if (not turn or turn.runtime_execution_id != row.runtime_execution_id
                     or TurnState(turn.state) not in {TurnState.RUNNING, TurnState.AWAITING_USER}):
                 row.status = "expired"; row.updated_at = now()
-                raise RuntimeError("interaction_expired")
-            row.status = "responding"; row.response_key = response_key
-            row.response_json = json.dumps(response, ensure_ascii=False); row.updated_at = now()
+                expired = True
+            else:
+                row.status = "responding"; row.response_key = response_key
+                row.response_json = json.dumps(response, ensure_ascii=False); row.updated_at = now()
+        if expired:
+            raise RuntimeError("interaction_expired")
         return self.interaction_view(row), True
 
     async def finish_interaction_response(self, interaction_id: str, *, delivered: bool) -> Interaction:

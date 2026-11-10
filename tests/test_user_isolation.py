@@ -67,3 +67,26 @@ def test_project_file_mutations_are_owner_scoped_versioned_and_path_checked(tmp_
         assert history[0]["deleted"] is True
         assert client.delete(f"/api/project-files/{renamed.json()['id']}").status_code == 200
         assert client.get(f"/api/threads/{thread['id']}/project-files").json() == []
+
+
+def test_upload_names_dispositions_inline_policy_and_body_limits(tmp_path):
+    settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "downloads.db"),
+        redis_url="", backend="fake", object_backend="local", model_catalog_discovery=False,
+        session_signing_key="download-policy-secret", max_attachment_bytes=64)
+    with TestClient(create_app(settings)) as client:
+        for name in ("..", "x\ny.txt", 'a"b.txt', "a\\b.txt"):
+            assert client.post("/api/uploads", params={"name":name,"mime":"text/plain"}, content=b"x").status_code == 400
+        assert client.post("/api/uploads", params={"name":"large.bin"},
+            headers={"Content-Length":"65"}, content=b"").status_code == 413
+        thread = client.post("/api/threads", json={"harness":"codex", "model":"gpt-5.6",
+            "reasoning_level":"standard", "title":"downloads"}).json()
+        created = client.post(f"/api/threads/{thread['id']}/project-files",
+            params={"path":"assets/报告.txt", "mime":"text/plain"}, content=b"hello").json()
+        response = client.get(f"/api/project-files/{created['id']}?inline=true")
+        assert response.status_code == 200 and "filename*=UTF-8''" in response.headers["content-disposition"]
+        html = client.post(f"/api/threads/{thread['id']}/project-files",
+            params={"path":"assets/page.html", "mime":"text/html"}, content=b"<script>alert(1)</script>").json()
+        unsafe = client.get(f"/api/project-files/{html['id']}?inline=true")
+        assert unsafe.headers["content-disposition"].startswith("attachment;")
+        assert unsafe.headers["content-type"].startswith("application/octet-stream")
+        assert unsafe.headers["content-security-policy"].startswith("sandbox;")

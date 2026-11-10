@@ -1,4 +1,5 @@
 import asyncio
+import pytest
 
 from sandbox_harness.broker import Broker
 from sandbox_harness.catalog import HarnessCatalog
@@ -82,6 +83,26 @@ class InteractionRuntime(Runtime):
 
     async def respond_interaction(self, sandbox, interaction_id, response):
         self.responses.append((interaction_id, response)); self.release.set(); return True
+
+
+async def test_terminal_turn_cannot_be_cancelled(tmp_path):
+    settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "cancel.db"),
+        backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9")
+    store = Store(settings.database_url); await store.initialize(); objects = ObjectStore(tmp_path / "objects")
+    backend = FakeSandboxBackend(); pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
+    catalog = HarnessCatalog(); broker = Broker(settings, store, objects, pool, Runtime(), catalog)
+    try:
+        profile = catalog.resolve("codex", "gpt-5.6", "standard"); owner = "a" * 64
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CODEX, model=profile.model,
+            reasoning_level="standard", title="Terminal"), profile, owner)
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="done", idempotency_key="terminal-cancel-key"), profile, owner)
+        await store.set_turn_state(turn.id, TurnState.COMPLETED)
+        with pytest.raises(RuntimeError, match="already_terminal"):
+            await broker.cancel(turn.id)
+        assert turn.id not in broker.cancelled
+    finally:
+        await broker.close(); await pool.close(); await store.close()
 
 
 async def test_broker_runs_harness_and_persists_transcript_checkpoint_and_artifact(tmp_path):

@@ -5,6 +5,11 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+DEVELOPMENT_SECRETS = {
+    "development-only-change-me", "development-control-change-me", "development-session-change-me",
+}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SANDBOX_HARNESS_", env_file=".env", extra="ignore")
 
@@ -82,5 +87,13 @@ class Settings(BaseSettings):
 
 def load_settings() -> Settings:
     value = Settings()
+    validate_service_settings(value)
     value.data_root.mkdir(parents=True, exist_ok=True)
     return value
+
+
+def validate_service_settings(value: Settings) -> None:
+    if value.backend == "opensandbox":
+        configured = (value.gateway_signing_key, value.gateway_control_key, value.session_signing_key)
+        if any(secret in DEVELOPMENT_SECRETS for secret in configured):
+            raise ValueError("OpenSandbox deployment requires explicit signing and control secrets")

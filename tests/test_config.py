@@ -1,4 +1,5 @@
-from sandbox_harness.config import Settings
+from sandbox_harness.config import Settings, validate_service_settings
+import pytest
 from sandbox_harness.model_routes import ModelRoutes
 
 
@@ -21,3 +22,9 @@ def test_model_routes_allow_distinct_upstreams_and_credential_references(monkeyp
     assert routes.resolve("codex", "gpt-6-sol").credential == "fast-secret"
     assert routes.resolve("codex", "gpt-6-astra").base_url == "http://default.example"
     assert routes.configured_models("codex") == ["gpt-6-sol"]
+
+
+def test_opensandbox_rejects_development_signing_secrets():
+    with pytest.raises(ValueError, match="explicit signing"):
+        validate_service_settings(Settings(_env_file=None, backend="opensandbox"))
+    validate_service_settings(Settings(_env_file=None, backend="fake"))

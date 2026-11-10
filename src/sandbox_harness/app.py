@@ -8,6 +8,7 @@ from contextlib import suppress
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
@@ -16,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .broker import Broker
 from .catalog import HarnessCatalog
-from .config import Settings, load_settings
+from .config import Settings, load_settings, validate_service_settings
 from .domain import Attachment, Harness, InteractionResponse, ProjectFileRename, ThreadCreate, TurnCreate, TurnInputCreate
 from .model_discovery import ModelDiscovery
 from .objects import object_store
@@ -27,6 +28,42 @@ from .sessions import COOKIE, Sessions
 from .store import Store
 
 logger = logging.getLogger(__name__)
+
+SAFE_INLINE_MIMES = {
+    "image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp",
+    "text/plain",
+}
+
+
+def valid_filename(value: str) -> bool:
+    try:
+        Attachment(name=value, object_ref="sha256:x", sha256="0" * 64, size=0)
+        return True
+    except ValueError:
+        return False
+
+
+def content_disposition(filename: str, *, inline: bool) -> str:
+    fallback = "".join(character if character.isascii() and (character.isalnum() or character in "._-")
+        else "_" for character in filename).strip("._") or "download"
+    kind = "inline" if inline else "attachment"
+    return f"{kind}; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"
+
+
+async def limited_body(request: Request, maximum: int) -> bytes:
+    raw_length = request.headers.get("content-length")
+    if raw_length:
+        try:
+            if int(raw_length) > maximum:
+                raise HTTPException(413, "Request body exceeds byte limit")
+        except ValueError as exc:
+            raise HTTPException(400, "Invalid Content-Length") from exc
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > maximum:
+            raise HTTPException(413, "Request body exceeds byte limit")
+        data.extend(chunk)
+    return bytes(data)
 
 
 def managed_project_path(value: str, *, upload: bool = False) -> str:
@@ -73,6 +110,7 @@ def components(settings: Settings):
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
+    validate_service_settings(settings)
     store, objects, pool, catalog, discovery, broker = components(settings)
     sessions = Sessions(settings.session_signing_key)
 
@@ -238,9 +276,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             path = managed_project_path(path, upload=True)
         except ValueError as exc:
             raise HTTPException(422, str(exc))
-        data = await request.body()
-        if len(data) > settings.max_attachment_bytes:
-            raise HTTPException(413, "Project asset exceeds byte limit")
+        data = await limited_body(request, settings.max_attachment_bytes)
         object_ref, digest = objects.put(data)
         value, _ = await store.register_project_file(thread_id, path=path, source_type="upload",
             source_turn_id="", sha256=digest, size=len(data), mime=mime, object_ref=object_ref)
@@ -288,6 +324,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await broker.cancel(turn_id)
         except KeyError:
             raise HTTPException(404, "Turn not found")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
         return {"accepted": True}
 
     @app.post("/api/turns/{turn_id}/inputs")
@@ -336,7 +374,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         async def stream():
             cursor = after
             while not await request.is_disconnected():
-                rows = await store.events_after(turn_id, cursor)
+                rows = await store.events_after(turn_id, cursor, 1000)
                 for event in rows:
                     cursor = event.sequence
                     yield f"id: {event.sequence}\nevent: {event.kind.value}\ndata: {json.dumps(event.payload, ensure_ascii=False)}\n\n"
@@ -352,18 +390,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return StreamingResponse(stream(), media_type="text/event-stream")
 
     @app.get("/api/turns/{turn_id}/events/history")
-    async def event_history(turn_id: str, request: Request, after: int = 0):
+    async def event_history(turn_id: str, request: Request, after: int = 0, limit: int = 500):
         if not await store.get_turn_for_owner(turn_id, request.state.owner_id):
             raise HTTPException(404, "Turn not found")
-        return await store.events_after(turn_id, after)
+        return await store.events_after(turn_id, after, min(max(limit, 1), 1000))
 
     @app.post("/api/uploads")
     async def upload(request: Request, name: str, mime: str = "application/octet-stream"):
-        if not name or len(name) > 255 or Path(name).name != name:
+        if not valid_filename(name):
             raise HTTPException(400, "Invalid filename")
-        data = await request.body()
-        if len(data) > settings.max_attachment_bytes:
-            raise HTTPException(413, "Attachment too large")
+        data = await limited_body(request, settings.max_attachment_bytes)
         object_ref, digest = objects.put(data)
         attachment = Attachment(name=name, object_ref=object_ref, sha256=digest, size=len(data), mime=mime)
         await store.record_upload(request.state.owner_id, attachment)
@@ -375,8 +411,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not value:
             raise HTTPException(404, "Artifact not found")
         data = objects.get(value.object_ref, maximum=settings.max_artifact_bytes)
-        disposition = "inline" if inline else "attachment"
-        return Response(data, media_type=value.mime, headers={"Content-Disposition": f'{disposition}; filename="{Path(value.path).name}"'})
+        filename = Path(value.path).name
+        safe_inline = inline and (value.mime in SAFE_INLINE_MIMES or value.mime.startswith(("video/", "audio/")))
+        return Response(data, media_type=value.mime if safe_inline or not inline else "application/octet-stream",
+            headers={"Content-Disposition": content_disposition(filename, inline=safe_inline),
+                     "Content-Security-Policy": "sandbox; default-src 'none'"})
 
     @app.get("/api/project-files/{file_id}")
     async def project_file(file_id: str, request: Request, inline: bool = False):
@@ -385,9 +424,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "Project file not found")
         maximum = settings.max_attachment_bytes if value.source_type == "upload" else settings.max_artifact_bytes
         data = objects.get(value.object_ref, maximum=maximum)
-        disposition = "inline" if inline else "attachment"
-        return Response(data, media_type=value.mime,
-            headers={"Content-Disposition": f'{disposition}; filename="{Path(value.path).name}"'})
+        filename = Path(value.path).name
+        safe_inline = inline and (value.mime in SAFE_INLINE_MIMES or value.mime.startswith(("video/", "audio/")))
+        return Response(data, media_type=value.mime if safe_inline or not inline else "application/octet-stream",
+            headers={"Content-Disposition": content_disposition(filename, inline=safe_inline),
+                     "Content-Security-Policy": "sandbox; default-src 'none'"})
 
     @app.post("/api/project-files/{file_id}/rename")
     async def rename_project_file(file_id: str, value: ProjectFileRename, request: Request):

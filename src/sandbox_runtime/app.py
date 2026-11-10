@@ -399,7 +399,9 @@ def create_app() -> FastAPI:
 
     @app.put("/v1/attachments/file")
     async def put_attachment(request: Request, name: str):
-        if not name or Path(name).name != name or len(name) > 255:
+        if (not name or name in {".", ".."} or Path(name).name != name or len(name) > 255
+                or any(character in name for character in '/\\"\r\n\0')
+                or any(ord(character) < 32 or ord(character) == 127 for character in name)):
             raise HTTPException(400, "Invalid attachment name")
         data = await request.body()
         if len(data) > 512 * 1024 * 1024:
