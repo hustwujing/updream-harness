@@ -71,11 +71,19 @@ function Activity({items,active,endedAt,failed}){
  const timing=active&&items.some(item=>item.status==='in_progress');
  useEffect(()=>{if(!timing)return;setNow(Date.now());const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer)},[timing]);
  if(!items.length)return null;
- const tools=items.filter(item=>['command','tool','file_change'].includes(item.type)).length,stages=items.length-tools;
- const failure=items.find(item=>item.type==='error'||item.status==='failed');
- const summary=active?'正在执行':failed?'执行失败':tools&&stages?`${tools} 个工具 · ${stages} 个阶段`:tools?`${tools} 个工具`:`${stages} 个阶段`;
- const older=items.length>8?items.slice(0,-6):[],visible=older.length?items.slice(-6):items,row=item=>{const elapsed=activityTiming(item,active,now,endedAt);return <div className={`activity-row ${item.status}`} key={item.id}><ActivityStatus status={item.status} active={active}/><span><b>{activityName(item)}</b><small title={activityDetail(item)}>{activityDetail(item)}</small></span><time className={`activity-duration ${elapsed.running?'running':''}`} aria-label={elapsed.label}>{elapsed.label}</time></div>};
- return <details className="activity" open={active||Boolean(failed)}><summary><span className={active?'activity-pulse':''}></span><b>{summary}</b><ChevronDown size={14}/></summary><div>{older.length>0&&<details className="activity-history"><summary>较早的 {older.length} 个步骤</summary>{older.map(row)}</details>}{visible.map(row)}</div></details>;
+ const failures=items.filter(item=>item.type==='error'||['failed','interrupted','cancelled'].includes(item.status));
+ const failureIds=new Set(failures.map(item=>item.id)),running=items.filter(item=>item.status==='in_progress'&&!failureIds.has(item.id));
+ const completed=items.filter(item=>!failureIds.has(item.id)&&item.status!=='in_progress');
+ const summary=`正在执行 ${running.length} · 失败 ${failures.length} · 已完成 ${completed.length}`;
+ const row=item=>{const elapsed=activityTiming(item,active,now,endedAt);return <div className={`activity-row ${item.status}`} key={item.id}><ActivityStatus status={item.status} active={active}/><span><b>{activityName(item)}</b><small title={activityDetail(item)}>{activityDetail(item)}</small></span><time className={`activity-duration ${elapsed.running?'running':''}`} aria-label={elapsed.label}>{elapsed.label}</time></div>};
+ const runningMiddle=running.length>5?running.slice(2,-3):[],runningStart=runningMiddle.length?running.slice(0,2):running,runningEnd=runningMiddle.length?running.slice(-3):[];
+ const olderFailures=failures.length>5?failures.slice(0,-5):[],recentFailures=olderFailures.length?failures.slice(-5):failures;
+ const olderCompleted=completed.length>6?completed.slice(0,-6):[],recentCompleted=olderCompleted.length?completed.slice(-6):completed;
+ return <details className="activity" open={active||Boolean(failed)}><summary><span className={running.length?'activity-pulse':''}></span><b>{summary}</b><ChevronDown size={14}/></summary><div>
+  {running.length>0&&<section className="activity-group running"><h3>执行中</h3>{runningStart.map(row)}{runningMiddle.length>0&&<details className="activity-history"><summary>另有 {runningMiddle.length} 个正在执行</summary>{runningMiddle.map(row)}</details>}{runningEnd.map(row)}</section>}
+  {failures.length>0&&<section className="activity-group failed"><h3>失败或中断</h3>{olderFailures.length>0&&<details className="activity-history"><summary>较早的 {olderFailures.length} 个失败步骤</summary>{olderFailures.map(row)}</details>}{recentFailures.map(row)}</section>}
+  {completed.length>0&&<section className="activity-group completed"><h3>已完成</h3>{olderCompleted.length>0&&<details className="activity-history"><summary>较早的 {olderCompleted.length} 个已完成步骤</summary>{olderCompleted.map(row)}</details>}{recentCompleted.map(row)}</section>}
+ </div></details>;
 }
 
 function ArtifactRow({item,onOpen}){const mime=item.payload?.mime||'application/octet-stream',url=apiUrl(`artifacts/${item.payload?.artifact_id}`),inline=`${url}?inline=true`,image=mime.startsWith('image/'),video=mime.startsWith('video/');if(image||video)return <section className="artifact-media"><button onClick={()=>onOpen({name:item.summary,mime,url:inline,download:url})}>{image?<img src={inline} alt={item.summary}/>:<video src={inline} preload="metadata" muted/>}<span><Maximize2 size={13}/>{item.summary}{item.payload?.partial?'（未完成任务的文件）':''}</span></button><a href={url} download><Download size={13}/>下载</a></section>;return <a className="artifact-row" href={url} download><File size={16}/><span><b>{item.summary}{item.payload?.partial?'（未完成任务的文件）':''}</b><small>{mime} · {item.payload?.size?`${Math.ceil(item.payload.size/1024)} KB`:''}</small></span><Download size={14}/></a>}

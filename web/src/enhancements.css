@@ -164,6 +164,8 @@
 
 .activity-row { padding: 4px 0; }
 .activity-row small { margin-top: 1px; line-height: 1.35; }
+.activity-group + .activity-group { margin-top: 7px; }
+.activity-group h3 { margin: 7px 0 2px; color: #858680; font-size: 9px; font-weight: 600; }
 .activity-history > summary { padding: 5px 0; }
 
 .artifact-media { position:relative; width:min(520px,calc(100% - 39px)); margin:10px 0 12px 39px; border:1px solid #deded9; border-radius:7px; overflow:hidden; background:#fafaf8; }
