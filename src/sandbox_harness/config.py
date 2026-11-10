@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     gateway_bind_host: str = "172.31.0.1"
     gateway_bind_port: int = Field(default=28600, ge=1024, le=65535)
     gateway_proxy_port: int = Field(default=28601, ge=1024, le=65535)
+    public_proxy_allowlist: list[str] = Field(default_factory=list)
+    public_proxy_denylist: list[str] = Field(default_factory=list)
     gateway_signing_key: str = Field(default="development-only-change-me", min_length=16)
     gateway_control_key: str = Field(default="development-control-change-me", min_length=16)
     session_signing_key: str = Field(default="development-session-change-me", min_length=16)

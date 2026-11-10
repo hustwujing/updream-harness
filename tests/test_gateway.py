@@ -11,6 +11,15 @@ def test_gateway_normalizes_native_client_v1_paths_against_versioned_base_url():
     assert upstream_suffix(prefix + "/messages", prefix) == "/messages"
 
 
+def test_gateway_rejects_invalid_public_proxy_policy_at_startup(tmp_path):
+    from sandbox_harness.config import Settings
+    from sandbox_harness.gateway import create_gateway
+    settings=Settings(backend='fake',database_url='sqlite+aiosqlite:///'+str(tmp_path/'gateway.db'),
+        public_proxy_allowlist=['https://example.com'])
+    with pytest.raises(ValueError,match='Invalid public proxy destination rule'):
+        create_gateway(settings)
+
+
 async def test_gateway_fails_model_request_when_upstream_never_starts_response():
     class Client:
         async def send(self, request, stream):

@@ -22,7 +22,7 @@ from .domain import Harness
 from .model_routes import ModelRoutes
 from .model_activity import ModelActivity
 from .store import Store
-from .public_proxy import start_proxy
+from .public_proxy import DestinationPolicy, start_proxy
 
 
 logger = logging.getLogger(__name__)
@@ -73,6 +73,7 @@ async def bytes_with_idle_timeout(response, timeout_seconds: float):
 def create_gateway(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     validate_service_settings(settings)
+    public_policy = DestinationPolicy(settings.public_proxy_allowlist, settings.public_proxy_denylist)
     codec = CapabilityCodec(settings.gateway_signing_key)
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     active: dict[str, set[httpx.Response]] = defaultdict(set)
@@ -112,7 +113,8 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
                 raise ValueError("Proxy capability is revoked or exhausted")
             return claims
 
-        proxy = await start_proxy(settings.gateway_bind_host, settings.gateway_proxy_port, authorize_public, connections=public_connections)
+        proxy = await start_proxy(settings.gateway_bind_host, settings.gateway_proxy_port, authorize_public,
+            connections=public_connections, policy=public_policy)
         try:
             yield
         finally:
@@ -129,7 +131,9 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health")
     async def health():
-        return {"status": "ok","observability":telemetry().status() if telemetry() else {"enabled":False}}
+        return {"status": "ok","observability":telemetry().status() if telemetry() else {"enabled":False},
+            "public_proxy_policy":{"mode":"allowlist" if public_policy.allowlist else "public",
+                "allowlist_rules":len(public_policy.allowlist),"denylist_rules":len(public_policy.denylist)}}
 
     @app.post("/internal/revoke/{nonce}")
     async def revoke(nonce: str, request: Request):

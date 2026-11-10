@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from dataclasses import dataclass
 import ipaddress
+import re
 import socket
 import time
 from .observability import event,bind,operation,enrich,add_link,observed
@@ -12,6 +14,86 @@ from urllib.parse import urlsplit
 
 MAX_HEADER = 64 * 1024
 ALLOWED_PORTS = {80, 443}
+DOMAIN_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+
+
+class DestinationDenied(ValueError):
+    pass
+
+
+def normalize_host(value: str) -> str:
+    host = value.strip().strip("[]").rstrip(".").lower()
+    if not host or "://" in host or any(character in host for character in "/?#@"):
+        raise ValueError("Invalid proxy destination")
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        try:
+            host = host.encode("idna").decode("ascii")
+        except UnicodeError as exc:
+            raise ValueError("Invalid proxy destination") from exc
+        if len(host) > 253 or not all(DOMAIN_LABEL.fullmatch(label) for label in host.split(".")):
+            raise ValueError("Invalid proxy destination")
+        return host
+
+
+@dataclass(frozen=True)
+class DestinationRule:
+    domain: str = ""
+    network: ipaddress.IPv4Network | ipaddress.IPv6Network | None = None
+    wildcard: bool = False
+    any_destination: bool = False
+
+    @classmethod
+    def parse(cls, raw: str) -> "DestinationRule":
+        value = raw.strip().lower()
+        if value == "*":
+            return cls(any_destination=True)
+        wildcard = value.startswith("*.")
+        candidate = value[2:] if wildcard else value
+        if not wildcard:
+            try:
+                return cls(network=ipaddress.ip_network(candidate, strict=False))
+            except ValueError:
+                pass
+        if "/" in candidate or not candidate:
+            raise ValueError(f"Invalid public proxy destination rule: {raw!r}")
+        domain = normalize_host(candidate)
+        try:
+            ipaddress.ip_address(domain)
+        except ValueError:
+            return cls(domain=domain, wildcard=wildcard)
+        raise ValueError(f"Invalid public proxy destination rule: {raw!r}")
+
+    def matches_host(self, host: str) -> bool:
+        if self.any_destination:
+            return True
+        if not self.domain:
+            return False
+        return host.endswith("." + self.domain) if self.wildcard else host == self.domain
+
+    def matches_address(self, address: str) -> bool:
+        return self.any_destination or bool(self.network and ipaddress.ip_address(address) in self.network)
+
+
+class DestinationPolicy:
+    def __init__(self, allowlist=(), denylist=()):
+        self.allowlist = tuple(DestinationRule.parse(value) for value in allowlist)
+        self.denylist = tuple(DestinationRule.parse(value) for value in denylist)
+
+    def check(self, host: str, addresses: set[str]) -> None:
+        if any(rule.matches_host(host) for rule in self.denylist):
+            raise DestinationDenied("Proxy destination is denied")
+        if any(rule.matches_address(address) for rule in self.denylist for address in addresses):
+            raise DestinationDenied("Proxy destination address is denied")
+        if not self.allowlist:
+            return
+        allowed_by_name = any(rule.matches_host(host) for rule in self.allowlist)
+        allowed_by_address = bool(addresses) and all(
+            any(rule.matches_address(address) for rule in self.allowlist) for address in addresses
+        )
+        if not allowed_by_name and not allowed_by_address:
+            raise DestinationDenied("Proxy destination is outside the allowlist")
 
 
 async def reject(writer: asyncio.StreamWriter, status: int, code: str) -> None:
@@ -27,13 +109,15 @@ def public_address(value: str) -> bool:
     return address.is_global and not address.is_multicast
 
 
-async def resolve_public(host: str, port: int) -> str:
+async def resolve_public(host: str, port: int, policy: DestinationPolicy | None = None) -> str:
     if port not in ALLOWED_PORTS:
         raise ValueError("Proxy destination port is not allowed")
+    host = normalize_host(host)
     rows = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
     addresses = {row[4][0] for row in rows}
     if not addresses or any(not public_address(address) for address in addresses):
         raise ValueError("Proxy destination is not public")
+    (policy or DestinationPolicy()).check(host, addresses)
     return sorted(addresses)[0]
 
 
@@ -63,7 +147,8 @@ def proxy_token(headers: dict[str, str]) -> str:
 
 
 @observed("public_proxy.request",new_trace=True)
-async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, authorize, *, connections=None) -> None:
+async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, authorize, *, connections=None,
+        policy: DestinationPolicy | None = None) -> None:
     upstream_writer = None
     registered_nonce = None
     expiry = None
@@ -109,7 +194,7 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
             if not separator or not host:
                 raise ValueError("Invalid CONNECT target")
             port = int(port_text)
-            address = await resolve_public(host.strip("[]"), port)
+            address = await resolve_public(host, port, policy)
             upstream_reader, upstream_writer = await asyncio.open_connection(address, port)
             writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             await writer.drain()
@@ -119,7 +204,7 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
         if parsed.scheme != "http" or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("Proxy requires an absolute HTTP URL")
         port = parsed.port or 80
-        address = await resolve_public(parsed.hostname, port)
+        address = await resolve_public(parsed.hostname, port, policy)
         upstream_reader, upstream_writer = await asyncio.open_connection(address, port)
         path = parsed.path or "/"
         if parsed.query:
@@ -137,7 +222,8 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
     except (ValueError, asyncio.IncompleteReadError, asyncio.LimitOverrunError, asyncio.TimeoutError) as exc:
         event("public_proxy.rejected",level=logging.WARNING,exc=exc,**log_context)
         if not writer.is_closing():
-            code = "destination_timeout" if isinstance(exc, asyncio.TimeoutError) else "destination_rejected"
+            code = ("destination_timeout" if isinstance(exc, asyncio.TimeoutError) else
+                "destination_denied" if isinstance(exc, DestinationDenied) else "destination_rejected")
             await reject(writer,403,code)
     except (ConnectionError, OSError) as exc:
         event("public_proxy.failed",level=logging.ERROR,exc=exc,**log_context)
@@ -158,8 +244,9 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
         writer.close()
 
 
-async def start_proxy(host: str, port: int, authorize, *, connections=None) -> asyncio.Server:
+async def start_proxy(host: str, port: int, authorize, *, connections=None,
+        policy: DestinationPolicy | None = None) -> asyncio.Server:
     async def handle(reader, writer):
-        await handle_proxy(reader, writer, authorize, connections=connections)
+        await handle_proxy(reader, writer, authorize, connections=connections, policy=policy)
 
     return await asyncio.start_server(handle, host, port, limit=MAX_HEADER + 1)

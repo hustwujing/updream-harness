@@ -13,6 +13,14 @@ def test_opensandbox_environment_contract(monkeypatch):
     assert settings.opensandbox_api_key == "secret-key"
 
 
+def test_public_proxy_policy_lists_load_from_json_environment(monkeypatch):
+    monkeypatch.setenv("SANDBOX_HARNESS_PUBLIC_PROXY_ALLOWLIST", '["example.com","*.example.net"]')
+    monkeypatch.setenv("SANDBOX_HARNESS_PUBLIC_PROXY_DENYLIST", '["blocked.example.com","203.0.113.0/24"]')
+    settings = Settings(_env_file=None)
+    assert settings.public_proxy_allowlist == ["example.com", "*.example.net"]
+    assert settings.public_proxy_denylist == ["blocked.example.com", "203.0.113.0/24"]
+
+
 def test_model_routes_allow_distinct_upstreams_and_credential_references(monkeypatch):
     monkeypatch.setenv("CODEX_FAST_KEY", "fast-secret")
     settings = Settings(_env_file=None, upstream_codex="http://default.example",
