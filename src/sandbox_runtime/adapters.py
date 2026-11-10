@@ -93,7 +93,7 @@ def control_interaction_response(interaction_id: str, response: dict) -> bytes:
         ensure_ascii=False, separators=(",", ":")) + "\n").encode()
 
 
-def normalize(harness: str, line: str) -> dict:
+def normalize(harness: str, line: str, state: dict | None = None) -> dict:
     try:
         value = json.loads(line)
     except (ValueError, TypeError):
@@ -171,7 +171,30 @@ def normalize(harness: str, line: str) -> dict:
             return {"kind": "text_delta", "payload": {"text": delta.get("text", "")}}
         if native.get("type") == "content_block_start" and (native.get("content_block") or {}).get("type") == "tool_use":
             block = native["content_block"]
+            if state is not None:
+                state.setdefault("claude_tool_blocks", {})[str(native.get("index", ""))] = {
+                    "name": block.get("name", "tool"), "tool_use_id": block.get("id", ""),
+                    "input": block.get("input") or {}, "partial_json": "",
+                }
+                return None
             return {"kind": "tool_started", "payload": {"name": block.get("name", "tool"), "tool_use_id": block.get("id", ""), "detail": block.get("input") or {}}}
+        if state is not None and native.get("type") == "content_block_delta" and delta.get("type") == "input_json_delta":
+            block = state.setdefault("claude_tool_blocks", {}).get(str(native.get("index", "")))
+            if block is not None:
+                block["partial_json"] += str(delta.get("partial_json") or "")
+            return None
+        if state is not None and native.get("type") == "content_block_stop":
+            block = state.setdefault("claude_tool_blocks", {}).pop(str(native.get("index", "")), None)
+            if block is not None:
+                detail = block["input"]
+                if block["partial_json"]:
+                    try:
+                        streamed = json.loads(block["partial_json"])
+                        detail = {**detail, **streamed} if isinstance(streamed, dict) else {"input": streamed}
+                    except ValueError:
+                        detail = {**detail, "raw_input": block["partial_json"]}
+                return {"kind": "tool_started", "payload": {"name": block["name"],
+                    "tool_use_id": block["tool_use_id"], "detail": detail}}
         return None
     if harness == "claude" and kind == "system" and value.get("subtype") == "init":
         return {"kind": "step_finished", "payload": {"name": "Claude session", "thread_id": value.get("session_id", "")}}

@@ -112,6 +112,7 @@ class Execution:
     condition: asyncio.Condition = field(default_factory=asyncio.Condition)
     reader_task: asyncio.Task | None = None
     journal_bytes: int = 0
+    protocol_state: dict[str, Any] = field(default_factory=dict)
 
 
 def safe_relative(value: str) -> Path:
@@ -253,7 +254,7 @@ def create_app() -> FastAPI:
                     native = json.loads(decoded)
                 except (TypeError, ValueError):
                     native = {}
-                event = normalize(harness, decoded)
+                event = normalize(harness, decoded, execution.protocol_state)
                 terminal_input = (
                     native.get("type") == "harness.input.completed"
                     if execution.selected.control_input else native.get("type") == "result"

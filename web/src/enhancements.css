@@ -149,6 +149,8 @@
   color: #5f7e5b;
 }
 
+.activity-history > summary { padding: 8px 0; color: #858680; font-size: 9px; cursor: pointer; }
+
 .interaction-card { margin: 10px 0 14px 39px; padding: 12px; border: 1px solid #d9d9d4; border-radius: 7px; background: #fafaf8; }
 .interaction-card header { display: flex; align-items: center; gap: 8px; font-size: 11px; }
 .interaction-card header small { margin-left: auto; color: #888983; font-size: 9px; }

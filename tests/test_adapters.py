@@ -25,6 +25,23 @@ def test_claude_non_public_protocol_frames_are_not_transcript_steps():
     })) is None
 
 
+def test_claude_streamed_tool_input_is_emitted_once_with_complete_arguments():
+    state = {}
+    frames = [
+        {"type":"stream_event","event":{"type":"content_block_start","index":1,
+            "content_block":{"type":"tool_use","id":"tool-1","name":"Bash","input":{}}}},
+        {"type":"stream_event","event":{"type":"content_block_delta","index":1,
+            "delta":{"type":"input_json_delta","partial_json":"{\"command\":\"pwd\","}}},
+        {"type":"stream_event","event":{"type":"content_block_delta","index":1,
+            "delta":{"type":"input_json_delta","partial_json":"\"description\":\"Inspect workspace\"}"}}},
+        {"type":"stream_event","event":{"type":"content_block_stop","index":1}},
+    ]
+    events = [normalize("claude", json.dumps(frame), state) for frame in frames]
+    assert events[:3] == [None, None, None]
+    assert events[3] == {"kind":"tool_started","payload":{"name":"Bash","tool_use_id":"tool-1",
+        "detail":{"command":"pwd","description":"Inspect workspace"}}}
+
+
 def test_codex_agent_message_and_thread_are_normalized():
     thread = normalize("codex", json.dumps({"type": "thread.started", "thread_id": "thread-1"}))
     message = normalize("codex", json.dumps({
