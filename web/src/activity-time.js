@@ -13,6 +13,7 @@ export function formatDuration(milliseconds){
  return `${Math.floor(minutes/60)} 小时 ${minutes%60} 分 ${rest} 秒`;
 }
 export function activityTiming(item,active,now,turnEndedAt){
+ if(item.payload?.model_request_id&&item.status==='interrupted')return {running:false,label:'耗时未确认'};
  const running=active&&item.status==='in_progress';
  const start=timestamp(item.created_at);
  const end=running?now:timestamp(item.status==='in_progress'?turnEndedAt:item.updated_at);

@@ -75,6 +75,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     active: dict[str, set[httpx.Response]] = defaultdict(set)
     public_connections: dict[str, set[asyncio.Task]] = defaultdict(set)
+    timing_finalizers: set[asyncio.Task] = set()
     clients: dict[str, httpx.AsyncClient] = {}
     model_routes = ModelRoutes(settings)
     activity_store = Store(settings.database_url, settings.redis_url, settings.redis_prefix)
@@ -116,6 +117,8 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             proxy.close()
             await proxy.wait_closed()
             await redis.aclose()
+            if timing_finalizers:
+                await asyncio.gather(*timing_finalizers, return_exceptions=True)
             await activity_store.close()
             await asyncio.gather(*(client.aclose() for client in clients.values()))
 
@@ -230,19 +233,31 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
                     async for chunk in bytes_with_idle_timeout(response, settings.gateway_model_idle_timeout_seconds):
                         if activity:
                             await activity.observe(chunk)
+                            if activity.probe.completed or activity.probe.failed:
+                                # Commit before forwarding the terminal frame: native
+                                # clients may close the HTTP stream immediately after it.
+                                await activity.finish(response.status_code)
                         yield chunk
             except BaseException as exc:
                 stream_error = "" if activity and activity.probe.completed and isinstance(exc, asyncio.CancelledError) else type(exc).__name__
                 raise
             finally:
-                if activity:
-                    if response.status_code == 200 and "text/event-stream" in response.headers.get("content-type", "") and not activity.probe.completed:
-                        stream_error = stream_error or "stream_incomplete"
-                    await activity.finish(response.status_code, stream_error)
-                active[claims.nonce].discard(response)
-                if not active[claims.nonce]:
-                    active.pop(claims.nonce, None)
-                await response.aclose()
+                if activity and response.status_code == 200 and "text/event-stream" in response.headers.get("content-type", "") and not activity.probe.completed:
+                    stream_error = stream_error or "stream_incomplete"
+                async def finalize():
+                    try:
+                        await response.aclose()
+                    finally:
+                        active[claims.nonce].discard(response)
+                        if not active[claims.nonce]:
+                            active.pop(claims.nonce, None)
+                        if activity:
+                            await activity.finish(response.status_code, stream_error)
+                # ASGI disconnect cancellation must not cancel the durable receipt.
+                finalizer = asyncio.create_task(finalize())
+                timing_finalizers.add(finalizer)
+                finalizer.add_done_callback(timing_finalizers.discard)
+                await asyncio.shield(finalizer)
 
         response_headers = {key: value for key, value in response.headers.items() if key.lower() not in HOP_HEADERS | {"content-encoding"}}
         return StreamingResponse(content(), status_code=response.status_code, headers=response_headers, media_type=response.headers.get("content-type"))
