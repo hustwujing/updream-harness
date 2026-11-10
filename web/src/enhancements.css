@@ -45,6 +45,9 @@
 .thread-list .thread-entry .thread-delete { display:grid; place-items:center; width:24px; height:24px; padding:0; opacity:0; color:#81827c; }
 .thread-entry:hover .thread-delete,.thread-entry.active .thread-delete { opacity:1; }
 .thread-delete:disabled { opacity:.2!important; cursor:default; }
+.thread-search:focus-within { color:#454642; }
+.thread-search input[type="search"]::-webkit-search-cancel-button { cursor:pointer; }
+.thread-empty { margin:24px 8px; color:#92928c; font-size:10px; text-align:center; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .composer-config label {

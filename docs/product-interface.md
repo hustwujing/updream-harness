@@ -81,6 +81,11 @@ The Workspace side sheet lists current project assets and artifacts, version his
 
 The current Thread ID is stored in the page query string. Refresh and browser history restore only Threads owned by the signed browser identity. Terminal Threads can be deleted from the sidebar; active Threads must first finish or be stopped.
 
+The sidebar search filters the already loaded owner-scoped Thread summaries by
+title, Harness, model and current status. Matching is case-insensitive and uses
+Unicode compatibility normalization; an empty query restores the Today/Previous
+grouping and a query with no matches shows an explicit empty result.
+
 ## Responsive Behavior
 
 On narrow screens the thread list and artifact viewer are independent drawers. The composer and transcript remain the main surface. Tool details default to collapsed, long lines wrap, and controls retain stable dimensions.

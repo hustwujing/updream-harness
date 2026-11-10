@@ -34,6 +34,7 @@ function writeThreadUrl(id,mode='push'){const url=new URL(location.href);if(id)u
 function defaultSettings(options){const selected=options.find(item=>item.id==='codex'&&item.available!==false)||options.find(item=>item.available!==false)||options[0],model=selected.models.find(item=>item.id===selected.default_model&&item.available!==false)||selected.models.find(item=>item.available!==false)||selected.models[0],level=model.reasoning[Math.min(1,model.reasoning.length-1)];return {harness:selected.id,model:model.id,reasoning_level:level.id}}
 function availableThreadSettings(options,current){return current.model?current:defaultSettings(options)}
 function groupThreads(rows){const today=[],previous=[];for(const row of rows)(Date.now()-new Date(row.updated_at).getTime()<86400000?today:previous).push(row);return {today,previous};}
+function searchText(value){return String(value||'').normalize('NFKC').toLocaleLowerCase()}
 function compactValue(value){if(value==null)return '';if(typeof value==='string')return value;if(typeof value==='number'||typeof value==='boolean')return String(value);if(typeof value==='object'){const selected=value.command||value.filePath||value.path||value.stdout||value.content||value.error||value.message;if(selected)return compactValue(selected);try{return JSON.stringify(value)}catch{return ''}}return ''}
 function parsedToolDetail(item){const raw=item.payload?.detail||{},parse=value=>{if(typeof value!=='string')return value;try{return JSON.parse(value)}catch{return value}},detail=parse(raw),argumentsValue=parse(detail?.arguments);return typeof argumentsValue==='object'&&argumentsValue?{...detail,...argumentsValue}:detail}
 function displayItem(item,turn){
@@ -54,13 +55,16 @@ function activityDetail(item){if(item.payload?.model_request_id){const p=item.pa
 function ActivityStatus({status,active}){if(status==='in_progress'&&active)return <LoaderCircle className="activity-status running" size={14} aria-label="执行中"/>;if(status==='completed')return <CircleCheck className="activity-status completed" size={14} aria-label="执行完成"/>;return <CircleX className="activity-status failed" size={14} aria-label={status==='interrupted'||status==='in_progress'?'执行中断':'执行错误'}/>}
 
 function Sidebar({threads,readTurns,current,onSelect,onNew,onDelete,open,onClose}){
- const groups=groupThreads(threads);
+ const [query,setQuery]=useState(''),needle=searchText(query.trim());
+ const filtered=needle?threads.filter(thread=>searchText([thread.title,thread.harness,harnessLabels[thread.harness],thread.model,statusLabels[thread.latest_turn_state]].join(' ')).includes(needle)):threads;
+ const groups=groupThreads(filtered);
  return <aside className={`sidebar ${open?'open':''}`}>
   <div className="sidebar-head"><button className="brand" onClick={onNew}><img className="brand-mark" src={brandMark} alt=""/><b>updream-harness</b></button><button className="icon-button mobile-only" onClick={onClose} aria-label="关闭会话列表"><X size={17}/></button></div>
   <button className="new-thread" onClick={onNew}><Plus size={16}/>新对话</button>
-  <label className="thread-search"><Search size={14}/><input placeholder="搜索对话"/></label>
+  <label className="thread-search"><Search size={14}/><input type="search" aria-label="搜索对话" placeholder="搜索对话" value={query} onChange={event=>setQuery(event.target.value)}/></label>
   <nav className="thread-list">
    {[['今天',groups.today],['之前',groups.previous]].map(([label,rows])=>rows.length?<section key={label}><h2>{label}</h2>{rows.map(thread=>{const running=thread.latest_turn_state&&!terminalStates.has(thread.latest_turn_state),done=thread.unread_completion===true&&readTurns.get(thread.id)!==thread.latest_turn_id;return <div className={`thread-entry ${thread.id===current?.id?'active':''}`} key={thread.id}><button className="thread-select" onClick={()=>onSelect(thread)}><span title={running?'正在执行':done?'已完成，尚未查看':undefined} className={`thread-status ${running?'running':done?'done':''}`}>{running?'':<HarnessIcon harness={thread.harness}/>}</span><span><b>{thread.title}</b><small>{harnessLabels[thread.harness]} · {running?statusLabels[thread.latest_turn_state]:relativeTime(thread.updated_at)}</small></span></button><button className="thread-delete" disabled={running} title={running?'运行中的会话不能删除':'删除会话'} onClick={()=>onDelete(thread)}><Trash2 size={13}/></button></div>})}</section>:null)}
+   {needle&&!filtered.length&&<p className="thread-empty">没有匹配的对话</p>}
   </nav>
   <button className="archive-link"><Archive size={15}/>已归档</button>
  </aside>;
