@@ -10,6 +10,10 @@ import httpx
 from .domain import Harness, identifier
 
 
+class SandboxNotFound(RuntimeError):
+    pass
+
+
 @dataclass
 class Sandbox:
     id: str
@@ -144,6 +148,8 @@ class OpenSandboxBackend:
             "sandbox-harness.io/turn": turn_id,
         }
         response = await self.client.patch(f"/v1/sandboxes/{sandbox.id}/metadata", json=patch)
+        if response.status_code == 404:
+            raise SandboxNotFound("OpenSandbox no longer has sandbox " + sandbox.id)
         response.raise_for_status()
         sandbox.metadata.pop("sandbox-harness.io/pool", None)
         sandbox.metadata.update({
@@ -189,6 +195,8 @@ class FakeSandboxBackend:
             if item.metadata.get("sandbox-harness.io/namespace") == self.namespace]
 
     async def bind(self, sandbox: Sandbox, thread_id: str, turn_id: str) -> None:
+        if sandbox.id not in self.items:
+            raise SandboxNotFound("Fake backend no longer has sandbox " + sandbox.id)
         sandbox.metadata.pop("sandbox-harness.io/pool", None)
         sandbox.metadata.update({
             "sandbox-harness.io/thread": thread_id,

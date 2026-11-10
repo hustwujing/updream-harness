@@ -214,3 +214,31 @@ async def test_concurrent_claims_atomically_evict_idle_sessions_at_capacity():
     assert first.id in backend.items and second.id in backend.items
     await pool.release(first, keep_attached=False); await pool.release(second, keep_attached=False)
     await pool.close()
+
+
+async def test_expired_warm_sandbox_is_replaced_during_claim():
+    backend = FakeSandboxBackend()
+    targets = {harness: (1 if harness == Harness.CLAUDE else 0) for harness in Harness}
+    pool = SandboxPool(backend, {harness: "" for harness in Harness}, targets, max_sandboxes=2)
+    await pool.fill()
+    expired = pool._warm[Harness.CLAUDE][0]
+    await backend.delete(expired)
+    claimed = await pool.acquire(thread_id="thread", turn_id="turn", harness=Harness.CLAUDE, environment={})
+    assert claimed.id != expired.id
+    assert claimed.id in backend.items
+    await pool.release(claimed, keep_attached=False)
+    await pool.close()
+
+
+async def test_expired_attached_sandbox_is_replaced_during_reacquire():
+    backend = FakeSandboxBackend()
+    pool = SandboxPool(backend, {harness: "" for harness in Harness}, {harness: 0 for harness in Harness},
+        max_sandboxes=2)
+    expired = await pool.acquire(thread_id="thread", turn_id="one", harness=Harness.CLAUDE, environment={})
+    await pool.release(expired, keep_attached=True, keepalive_seconds=60)
+    await backend.delete(expired)
+    claimed = await pool.acquire(thread_id="thread", turn_id="two", harness=Harness.CLAUDE, environment={})
+    assert claimed.id != expired.id
+    assert claimed.id in backend.items
+    await pool.release(claimed, keep_attached=False)
+    await pool.close()

@@ -6,7 +6,7 @@ import logging
 import time
 
 from .domain import Harness, identifier
-from .sandbox import Sandbox, SandboxBackend
+from .sandbox import Sandbox, SandboxBackend, SandboxNotFound
 
 
 logger = logging.getLogger(__name__)
@@ -85,9 +85,14 @@ class SandboxPool:
             attached = self._attached.get(thread_id)
             if attached and attached.harness == harness:
                 self._idle_since.pop(thread_id, None)
-                await self.backend.bind(attached, thread_id, turn_id)
-                attached.turn_id = turn_id
-                return attached
+                try:
+                    await self.backend.bind(attached, thread_id, turn_id)
+                    attached.turn_id = turn_id
+                    return attached
+                except SandboxNotFound:
+                    self._attached.pop(thread_id, None)
+                    self._user_slots.release()
+                    attached = None
             if attached:
                 await self.backend.delete(attached)
                 self._attached.pop(thread_id, None)
@@ -121,8 +126,17 @@ class SandboxPool:
                 if sandbox:
                     # Pristine warm instances do not contain a user token. Runtime injection
                     # happens through its control endpoint after ownership is frozen.
-                    await self.backend.bind(sandbox, thread_id, turn_id)
-                    sandbox.warm = False
+                    try:
+                        await self.backend.bind(sandbox, thread_id, turn_id)
+                        sandbox.warm = False
+                    except SandboxNotFound:
+                        sandbox = await self.backend.create(
+                            harness,
+                            self.images[harness],
+                            {"sandbox-harness.io/thread": thread_id, "sandbox-harness.io/turn": turn_id,
+                             "sandbox-harness.io/harness": harness.value},
+                            environment,
+                        )
                 else:
                     sandbox = await self.backend.create(
                         harness,
