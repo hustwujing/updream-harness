@@ -117,3 +117,16 @@ def test_append_input_delivery_error_is_controlled_and_visible(tmp_path):
         assert inputs[-1]["status"] == "failed"
         items = client.get(f"/api/threads/{thread['id']}/items").json()
         assert items[-1]["summary"] == "follow up" and items[-1]["status"] == "failed"
+
+
+def test_slow_model_probe_does_not_block_api_startup(tmp_path, monkeypatch):
+    import asyncio
+    async def unavailable(self):
+        await asyncio.Event().wait()
+    monkeypatch.setattr('sandbox_harness.model_discovery.ModelDiscovery.refresh', unavailable)
+    settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'startup.db'),
+        redis_url='',backend='fake',object_backend='local',model_catalog_discovery=True,
+        session_signing_key='startup-browser-session-secret')
+    with TestClient(create_app(settings)) as client:
+        assert client.get('/api/health').status_code==200
+        assert client.get('/api/catalog/harnesses').status_code==200

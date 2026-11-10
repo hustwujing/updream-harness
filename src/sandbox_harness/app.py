@@ -117,12 +117,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pool_task = None
         catalog_task = None
         if settings.model_catalog_discovery:
-            await discovery.refresh()
-
             async def refresh_catalog():
                 while True:
+                    try:
+                        await discovery.refresh()
+                    except Exception:
+                        logger.exception("Model catalog refresh failed; retaining the previous catalog")
                     await asyncio.sleep(settings.model_catalog_refresh_seconds)
-                    await discovery.refresh()
 
             catalog_task = asyncio.create_task(refresh_catalog(), name="model-catalog-refresh")
         if settings.backend == "opensandbox":

@@ -41,3 +41,8 @@ The API uses 30-second Turn leases, 10-second heartbeats, a 15-second expired-le
 Local UI tests may use SQLite, local content-addressed objects and the explicit fake lifecycle backend. Those results do not count as a deployment or real OpenSandbox validation.
 
 The foundation image tag includes the SHA-256 prefix of `runtime/foundation.Dockerfile`. `runtime/toolchain.lock.json` is verified while building the common runtime base, and the three final Harness images must expose the same locked toolchain before their immutable registry digests are deployed.
+
+Before restarting API/Gateway after adding source files or building the frontend,
+run `bash deploy/check-service-access.sh`. It grants the service user read/traverse
+access only to `src` and `web/dist`, then imports both services and reads every web
+asset as that user. Root-only unit tests do not detect unreadable new modules.
