@@ -78,7 +78,18 @@ The final 21-case capability, interaction, Workspace, background execution, reco
 
 Every Harness image inherits the same immutable foundation with Python, Node.js, ffmpeg/ffprobe, Chromium, Playwright with its pinned Chromium browser, ImageMagick, Three.js, Git, curl, jq, ripgrep, file inspection, GCC/G++, Make, CMake, pkg-config, archive tools and CJK fonts. The common Runtime layer additionally carries NumPy, Pillow, OpenCV, SciPy, scikit-image, librosa, SoundFile, Matplotlib, MoviePy, PyAV, ImageIO, CairoSVG, PSD Tools, rembg/ONNX Runtime, Trimesh and related media libraries. `runtime/media_probe.py` imports the declared modules during every image build. [toolchain.lock.json](runtime/toolchain.lock.json) records the observed foundation command and package versions; image builds fail when the foundation no longer matches it. The deployed Harness images are referenced by registry digest rather than mutable tag.
 
-Sandbox public traffic is best-effort and passes through the capability-checked HTTP/S proxy. Foreign sites may be unavailable because of host routing, DNS interception or the destination's own anti-bot policy. Agents are instructed to stop repeated retries, prefer accessible domestic/public sources or user-provided assets, and report the limitation. For browser access to public pages, use `sandbox-browser-screenshot URL OUTPUT`; it launches Chromium with the Turn's authenticated proxy. Raw Chromium has no direct Internet route.
+## Public Network Policy
+
+Sandboxes have no direct public route. The Runtime injects a short-lived Turn capability into standard `HTTP_PROXY` and `HTTPS_PROXY` variables, so libraries such as Requests use the authenticated Gateway automatically. `sandbox-browser-screenshot URL OUTPUT` uses the same Gateway for the page, redirects and subresources; raw Chromium cannot bypass it.
+
+The Gateway permits only public addresses on ports 80 and 443, rejects private, loopback, link-local, reserved and cloud-metadata addresses, and applies configurable destination rules after DNS resolution:
+
+```dotenv
+SANDBOX_HARNESS_PUBLIC_PROXY_ALLOWLIST=["bilibili.com","*.bilibili.com"]
+SANDBOX_HARNESS_PUBLIC_PROXY_DENYLIST=[]
+```
+
+Rules may be exact domains, wildcard subdomains, individual IPs or CIDRs. An empty allowlist permits every otherwise-valid public destination; a non-empty allowlist changes the default to deny. The denylist always takes precedence, including over a permitted domain whose resolved address is denied. HTTPS encryption means policy can filter hosts and resolved addresses, but not URL paths. See [gateway.md](docs/gateway.md) for the complete contract.
 
 Runtime boundary handling: execution creation and stdin submission are serialized. An input ID is bound to its original body; a replay returns the existing execution and conflicting content is rejected before attachment metadata changes. Streaming Harnesses must acknowledge their pending inputs: EOF alone is not success. Protocol failures and cancellation quiesce the Harness process group and supervised background jobs before publishing a terminal result; jobs ignoring SIGTERM are killed after a bounded grace period.
 
