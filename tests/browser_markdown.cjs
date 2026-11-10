@@ -20,7 +20,7 @@ const assert=require('node:assert/strict');
    else if(path.includes('/artifacts/'))return route.fulfill({status:200,contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==','base64')});
    await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(data)});
   });
-  await page.goto('http://127.0.0.1:22892/?thread=markdown-thread');
+  await page.goto((process.env.TEST_BASE_URL||'http://127.0.0.1:22892/')+'?thread=markdown-thread');
   await page.waitForSelector('.markdown-copy strong');
   assert.equal(await page.locator('.markdown-copy strong').innerText(),'海豚');
   assert(await page.locator('.agent-avatar img[alt=Codex]').evaluate(img=>img.complete&&img.naturalWidth>0));

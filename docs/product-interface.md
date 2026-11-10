@@ -68,7 +68,14 @@ The transcript follows streaming output only while the user is already near the 
 
 ## File and Artifact Review
 
-Images and videos are rendered directly in the transcript and open into a full-screen ownership-checked preview. The Workspace opens images, videos and text files in the same preview; unsupported types download directly. Transcript artifacts and every Workspace row retain an explicit download action without exposing object-store URLs, runtime credentials or private Harness state.
+Images and videos are grouped into a responsive thumbnail gallery in the
+transcript: four columns on desktop and two on narrow screens. Video thumbnails
+show a non-playing early frame with a play marker. Selecting a tile opens the
+full-screen ownership-checked image/player preview; each tile keeps a separate
+download action. Non-media artifacts remain compact file rows. The Workspace
+opens images, videos and text files in the same preview; unsupported types
+download directly. No surface exposes object-store URLs, Runtime credentials or
+private Harness state.
 
 The Workspace side sheet lists current project assets and artifacts, version history and active supervised background jobs. It supports direct asset upload, rename, deletion, download and background-job cancellation.
 
