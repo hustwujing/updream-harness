@@ -2,7 +2,7 @@ const {chromium}=require('playwright');
 const assert=require('node:assert/strict');
 
 (async()=>{let browser;try{
- browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+ browser=await chromium.launch({headless:true,args:['--no-sandbox'],ignoreDefaultArgs:['--disable-dev-shm-usage']});
  const page=await browser.newPage({viewport:{width:1280,height:800}});
  const now=new Date().toISOString(),catalog=[{id:'codex',label:'Codex',available:true,default_model:'gpt-5.6',models:[{id:'gpt-5.6',label:'GPT-5.6',available:true,reasoning:[{id:'standard',label:'标准'}]}]}];
  let submissions=0;

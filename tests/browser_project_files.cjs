@@ -7,7 +7,7 @@ const fs=require('node:fs');
  assert.ok(token&&threadId,'UI_SESSION_TOKEN and UI_THREAD_ID are required');
  let browser;
  try{
-  browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+  browser=await chromium.launch({headless:true,args:['--no-sandbox'],ignoreDefaultArgs:['--disable-dev-shm-usage']});
   for(const viewport of [{name:'desktop',width:1440,height:900},{name:'mobile',width:390,height:844}]){
    const page=await browser.newPage({viewport});const errors=[];page.on('pageerror',error=>errors.push(error.message));
    await page.context().addCookies([{name:'sandbox_harness_session',value:token,url:'http://127.0.0.1:22766/'}]);

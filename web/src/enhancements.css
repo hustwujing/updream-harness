@@ -112,6 +112,8 @@
 .project-file b,
 .project-file small {
   display: block;
+  width: 100%;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -119,10 +121,10 @@
 
 .project-file-wrap { border-bottom: 1px solid #e8e8e4; }
 .project-file { display: grid; grid-template-columns: 16px minmax(0,1fr) repeat(4,24px); align-items: center; gap: 5px; padding: 7px 0; }
-.project-file > a { min-width: 0; color: #343531; text-decoration: none; }
+.project-file > a { min-width: 0; overflow: hidden; color: #343531; text-decoration: none; }
 .project-file > button { display: grid; place-items: center; width: 24px; height: 24px; border: 0; border-radius: 4px; background: transparent; color: #74756f; }
 .project-file > button:hover { background: #ecece8; }
-.project-file-name { display:block!important; width:100%!important; height:auto!important; min-width:0; padding:0!important; text-align:left; color:#343531!important; }
+.project-file-name { display:block!important; width:100%!important; height:auto!important; min-width:0; overflow:hidden; padding:0!important; text-align:left; color:#343531!important; }
 .project-file-action { display:grid; place-items:center; width:24px; height:24px; border-radius:4px; color:#74756f!important; }
 .project-file-action:hover { background:#ecece8; }
 .project-file-rename { display: flex; gap: 5px; padding: 0 0 8px 22px; }

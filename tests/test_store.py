@@ -36,11 +36,15 @@ async def test_thread_turn_items_and_idempotency(tmp_path):
         await store.set_input_status(claimed.id, "applied")
         assert (await store.list_turn_inputs(turn.id))[0].status == "applied"
         assert (await store.items_after(thread.id))[1].status == "completed"
+        input_event = (await store.events_after(turn.id, 0))[0]
+        assert input_event.kind == EventKind.ITEM_UPDATED
+        assert input_event.payload == {"item_id": input_event.item_id,
+            "status": "completed", "input_id": claimed.id}
         agent = await store.append_agent_delta(thread.id, turn.id, "hel")
         agent = await store.append_agent_delta(thread.id, turn.id, "lo")
         assert agent.summary == "hello"
         event = await store.append_event(turn.id, EventKind.TEXT_DELTA, {"text": "lo"}, item_id=agent.id)
-        assert (await store.events_after(turn.id, 0))[0].sequence == event.sequence
+        assert (await store.events_after(turn.id, input_event.sequence))[0].sequence == event.sequence
         tool = await store.append_item(thread.id, turn.id, ItemType.TOOL, status="in_progress",
             summary="Bash", payload={"tool_use_id": "tool-1"})
         finished = await store.finish_tool_item(turn.id, "tool-1", {

@@ -1,6 +1,8 @@
 from __future__ import annotations
 import asyncio,os,subprocess,uuid,json
+from pathlib import Path
 import httpx
+ROOT=Path(__file__).parents[1]
 async def main():
  async with httpx.AsyncClient(base_url='http://127.0.0.1:22766/',timeout=None,trust_env=False) as client:
   title='LIVE-U-BG-'+uuid.uuid4().hex[:8];thread=(await client.post('api/threads',json={'harness':'claude','model':'claude-sonnet-5-5','reasoning_level':'standard','title':title})).json()
@@ -10,7 +12,9 @@ async def main():
    if any(j['status']=='running' for j in jobs):break
    await asyncio.sleep(.25)
   else:raise TimeoutError('background job')
-  env={**os.environ,'NODE_PATH':'/data/wujing03/node_modules','UI_SESSION_TOKEN':client.cookies.get('sandbox_harness_session'),'UI_THREAD_TITLE':title}
+  env={**os.environ,'NODE_PATH':str(ROOT/'web/node_modules'),
+      'PLAYWRIGHT_BROWSERS_PATH':str(ROOT/'.data/playwright-browsers'),
+      'TMPDIR':str(ROOT/'.data/tmp'),'UI_SESSION_TOKEN':client.cookies.get('sandbox_harness_session'),'UI_THREAD_TITLE':title}
   subprocess.run(['node','tests/browser_live_background.cjs'],env=env,check=True)
   final=None
   for _ in range(240):

@@ -42,6 +42,7 @@ TERMINAL = {TurnState.WAITING_USER, TurnState.COMPLETED, TurnState.FAILED, TurnS
 
 
 class EventKind(StrEnum):
+    ITEM_UPDATED = "item.updated"
     TEXT_DELTA = "text_delta"
     STEP_STARTED = "step_started"
     STEP_PROGRESS = "step_progress"

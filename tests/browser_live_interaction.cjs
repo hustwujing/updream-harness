@@ -5,7 +5,7 @@ const assert=require('node:assert/strict');
  const token=process.env.UI_SESSION_TOKEN,title=process.env.UI_THREAD_TITLE;
  assert.ok(token&&title);let browser;
  try{
-  browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+  browser=await chromium.launch({headless:true,args:['--no-sandbox'],ignoreDefaultArgs:['--disable-dev-shm-usage']});
   const desktop=await browser.newPage({viewport:{width:1440,height:900}});const errors=[];
   desktop.on('pageerror',error=>errors.push(error.message));
   await desktop.context().addCookies([{name:'sandbox_harness_session',value:token,url:'http://127.0.0.1:22766/'}]);

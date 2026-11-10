@@ -628,6 +628,9 @@ class Store:
         return self.input_view(row)
 
     async def set_input_status(self, input_id: str, status: str, delivery_mode: str | None = None) -> None:
+        updated_item_id = ""
+        turn_id = ""
+        item_status = ""
         async with self.connections.begin() as db:
             row = await db.get(TurnInputRow, input_id, with_for_update=True)
             if row:
@@ -643,8 +646,17 @@ class Store:
                 item = next((candidate for candidate in items
                     if json.loads(candidate.payload_json).get("input_id") == input_id), None)
                 if item:
-                    item.status = {"applied":"completed", "failed":"failed"}.get(status, "in_progress")
-                    item.updated_at = now()
+                    next_status = {"applied":"completed", "failed":"failed"}.get(status, "in_progress")
+                    if item.status != next_status:
+                        item.status = next_status
+                        item.updated_at = now()
+                        updated_item_id = item.id
+                        turn_id = row.turn_id
+                        item_status = next_status
+        if updated_item_id:
+            await self.append_event(turn_id, EventKind.ITEM_UPDATED,
+                {"item_id": updated_item_id, "status": item_status, "input_id": input_id},
+                item_id=updated_item_id)
 
     async def get_turn_input(self, input_id: str) -> TurnInputView | None:
         async with self.connections() as db:

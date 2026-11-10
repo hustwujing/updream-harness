@@ -8,7 +8,13 @@ Type=simple
 User=sandbox-harness
 Group=sandbox-harness
 WorkingDirectory=/data2/wujing03/sandbox-harness-platform
-EnvironmentFile=/etc/sandbox-harness/platform.env
+EnvironmentFile=/data2/wujing03/sandbox-harness-platform/.data/config/platform.env
+Environment=TMPDIR=/data2/wujing03/sandbox-harness-platform/.data/tmp
+Environment=XDG_CACHE_HOME=/data2/wujing03/sandbox-harness-platform/.data/cache
+Environment=PIP_CACHE_DIR=/data2/wujing03/sandbox-harness-platform/.data/pip-cache
+Environment=UV_CACHE_DIR=/data2/wujing03/sandbox-harness-platform/.data/uv-cache
+Environment=npm_config_cache=/data2/wujing03/sandbox-harness-platform/.data/npm-cache
+Environment=PLAYWRIGHT_BROWSERS_PATH=/data2/wujing03/sandbox-harness-platform/.data/playwright-browsers
 ExecStart=/data2/wujing03/sandbox-harness-platform/.venv/bin/sandbox-harness-gateway
 Restart=on-failure
 RestartSec=3
@@ -16,7 +22,8 @@ TimeoutStopSec=15
 KillMode=control-group
 UMask=0077
 NoNewPrivileges=true
-PrivateTmp=true
+PrivateTmp=false
+TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/data2/wujing03/sandbox-harness-platform/.data
@@ -30,6 +37,8 @@ LockPersonality=true
 MemoryDenyWriteExecute=true
 TasksMax=256
 LimitNOFILE=8192
+StandardOutput=append:/data2/wujing03/sandbox-harness-platform/.data/service-logs/gateway.log
+StandardError=append:/data2/wujing03/sandbox-harness-platform/.data/service-logs/gateway.log
 
 [Install]
 WantedBy=multi-user.target

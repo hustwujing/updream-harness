@@ -1,7 +1,7 @@
 const {chromium}=require('playwright');
 const assert=require('node:assert/strict');
 (async()=>{
- const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+ const browser=await chromium.launch({headless:true,args:['--no-sandbox'],ignoreDefaultArgs:['--disable-dev-shm-usage']});
  try {
   const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.addInitScript(()=>{window.streams=[];window.EventSource=class{constructor(url){this.url=url;this.events={};this.closed=false;window.streams.push(this)}addEventListener(name,fn){this.events[name]=fn}close(){this.closed=true}}});

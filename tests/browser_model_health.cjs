@@ -1,6 +1,6 @@
 const {chromium}=require('playwright');const assert=require('node:assert/strict');
 (async()=>{
- const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+ const browser=await chromium.launch({headless:true,args:['--no-sandbox'],ignoreDefaultArgs:['--disable-dev-shm-usage']});
  try{
   const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.addInitScript(()=>{const original=setInterval;window.catalogTicks=[];window.setInterval=(fn,ms,...args)=>{if(ms===60000)window.catalogTicks.push(fn);return original(fn,ms,...args)};window.EventSource=class{addEventListener(){}close(){}}});

@@ -13,7 +13,7 @@ from sandbox_harness.observability import configure,operation,telemetry,carrier
 FIXTURE="import sys,json\nsys.stdin.readline()\nprint(json.dumps({'type':'result','result':'fixture completed'}),flush=True)\n"
 
 async def main():
-    for key,value in dotenv_values(os.environ.get('SANDBOX_HARNESS_ENV_FILE','/etc/sandbox-harness/platform.env')).items():
+    for key,value in dotenv_values(os.environ.get('SANDBOX_HARNESS_ENV_FILE','/data2/wujing03/sandbox-harness-platform/.data/config/platform.env')).items():
         if value is not None:os.environ[key]=value
     settings=Settings();identity=uuid.uuid4().hex;root=settings.data_root/'observability'/('reuse-'+identity)
     root.mkdir(parents=True);configure('test-reuse',root/'logs')

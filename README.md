@@ -14,7 +14,7 @@ Redis: live event fan-out and short-lived capability revocation
 Object storage: content-addressed checkpoints and artifacts
 ```
 
-Production reuses the host PostgreSQL, Redis, Docker/runsc, OpenSandbox and BOSS/S3 services. This product owns a separate database/role, Redis key prefix, image repository, OpenSandbox metadata namespace and object prefix; it does not deploy another copy of those dependencies.
+Production runs a dedicated PostgreSQL cluster on `127.0.0.1:25432` and reuses the host Redis, Docker/runsc, OpenSandbox and BOSS/S3 services. PostgreSQL data, service logs, caches, browser dependencies, test temporaries and other local writable state stay under `/data2/wujing03/sandbox-harness-platform/.data`; the root filesystem is not used for project-generated data. Shared services remain isolated by Redis key prefix, image repository, OpenSandbox metadata namespace and object prefix.
 
 The Capability Gateway is an infrastructure proxy. It injects model and Provider credentials after validating a Turn-scoped token. It does not understand prompts, plans or media quality.
 
@@ -55,7 +55,7 @@ The browser keeps the selected Thread in `?thread=<id>`, restores it after refre
 ## Development
 
 ```bash
-uv sync --extra test
+UV_CACHE_DIR=.data/uv-cache uv sync --extra test
 .venv/bin/pytest
 .venv/bin/uvicorn sandbox_harness.app:create_app --factory --reload --port 22766
 ```

@@ -12,6 +12,7 @@ import httpx
 
 
 BASE = "http://127.0.0.1:22766/"
+ROOT = Path(__file__).parents[1]
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "WAITING_USER"}
 MODELS = {"codex":"gpt-6-sol", "claude":"claude-sonnet-5-5", "deepseek":"deepseek-v4-pro"}
 
@@ -66,7 +67,9 @@ async def main():
             turn=await start_turn(client,thread,"Use sandbox-interact question --prompt 'Choose output format' --question format='Which format?' --option mp4 --option webm. Parse its JSON response. Write /workspace/outputs/interaction.json with the selected format, verify it, then reply.")
             pending=await wait_interaction(client,thread["id"])
             token=client.cookies.get("sandbox_harness_session")
-            env={**os.environ,"NODE_PATH":"/data/wujing03/node_modules","UI_SESSION_TOKEN":token,"UI_THREAD_TITLE":title}
+            env={**os.environ,"NODE_PATH":str(ROOT/"web/node_modules"),
+                "PLAYWRIGHT_BROWSERS_PATH":str(ROOT/".data/playwright-browsers"),
+                "TMPDIR":str(ROOT/".data/tmp"),"UI_SESSION_TOKEN":token,"UI_THREAD_TITLE":title}
             subprocess.run(["node","tests/browser_live_interaction.cjs"],cwd=Path(__file__).parents[1],env=env,check=True)
             final=await wait_turn(client,turn["id"])
             if final["state"]!="COMPLETED":raise AssertionError(str(final))

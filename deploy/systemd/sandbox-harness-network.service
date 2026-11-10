@@ -9,6 +9,8 @@ Type=oneshot
 RemainAfterExit=true
 ExecStart=/data2/wujing03/sandbox-harness-platform/deploy/network-rule.sh install
 ExecStop=/data2/wujing03/sandbox-harness-platform/deploy/network-rule.sh remove
+StandardOutput=append:/data2/wujing03/sandbox-harness-platform/.data/service-logs/network.log
+StandardError=append:/data2/wujing03/sandbox-harness-platform/.data/service-logs/network.log
 
 [Install]
 WantedBy=multi-user.target

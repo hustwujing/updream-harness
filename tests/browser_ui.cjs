@@ -4,7 +4,7 @@ const assert=require('node:assert/strict');
 (async()=>{
  let browser;
  try{
-  browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+  browser=await chromium.launch({headless:true,args:['--no-sandbox'],ignoreDefaultArgs:['--disable-dev-shm-usage']});
   for(const viewport of [{name:'desktop',width:1440,height:960},{name:'short-desktop',width:1280,height:600},{name:'mobile',width:390,height:844}]){
    const page=await browser.newPage({viewport});const errors=[];page.on('pageerror',error=>errors.push(error.message));
    await page.goto('http://127.0.0.1:22766/');await page.waitForSelector('.new-thread');

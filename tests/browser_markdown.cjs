@@ -1,7 +1,7 @@
 const {chromium}=require('playwright');
 const assert=require('node:assert/strict');
 (async()=>{
- const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+ const browser=await chromium.launch({headless:true,args:['--no-sandbox'],ignoreDefaultArgs:['--disable-dev-shm-usage']});
  try{
   const page=await browser.newPage({viewport:{width:1280,height:850}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
   const now=new Date().toISOString(),thread={id:'markdown-thread',title:'海豚抠图与合成',harness:'codex',model:'gpt-5.6',reasoning_level:'standard',updated_at:now};

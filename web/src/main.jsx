@@ -119,7 +119,7 @@ function Composer({disabled,running,harnessLocked,settings,setSettings,catalog,o
 function ProjectFiles({title,files,onRename,onDelete,onHistory,onOpen}){
  const [editing,setEditing]=useState(''),[name,setName]=useState(''),[histories,setHistories]=useState({});
  const history=async item=>{if(histories[item.id]){setHistories({...histories,[item.id]:null});return}setHistories({...histories,[item.id]:await onHistory(item)})};
- return <section><h2>{title}</h2>{files.length?files.map(item=>{const url=apiUrl(`project-files/${item.id}`),previewable=item.mime.startsWith('image/')||item.mime.startsWith('video/')||item.mime.startsWith('text/'),label=<><b>{item.path.split('/').at(-1)}</b><small>{item.path} · v{item.version} · {item.size>=1048576?`${(item.size/1048576).toFixed(1)} MB`:`${Math.max(1,Math.ceil(item.size/1024))} KB`}</small></>;return <div className="project-file-wrap" key={item.id}><div className="project-file"><File size={15}/>{previewable?<button className="project-file-name" onClick={()=>onOpen({name:item.path.split('/').at(-1),mime:item.mime,url:`${url}?inline=true`,download:url})}>{label}</button>:<a href={url} download>{label}</a>}<a className="project-file-action" title="下载" href={url} download><Download size={13}/></a><button title="版本记录" onClick={()=>history(item)}><Clock3 size={13}/></button><button title="重命名" onClick={()=>{setEditing(item.id);setName(item.path.split('/').at(-1))}}><Pencil size={13}/></button><button title="删除" onClick={()=>onDelete(item)}><Trash2 size={13}/></button></div>{editing===item.id&&<form className="project-file-rename" onSubmit={async event=>{event.preventDefault();await onRename(item,item.path.split('/').slice(0,-1).concat(name).join('/'));setEditing('')}}><input value={name} onChange={event=>setName(event.target.value)}/><button>保存</button><button type="button" onClick={()=>setEditing('')}>取消</button></form>}{histories[item.id]&&<div className="project-file-history">{histories[item.id].map(version=><small key={version.id}>v{version.version} · {version.deleted?'已删除':new Date(version.created_at).toLocaleString()}</small>)}</div>}</div>}):<p>暂无文件</p>}</section>;
+ return <section><h2>{title}</h2>{files.length?files.map(item=>{const url=apiUrl(`project-files/${item.id}`),filename=item.path.split('/').at(-1),previewable=item.mime.startsWith('image/')||item.mime.startsWith('video/')||item.mime.startsWith('text/'),label=<><b title={filename}>{filename}</b><small title={item.path}>{item.path} · v{item.version} · {item.size>=1048576?`${(item.size/1048576).toFixed(1)} MB`:`${Math.max(1,Math.ceil(item.size/1024))} KB`}</small></>;return <div className="project-file-wrap" key={item.id}><div className="project-file"><File size={15}/>{previewable?<button className="project-file-name" onClick={()=>onOpen({name:filename,mime:item.mime,url:`${url}?inline=true`,download:url})}>{label}</button>:<a href={url} download>{label}</a>}<a className="project-file-action" title="下载" href={url} download><Download size={13}/></a><button title="版本记录" onClick={()=>history(item)}><Clock3 size={13}/></button><button title="重命名" onClick={()=>{setEditing(item.id);setName(filename)}}><Pencil size={13}/></button><button title="删除" onClick={()=>onDelete(item)}><Trash2 size={13}/></button></div>{editing===item.id&&<form className="project-file-rename" onSubmit={async event=>{event.preventDefault();await onRename(item,item.path.split('/').slice(0,-1).concat(name).join('/'));setEditing('')}}><input value={name} onChange={event=>setName(event.target.value)}/><button>保存</button><button type="button" onClick={()=>setEditing('')}>取消</button></form>}{histories[item.id]&&<div className="project-file-history">{histories[item.id].map(version=><small key={version.id}>v{version.version} · {version.deleted?'已删除':new Date(version.created_at).toLocaleString()}</small>)}</div>}</div>}):<p>暂无文件</p>}</section>;
 }
 
 function BackgroundJobs({jobs,onCancel}){return <section><h2>后台任务</h2>{jobs.length?jobs.map(job=><div className="background-job" key={job.id}><span className={job.status==='running'?'activity-pulse':''}/><div><b>{job.name}</b><small>{job.status} · PID {job.pid||'—'}</small>{job.log_tail&&<pre>{job.log_tail}</pre>}</div>{job.status==='running'&&<button onClick={()=>onCancel(job)}><Square size={11}/>停止</button>}</div>):<p>没有后台任务</p>}</section>}
@@ -134,7 +134,7 @@ function Inspector({open,onClose,thread,turn,projectFiles,jobs,onCancelJob,onRef
 }
 
 function App(){
- const [threads,setThreads]=useState([]),[catalog,setCatalog]=useState([]),[thread,setThread]=useState(null),[turns,setTurns]=useState([]),[items,setItems]=useState([]),[interactions,setInteractions]=useState([]),[projectFiles,setProjectFiles]=useState([]),[backgroundJobs,setBackgroundJobs]=useState([]),[sidebar,setSidebar]=useState(false),[inspector,setInspector]=useState(false),[preview,setPreview]=useState(null),[follow,setFollow]=useState(true),[settings,setSettings]=useState({harness:'claude',model:'',reasoning_level:''});const source=useRef(null),refreshTimer=useRef(null),selectedThread=useRef(null),viewEpoch=useRef(0),streamTurn=useRef(null),refreshing=useRef(false),readTurns=useRef(new Map()),reading=useRef(new Set());
+ const [threads,setThreads]=useState([]),[catalog,setCatalog]=useState([]),[thread,setThread]=useState(null),[turns,setTurns]=useState([]),[items,setItems]=useState([]),[interactions,setInteractions]=useState([]),[projectFiles,setProjectFiles]=useState([]),[backgroundJobs,setBackgroundJobs]=useState([]),[sidebar,setSidebar]=useState(false),[inspector,setInspector]=useState(false),[preview,setPreview]=useState(null),[follow,setFollow]=useState(true),[settings,setSettings]=useState({harness:'claude',model:'',reasoning_level:''});const source=useRef(null),refreshTimer=useRef(null),selectedThread=useRef(null),viewEpoch=useRef(0),streamTurn=useRef(null),refreshing=useRef(false),refreshPending=useRef(false),readTurns=useRef(new Map()),reading=useRef(new Set());
  const activeTurn=turns.find(turn=>!terminalStates.has(turn.state));
  const closeStream=()=>{source.current?.close();source.current=null;streamTurn.current=null};
  const connect=(turn,selected)=>{
@@ -145,7 +145,8 @@ function App(){
   stream.onerror=update;
  };
  const refresh=useCallback(async(selected,epoch=viewEpoch.current)=>{
-  if(!selected||selectedThread.current!==selected.id||refreshing.current===epoch)return;
+  if(!selected||selectedThread.current!==selected.id)return;
+  if(refreshing.current===epoch){refreshPending.current=epoch;return}
   refreshing.current=epoch;
   try{
    const nextTurns=await listTurns(selected.id),active=nextTurns.find(turn=>!terminalStates.has(turn.state));
@@ -153,7 +154,10 @@ function App(){
    if(epoch!==viewEpoch.current||selectedThread.current!==selected.id)return;
    setTurns(nextTurns);setItems(nextItems);setInteractions(nextInteractions);setProjectFiles(nextFiles);setBackgroundJobs(nextJobs);
    if(active)connect(active,selected);else closeStream();
-  }finally{if(refreshing.current===epoch)refreshing.current=false}
+  }finally{
+   if(refreshing.current===epoch)refreshing.current=false;
+   if(refreshPending.current===epoch){refreshPending.current=false;if(epoch===viewEpoch.current&&selectedThread.current===selected.id)setTimeout(()=>refresh(selected,epoch),0)}
+  }
  },[]);
  useEffect(()=>{
   const latest=turns.at(-1),selectedId=thread?.id,summary=threads.find(row=>row.id===selectedId);
