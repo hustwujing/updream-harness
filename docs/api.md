@@ -102,4 +102,10 @@ GET /api/catalog/models?harness=codex
 GET /api/threads/{thread_id}/sandbox
 ```
 
-The host discovers model IDs from each configured upstream at startup and every five minutes, then filters them by native Harness protocol family. It sends a bounded minimal request through each model protocol, records availability, latency, error class and check time, and disables models that did not pass the latest probe. Claude exposes only `claude-*`, DeepSeek only `deepseek-*`, and Codex compatible GPT text/reasoning models. The versioned last successful catalog and probe snapshot is persisted under the isolated data root. Probes reduce predictable routing failures but remain point-in-time observations; a successful Turn is the final proof that the selected route worked for that request.
+The host discovers model IDs from each configured upstream at startup and every five minutes, then filters them by native Harness protocol family. It sends a bounded minimal request through each model protocol, records availability, latency, error class and check time, and separates transient probe failures from explicit route rejection. Timeouts, rate limits and temporary service errors remain selectable; three consecutive transient failures mark a model busy, and two consecutive successes restore a degraded model. Explicit unsupported-model, missing-route or authorization responses disable selection. Streaks and stable state persist across restarts. Claude exposes only `claude-*`, DeepSeek only `deepseek-*`, and Codex compatible GPT text/reasoning models. The versioned last successful catalog and probe snapshot is persisted under the isolated data root. Probes reduce predictable routing failures but remain point-in-time observations; a successful Turn is the final proof that the selected route worked for that request.
+
+Catalog refreshes do not change the user's selected model or reasoning level. The
+browser preserves choices per conversation (and draft) in session storage. A busy
+model can still be submitted; a hard-rejected model stays visible with its reason
+and requires explicit user selection of another model. Background health changes
+do not block appended input to an already running Turn.

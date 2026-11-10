@@ -75,6 +75,8 @@ class Settings(BaseSettings):
     model_catalog_timeout_seconds: float = Field(default=10, ge=1, le=60)
     model_probe_enabled: bool = True
     model_probe_timeout_seconds: float = Field(default=20, ge=2, le=120)
+    model_probe_failure_threshold: int = Field(default=3, ge=1, le=10)
+    model_probe_recovery_threshold: int = Field(default=2, ge=1, le=10)
     model_probe_concurrency: int = Field(default=6, ge=1, le=32)
 
     def image_for(self, harness: str) -> str:

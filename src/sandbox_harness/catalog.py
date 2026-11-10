@@ -116,14 +116,10 @@ class HarnessCatalog:
 
     def replace_availability(self, results: dict[tuple[Harness, str], dict[str, Any]]) -> None:
         self.availability.update(results)
-        for harness, option in self.options.items():
-            available = [model.id for model in option.models if self.is_available(harness, model.id)]
-            if available and option.default_model not in available:
-                self.options[harness] = option.model_copy(update={"default_model": available[0]})
 
     def is_available(self, harness: Harness | str, model: str) -> bool:
         state = self.availability.get((Harness(harness), model))
-        return state is None or state.get("status") == "available"
+        return state is None or state.get("status") != "unavailable"
 
     def public(self) -> list[dict]:
         result = []
@@ -145,7 +141,7 @@ class HarnessCatalog:
         if not selected:
             raise ValueError("Model is not configured for the selected Harness")
         if not self.is_available(harness, selected.id):
-            raise ValueError("Model is temporarily unavailable; refresh the model list or select another model")
+            raise ValueError("Model is not supported or authorized on the configured route; select another model")
         level_id = reasoning_level or selected.reasoning[min(1, len(selected.reasoning) - 1)].id
         level = next((item for item in selected.reasoning if item.id == level_id), None)
         if not level:

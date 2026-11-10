@@ -14,6 +14,7 @@ from .catalog import HarnessCatalog
 from .config import Settings
 from .domain import Harness
 from .model_routes import ModelRoutes
+from .model_health import classify_response, reduce_health
 
 
 logger = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ class ModelDiscovery:
     def load_snapshot(self) -> bool:
         try:
             value = json.loads(self.snapshot.read_text())
-            if value.get("version") not in (1, 2) or not isinstance(value.get("models"), dict):
+            if value.get("version") not in (1, 2, 3) or not isinstance(value.get("models"), dict):
                 raise ValueError("Unsupported model catalog snapshot")
             discovered = {
                 Harness(key): compatible_models(key, identifiers)
@@ -67,13 +68,16 @@ class ModelDiscovery:
                 if key in {item.value for item in Harness} and isinstance(identifiers, list)
             }
             self.catalog.replace_models(discovered)
-            if value.get("version") == 2:
+            if value.get("version") in (2, 3):
                 availability = {}
                 for harness_name, models in value.get("availability", {}).items():
                     if harness_name not in {item.value for item in Harness} or not isinstance(models, dict):
                         continue
                     for model, state in models.items():
-                        if isinstance(state, dict) and state.get("status") in {"available", "unavailable"}:
+                        if isinstance(state, dict) and state.get("status") in {"available", "busy", "unknown", "unavailable"}:
+                            if value.get("version") == 2 and state.get("status") == "unavailable":
+                                # Legacy snapshots lack the reason body / streak evidence.
+                                state = {**state, "status": "unknown", "available": True}
                             availability[(Harness(harness_name), model)] = state
                 self.catalog.replace_availability(availability)
             return bool(discovered)
@@ -102,6 +106,9 @@ class ModelDiscovery:
                 self.catalog.replace_models(discovered)
                 if self.settings.model_probe_enabled:
                     availability = await self._probe_all(client, discovered)
+                    availability = {key: reduce_health(self.catalog.availability.get(key, {}), state,
+                        failures=self.settings.model_probe_failure_threshold,
+                        successes=self.settings.model_probe_recovery_threshold) for key, state in availability.items()}
                     self.catalog.replace_availability(availability)
                     self.last_available = sum(state["status"] == "available" for state in availability.values())
                 else:
@@ -167,22 +174,20 @@ class ModelDiscovery:
             response = await client.post(url, headers=headers, json=body,
                                          timeout=self.settings.model_probe_timeout_seconds)
             latency_ms = round((time.monotonic() - started) * 1000)
-            if 200 <= response.status_code < 300:
-                return {"status": "available", "available": True, "checked_at": checked_at,
-                        "latency_ms": latency_ms, "error_code": None}
-            return {"status": "unavailable", "available": False, "checked_at": checked_at,
-                    "latency_ms": latency_ms, "error_code": f"http_{response.status_code}"}
+            status, reason = classify_response(response)
+            return {"status": status, "available": status != "unavailable", "checked_at": checked_at,
+                    "latency_ms": latency_ms, "error_code": reason}
         except httpx.TimeoutException:
-            return {"status": "unavailable", "available": False, "checked_at": checked_at,
+            return {"status": "busy", "available": True, "checked_at": checked_at,
                     "latency_ms": round((time.monotonic() - started) * 1000), "error_code": "timeout"}
         except httpx.HTTPError as exc:
             logger.warning("Model availability probe failed for %s/%s: %s", harness.value, model, exc)
-            return {"status": "unavailable", "available": False, "checked_at": checked_at,
+            return {"status": "busy", "available": True, "checked_at": checked_at,
                     "latency_ms": round((time.monotonic() - started) * 1000), "error_code": "network_error"}
 
     def _save_snapshot(self) -> None:
         value = {
-            "version": 2,
+            "version": 3,
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "models": {
                 harness.value: [model.id for model in option.models]

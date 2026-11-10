@@ -73,7 +73,7 @@ async def test_model_discovery_refreshes_catalog_and_persists_snapshot(tmp_path,
     assert restored.resolve("codex", "gpt-6-sol", "maximum").reasoning_effort == "xhigh"
 
 
-async def test_probe_disables_failed_models_and_restores_status(tmp_path, monkeypatch):
+async def test_transient_probe_failure_does_not_disable_or_change_default(tmp_path, monkeypatch):
     settings = Settings(data_root=tmp_path, upstream_codex="https://codex.example",
                         upstream_claude="", upstream_deepseek="")
     monkeypatch.setenv("SANDBOX_HARNESS_UPSTREAM_CODEX_KEY", "secret")
@@ -93,14 +93,12 @@ async def test_probe_disables_failed_models_and_restores_status(tmp_path, monkey
     models = {row["id"]: row for row in catalog.public()[0]["models"]}
     assert models["gpt-6-astra"]["available"] is True
     assert models["gpt-5.6"]["error_code"] == "http_502"
-    assert catalog.options[Harness.CODEX].default_model == "gpt-6-astra"
-    with pytest.raises(ValueError, match="temporarily unavailable"):
-        catalog.resolve("codex", "gpt-5.6", "standard")
+    assert catalog.options[Harness.CODEX].default_model == "gpt-5.6"
+    assert catalog.resolve("codex", "gpt-5.6", "standard").model == "gpt-5.6"
 
     restored = HarnessCatalog()
     assert ModelDiscovery(settings, restored).load_snapshot()
-    with pytest.raises(ValueError, match="temporarily unavailable"):
-        restored.resolve("codex", "gpt-5.6", "standard")
+    assert restored.resolve("codex", "gpt-5.6", "standard").model == "gpt-5.6"
 
 
 async def test_discovery_probes_explicit_model_on_its_own_route(tmp_path, monkeypatch):
