@@ -55,6 +55,10 @@ async def test_thread_turn_items_and_idempotency(tmp_path):
         assert [item.type.value for item in items] == ["user_message", "user_message", "agent_message", "tool"]
         await store.set_turn_state(turn.id, TurnState.COMPLETED)
         assert (await store.get_turn(turn.id)).state == TurnState.COMPLETED
+        lingering = await store.append_item(thread.id, turn.id, ItemType.PLAN, status="in_progress",
+            summary="late step")
+        await store.set_turn_state(turn.id, TurnState.COMPLETED)
+        assert next(item for item in await store.items_after(thread.id) if item.id == lingering.id).status == "interrupted"
     finally:
         await store.close()
 

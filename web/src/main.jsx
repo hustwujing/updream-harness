@@ -1,6 +1,6 @@
 import React,{useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {Archive,ArrowDown,ChevronDown,ChevronRight,Clock3,Download,File,Maximize2,Menu,MessageSquare,Paperclip,PanelRight,Pencil,Plus,Search,Send,Square,Terminal,Trash2,Upload,X,Wrench} from 'lucide-react';
+import {Archive,ArrowDown,ChevronDown,ChevronRight,CircleCheck,CircleX,Clock3,Download,File,LoaderCircle,Maximize2,Menu,MessageSquare,Paperclip,PanelRight,Pencil,Plus,Search,Send,Square,Trash2,Upload,X} from 'lucide-react';
 import {apiUrl,appendTurnInput,cancelBackgroundJob,createThread,createTurn,deleteProjectFile,deleteThread,ensureSession,getHarnessCatalog,interruptTurn,listBackgroundJobs,listInteractions,listItems,listProjectFiles,listThreads,listTurns,markThreadRead,projectFileHistory,renameProjectFile,respondInteraction,upload,uploadProjectFile} from './api';
 import AgentMarkdown from './AgentMarkdown';
 import {modelHealthLabel,loadModelChoice,saveModelChoice} from './model-choice';
@@ -37,6 +37,8 @@ function groupThreads(rows){const today=[],previous=[];for(const row of rows)(Da
 function compactValue(value){if(value==null)return '';if(typeof value==='string')return value;if(typeof value==='number'||typeof value==='boolean')return String(value);if(typeof value==='object'){const selected=value.command||value.filePath||value.path||value.stdout||value.content||value.error||value.message;if(selected)return compactValue(selected);try{return JSON.stringify(value)}catch{return ''}}return ''}
 function parsedToolDetail(item){const raw=item.payload?.detail||{},parse=value=>{if(typeof value!=='string')return value;try{return JSON.parse(value)}catch{return value}},detail=parse(raw),argumentsValue=parse(detail?.arguments);return typeof argumentsValue==='object'&&argumentsValue?{...detail,...argumentsValue}:detail}
 function displayItem(item,turn){
+ const terminal=turn&&terminalStates.has(turn.state);
+ if(item.status==='in_progress'&&terminal)return {...item,status:['COMPLETED','WAITING_USER'].includes(turn.state)?'completed':'failed'};
  const nativeFailed=item.payload?.is_error||['failed','interrupted','cancelled'].includes(item.payload?.turn?.status);
  if(nativeFailed||(item.payload?.input_completed&&turn?.state==='FAILED'))return {...item,status:'failed'};
  if(item.type==='error'){
@@ -49,6 +51,7 @@ function displayItem(item,turn){
 
 function activityName(item){if(item.payload?.model_request_id&&item.status==='interrupted')return `${item.payload.model} 请求已结束`;if(item.type==='plan')return ({'Codex response':'Codex 本轮响应','Claude response':'Claude 本轮响应','Input completed':'输入处理结果'}[item.summary]||item.summary||'执行阶段');if(item.type==='warning')return item.payload?.code||'警告';if(item.type==='error')return '执行错误';const name=String(item.summary||item.payload?.name||'').toLowerCase(),labels={bash:'执行命令',commandexecution:'执行命令',read:'读取文件',write:'写入文件',edit:'修改文件',filechange:'修改文件',read_image:'查看图片',imageview:'查看图片',job_output:'等待后台任务',todo_write:'更新任务计划'};return labels[name]||(!name||name==='tool'||name==='tool_output'?'工具调用':item.summary||item.payload?.name)}
 function activityDetail(item){if(item.payload?.model_request_id){const p=item.payload;return [p.phase==='waiting'?'正在等待模型生成内容':p.first_output_ms!=null?`等待首次输出 ${formatDuration(p.first_output_ms)}`:'未收到有效输出',p.http_status?`HTTP ${p.http_status}`:'',p.error_code||''].filter(Boolean).join(' · ')}if(item.type==='error'||item.type==='warning')return item.summary||compactValue(item.payload?.detail)||item.status;const detail=parsedToolDetail(item),command=detail?.command||detail?.cmd,description=detail?.description,resource=detail?.file_path||detail?.filePath||detail?.path,query=detail?.query;const useful=description||resource||query||(typeof command==='string'?command.split('\n').find(Boolean):'');const result=item.status==='failed'&&compactValue(item.payload?.result);return result||useful||compactValue(item.payload?.text)||({in_progress:'执行中',completed:'已完成',failed:'失败',interrupted:'已中断'}[item.status]||item.status)}
+function ActivityStatus({status,active}){if(status==='in_progress'&&active)return <LoaderCircle className="activity-status running" size={14} aria-label="执行中"/>;if(status==='completed')return <CircleCheck className="activity-status completed" size={14} aria-label="执行完成"/>;return <CircleX className="activity-status failed" size={14} aria-label={status==='interrupted'||status==='in_progress'?'执行中断':'执行错误'}/>}
 
 function Sidebar({threads,readTurns,current,onSelect,onNew,onDelete,open,onClose}){
  const groups=groupThreads(threads);
@@ -71,7 +74,7 @@ function Activity({items,active,endedAt,failed}){
  const tools=items.filter(item=>['command','tool','file_change'].includes(item.type)).length,stages=items.length-tools;
  const failure=items.find(item=>item.type==='error'||item.status==='failed');
  const summary=active?'正在执行':failed?'执行失败':tools&&stages?`${tools} 个工具 · ${stages} 个阶段`:tools?`${tools} 个工具`:`${stages} 个阶段`;
- const older=items.length>8?items.slice(0,-6):[],visible=older.length?items.slice(-6):items,row=item=>{const elapsed=activityTiming(item,active,now,endedAt);return <div className={`activity-row ${item.status}`} key={item.id}>{['command','tool'].includes(item.type)?<Terminal size={14}/>:<Wrench size={14}/>}<span><b>{activityName(item)}</b><small title={activityDetail(item)}>{activityDetail(item)}</small></span><time className={`activity-duration ${elapsed.running?'running':''}`} aria-label={elapsed.label}>{elapsed.label}</time></div>};
+ const older=items.length>8?items.slice(0,-6):[],visible=older.length?items.slice(-6):items,row=item=>{const elapsed=activityTiming(item,active,now,endedAt);return <div className={`activity-row ${item.status}`} key={item.id}><ActivityStatus status={item.status} active={active}/><span><b>{activityName(item)}</b><small title={activityDetail(item)}>{activityDetail(item)}</small></span><time className={`activity-duration ${elapsed.running?'running':''}`} aria-label={elapsed.label}>{elapsed.label}</time></div>};
  return <details className="activity" open={active||Boolean(failed)}><summary><span className={active?'activity-pulse':''}></span><b>{summary}</b><ChevronDown size={14}/></summary><div>{older.length>0&&<details className="activity-history"><summary>较早的 {older.length} 个步骤</summary>{older.map(row)}</details>}{visible.map(row)}</div></details>;
 }
 

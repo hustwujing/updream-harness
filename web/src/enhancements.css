@@ -156,9 +156,11 @@
   color: #a1443d;
 }
 
-.activity-row.completed > svg {
-  color: #5f7e5b;
-}
+.activity-status { flex: none; margin-top: 1px; }
+.activity-status.running { color: #686a65; animation: activity-spin .8s linear infinite; }
+.activity-status.completed { color: #4f7b4c; }
+.activity-status.failed { color: #a1443d; }
+@keyframes activity-spin { to { transform: rotate(360deg); } }
 
 .activity-row { padding: 4px 0; }
 .activity-row small { margin-top: 1px; line-height: 1.35; }
