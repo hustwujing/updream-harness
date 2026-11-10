@@ -13,6 +13,12 @@ import sandbox_runtime.app as runtime_app
 from sandbox_runtime.adapters import HarnessCommand
 
 
+def test_runtime_guidance_has_network_and_browser_fallbacks():
+    assert "do not keep retrying the same foreign site" in runtime_app.RUNTIME_GUIDANCE
+    assert "sandbox-browser-screenshot URL OUTPUT" in runtime_app.RUNTIME_GUIDANCE
+    assert "ImageMagick (`convert` and `identify`)" in runtime_app.RUNTIME_GUIDANCE
+
+
 def test_runtime_configuration_freezes_turn_harness_and_model(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
     monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")

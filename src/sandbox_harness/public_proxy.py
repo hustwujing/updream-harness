@@ -14,6 +14,14 @@ MAX_HEADER = 64 * 1024
 ALLOWED_PORTS = {80, 443}
 
 
+async def reject(writer: asyncio.StreamWriter, status: int, code: str) -> None:
+    body = (code + "\n").encode()
+    writer.write((f"HTTP/1.1 {status} {'Forbidden' if status == 403 else 'Bad Gateway'}\r\n"
+        f"Content-Type: text/plain; charset=utf-8\r\nContent-Length: {len(body)}\r\n"
+        f"X-Sandbox-Proxy-Error: {code}\r\nConnection: close\r\n\r\n").encode() + body)
+    await writer.drain()
+
+
 def public_address(value: str) -> bool:
     address = ipaddress.ip_address(value)
     return address.is_global and not address.is_multicast
@@ -129,13 +137,12 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
     except (ValueError, asyncio.IncompleteReadError, asyncio.LimitOverrunError, asyncio.TimeoutError) as exc:
         event("public_proxy.rejected",level=logging.WARNING,exc=exc,**log_context)
         if not writer.is_closing():
-            writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-            await writer.drain()
+            code = "destination_timeout" if isinstance(exc, asyncio.TimeoutError) else "destination_rejected"
+            await reject(writer,403,code)
     except (ConnectionError, OSError) as exc:
         event("public_proxy.failed",level=logging.ERROR,exc=exc,**log_context)
         if not writer.is_closing():
-            writer.write(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-            await writer.drain()
+            await reject(writer,502,"destination_unreachable")
     finally:
         event("public_proxy.closed",duration_ms=round((time.monotonic()-started)*1000),**log_context)
         if expiry:

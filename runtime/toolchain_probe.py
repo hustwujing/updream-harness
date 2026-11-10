@@ -9,7 +9,7 @@ from pathlib import Path
 
 PACKAGES = (
     "build-essential", "ca-certificates", "chromium", "cmake", "curl", "ffmpeg", "file",
-    "fonts-noto-color-emoji", "fonts-wqy-zenhei", "git", "jq", "libgbm1", "libgl1-mesa-dri",
+    "fonts-noto-color-emoji", "fonts-wqy-zenhei", "git", "imagemagick", "jq", "libgbm1", "libgl1-mesa-dri",
     "libglx-mesa0", "mesa-utils", "pkg-config", "procps", "ripgrep", "unzip", "xauth", "xvfb", "xz-utils",
 )
 
@@ -21,6 +21,8 @@ COMMANDS = {
     "ffprobe": ["ffprobe", "-version"],
     "file": ["file", "--version"],
     "git": ["git", "--version"],
+    "identify": ["identify", "--version"],
+    "imagemagick": ["convert", "--version"],
     "g++": ["g++", "--version"],
     "gcc": ["gcc", "--version"],
     "jq": ["jq", "--version"],
@@ -28,6 +30,7 @@ COMMANDS = {
     "node": ["node", "--version"],
     "npm": ["npm", "--version"],
     "pkg-config": ["pkg-config", "--version"],
+    "playwright": ["playwright", "--version"],
     "python": ["python", "--version"],
     "rg": ["rg", "--version"],
     "unzip": ["unzip", "-v"],
@@ -51,6 +54,10 @@ def snapshot() -> dict:
     ).splitlines()
     packages = dict(row.split("\t", 1) for row in package_rows)
     npm_root = Path(subprocess.check_output(["npm", "root", "-g"], text=True).strip())
+    browser = Path(subprocess.check_output(["node", "-e",
+        "const {chromium}=require('playwright');process.stdout.write(chromium.executablePath())"], text=True))
+    if not browser.is_file() or not browser.stat().st_mode & 0o111:
+        raise RuntimeError("Playwright Chromium executable is missing")
     return {
         "schema_version": 1,
         "commands": {name: first_line(command) for name, command in COMMANDS.items()},

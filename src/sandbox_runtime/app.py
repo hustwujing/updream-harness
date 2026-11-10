@@ -36,6 +36,9 @@ RUNTIME_GUIDANCE = """Sandbox runtime contract:
 - For casual conversation, reply normally without creating files.
 - Work in /workspace/project. Current-message attachments are in /workspace/inbox; durable project inputs and prior outputs are in /workspace/project/assets and /workspace/project/artifacts.
 - Put files intended for the user in /workspace/outputs and verify them before replying.
+- Public HTTP/S uses a capability-checked proxy. Some foreign sites are unreachable from this host; after a proxy rejection, timeout, TLS failure or repeated 4xx, do not keep retrying the same foreign site. Prefer an accessible domestic/public source, use user-provided material, or clearly report the source limitation.
+- For a public webpage screenshot use `sandbox-browser-screenshot URL OUTPUT`; it configures Chromium with the authenticated sandbox proxy. Raw `chromium URL` does not have direct Internet access. `playwright screenshot` is available, but the sandbox helper is the supported path for proxied public pages.
+- ImageMagick (`convert` and `identify`), Pillow, FFmpeg and the locked media toolchain are installed. Probe a less common command with `command -v` before building a long pipeline.
 - For a long subprocess that should outlive the immediate tool call, use `sandbox-background start --name NAME -- argv...`; its exit status is part of this Turn.
 - When a material user decision is required, use `sandbox-interact question --prompt TEXT --question id=TEXT` or `sandbox-interact approval --prompt TEXT`; continue only after its JSON response. Do not ask for confirmation when the request already authorizes the action.
 

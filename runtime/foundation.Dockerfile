@@ -3,6 +3,7 @@ ARG DEBIAN_MIRROR=http://mirrors.aliyun.com
 ARG NODE_VERSION=22.14.0
 ARG NODE_MIRROR=https://npmmirror.com/mirrors/node
 ARG NPM_REGISTRY=https://registry.npmmirror.com
+ARG PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright
 ARG PLAYWRIGHT_VERSION=1.65.0
 ARG THREE_VERSION=0.187.0
 ARG ESBUILD_VERSION=0.28.2
@@ -20,6 +21,7 @@ RUN sed -i -e "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}/debian|g" \
       fonts-noto-color-emoji \
       fonts-wqy-zenhei \
       git \
+      imagemagick \
       jq \
       libgbm1 \
       libgl1-mesa-dri \
@@ -37,7 +39,13 @@ RUN sed -i -e "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}/debian|g" \
       | tar -xJ --strip-components=1 -C /usr/local && \
     PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g --registry="${NPM_REGISTRY}" \
       "playwright@${PLAYWRIGHT_VERSION}" "three@${THREE_VERSION}" "esbuild@${ESBUILD_VERSION}" && \
+    PLAYWRIGHT_DOWNLOAD_HOST="${PLAYWRIGHT_DOWNLOAD_HOST}" \
+      PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=120000 \
+      PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+      playwright install chromium && \
+    chmod -R a+rX /ms-playwright && \
     npm cache clean --force
 ENV NODE_PATH=/usr/local/lib/node_modules
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV CHROME_PATH=/usr/bin/chromium
 ENV LIBGL_ALWAYS_SOFTWARE=1

@@ -2,7 +2,7 @@ import base64
 
 import pytest
 
-from sandbox_harness.public_proxy import proxy_token, public_address
+from sandbox_harness.public_proxy import proxy_token, public_address, reject
 
 
 def test_proxy_allows_public_and_rejects_internal_addresses():
@@ -49,3 +49,19 @@ async def test_active_public_tunnel_is_registered_and_cancelled_on_revocation(mo
     finally:
         writer.close();await writer.wait_closed();proxy.close();server.close()
         await proxy.wait_closed();await server.wait_closed()
+
+
+async def test_proxy_error_response_exposes_stable_actionable_code():
+    import asyncio
+    async def handler(reader, writer):
+        await reject(writer, 502, "destination_unreachable")
+        writer.close()
+    server = await asyncio.start_server(handler, "127.0.0.1", 0)
+    reader, writer = await asyncio.open_connection("127.0.0.1", server.sockets[0].getsockname()[1])
+    try:
+        response = await reader.read()
+        assert b"HTTP/1.1 502 Bad Gateway" in response
+        assert b"X-Sandbox-Proxy-Error: destination_unreachable" in response
+        assert response.endswith(b"destination_unreachable\n")
+    finally:
+        writer.close();await writer.wait_closed();server.close();await server.wait_closed()
