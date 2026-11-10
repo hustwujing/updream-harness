@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
@@ -33,7 +34,7 @@ class ObjectStore:
         if not reference.startswith("sha256:"):
             raise ValueError("Unknown object reference")
         digest = reference.removeprefix("sha256:")
-        if len(digest) != 64:
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise ValueError("Invalid object digest")
         path = self._path(digest)
         if path.stat().st_size > maximum:
@@ -97,7 +98,7 @@ class S3ObjectStore:
         if not reference.startswith("sha256:"):
             raise ValueError("Unknown object reference")
         digest = reference.removeprefix("sha256:")
-        if len(digest) != 64:
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise ValueError("Invalid object digest")
         response = self.client.get_object(Bucket=self.bucket, Key=self._key(digest))
         body = response["Body"]

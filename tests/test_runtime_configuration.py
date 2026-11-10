@@ -380,3 +380,18 @@ def test_runtime_stream_emits_transport_heartbeat_during_long_silence(tmp_path, 
     rows = [json.loads(line) for line in response.text.splitlines()]
     assert sum(row.get("type") == "heartbeat" for row in rows) >= 2
     assert rows[-1]["type"] == "result" and rows[-1]["result"]["status"] == "completed"
+
+
+def test_artifact_export_rejects_links_and_non_regular_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_app,'WORKSPACE',tmp_path/'workspace')
+    monkeypatch.setattr(runtime_app,'OUTPUTS',tmp_path/'workspace'/'outputs')
+    monkeypatch.setattr(runtime_app,'RUN',tmp_path/'run')
+    app=runtime_app.create_app();outputs=tmp_path/'workspace'/'outputs'
+    (outputs/'real.txt').write_text('safe')
+    (outputs/'alias.txt').symlink_to(outputs/'real.txt')
+    import os
+    os.mkfifo(outputs/'pipe')
+    with TestClient(app) as client:
+        assert client.get('/v1/artifacts/file',params={'path':'alias.txt'}).status_code==404
+        assert client.get('/v1/artifacts/file',params={'path':'pipe'}).status_code==404
+        assert [r['path'] for r in client.get('/v1/artifacts').json()['items']]==['real.txt']

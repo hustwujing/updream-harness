@@ -246,3 +246,6 @@
   .media-preview { padding:8px; }
 
 }
+
+.input-status {display:block;font-size:12px;margin-top:6px;color:#7b8493}
+.input-status.failed {color:#bd4545}

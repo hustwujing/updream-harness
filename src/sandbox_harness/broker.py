@@ -12,8 +12,9 @@ from .catalog import HarnessCatalog
 from .config import Settings
 from .domain import EventKind, Harness, ItemType, RuntimeResult, TurnCreate, TurnState, TurnView
 from .objects import ObjectStore
+from .errors import public_failure
 from .pool import SandboxPool
-from .runtime import RuntimeClient
+from .runtime import RuntimeClient, RuntimeStreamInterrupted
 from .store import Store
 
 
@@ -109,6 +110,7 @@ class Broker:
         self.reaper_task = asyncio.create_task(self._reaper_loop(), name="sandbox-orphan-reaper")
 
     async def cleanup_startup_orphans(self, *, delete_stale_warm: bool = False) -> None:
+        await self.pool.retry_deletions()
         live_turns = await self.store.nonterminal_turn_ids()
         active_ids = {sandbox.id for sandbox in self.active_sandboxes.values()} | await self.pool.managed_sandbox_ids()
         for sandbox in await self.pool.backend.list_namespace():
@@ -267,7 +269,8 @@ class Broker:
         if not delivered:
             raise RuntimeError("interaction_transport_unsupported")
         await self.store.finish_interaction_item(interaction.turn_id, interaction.id, response)
-        await self._state(interaction.turn_id, TurnState.RUNNING, sandbox_id=sandbox.id)
+        if await self.store.resume_interaction_turn(interaction.turn_id, interaction.runtime_execution_id):
+            await self.store.append_event(interaction.turn_id, EventKind.STATE, {"state": TurnState.RUNNING.value})
         return current
 
     async def background_jobs(self, turn_id: str, owner_id: str) -> list[dict]:
@@ -397,18 +400,18 @@ class Broker:
                 EventKind.ERROR: ItemType.ERROR, EventKind.WAITING_USER: ItemType.APPROVAL,
             }.get(value.kind, ItemType.REASONING)
             item = await self.store.append_item(thread_id, turn_id, item_type,
-                status="completed" if value.kind in {
+                status="failed" if value.payload.get("is_error") or value.kind == EventKind.ERROR else "completed" if value.kind in {
                     EventKind.TOOL_FINISHED, EventKind.STEP_FINISHED, EventKind.WARNING, EventKind.ERROR,
                 } else "in_progress",
                 summary=str(value.payload.get("name") or value.payload.get("text") or value.kind.value), payload=value.payload)
         await self.store.append_event(turn_id, value.kind, value.payload, item_id=item.id,
             source_execution_id=execution_id, source_sequence=value.runtime_sequence)
         if value.payload.get("input_completed"):
-            await self.store.complete_agent_item(turn_id, "completed")
+            await self.store.complete_agent_item(turn_id, "interrupted" if value.payload.get("is_error") else "completed")
 
     async def _materialize_attachments(self, sandbox, attachments) -> None:
         for attachment in attachments:
-            data = self.objects.get(attachment.object_ref, maximum=self.settings.max_attachment_bytes)
+            data = await asyncio.to_thread(self.objects.get, attachment.object_ref, maximum=self.settings.max_attachment_bytes)
             if len(data) != attachment.size:
                 raise ValueError("Attachment size does not match its immutable record")
             await self.runtime.put_attachment(sandbox, attachment.name, data, attachment.mime)
@@ -425,10 +428,34 @@ class Broker:
 
     async def _materialize_project_files(self, sandbox, files) -> None:
         for value in files:
-            data = self.objects.get(value.object_ref, maximum=self.settings.max_artifact_bytes)
+            data = await asyncio.to_thread(self.objects.get, value.object_ref, maximum=self.settings.max_artifact_bytes)
             if len(data) != value.size:
                 raise ValueError("Project file size does not match its immutable record")
             await self.runtime.put_project_file(sandbox, value.path, data, value.mime)
+
+    async def _save_workspace(self, sandbox, thread_id: str, turn_id: str,
+                              native_thread_id: str, *, partial: bool = False) -> None:
+        archive = await self.runtime.checkpoint(sandbox)
+        if len(archive) > self.settings.max_checkpoint_bytes:
+            raise ValueError("Checkpoint exceeds byte limit")
+        checkpoint_ref, _ = await asyncio.to_thread(self.objects.put, archive)
+        await self.store.update_thread_checkpoint(thread_id, checkpoint_ref, native_thread_id)
+        total = 0
+        for item in await self.runtime.artifacts(sandbox):
+            path = item["path"]
+            data = await self.runtime.artifact(sandbox, path)
+            total += len(data)
+            if total > self.settings.max_artifact_bytes:
+                raise ValueError("Artifacts exceed Turn byte limit")
+            object_ref, digest = await asyncio.to_thread(self.objects.put, data)
+            artifact = await self.store.artifact_by_identity(turn_id, path, digest)
+            if artifact is None:
+                artifact = await self.store.add_artifact(turn_id, path=path, sha256=digest, size=len(data), mime=item.get("mime") or mimetypes.guess_type(path)[0] or "application/octet-stream", object_ref=object_ref)
+                await self.store.append_item(thread_id, turn_id, ItemType.ARTIFACT, status="completed", summary=path,
+                    payload={"artifact_id": artifact.id, "mime": artifact.mime, "size": artifact.size, "partial": partial})
+            await self.store.register_project_file(thread_id,
+                path="artifacts/" + path, source_type="artifact", source_turn_id=turn_id,
+                sha256=digest, size=len(data), mime=artifact.mime, object_ref=object_ref)
 
     async def _process(self, turn_id: str) -> None:
         claimed = await self.store.claim_turn(
@@ -534,7 +561,7 @@ class Broker:
                         event_idle_timeout_seconds=self.settings.runtime_event_idle_timeout_seconds,
                     )
                     if thread.checkpoint_ref and not sandbox.reused:
-                        archive = self.objects.get(thread.checkpoint_ref, maximum=self.settings.max_checkpoint_bytes)
+                        archive = await asyncio.to_thread(self.objects.get, thread.checkpoint_ref, maximum=self.settings.max_checkpoint_bytes)
                         try:
                             await self.runtime.restore(sandbox, archive)
                         except httpx.HTTPStatusError as exc:
@@ -570,7 +597,7 @@ class Broker:
                                     turn.id, value.runtime_sequence, self.instance_id, generation,
                                 )
                     if result is None:
-                        raise RuntimeError("Runtime stream ended without a result")
+                        raise RuntimeStreamInterrupted("Runtime stream ended without a result")
                     if result.status in ("completed", "waiting_user"):
                         async with self.input_lock(turn.id):
                             await self._state(turn.id, TurnState.DRAINING_INPUTS, sandbox_id=sandbox.id)
@@ -604,27 +631,7 @@ class Broker:
                         raise
                 if result.status in ("completed", "waiting_user"):
                     await self._state(turn.id, TurnState.CHECKPOINTING, sandbox_id=sandbox.id)
-                    archive = await self.runtime.checkpoint(sandbox)
-                    if len(archive) > self.settings.max_checkpoint_bytes:
-                        raise ValueError("Checkpoint exceeds byte limit")
-                    checkpoint_ref, _ = self.objects.put(archive)
-                    await self.store.update_thread_checkpoint(thread.id, checkpoint_ref, result.native_thread_id)
-                    total = 0
-                    for item in await self.runtime.artifacts(sandbox):
-                        path = item["path"]
-                        data = await self.runtime.artifact(sandbox, path)
-                        total += len(data)
-                        if total > self.settings.max_artifact_bytes:
-                            raise ValueError("Artifacts exceed Turn byte limit")
-                        object_ref, digest = self.objects.put(data)
-                        artifact = await self.store.artifact_by_identity(turn.id, path, digest)
-                        if artifact is None:
-                            artifact = await self.store.add_artifact(turn.id, path=path, sha256=digest, size=len(data), mime=item.get("mime") or mimetypes.guess_type(path)[0] or "application/octet-stream", object_ref=object_ref)
-                            await self.store.append_item(thread.id, turn.id, ItemType.ARTIFACT, status="completed", summary=path,
-                                payload={"artifact_id": artifact.id, "mime": artifact.mime, "size": artifact.size})
-                        await self.store.register_project_file(thread.id,
-                            path="artifacts/" + path, source_type="artifact", source_turn_id=turn.id,
-                            sha256=digest, size=len(data), mime=artifact.mime, object_ref=object_ref)
+                    await self._save_workspace(sandbox, thread.id, turn.id, result.native_thread_id)
                     final_state = TurnState.COMPLETED if result.status == "completed" else TurnState.WAITING_USER
                     error_code = ""
                     error_detail = ""
@@ -636,6 +643,16 @@ class Broker:
                     final_state = TurnState.FAILED
                     error_code = result.error_code or "harness_failed"
                     error_detail = result.error_detail
+                    # Preserve inspectable work even if the next model request failed.
+                    # A failed Turn remains failed; partial artifacts are labelled as such.
+                    try:
+                        await self._state(turn.id, TurnState.CHECKPOINTING, sandbox_id=sandbox.id)
+                        await self._save_workspace(sandbox, thread.id, turn.id,
+                            result.native_thread_id or native_thread_id, partial=True)
+                    except Exception:
+                        logger.exception("Failed to preserve partial workspace turn=%s", turn.id)
+                        await self.store.append_event(turn.id, EventKind.WARNING,
+                            {"code": "partial_workspace_save_failed", "detail": "本轮中间文件未能完整保存。"})
         except asyncio.CancelledError:
             if self.closing:
                 abandoned = True
@@ -651,6 +668,7 @@ class Broker:
         except Exception as exc:
             error_code = type(exc).__name__
             error_detail = str(exc)
+            logger.exception("Turn execution failed turn=%s execution=%s", turn.id, turn.runtime_execution_id)
             try:
                 await self.store.append_event(turn.id, EventKind.ERROR,
                     {"code": error_code, "detail": error_detail[:1000]},
@@ -733,15 +751,7 @@ class Broker:
                     self.tasks.pop(turn.id, None)
                     return
                 if final_state == TurnState.FAILED:
-                    public_detail = {
-                        "HTTPStatusError": "沙箱运行环境暂时不可用，请重新发送消息。",
-                        "CheckpointRestoreError": "会话工作区恢复失败，请重新发送消息。",
-                        "ConnectError": "沙箱运行环境暂时无法连接，请重新发送消息。",
-                        "harness_exit": "Harness 执行失败，请重试或切换模型。",
-                        "model_response_timeout": "模型服务在规定时间内没有返回，请稍后重试或切换模型。",
-                        "harness_idle_timeout": "Harness 长时间没有产生新进展，本轮已安全停止。",
-                        "cleanup_failed": "运行结果保存或环境清理失败，请重试。",
-                    }.get(error_code, "本轮执行失败，请重试；如果持续失败，可以切换模型。")
+                    error_code, public_detail = public_failure(error_code, error_detail)
                     item = await self.store.append_item(thread.id, turn.id, ItemType.ERROR, status="failed",
                         summary=public_detail, payload={"code": error_code, "detail": public_detail},
                         lease_owner=self.instance_id, recovery_generation=generation)

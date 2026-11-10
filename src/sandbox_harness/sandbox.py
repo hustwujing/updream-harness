@@ -118,7 +118,8 @@ class OpenSandboxBackend:
         result = []
         for row in rows:
             metadata = row.get("metadata") or {}
-            if metadata.get("sandbox-harness.io/namespace") != self.namespace:
+            if (metadata.get("sandbox-harness.io/namespace") != self.namespace
+                    or metadata.get("sandbox-harness.io/turn") != turn_id):
                 continue
             harness = Harness(metadata.get("sandbox-harness.io/harness", "codex"))
             result.append(await self._ready(self._sandbox(row, harness, (row.get("image") or {}).get("uri", ""), metadata)))
@@ -137,9 +138,12 @@ class OpenSandboxBackend:
                 continue
             try:
                 harness = Harness(metadata.get("sandbox-harness.io/harness", "codex"))
-                result.append(await self._ready(self._sandbox(
-                    row, harness, (row.get("image") or {}).get("uri", ""), metadata,
-                )))
+                sandbox = self._sandbox(row, harness, (row.get("image") or {}).get("uri", ""), metadata)
+                status = await self.client.get(f"/v1/sandboxes/{sandbox.id}")
+                if status.status_code == 404:
+                    continue
+                status.raise_for_status()
+                result.append(sandbox)
             except RuntimeError:
                 continue
         return result

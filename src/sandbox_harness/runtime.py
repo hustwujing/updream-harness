@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator
 
 import httpx
 
 from .domain import Attachment, RuntimeEvent, RuntimeResult
 from .sandbox import Sandbox
+
+
+logger = logging.getLogger(__name__)
+
+
+class RuntimeStreamInterrupted(RuntimeError):
+    """The existing execution could not be reattached; never replay its input."""
 
 
 class RuntimeClient:
@@ -65,20 +73,55 @@ class RuntimeClient:
         body = {"message": message, "attachments": [item.model_dump(mode="json") for item in attachments],
                 "native_thread_id": native_thread_id, "reasoning_effort": reasoning_effort,
                 "execution_id": execution_id, "input_id": input_id, "after_sequence": after_sequence}
+        async for value in self._execution_stream(sandbox, execution_id, after_sequence, body=body):
+            yield value
+
+    async def _execution_stream(self, sandbox: Sandbox, execution_id: str, after_sequence: int,
+                                *, body: dict | None = None):
+        cursor = after_sequence
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers,
             timeout=self.timeout, trust_env=False, transport=self.transport) as client:
-            async with client.stream("POST", "/v1/turns", json=body) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line:
-                        continue
-                    value = json.loads(line)
-                    if value.get("type") == "heartbeat":
-                        continue
-                    if value.get("type") == "result":
-                        yield RuntimeResult.model_validate({**value["result"], "runtime_sequence": value.get("runtime_sequence", 0)})
-                    else:
-                        yield RuntimeEvent.model_validate(value)
+            for attempt in range(4):
+                try:
+                    # A lost POST reply is an unknown submission. Every retry only reads
+                    # the same execution; it must never start another Harness invocation.
+                    method = "POST" if attempt == 0 and body is not None else "GET"
+                    path = "/v1/turns" if method == "POST" else f"/v1/executions/{execution_id}/events"
+                    kwargs = {"json": body} if method == "POST" else {"params": {"after": cursor}}
+                    async with client.stream(method, path, **kwargs) as response:
+                        response.raise_for_status()
+                        async for line in response.aiter_lines():
+                            if not line:
+                                continue
+                            value = json.loads(line)
+                            if value.get("type") == "heartbeat":
+                                continue
+                            sequence = value.get("runtime_sequence", 0)
+                            if value.get("type") == "result":
+                                yield RuntimeResult.model_validate({**value["result"], "runtime_sequence": sequence})
+                                return
+                            if sequence and sequence <= cursor:
+                                continue
+                            yield RuntimeEvent.model_validate(value)
+                            cursor = max(cursor, sequence)
+                    # The final frame may already have been consumed by a prior Broker.
+                    status = await client.get(f"/v1/executions/{execution_id}")
+                    if status.status_code == 200:
+                        snapshot = status.json()
+                        if (snapshot.get("result") is not None
+                                and int(snapshot.get("last_sequence", 0)) <= cursor):
+                            yield RuntimeResult.model_validate({**snapshot["result"], "runtime_sequence": cursor})
+                            return
+                except (httpx.TransportError, httpx.HTTPStatusError) as exc:
+                    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code not in {404, 408, 429, 500, 502, 503, 504}:
+                        raise
+                    logger.warning("Runtime transport interrupted execution=%s cursor=%s attempt=%s error=%s",
+                        execution_id, cursor, attempt + 1, type(exc).__name__)
+                if attempt < 3:
+                    logger.warning("Reattaching runtime stream execution=%s cursor=%s attempt=%s",
+                        execution_id, cursor, attempt + 1)
+                    await asyncio.sleep(0.2 * (attempt + 1))
+        raise RuntimeStreamInterrupted("Runtime connection ended without a result; reattachment exhausted")
 
     async def append_input(self, sandbox: Sandbox, *, message: str, attachments: list[Attachment], reasoning_effort: str,
                            execution_id: str = "legacy", input_id: str = "initial") -> str:
@@ -132,21 +175,8 @@ class RuntimeClient:
             return response.json()
 
     async def resume(self, sandbox: Sandbox, execution_id: str, after_sequence: int) -> AsyncIterator[RuntimeEvent | RuntimeResult]:
-        async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers,
-            timeout=self.timeout, trust_env=False, transport=self.transport) as client:
-            async with client.stream("GET", f"/v1/executions/{execution_id}/events",
-                params={"after": after_sequence}) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line:
-                        continue
-                    value = json.loads(line)
-                    if value.get("type") == "heartbeat":
-                        continue
-                    if value.get("type") == "result":
-                        yield RuntimeResult.model_validate({**value["result"], "runtime_sequence": value.get("runtime_sequence", 0)})
-                    else:
-                        yield RuntimeEvent.model_validate(value)
+        async for value in self._execution_stream(sandbox, execution_id, after_sequence):
+            yield value
 
     async def checkpoint(self, sandbox: Sandbox) -> bytes:
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers=sandbox.runtime_headers, timeout=300, trust_env=False) as client:

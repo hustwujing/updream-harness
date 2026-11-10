@@ -8,6 +8,7 @@ import os
 from pathlib import Path, PurePosixPath
 import signal
 import shutil
+import stat
 import tarfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -107,6 +108,7 @@ class Execution:
     pending_input_ids: list[str] = field(default_factory=list)
     completed_input_ids: list[str] = field(default_factory=list)
     received_input_ids: set[str] = field(default_factory=set)
+    accepting_inputs: bool = True
     result: dict | None = None
     saw_text_delta: bool = False
     condition: asyncio.Condition = field(default_factory=asyncio.Condition)
@@ -170,22 +172,26 @@ def create_app() -> FastAPI:
             process.kill()
             await process.wait()
 
+    def append_event_locked(execution: Execution, value: dict) -> None:
+        row = {**value, "runtime_sequence": execution.sequence + 1}
+        size = len(json.dumps(row, ensure_ascii=False).encode()) + 1
+        if execution.journal_bytes + size > RUNTIME_EVENT_JOURNAL_LIMIT and value.get("type") != "result":
+            raise RuntimeError("Runtime event journal exceeded its byte limit")
+        execution.sequence += 1
+        execution.journal_bytes += size
+        execution.events.append(row)
+        execution.condition.notify_all()
+
     async def publish(execution: Execution, value: dict) -> None:
         async with execution.condition:
-            execution.sequence += 1
-            row = {**value, "runtime_sequence": execution.sequence}
-            size = len(json.dumps(row, ensure_ascii=False).encode()) + 1
-            if execution.journal_bytes + size > RUNTIME_EVENT_JOURNAL_LIMIT and value.get("type") != "result":
-                raise RuntimeError("Runtime event journal exceeded its byte limit")
-            execution.journal_bytes += size
-            execution.events.append(row)
-            execution.condition.notify_all()
+            append_event_locked(execution, value)
 
     async def finish_execution(execution: Execution, result: dict) -> None:
-        if execution.result is not None:
-            return
-        execution.result = result
-        await publish(execution, {"type": "result", "result": result})
+        async with execution.condition:
+            if execution.result is not None:
+                return
+            append_event_locked(execution, {"type": "result", "result": result})
+            execution.result = result
 
     def persist_job(job: BackgroundJob) -> None:
         target = jobs_root / (job.id + ".json")
@@ -274,15 +280,23 @@ def create_app() -> FastAPI:
                     }
                 substantive = substantive or terminal_input
                 if execution.selected.streaming_input and terminal_input:
-                    if execution.selected.batched_completion:
-                        completed = list(execution.pending_input_ids)
-                        execution.pending_input_ids.clear()
-                    else:
-                        completed = execution.pending_input_ids[:1]
-                        del execution.pending_input_ids[:1]
-                    execution.completed_input_ids.extend(completed)
-                    app.state.pending_inputs = len(execution.pending_input_ids)
-                    if not execution.pending_input_ids:
+                    async with app.state.write_lock:
+                        if execution.selected.control_input:
+                            ids = set(native.get("input_ids") or [])
+                            completed = [identity for identity in execution.pending_input_ids if identity in ids]
+                            execution.pending_input_ids[:] = [identity for identity in execution.pending_input_ids if identity not in ids]
+                        elif execution.selected.batched_completion:
+                            completed = list(execution.pending_input_ids)
+                            execution.pending_input_ids.clear()
+                        else:
+                            completed = execution.pending_input_ids[:1]
+                            del execution.pending_input_ids[:1]
+                        execution.completed_input_ids.extend(completed)
+                        app.state.pending_inputs = len(execution.pending_input_ids)
+                        done = not execution.pending_input_ids
+                        if done:
+                            execution.accepting_inputs = False
+                    if done:
                         await stop_process()
                         background = await wait_background(execution)
                         failed = (
@@ -494,7 +508,7 @@ def create_app() -> FastAPI:
                 name="harness-reader-" + value.execution_id)
         if value.input_id not in execution.received_input_ids:
             async with app.state.write_lock:
-                execution.process.stdin.write(control_user_message(prompt) if selected.control_input else
+                execution.process.stdin.write(control_user_message(prompt, value.input_id) if selected.control_input else
                     streaming_user_message(prompt) if selected.streaming_input else prompt.encode())
                 await execution.process.stdin.drain()
                 execution.received_input_ids.add(value.input_id)
@@ -528,21 +542,22 @@ def create_app() -> FastAPI:
         prompt = value.message
         input_id = value.input_id
         execution = app.state.execution
-        if input_id == "initial" and execution and input_id in execution.received_input_ids:
-            input_id = "append-" + __import__("uuid").uuid4().hex
         if value.attachments:
             prompt += "\n\nAttached files are available in /workspace/inbox. Their immutable records are listed in attachments.json."
             (WORKSPACE / "inbox" / "attachments.json").write_text(json.dumps(value.attachments, ensure_ascii=False))
         async with app.state.write_lock:
             execution = app.state.execution
-            if execution and input_id in execution.received_input_ids:
+            if (not execution or execution.id != value.execution_id
+                    or not execution.accepting_inputs or execution.result is not None):
+                raise HTTPException(409, "Execution is no longer accepting input")
+            if input_id in execution.received_input_ids:
                 mode = "native_steer" if os.environ.get("HARNESS_KIND") == "codex" else (
                     "native_safe_point" if os.environ.get("HARNESS_KIND") == "deepseek" else "native_stream")
                 return {"accepted": True, "mode": mode, "replayed": True}
             if execution:
                 execution.received_input_ids.add(input_id)
                 execution.pending_input_ids.append(input_id)
-            process.stdin.write(control_user_message(prompt) if selected.control_input else streaming_user_message(prompt)); await process.stdin.drain()
+            process.stdin.write(control_user_message(prompt, value.input_id) if selected.control_input else streaming_user_message(prompt)); await process.stdin.drain()
             app.state.pending_inputs += 1
         mode = "native_steer" if os.environ.get("HARNESS_KIND") == "codex" else (
             "native_safe_point" if os.environ.get("HARNESS_KIND") == "deepseek" else "native_stream")
@@ -643,25 +658,44 @@ def create_app() -> FastAPI:
         await stop_process()
         return {"cancelled": True}
 
+    def artifact_path(value: str) -> Path:
+        relative = safe_relative(value)
+        target = OUTPUTS / relative
+        # Check the lexical path before resolve() so links cannot disappear from
+        # validation. Special files and hard links are never exported.
+        current = OUTPUTS
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink():
+                raise ValueError("Artifact links are not allowed")
+        info = target.stat()
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise ValueError("Artifact is not a regular independent file")
+        if not target.resolve().is_relative_to(OUTPUTS.resolve()):
+            raise ValueError("Artifact is outside output directory")
+        return target
+
     @app.get("/v1/artifacts")
     async def artifacts():
         items = []
         for path in OUTPUTS.rglob("*"):
-            if not path.is_file() or path.is_symlink():
+            try:
+                relative = path.relative_to(OUTPUTS).as_posix()
+                path = artifact_path(relative)
+            except (ValueError, OSError):
                 continue
-            relative = path.relative_to(OUTPUTS).as_posix()
             with path.open("rb") as stream:
                 digest = hashlib.file_digest(stream, "sha256").hexdigest()
             items.append({"path": relative, "size": path.stat().st_size, "sha256": digest, "mime": mimetypes.guess_type(path.name)[0] or "application/octet-stream"})
-        return {"items": items[:50_000]}
+            if len(items) >= 50_000:
+                break
+        return {"items": items}
 
     @app.get("/v1/artifacts/file")
     async def artifact(path: str):
         try:
-            target = (OUTPUTS / safe_relative(path)).resolve()
-            if not target.is_relative_to(OUTPUTS.resolve()) or not target.is_file() or target.is_symlink():
-                raise ValueError
-        except ValueError:
+            target = artifact_path(path)
+        except (ValueError, OSError):
             raise HTTPException(404, "Artifact not found")
         return FileResponse(target)
 

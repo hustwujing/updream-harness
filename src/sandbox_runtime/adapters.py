@@ -83,8 +83,8 @@ def streaming_user_message(message: str) -> bytes:
     ]}, "parent_tool_use_id": None, "session_id": ""}, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
 
 
-def control_user_message(message: str) -> bytes:
-    return (json.dumps({"type": "input", "id": __import__("uuid").uuid4().hex, "message": message},
+def control_user_message(message: str, input_id: str | None = None) -> bytes:
+    return (json.dumps({"type": "input", "id": input_id or __import__("uuid").uuid4().hex, "message": message},
         ensure_ascii=False, separators=(",", ":")) + "\n").encode()
 
 
@@ -103,7 +103,7 @@ def normalize(harness: str, line: str, state: dict | None = None) -> dict:
     params = value.get("params") or {}
     if kind == "harness.input.completed":
         return {"kind": "step_finished", "payload": {"name": "Input completed", "input_completed": True,
-            "input_ids": value.get("input_ids", [])}}
+            "input_ids": value.get("input_ids", []), "is_error": value.get("status") in {"failed", "interrupted", "cancelled"}}}
     if kind == "harness.interaction.requested":
         return {"kind": "waiting_user", "payload": {
             "interaction_id": str(value.get("id", "")),
@@ -121,6 +121,8 @@ def normalize(harness: str, line: str, state: dict | None = None) -> dict:
         if item_type in {"commandExecution", "fileChange", "imageView", "mcpToolCall", "dynamicToolCall"}:
             payload = {"name": item_type, "tool_use_id": identity}
             payload["detail" if method == "item/started" else "result"] = item
+            if method == "item/completed":
+                payload["is_error"] = item.get("status") in {"failed", "declined"} or item.get("exitCode") not in (None, 0)
             return {"kind": "tool_started" if method == "item/started" else "tool_finished", "payload": payload}
         return None
     if harness == "codex" and method in {"item/commandExecution/outputDelta", "item/fileChange/outputDelta"}:
@@ -128,7 +130,8 @@ def normalize(harness: str, line: str, state: dict | None = None) -> dict:
     if harness == "codex" and method == "turn/plan/updated":
         return {"kind": "step_progress", "payload": {"name": "Plan", "plan": params.get("plan", [])}}
     if harness == "codex" and method == "turn/completed":
-        return {"kind": "step_finished", "payload": {"name": "Codex response", "turn": params.get("turn", {})}}
+        return {"kind": "step_finished", "payload": {"name": "Codex response", "turn": params.get("turn", {}),
+            "is_error": (params.get("turn") or {}).get("status") in {"failed", "interrupted", "cancelled"}}}
     if harness == "codex" and method:
         return None
     if harness == "codex" and kind == "thread.started":
@@ -215,7 +218,8 @@ def normalize(harness: str, line: str, state: dict | None = None) -> dict:
             }}
         return None
     if harness == "claude" and kind == "result":
-        return {"kind": "step_finished", "payload": {"name": "Claude response", "usage": value.get("usage") or {}, "thread_id": value.get("session_id", "")}}
+        return {"kind": "step_finished", "payload": {"name": "Claude response", "usage": value.get("usage") or {}, "thread_id": value.get("session_id", ""),
+            "is_error": bool(value.get("is_error")) or str(value.get("subtype", "")).startswith("error")}}
     if kind in {"text_delta", "response.output_text.delta", "assistant_delta"}:
         return {"kind": "text_delta", "payload": {"text": value.get("delta") or value.get("text") or ""}}
     if kind in {"tool_started", "tool_use", "item.started"}:

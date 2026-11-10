@@ -30,6 +30,8 @@ class SandboxPool:
         self._creating: dict[Harness, int] = defaultdict(int)
         self._refill: set[asyncio.Task] = set()
         self._closed = False
+        self._retiring: dict[str, tuple[Sandbox, bool]] = {}
+        self._deleting: set[str] = set()
         self._lock = asyncio.Lock()
         self._thread_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._thread_lock_users: dict[str, int] = defaultdict(int)
@@ -55,9 +57,38 @@ class SandboxPool:
 
     async def managed_sandbox_ids(self) -> set[str]:
         async with self._lock:
-            return {sandbox.id for sandbox in self._attached.values()} | {
+            return set(self._retiring) | {sandbox.id for sandbox in self._attached.values()} | {
                 sandbox.id for rows in self._warm.values() for sandbox in rows
             }
+
+    async def _delete_tracked(self, sandbox: Sandbox, *, user_slot: bool = True) -> None:
+        async with self._lock:
+            self._retiring.setdefault(sandbox.id, (sandbox, user_slot))
+            if sandbox.id in self._deleting:
+                return
+            self._deleting.add(sandbox.id)
+        try:
+            await self.backend.delete(sandbox)
+        except BaseException:
+            # Keep both the object and its capacity reservation for retry.
+            raise
+        else:
+            async with self._lock:
+                retired = self._retiring.pop(sandbox.id, None)
+            if retired and retired[1]:
+                self._user_slots.release()
+        finally:
+            async with self._lock:
+                self._deleting.discard(sandbox.id)
+
+    async def retry_deletions(self) -> None:
+        async with self._lock:
+            pending = list(self._retiring.values())
+        for sandbox, user_slot in pending:
+            try:
+                await self._delete_tracked(sandbox, user_slot=user_slot)
+            except Exception:
+                logger.exception("Sandbox deletion still pending id=%s", sandbox.id)
 
     async def _fill_harness(self, harness: Harness) -> None:
         while True:
@@ -65,28 +96,22 @@ class SandboxPool:
                 if self._closed or len(self._warm[harness]) + self._creating[harness] >= self.targets[harness]:
                     return
                 self._creating[harness] += 1
+            sandbox = None
             try:
-                sandbox = await self.backend.create(
-                    harness,
-                    self.images[harness],
-                    {"sandbox-harness.io/pool": "warm", "sandbox-harness.io/turn": "warm-" + identifier(), "sandbox-harness.io/harness": harness.value},
-                    {},
-                )
+                sandbox = await self.backend.create(harness, self.images[harness],
+                    {"sandbox-harness.io/pool": "warm", "sandbox-harness.io/turn": "warm-" + identifier(),
+                     "sandbox-harness.io/harness": harness.value}, {})
                 sandbox.warm = True
                 async with self._lock:
-                    self._creating[harness] -= 1
-                    if self._closed:
-                        delete = True
-                    else:
+                    if not self._closed:
                         self._warm[harness].append(sandbox)
-                        delete = False
-                if delete:
-                    await self.backend.delete(sandbox)
+                        sandbox = None
+                if sandbox:
+                    await self._delete_tracked(sandbox, user_slot=False)
                     return
-            except Exception:
+            finally:
                 async with self._lock:
                     self._creating[harness] -= 1
-                raise
 
     def _schedule_refill(self, harness: Harness) -> None:
         task = asyncio.create_task(self._fill_harness(harness), name="sandbox-refill-" + harness.value)
@@ -99,6 +124,8 @@ class SandboxPool:
         async with self._thread_lock(thread_id):
             slot_reserved = False
             async with self._lock:
+                if self._closed:
+                    raise RuntimeError("sandbox_pool_closed")
                 expiry = self._expiry.pop(thread_id, None)
                 attached = self._attached.get(thread_id)
                 self._idle_since.pop(thread_id, None)
@@ -119,8 +146,7 @@ class SandboxPool:
                     self._user_slots.release()
                     attached = None
             if attached:
-                await self.backend.delete(attached)
-                self._user_slots.release()
+                await self._delete_tracked(attached)
 
             while not slot_reserved:
                 evict = None
@@ -138,8 +164,7 @@ class SandboxPool:
                     evict_expiry.cancel()
                     await asyncio.gather(evict_expiry, return_exceptions=True)
                 if evict:
-                    await self.backend.delete(evict)
-                    self._user_slots.release()
+                    await self._delete_tracked(evict)
                     continue
                 if not slot_reserved:
                     await self._user_slots.acquire()
@@ -147,6 +172,8 @@ class SandboxPool:
 
             try:
                 async with self._lock:
+                    if self._closed:
+                        raise RuntimeError("sandbox_pool_closed")
                     sandbox = self._warm[harness].pop() if self._warm[harness] else None
                 if sandbox:
                     # Pristine warm instances do not contain a user token. Runtime injection
@@ -173,7 +200,13 @@ class SandboxPool:
                 sandbox.turn_id = turn_id
                 sandbox.reused = False
                 async with self._lock:
-                    self._attached[thread_id] = sandbox
+                    closed = self._closed
+                    if not closed:
+                        self._attached[thread_id] = sandbox
+                if closed:
+                    # The local exception path releases this reservation.
+                    await self._delete_tracked(sandbox, user_slot=False)
+                    raise RuntimeError("sandbox_pool_closed")
             except BaseException:
                 self._user_slots.release()
                 raise
@@ -181,27 +214,35 @@ class SandboxPool:
             return sandbox
 
     async def adopt(self, sandbox: Sandbox, *, thread_id: str, turn_id: str) -> Sandbox:
-        await self._user_slots.acquire()
-        try:
-            async with self._thread_lock(thread_id):
-                async with self._lock:
-                    existing = self._attached.get(thread_id)
-                    if existing and existing.id != sandbox.id:
+        async with self._thread_lock(thread_id):
+            async with self._lock:
+                if self._closed:
+                    raise RuntimeError("sandbox_pool_closed")
+                existing = self._attached.get(thread_id)
+                if existing:
+                    if existing.id != sandbox.id:
                         raise RuntimeError("Thread already owns another sandbox")
+                    return existing
+            await self._user_slots.acquire()
+            try:
                 await self.backend.bind(sandbox, thread_id, turn_id)
                 sandbox.thread_id = thread_id
                 sandbox.turn_id = turn_id
                 sandbox.warm = False
                 async with self._lock:
+                    if self._closed:
+                        raise RuntimeError("sandbox_pool_closed")
                     self._attached[thread_id] = sandbox
-            return sandbox
-        except BaseException:
-            self._user_slots.release()
-            raise
+                return sandbox
+            except BaseException:
+                self._user_slots.release()
+                raise
 
     async def release(self, sandbox: Sandbox, *, keep_attached: bool, keepalive_seconds: int = 0) -> None:
         async with self._thread_lock(sandbox.thread_id):
             async with self._lock:
+                if self._attached.get(sandbox.thread_id) is not sandbox:
+                    return
                 if keep_attached:
                     self._attached[sandbox.thread_id] = sandbox
                     previous = self._expiry.pop(sandbox.thread_id, None)
@@ -215,8 +256,7 @@ class SandboxPool:
                     return
                 self._attached.pop(sandbox.thread_id, None)
                 self._idle_since.pop(sandbox.thread_id, None)
-            await self.backend.delete(sandbox)
-            self._user_slots.release()
+            await self._delete_tracked(sandbox)
 
     async def detach(self, sandbox: Sandbox) -> None:
         """Forget a sandbox after this process loses ownership without deleting it."""
@@ -240,8 +280,7 @@ class SandboxPool:
             if expiry:
                 expiry.cancel()
             if sandbox:
-                await self.backend.delete(sandbox)
-                self._user_slots.release()
+                await self._delete_tracked(sandbox)
                 return
         for candidate in await self.backend.list_namespace():
             if candidate.metadata.get("sandbox-harness.io/thread") == thread_id:
@@ -257,8 +296,7 @@ class SandboxPool:
                     self._attached.pop(thread_id, None)
                     self._idle_since.pop(thread_id, None)
                     self._expiry.pop(thread_id, None)
-                await self.backend.delete(sandbox)
-                self._user_slots.release()
+                await self._delete_tracked(sandbox)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -286,4 +324,8 @@ class SandboxPool:
             await asyncio.gather(*refill, return_exceptions=True)
         for sandbox in values:
             if sandbox.id not in preserve_sandbox_ids:
-                await self.backend.delete(sandbox)
+                try:
+                    await self._delete_tracked(sandbox, user_slot=not sandbox.warm)
+                except Exception:
+                    logger.exception("Sandbox deletion pending on shutdown id=%s", sandbox.id)
+        await self.retry_deletions()

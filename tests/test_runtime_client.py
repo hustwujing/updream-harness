@@ -34,3 +34,38 @@ async def test_runtime_client_ignores_transport_heartbeats():
     rows = [row async for row in runtime.run(sandbox, message="hello", attachments=[], native_thread_id="",
         reasoning_effort="high")]
     assert len(rows) == 1 and rows[0].status == "completed"
+
+
+async def test_broken_runtime_stream_reattaches_without_resubmitting_input():
+    requests = []
+    def respond(request):
+        requests.append(request)
+        if request.method == 'POST':
+            return httpx.Response(200, text='{"kind":"text_delta","payload":{"text":"hello"},"runtime_sequence":1}\n')
+        if request.url.path.endswith('/events'):
+            assert request.url.params['after'] == '1'
+            return httpx.Response(200, text='{"kind":"text_delta","payload":{"text":"hello"},"runtime_sequence":1}\n{"type":"result","runtime_sequence":2,"result":{"status":"completed"}}\n')
+        return httpx.Response(200, json={'state':'running','last_sequence':1,'result':None})
+    runtime = RuntimeClient(transport=httpx.MockTransport(respond))
+    sandbox = Sandbox(id='s', harness=Harness.CODEX, image='i', runtime_url='http://runtime', metadata={})
+    rows = [row async for row in runtime.run(sandbox, message='once', attachments=[],
+        native_thread_id='', reasoning_effort='high', execution_id='execution-one')]
+    assert len(rows) == 2 and rows[-1].status == 'completed'
+    assert sum(r.method == 'POST' for r in requests) == 1
+
+
+async def test_runtime_stream_recovery_is_bounded_and_never_replays_post(monkeypatch):
+    import pytest
+    from sandbox_harness.runtime import RuntimeStreamInterrupted
+    calls = []
+    async def no_wait(seconds): pass
+    monkeypatch.setattr('sandbox_harness.runtime.asyncio.sleep', no_wait)
+    def respond(request):
+        calls.append(request.method)
+        return httpx.Response(200, text='') if request.method == 'POST' else httpx.Response(404)
+    runtime = RuntimeClient(transport=httpx.MockTransport(respond))
+    sandbox = Sandbox(id='s', harness=Harness.CODEX, image='i', runtime_url='http://runtime', metadata={})
+    with pytest.raises(RuntimeStreamInterrupted):
+        _ = [row async for row in runtime.run(sandbox, message='once', attachments=[],
+            native_thread_id='', reasoning_effort='high', execution_id='missing')]
+    assert calls.count('POST') == 1 and calls.count('GET') == 4

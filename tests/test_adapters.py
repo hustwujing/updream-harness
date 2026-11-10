@@ -79,3 +79,12 @@ def test_codex_app_server_events_and_control_inputs_are_normalized():
     assert delta == {"kind":"text_delta","payload":{"text":"hello"}}
     assert started["kind"] == "tool_started" and started["payload"]["tool_use_id"] == "t"
     assert finished["kind"] == "tool_finished" and finished["payload"]["tool_use_id"] == "t"
+
+
+def test_terminal_protocol_events_preserve_failure_instead_of_claiming_success():
+    for harness, frame in [
+        ('codex', {'method':'turn/completed','params':{'turn':{'status':'failed','error':{'message':'503'}}}}),
+        ('codex', {'type':'harness.input.completed','status':'failed','input_ids':['a']}),
+        ('claude', {'type':'result','subtype':'error_during_execution','is_error':True}),
+    ]:
+        assert normalize(harness, json.dumps(frame))['payload']['is_error'] is True

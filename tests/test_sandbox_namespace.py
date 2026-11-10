@@ -323,3 +323,48 @@ async def test_unrelated_sandbox_create_does_not_block_release():
     second = await creating
     await pool.release(second, keep_attached=False)
     await pool.close()
+
+
+async def test_failed_delete_keeps_capacity_until_retry_confirms_absence():
+    class Backend(FakeSandboxBackend):
+        fail = True
+        async def delete(self, sandbox):
+            if self.fail:
+                raise RuntimeError('temporary delete failure')
+            await super().delete(sandbox)
+    import pytest
+    backend=Backend();pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness},max_sandboxes=1)
+    first=await pool.acquire(thread_id='one',turn_id='one',harness=Harness.CODEX,environment={})
+    with pytest.raises(RuntimeError,match='temporary delete failure'):
+        await pool.release(first,keep_attached=False)
+    assert first.id in await pool.managed_sandbox_ids()
+    waiting=asyncio.create_task(pool.acquire(thread_id='two',turn_id='two',harness=Harness.CODEX,environment={}))
+    await asyncio.sleep(.01);assert not waiting.done()
+    backend.fail=False;await pool.retry_deletions()
+    second=await asyncio.wait_for(waiting,1)
+    assert first.id not in backend.items
+    await pool.release(second,keep_attached=False);await pool.close()
+
+
+async def test_namespace_sweep_includes_failed_sandboxes_and_exact_turn_lookup():
+    def respond(request):
+        metadata={'sandbox-harness.io/namespace':'sandbox-harness','sandbox-harness.io/harness':'codex','sandbox-harness.io/turn':'wrong-turn'}
+        if request.url.path=='/v1/sandboxes':
+            return httpx.Response(200,json={'items':[{'id':'broken','metadata':metadata,'image':{'uri':'i'}}]})
+        return httpx.Response(200,json={'id':'broken','status':{'state':'Failed'}})
+    backend=OpenSandboxBackend('http://sandbox','',60,'sandbox-harness')
+    await backend.client.aclose();backend.client=httpx.AsyncClient(base_url='http://sandbox',transport=httpx.MockTransport(respond))
+    try:
+        assert [s.id for s in await backend.list_namespace()]==['broken']
+        assert await backend.find_by_turn('expected-turn')==[]
+    finally:await backend.client.aclose()
+
+
+async def test_repeated_adoption_does_not_reserve_an_extra_slot():
+    backend=FakeSandboxBackend();pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness},max_sandboxes=1)
+    external=await backend.create(Harness.CODEX,'',{'sandbox-harness.io/turn':'t'}, {})
+    first=await pool.adopt(external,thread_id='thread',turn_id='t')
+    assert await asyncio.wait_for(pool.adopt(external,thread_id='thread',turn_id='t'),1) is first
+    await pool.release(first,keep_attached=False)
+    second=await asyncio.wait_for(pool.acquire(thread_id='new',turn_id='next',harness=Harness.CODEX,environment={}),1)
+    await pool.release(second,keep_attached=False);await pool.close()

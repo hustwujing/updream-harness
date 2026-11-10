@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 import os
 import time
 import json
+import logging
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -18,6 +19,9 @@ from .config import Settings, load_settings, validate_service_settings
 from .domain import Harness
 from .model_routes import ModelRoutes
 from .public_proxy import start_proxy
+
+
+logger = logging.getLogger(__name__)
 
 
 HOP_HEADERS = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length"}
@@ -68,6 +72,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     codec = CapabilityCodec(settings.gateway_signing_key)
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     active: dict[str, set[httpx.Response]] = defaultdict(set)
+    public_connections: dict[str, set[asyncio.Task]] = defaultdict(set)
     clients: dict[str, httpx.AsyncClient] = {}
     model_routes = ModelRoutes(settings)
     upstreams = {
@@ -100,7 +105,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
                 raise ValueError("Proxy capability is revoked or exhausted")
             return claims
 
-        proxy = await start_proxy(settings.gateway_bind_host, settings.gateway_proxy_port, authorize_public)
+        proxy = await start_proxy(settings.gateway_bind_host, settings.gateway_proxy_port, authorize_public, connections=public_connections)
         try:
             yield
         finally:
@@ -124,6 +129,11 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             "1",
             ex=settings.capability_ttl_seconds,
         )
+        tunnels = list(public_connections.pop(nonce, set()))
+        for task in tunnels:
+            task.cancel()
+        if tunnels:
+            await asyncio.gather(*tunnels, return_exceptions=True)
         responses = list(active.pop(nonce, set()))
         if responses:
             await asyncio.gather(*(response.aclose() for response in responses), return_exceptions=True)
@@ -160,8 +170,11 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         if not base_url:
             raise HTTPException(503, "Gateway upstream is not configured")
         client_key = prefix + "\0" + base_url
-        client = clients.setdefault(client_key, httpx.AsyncClient(base_url=base_url.rstrip("/"),
-            timeout=httpx.Timeout(None, connect=20), trust_env=False))
+        client = clients.get(client_key)
+        if client is None:
+            client = httpx.AsyncClient(base_url=base_url.rstrip("/"),
+                timeout=httpx.Timeout(None, connect=20), trust_env=False)
+            clients[client_key] = client
         suffix = upstream_suffix(route, prefix)
         headers = {key: value for key, value in request.headers.items() if key.lower() not in HOP_HEADERS | {"authorization", "x-api-key", "anthropic-api-key"}}
         if credential:
@@ -179,20 +192,30 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             payload["model"] = claims.model
             body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
         upstream = client.build_request(request.method, suffix, params=request.query_params, headers=headers, content=body)
+        started = time.monotonic()
         response = await send_with_start_timeout(client, upstream, settings.gateway_model_start_timeout_seconds)
+        log = logger.warning if response.status_code >= 400 else logger.info
+        log("Upstream response turn=%s model=%s status=%s header_seconds=%.3f request_bytes=%s request_id=%s",
+            claims.turn_id, claims.model, response.status_code, time.monotonic() - started,
+            len(body), response.headers.get("x-request-id") or response.headers.get("request-id", ""))
+        if (int(time.time()) >= claims.expires_at or
+                await redis.exists(settings.redis_prefix + "capability:revoked:" + claims.nonce)):
+            await response.aclose()
+            raise HTTPException(401, "Capability token expired or revoked")
         active[claims.nonce].add(response)
 
         async def content():
             try:
-                async for chunk in bytes_with_idle_timeout(response, settings.gateway_model_idle_timeout_seconds):
-                    yield chunk
+                async with asyncio.timeout(max(0, claims.expires_at - time.time())):
+                    async for chunk in bytes_with_idle_timeout(response, settings.gateway_model_idle_timeout_seconds):
+                        yield chunk
             finally:
                 active[claims.nonce].discard(response)
                 if not active[claims.nonce]:
                     active.pop(claims.nonce, None)
                 await response.aclose()
 
-        response_headers = {key: value for key, value in response.headers.items() if key.lower() not in HOP_HEADERS}
+        response_headers = {key: value for key, value in response.headers.items() if key.lower() not in HOP_HEADERS | {"content-encoding"}}
         return StreamingResponse(content(), status_code=response.status_code, headers=response_headers, media_type=response.headers.get("content-type"))
 
     return app

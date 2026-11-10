@@ -158,7 +158,12 @@ async def test_broker_persists_a_user_visible_item_for_terminal_failure(tmp_path
         errors = [item for item in await store.items_after(thread.id) if item.type.value == "error"]
         assert current.state == TurnState.FAILED
         assert len(errors) == 1 and errors[0].status == "failed"
-        assert "Harness 执行失败" in errors[0].summary
+        assert "执行进程异常退出" in errors[0].summary
+        artifacts = await store.artifacts(turn.id)
+        assert artifacts and objects.get(artifacts[0].object_ref, maximum=100) == b"result"
+        exported = [item for item in await store.items_after(thread.id) if item.type.value == "artifact"]
+        assert exported[0].payload["partial"] is True
+        assert (await store.get_thread(thread.id)).checkpoint_ref
     finally:
         await pool.close(); await store.close()
 

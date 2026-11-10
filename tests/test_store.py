@@ -216,7 +216,7 @@ async def test_expired_interaction_status_is_committed_before_error(tmp_path):
             TurnCreate(message="hello", idempotency_key="expired-turn-key"), profile, owner)
         interaction, _ = await store.upsert_interaction(thread.id, turn.id, "old-execution",
             "native-expired", "approval", {"prompt":"Allow?"})
-        await store.set_turn_state(turn.id, TurnState.COMPLETED)
+        await store.set_turn_state(turn.id, TurnState.RUNNING)
         with pytest.raises(RuntimeError, match="interaction_expired"):
             await store.claim_interaction_response(interaction.id, owner, "expired-response-key", {"action":"approve"})
         assert (await store.list_interactions(thread.id, owner))[0].status == "expired"

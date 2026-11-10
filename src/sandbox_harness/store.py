@@ -637,6 +637,19 @@ class Store:
             row.error_detail = error_detail[:4000]
             if state in {TurnState.WAITING_USER, TurnState.COMPLETED, TurnState.FAILED, TurnState.CANCELLED}:
                 row.pending_final_state = ""
+                inputs = (await db.execute(select(TurnInputRow).where(
+                    TurnInputRow.turn_id == turn_id, TurnInputRow.status.in_(["pending", "delivered"])
+                ).with_for_update())).scalars().all()
+                ids = {value.id for value in inputs}
+                for value in inputs:
+                    value.status = "failed"; value.updated_at = now()
+                await db.execute(update(InteractionRow).where(InteractionRow.turn_id == turn_id,
+                    InteractionRow.status.in_(["pending", "responding"])).values(status="expired", updated_at=now()))
+                items = (await db.execute(select(ItemRow).where(ItemRow.turn_id == turn_id))).scalars().all()
+                for item in items:
+                    if (json.loads(item.payload_json).get("input_id") in ids
+                            or item.type == ItemType.APPROVAL.value and item.status == "in_progress"):
+                        item.status = "failed"; item.updated_at = now()
             row.updated_at = now()
         return self.turn_view(row)
 
@@ -970,20 +983,9 @@ class Store:
             stored_response = json.loads(row.response_json)
             if row.response_key == response_key and stored_response and stored_response != response:
                 raise RuntimeError("idempotency_conflict")
-            if row.status == "responded" and row.response_key == response_key:
+            if row.status == "responded" and stored_response == response:
                 return self.interaction_view(row), False
-            if row.status == "responding":
-                lease_active = bool(row.response_expires_at
-                    and utc_datetime(row.response_expires_at) > timestamp)
-                if lease_active:
-                    raise RuntimeError("interaction_response_in_progress")
-                row.response_key = response_key
-                row.response_json = json.dumps(response, ensure_ascii=False)
-                row.response_owner = claim_owner
-                row.response_expires_at = timestamp + timedelta(seconds=lease_seconds)
-                row.updated_at = timestamp
-                return self.interaction_view(row), True
-            if row.status != "pending":
+            if row.status not in {"pending", "responding"}:
                 raise RuntimeError("interaction_not_pending")
             turn = await db.get(TurnRow, row.turn_id, with_for_update=True)
             if (not turn or turn.runtime_execution_id != row.runtime_execution_id
@@ -991,6 +993,13 @@ class Store:
                 row.status = "expired"; row.updated_at = timestamp
                 expired = True
             else:
+                if row.status == "responding":
+                    if row.response_expires_at and utc_datetime(row.response_expires_at) > timestamp:
+                        raise RuntimeError("interaction_response_in_progress")
+                    # A lost receipt must not change the user's committed answer.
+                    # A new browser key is allowed, a different answer is not.
+                    if stored_response != response:
+                        raise RuntimeError("interaction_response_conflict")
                 row.status = "responding"; row.response_key = response_key
                 row.response_json = json.dumps(response, ensure_ascii=False)
                 row.response_owner = claim_owner
@@ -1015,6 +1024,14 @@ class Store:
                 row.response_owner = ""; row.response_expires_at = None
                 row.updated_at = now()
         return self.interaction_view(row)
+
+    async def resume_interaction_turn(self, turn_id: str, execution_id: str) -> bool:
+        async with self.connections.begin() as db:
+            result = await db.execute(update(TurnRow).where(TurnRow.id == turn_id,
+                TurnRow.runtime_execution_id == execution_id,
+                TurnRow.state == TurnState.AWAITING_USER.value
+            ).values(state=TurnState.RUNNING.value, updated_at=now()))
+            return result.rowcount == 1
 
     async def finish_interaction_item(self, turn_id: str, interaction_id: str, response: dict) -> None:
         async with self.connections.begin() as db:

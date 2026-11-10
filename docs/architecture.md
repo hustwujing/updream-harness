@@ -37,3 +37,28 @@ Each conversation freezes one Harness. Codex uses app-server `turn/steer`, Claud
 The product keeps a bounded pristine warm pool and a separate attached-session set. Used sandboxes are never returned to the warm pool. Total product capacity is bounded; excess Turns wait for a released slot.
 
 Graceful API shutdown preserves only currently executing sandboxes. On startup, stale warm sandboxes and sandboxes whose Turns are terminal are removed. A periodic namespace-scoped reaper removes later orphans without touching another product's OpenSandbox resources.
+
+## Transport loss and failed-turn artifacts
+
+The Runtime result and its journal entry are published under the same condition lock.
+A Broker that sees EOF or a transient transport error reconnects to the existing
+execution's GET event endpoint (up to three reconnections), starting after its last
+consumed sequence. It does not replay the POST or create another Harness process.
+Exhaustion is reported as a transport interruption, not a model-quality failure.
+
+A terminal Harness failure still triggers a bounded checkpoint/artifact save before
+sandbox deletion. Exported files are marked `partial` in transcript Items, and the
+Turn remains FAILED. Saving partial work is best effort; it cannot recover files
+from a sandbox that disappeared before they were exported. Original upstream errors
+remain in the Turn audit record; public errors distinguish overload, timeouts and
+transport interruption. Protocol completion events preserve failure status.
+
+The UI retains one EventSource per active Turn, honours terminal closure and reads
+all Item pages. SSE reconnects honour Last-Event-ID. A delivery conflict only creates
+a queued Turn for the explicit `turn_not_accepting_input` outcome, never for arbitrary
+409 errors. Pending and failed appended messages have visible transcript states.
+
+Object storage calls run outside the asyncio event loop so slow BOSS transfers do
+not block lease heartbeats. Sandbox deletions retain their capacity reservation and
+retry record until absence is confirmed. Namespace cleanup includes unhealthy
+sandboxes; exact Turn lookup validates metadata returned by OpenSandbox.

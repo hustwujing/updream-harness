@@ -273,7 +273,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(422, str(exc))
         data = await limited_body(request, settings.max_attachment_bytes)
-        object_ref, digest = objects.put(data)
+        object_ref, digest = await asyncio.to_thread(objects.put, data)
         value, _ = await store.register_project_file(thread_id, path=path, source_type="upload",
             source_turn_id="", sha256=digest, size=len(data), mime=mime, object_ref=object_ref)
         return value
@@ -371,6 +371,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def events(turn_id: str, request: Request, after: int = 0):
         if not await store.get_turn_for_owner(turn_id, request.state.owner_id):
             raise HTTPException(404, "Turn not found")
+        try:
+            after = max(after, int(request.headers.get("last-event-id", "0")))
+        except ValueError:
+            raise HTTPException(422, "Invalid event cursor")
         async def stream():
             cursor = after
             while not await request.is_disconnected():
@@ -400,7 +404,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not valid_filename(name):
             raise HTTPException(400, "Invalid filename")
         data = await limited_body(request, settings.max_attachment_bytes)
-        object_ref, digest = objects.put(data)
+        object_ref, digest = await asyncio.to_thread(objects.put, data)
         attachment = Attachment(name=name, object_ref=object_ref, sha256=digest, size=len(data), mime=mime)
         await store.record_upload(request.state.owner_id, attachment)
         return attachment
@@ -410,7 +414,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         value = await store.get_artifact_for_owner(artifact_id, request.state.owner_id)
         if not value:
             raise HTTPException(404, "Artifact not found")
-        data = objects.get(value.object_ref, maximum=settings.max_artifact_bytes)
+        data = await asyncio.to_thread(objects.get, value.object_ref, maximum=settings.max_artifact_bytes)
         filename = Path(value.path).name
         safe_inline = inline and (value.mime in SAFE_INLINE_MIMES or value.mime.startswith(("video/", "audio/")))
         return Response(data, media_type=value.mime if safe_inline or not inline else "application/octet-stream",
@@ -423,7 +427,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not value:
             raise HTTPException(404, "Project file not found")
         maximum = settings.max_attachment_bytes if value.source_type == "upload" else settings.max_artifact_bytes
-        data = objects.get(value.object_ref, maximum=maximum)
+        data = await asyncio.to_thread(objects.get, value.object_ref, maximum=maximum)
         filename = Path(value.path).name
         safe_inline = inline and (value.mime in SAFE_INLINE_MIMES or value.mime.startswith(("video/", "audio/")))
         return Response(data, media_type=value.mime if safe_inline or not inline else "application/octet-stream",

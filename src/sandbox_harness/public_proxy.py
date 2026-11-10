@@ -4,6 +4,7 @@ import asyncio
 import base64
 import ipaddress
 import socket
+import time
 from urllib.parse import urlsplit
 
 
@@ -51,8 +52,10 @@ def proxy_token(headers: dict[str, str]) -> str:
     return token
 
 
-async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, authorize) -> None:
+async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, authorize, *, connections=None) -> None:
     upstream_writer = None
+    registered_nonce = None
+    expiry = None
     try:
         header = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=10)
         if len(header) > MAX_HEADER:
@@ -79,7 +82,13 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
                 if content_length < 0 or content_length > 256 * 1024 * 1024:
                     raise ValueError("Proxy request body is too large")
             headers.append((name.strip(), value.strip()))
-        await authorize(proxy_token(header_map))
+        claims = await authorize(proxy_token(header_map))
+        if connections is not None:
+            registered_nonce = claims.nonce
+            connections[registered_nonce].add(asyncio.current_task())
+            expiry = asyncio.get_running_loop().call_later(
+                max(0, claims.expires_at - time.time()), asyncio.current_task().cancel)
+
         if method.upper() == "CONNECT":
             host, separator, port_text = target.rpartition(":")
             if not separator or not host:
@@ -119,13 +128,21 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
             writer.write(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             await writer.drain()
     finally:
+        if expiry:
+            expiry.cancel()
+        if registered_nonce:
+            tasks = connections.get(registered_nonce)
+            if tasks is not None:
+                tasks.discard(asyncio.current_task())
+                if not tasks:
+                    connections.pop(registered_nonce, None)
         if upstream_writer:
             upstream_writer.close()
         writer.close()
 
 
-async def start_proxy(host: str, port: int, authorize) -> asyncio.Server:
+async def start_proxy(host: str, port: int, authorize, *, connections=None) -> asyncio.Server:
     async def handle(reader, writer):
-        await handle_proxy(reader, writer, authorize)
+        await handle_proxy(reader, writer, authorize, connections=connections)
 
     return await asyncio.start_server(handle, host, port, limit=MAX_HEADER + 1)
