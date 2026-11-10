@@ -58,6 +58,13 @@ H04 contains separate Codex, Claude and DeepSeek executions. The stable browser-
 
 The real R06 allocation test deliberately deleted both Claude warm Sandboxes before submitting two new Turns. Both Turns received newly created Sandbox IDs and entered `RUNNING`, proving the original metadata-bind 404 was removed. Their later Claude requests did not reach a prompt terminal state during the bounded observation window and were explicitly cancelled; that external/model tail is not presented as a conversational-success case.
 
+## 2026-11-10 UI And Claude Follow-up
+
+- A delayed refresh from the previously selected Thread could repopulate the new-conversation view. Thread selection now uses a monotonically increasing view epoch; old SSE and API responses cannot mutate the new view.
+- The new-conversation view exposes Harness, model and reasoning controls. Once a Thread exists, Harness is hidden and frozen; model and reasoning remain selectable between Turns.
+- Thread summaries now include their latest Turn state. The sidebar renders a spinner for nonterminal work and a green completion dot.
+- Claude was observed opening both Sandbox-to-Gateway and Gateway-to-`llmapi.bilibili.co` connections correctly. The upstream produced no response headers for 120 seconds. Gateway now returns a bounded 504, and Runtime stops a still-silent Harness at 150 seconds with `model_response_timeout`. A real verification Turn failed deterministically after 156.347 seconds, released its lease and removed its Sandbox.
+
 No case-specific production branch was added. Prompt changes are limited to a short Runtime contract describing Workspace paths, output publication, `sandbox-background`, `sandbox-interact`, casual-chat behavior and the rule against redundant confirmation. Programmatic schema, ownership, fencing and lifecycle checks remain authoritative.
 
 ## Evidence Files

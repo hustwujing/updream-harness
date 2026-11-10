@@ -646,6 +646,8 @@ class Broker:
                         "HTTPStatusError": "沙箱运行环境暂时不可用，请重新发送消息。",
                         "ConnectError": "沙箱运行环境暂时无法连接，请重新发送消息。",
                         "harness_exit": "Harness 执行失败，请重试或切换模型。",
+                        "model_response_timeout": "模型服务在规定时间内没有返回，请稍后重试或切换模型。",
+                        "harness_idle_timeout": "Harness 长时间没有产生新进展，本轮已安全停止。",
                         "cleanup_failed": "运行结果保存或环境清理失败，请重试。",
                     }.get(error_code, "本轮执行失败，请重试；如果持续失败，可以切换模型。")
                     item = await self.store.append_item(thread.id, turn.id, ItemType.ERROR, status="failed",
