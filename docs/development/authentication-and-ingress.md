@@ -40,6 +40,8 @@ caller-supplied `X-Forwarded-For` or ingress header without nginx overwrite.
 ## Account administration
 
 Use `sandbox-harness-user create|list|rename|reset-password|disable|enable`.
+Passwords must contain 8-256 characters. The CLI reads new passwords from a
+mode-0600 file so credentials do not appear in command arguments or logs.
 Password files must be mode 0600 and are not tracked. Public self-registration
 is not implemented.
 

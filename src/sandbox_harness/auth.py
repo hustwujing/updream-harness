@@ -25,8 +25,8 @@ def normalize_username(value: str) -> str:
 
 
 def validate_password(value: str) -> str:
-    if len(value) < 12 or len(value) > 256:
-        raise ValueError("Password must be 12-256 characters")
+    if len(value) < 8 or len(value) > 256:
+        raise ValueError("Password must be 8-256 characters")
     return value
 
 

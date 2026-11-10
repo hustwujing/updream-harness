@@ -2,6 +2,7 @@ import asyncio
 
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
+import pytest
 
 from sandbox_harness.app import create_app
 from sandbox_harness.auth import AUTH_COOKIE, AccountAuth, normalize_username, token_hash
@@ -13,8 +14,9 @@ from sandbox_harness.store import Store
 async def test_account_password_sessions_and_rotation(tmp_path):
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'auth-store.db'));await store.initialize();auth=AccountAuth(store,3600)
     try:
-        password='correct horse battery staple'
+        password='eight888'
         account=await store.create_user(normalize_username('Test.User'),await auth.hash_password(password))
+        with pytest.raises(ValueError):await auth.hash_password('short7')
         assert (await auth.authenticate('TEST.USER',password)).id==account.id
         assert await auth.authenticate('test.user','wrong password') is None
         first,first_hash=await auth.create_session(account.id);second,second_hash=await auth.create_session(account.id)
@@ -61,12 +63,12 @@ def test_frpc_requires_account_while_direct_ingress_remains_anonymous(tmp_path):
             'username':'renamed.user','current_password':'initial account password'})
         assert changed.status_code==200 and changed.json()['user']['username']=='renamed.user'
         changed=client.post('/api/auth/change-password',headers={'X-Updream-Ingress':'frpc'},json={
-            'current_password':'initial account password','new_password':'replacement account password'})
+            'current_password':'initial account password','new_password':'newpass8'})
         assert changed.status_code==200
         logout=client.post('/api/auth/logout',headers={'X-Updream-Ingress':'frpc'});assert logout.status_code==200
         assert client.get('/api/threads',headers={'X-Updream-Ingress':'frpc'}).status_code==401
         relogin=client.post('/api/auth/login',headers={'X-Updream-Ingress':'frpc'},json={
-            'username':'renamed.user','password':'replacement account password'})
+            'username':'renamed.user','password':'newpass8'})
         assert relogin.status_code==200
 
 
