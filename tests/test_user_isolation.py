@@ -41,6 +41,29 @@ def test_threads_and_uploads_are_scoped_to_signed_browser_owner(tmp_path):
         assert client.get("/api/threads").json() == []
 
 
+def test_thread_archive_and_restore_are_owner_scoped(tmp_path):
+    secret = "archive-browser-session-secret"
+    settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "archive.db"),
+        redis_url="", backend="fake", object_backend="local", model_catalog_discovery=False,
+        session_signing_key=secret)
+    sessions = Sessions(secret);_, token_a, _ = sessions.resolve(None);_, token_b, _ = sessions.resolve(None)
+    with TestClient(create_app(settings)) as client:
+        client.cookies.set(COOKIE, token_a)
+        thread = client.post("/api/threads", json={"harness":"claude", "model":"claude-4.6-sonnet",
+            "reasoning_level":"standard", "title":"archive me"}).json()
+        archived = client.post(f"/api/threads/{thread['id']}/archive")
+        assert archived.status_code == 200 and archived.json()["archived_at"]
+        assert client.get("/api/threads").json() == []
+        assert [row["id"] for row in client.get("/api/threads?archived=true").json()] == [thread["id"]]
+        client.cookies.set(COOKIE, token_b)
+        assert client.post(f"/api/threads/{thread['id']}/unarchive").status_code == 404
+        assert client.get("/api/threads?archived=true").json() == []
+        client.cookies.set(COOKIE, token_a)
+        restored = client.post(f"/api/threads/{thread['id']}/unarchive")
+        assert restored.status_code == 200 and restored.json()["archived_at"] is None
+        assert [row["id"] for row in client.get("/api/threads").json()] == [thread["id"]]
+
+
 def test_project_file_mutations_are_owner_scoped_versioned_and_path_checked(tmp_path):
     secret = "project-file-owner-secret"
     settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "files.db"),

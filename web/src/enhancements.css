@@ -39,15 +39,17 @@
 .thread-status { position: relative; display: grid; place-items: center; width: 14px; height: 14px; margin-top: 1px; flex: none; }
 .thread-status.running { border: 2px solid #d5d5d0; border-top-color: #4f7550; border-radius: 50%; animation: spin .8s linear infinite; }
 .thread-status.done::after { content:""; position:absolute; right:-1px; top:-1px; width:6px; height:6px; border:2px solid #f5f5f3; border-radius:50%; background:#55a65c; }
-.thread-entry { display:grid; grid-template-columns:minmax(0,1fr) 26px; align-items:center; border-radius:6px; }
+.thread-entry { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; border-radius:6px; }
 .thread-entry:hover,.thread-entry.active { background:#e9e9e6; }
 .thread-list .thread-entry .thread-select { background:transparent; }
-.thread-list .thread-entry .thread-delete { display:grid; place-items:center; width:24px; height:24px; padding:0; opacity:0; color:#81827c; }
-.thread-entry:hover .thread-delete,.thread-entry.active .thread-delete { opacity:1; }
-.thread-delete:disabled { opacity:.2!important; cursor:default; }
+.thread-actions { display:flex; align-items:center; }
+.thread-list .thread-entry .thread-actions button { display:grid; place-items:center; width:24px; height:24px; padding:0; opacity:0; color:#81827c; }
+.thread-entry:hover .thread-actions button,.thread-entry.active .thread-actions button { opacity:1; }
+.thread-actions button:disabled { opacity:.2!important; cursor:default; }
 .thread-search:focus-within { color:#454642; }
 .thread-search input[type="search"]::-webkit-search-cancel-button { cursor:pointer; }
 .thread-empty { margin:24px 8px; color:#92928c; font-size:10px; text-align:center; }
+.archive-link.active { background:#e9e9e6; color:#343531; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .composer-config label {
@@ -262,6 +264,7 @@
 
   .interaction-card { margin-left: 0; }
   .artifact-gallery { grid-template-columns:repeat(2,minmax(0,1fr)); width:100%; margin-left:0; gap:8px; }
+  .thread-list .thread-entry .thread-actions button { opacity:1; }
   .media-preview { padding:8px; }
 
 }

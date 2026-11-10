@@ -7,11 +7,13 @@ domain concept has a separate table.
 ## Threads
 
 `threads` stores browser owner, frozen Harness defaults, title, checkpoint
-reference, native Harness thread ID, active Turn pointer, last-read Turn and the
-next transcript Item sequence.
+reference, native Harness thread ID, active Turn pointer, last-read Turn, the
+next transcript Item sequence and nullable `archived_at`.
 
 One Thread belongs to one hashed browser owner. `active_turn_id` serializes
 execution; a queued follower is not claimable until this pointer advances.
+Archived Threads are filtered from the default list and cannot accept a new
+Turn until restored.
 
 ## Turns
 

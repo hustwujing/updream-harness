@@ -15,9 +15,11 @@ GET /api/catalog/harnesses
 
 ```text
 POST   /api/threads
-GET    /api/threads
+GET    /api/threads?archived=false|true
 GET    /api/threads/{thread_id}
 POST   /api/threads/{thread_id}/read
+POST   /api/threads/{thread_id}/archive
+POST   /api/threads/{thread_id}/unarchive
 DELETE /api/threads/{thread_id}
 ```
 
@@ -28,6 +30,11 @@ sandbox before deleting durable records.
 
 The read endpoint acknowledges only the exact latest `COMPLETED` Turn shown to
 the browser; a stale request cannot consume a newer unread marker.
+
+Archiving rejects a Thread with nonterminal work and removes any retained
+sandbox before returning. Archived Threads are excluded from the default list,
+remain owner-scoped and readable, and reject creation of a new Turn until they
+are unarchived.
 
 ## Turns, inputs and transcript
 

@@ -215,8 +215,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return await store.create_thread(value, resolved, request.state.owner_id)
 
     @app.get("/api/threads")
-    async def list_threads(request: Request):
-        return await store.list_thread_summaries(request.state.owner_id)
+    async def list_threads(request: Request, archived: bool = False):
+        return await store.list_thread_summaries(request.state.owner_id, archived=archived)
 
     @app.get("/api/threads/{thread_id}")
     async def get_thread(thread_id: str, request: Request):
@@ -232,6 +232,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Thread not found")
         return {"read_turn_id": turn_id}
+
+    @app.post("/api/threads/{thread_id}/archive")
+    async def archive_thread(thread_id: str, request: Request):
+        try:
+            return await broker.set_thread_archived(thread_id, request.state.owner_id, archived=True)
+        except KeyError:
+            raise HTTPException(404, "Thread not found")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+
+    @app.post("/api/threads/{thread_id}/unarchive")
+    async def unarchive_thread(thread_id: str, request: Request):
+        try:
+            return await broker.set_thread_archived(thread_id, request.state.owner_id, archived=False)
+        except KeyError:
+            raise HTTPException(404, "Thread not found")
 
     @app.delete("/api/threads/{thread_id}", status_code=204)
     async def delete_thread(thread_id: str, request: Request):

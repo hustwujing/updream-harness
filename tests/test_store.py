@@ -63,6 +63,50 @@ async def test_thread_turn_items_and_idempotency(tmp_path):
         await store.close()
 
 
+async def test_thread_archive_filters_blocks_active_work_and_can_restore(tmp_path):
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "archive.db"))
+    await store.initialize()
+    try:
+        catalog = HarnessCatalog(); profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+        owner = "a" * 64
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Archive"), profile, owner)
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="hello", idempotency_key="archive-turn-key"), profile, owner)
+        with pytest.raises(RuntimeError, match="active_thread_cannot_be_archived"):
+            await store.set_thread_archived(thread.id, owner, archived=True)
+        await store.set_turn_state(turn.id, TurnState.COMPLETED)
+        archived = await store.set_thread_archived(thread.id, owner, archived=True)
+        assert archived.archived_at is not None
+        assert await store.list_threads(owner) == []
+        assert [value.id for value in await store.list_threads(owner, archived=True)] == [thread.id]
+        with pytest.raises(RuntimeError, match="thread_archived"):
+            await store.create_turn(thread.id,
+                TurnCreate(message="blocked", idempotency_key="archive-blocked-key"), profile, owner)
+        restored = await store.set_thread_archived(thread.id, owner, archived=False)
+        assert restored.archived_at is None
+        assert [value.id for value in await store.list_threads(owner)] == [thread.id]
+    finally:
+        await store.close()
+
+
+async def test_initialize_adds_archived_at_to_existing_database(tmp_path):
+    import sqlite3
+    database = tmp_path / "archive-migration.db"
+    store = Store("sqlite+aiosqlite:///" + str(database));await store.initialize();await store.close()
+    with sqlite3.connect(database) as connection:
+        connection.execute("ALTER TABLE threads DROP COLUMN archived_at")
+    upgraded = Store("sqlite+aiosqlite:///" + str(database))
+    await upgraded.initialize()
+    try:
+        async with upgraded.engine.connect() as connection:
+            from sqlalchemy import inspect
+            columns = await connection.run_sync(lambda value: {column["name"] for column in inspect(value).get_columns("threads")})
+        assert "archived_at" in columns
+    finally:
+        await upgraded.close()
+
+
 async def test_turn_lease_generation_fences_stale_broker_writes(tmp_path):
     store = Store("sqlite+aiosqlite:///" + str(tmp_path / "fencing.db"))
     await store.initialize()

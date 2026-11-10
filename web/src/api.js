@@ -6,11 +6,12 @@ export async function api(path,options={}){
   return response.status===204?null:response.json();
 }
 
-export const listThreads=()=>api('threads');
+export const listThreads=(archived=false)=>api(`threads?archived=${archived}`);
 export const markThreadRead=(id,turnId)=>api(`threads/${id}/read`,{method:'POST',body:JSON.stringify({turn_id:turnId})});
 export const ensureSession=()=>api('session');
 export const getHarnessCatalog=()=>api('catalog/harnesses');
 export const createThread=value=>api('threads',{method:'POST',body:JSON.stringify(value)});
+export const setThreadArchived=(id,archived)=>api(`threads/${id}/${archived?'archive':'unarchive'}`,{method:'POST'});
 export const deleteThread=id=>api(`threads/${id}`,{method:'DELETE'});
 export const listTurns=id=>api(`threads/${id}/turns`);
 export async function listItems(id,after=0){const items=[];let cursor=after;while(true){const page=await api(`threads/${id}/items?after=${cursor}&limit=500`);items.push(...page);if(page.length<500)return items;const next=page.at(-1).sequence;if(next<=cursor)throw new Error('会话记录分页未能继续');cursor=next;}}

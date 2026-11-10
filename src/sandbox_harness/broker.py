@@ -350,6 +350,17 @@ class Broker:
             await self.pool.discard_thread(thread_id)
             await self.store.delete_thread(thread_id, owner_id)
 
+    async def set_thread_archived(self, thread_id: str, owner_id: str, *, archived: bool):
+        async with self.thread_lock(thread_id):
+            thread = await self.store.set_thread_archived(thread_id, owner_id, archived=archived)
+            if archived:
+                try:
+                    await self.pool.discard_thread(thread_id)
+                except Exception:
+                    await self.store.set_thread_archived(thread_id, owner_id, archived=False)
+                    raise
+            return thread
+
     @observed("turn.cancel")
     async def cancel(self, turn_id: str) -> None:
         turn = await self.store.request_turn_cancel(turn_id)

@@ -23,6 +23,8 @@ are not substitutes for database state.
 - Browser ownership is `ThreadRow.owner_id`, derived from the signed anonymous
   session cookie.
 - `ThreadRow.active_turn_id` is the serialization head.
+- `ThreadRow.archived_at` removes a Thread from the default list. Archiving is
+  allowed only after every Turn is terminal; archived Threads reject new Turns.
 - `Store.create_turn` rejects `delivery_mode=start` while a nonterminal active
   Turn exists. Queued Turns do not become claimable until `claim_next_turn`
   advances the Thread pointer.

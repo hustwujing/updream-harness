@@ -107,6 +107,7 @@ class ThreadView(BaseModel):
     native_thread_id: str = ""
     active_turn_id: str = ""
     last_read_turn_id: str = ""
+    archived_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     owner_id: str = Field(default="", exclude=True)

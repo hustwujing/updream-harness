@@ -46,6 +46,7 @@ class ThreadRow(Base):
     active_turn_id: Mapped[str] = mapped_column(String(32), default="")
     last_read_turn_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
     next_item_sequence: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -219,6 +220,9 @@ class Store:
             if "next_item_sequence" not in columns:
                 await connection.execute(text("ALTER TABLE threads ADD COLUMN next_item_sequence INTEGER NOT NULL DEFAULT 0"))
                 await connection.execute(text("UPDATE threads SET next_item_sequence = COALESCE((SELECT MAX(items.sequence) FROM items WHERE items.thread_id = threads.id), 0)"))
+            if "archived_at" not in columns:
+                definition = "TIMESTAMP WITH TIME ZONE NULL" if connection.dialect.name == "postgresql" else "DATETIME NULL"
+                await connection.execute(text(f"ALTER TABLE threads ADD COLUMN archived_at {definition}"))
             await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_threads_owner_id ON threads (owner_id)"))
             input_columns = await connection.run_sync(lambda value: {column["name"] for column in inspect(value).get_columns("turn_inputs")})
             if "delivery_mode" not in input_columns:
@@ -306,13 +310,15 @@ class Store:
             db.add(row)
         return self.thread_view(row)
 
-    async def list_threads(self, owner_id: str) -> list[ThreadView]:
+    async def list_threads(self, owner_id: str, *, archived: bool = False) -> list[ThreadView]:
         async with self.connections() as db:
-            rows = (await db.execute(select(ThreadRow).where(ThreadRow.owner_id == owner_id).order_by(ThreadRow.updated_at.desc()))).scalars().all()
+            archive_filter = ThreadRow.archived_at.is_not(None) if archived else ThreadRow.archived_at.is_(None)
+            rows = (await db.execute(select(ThreadRow).where(ThreadRow.owner_id == owner_id, archive_filter)
+                .order_by(ThreadRow.updated_at.desc()))).scalars().all()
         return [self.thread_view(row) for row in rows]
 
-    async def list_thread_summaries(self, owner_id: str) -> list[dict]:
-        threads = await self.list_threads(owner_id)
+    async def list_thread_summaries(self, owner_id: str, *, archived: bool = False) -> list[dict]:
+        threads = await self.list_threads(owner_id, archived=archived)
         async with self.connections() as db:
             ranked = select(TurnRow.id, TurnRow.thread_id, TurnRow.state, TurnRow.updated_at,
                 func.row_number().over(partition_by=TurnRow.thread_id,
@@ -352,6 +358,25 @@ class Store:
             row = (await db.execute(query)).scalar_one_or_none()
         return self.thread_view(row) if row else None
 
+    async def set_thread_archived(self, thread_id: str, owner_id: str, *, archived: bool) -> ThreadView:
+        terminal = {state.value for state in {
+            TurnState.COMPLETED, TurnState.WAITING_USER, TurnState.FAILED, TurnState.CANCELLED,
+        }}
+        async with self.connections.begin() as db:
+            thread = (await db.execute(select(ThreadRow).where(
+                ThreadRow.id == thread_id, ThreadRow.owner_id == owner_id,
+            ).with_for_update())).scalar_one_or_none()
+            if not thread:
+                raise KeyError("thread_not_found")
+            if archived:
+                states = (await db.execute(select(TurnRow.state).where(TurnRow.thread_id == thread_id))).scalars().all()
+                if any(state not in terminal for state in states):
+                    raise RuntimeError("active_thread_cannot_be_archived")
+            timestamp = now()
+            thread.archived_at = timestamp if archived else None
+            thread.updated_at = timestamp
+        return self.thread_view(thread)
+
     async def delete_thread(self, thread_id: str, owner_id: str) -> list[str]:
         terminal = {state.value for state in {
             TurnState.COMPLETED, TurnState.WAITING_USER, TurnState.FAILED, TurnState.CANCELLED,
@@ -387,6 +412,8 @@ class Store:
                 .returning(ThreadRow))).scalar_one_or_none()
             if not thread:
                 raise KeyError("thread_not_found")
+            if thread.archived_at is not None:
+                raise RuntimeError("thread_archived")
             existing = (await db.execute(select(TurnRow).where(TurnRow.thread_id == thread_id, TurnRow.idempotency_key == value.idempotency_key))).scalar_one_or_none()
             if existing:
                 attachments = [item.model_dump(mode="json") for item in value.attachments]

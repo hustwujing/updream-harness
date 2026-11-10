@@ -79,7 +79,12 @@ private Harness state.
 
 The Workspace side sheet lists current project assets and artifacts, version history and active supervised background jobs. It supports direct asset upload, rename, deletion, download and background-job cancellation.
 
-The current Thread ID is stored in the page query string. Refresh and browser history restore only Threads owned by the signed browser identity. Terminal Threads can be deleted from the sidebar; active Threads must first finish or be stopped.
+The current Thread ID is stored in the page query string. Refresh and browser
+history restore only Threads owned by the signed browser identity. Terminal
+Threads can be archived or deleted from the sidebar; active Threads must first
+finish or be stopped. The archive view has its own searchable list. Archived
+Threads are read-only until restored and retain their transcript, files and
+history.
 
 The sidebar search filters the already loaded owner-scoped Thread summaries by
 title, Harness, model and current status. Matching is case-insensitive and uses
