@@ -121,3 +121,24 @@ async def test_discovery_probes_explicit_model_on_its_own_route(tmp_path, monkey
     catalog = HarnessCatalog(); discovery = ModelDiscovery(settings, catalog, httpx.MockTransport(handler))
     await discovery.refresh()
     assert [model.id for model in catalog.options[Harness.CODEX].models] == ["gpt-5.6", "gpt-6-sol"]
+
+
+async def test_catalog_outage_keeps_inventory_and_probes_independent_model_route(tmp_path, monkeypatch):
+    settings=Settings(data_root=tmp_path,upstream_codex='https://default.example',
+        upstream_claude='',upstream_deepseek='',model_routes_json=json.dumps({
+            'codex/gpt-6-sol':{'base_url':'https://sol.example/v1','credential_env':'SOL_KEY'}}))
+    monkeypatch.setenv('SOL_KEY','test-secret')
+    probes=[]
+    def handler(request):
+        if request.method=='GET':return httpx.Response(503,json={'error':'catalog unavailable'})
+        model=json.loads(request.content)['model'];probes.append((request.url.host,model))
+        return httpx.Response(200,json={'ok':True})
+    catalog=HarnessCatalog()
+    catalog.replace_models({Harness.CODEX:['gpt-5.6','gpt-6-astra']})
+    discovery=ModelDiscovery(settings,catalog,httpx.MockTransport(handler))
+    await discovery.refresh()
+    assert {m.id for m in catalog.options[Harness.CODEX].models}=={'gpt-5.6','gpt-6-astra','gpt-6-sol'}
+    assert ('sol.example','gpt-6-sol') in probes
+    assert catalog.availability[(Harness.CODEX,'gpt-6-sol')]['status']=='available'
+    restored=HarnessCatalog();assert ModelDiscovery(settings,restored).load_snapshot()
+    assert {m.id for m in restored.options[Harness.CODEX].models}=={'gpt-5.6','gpt-6-astra','gpt-6-sol'}

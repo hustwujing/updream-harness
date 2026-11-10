@@ -109,6 +109,8 @@ class Execution:
     completed_input_ids: list[str] = field(default_factory=list)
     received_input_ids: set[str] = field(default_factory=set)
     input_fingerprints: dict[str, str] = field(default_factory=dict)
+    interaction_ids: dict[str, str] = field(default_factory=dict)
+    interaction_responses: dict[str, dict] = field(default_factory=dict)
     stop_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     cancel_requested: bool = False
     accepting_inputs: bool = True
@@ -135,7 +137,6 @@ def create_app() -> FastAPI:
     app.state.execution = None
     app.state.background_jobs = {}
     app.state.interaction_waiters = {}
-    app.state.interaction_responses = {}
     app.state.interaction_response_lock = asyncio.Lock()
     app.state.model_start_timeout_seconds = 150.0
     app.state.event_idle_timeout_seconds = 900.0
@@ -219,6 +220,16 @@ def create_app() -> FastAPI:
 
     async def publish(execution: Execution, value: dict) -> None:
         async with execution.condition:
+            if value.get("kind") == "waiting_user":
+                if execution.result is not None or not execution.accepting_inputs:
+                    raise HTTPException(409, "Execution is no longer accepting interactions")
+                payload = value["payload"]
+                native_id = str(payload.get("interaction_id") or "")
+                if not native_id:
+                    raise ValueError("Native interaction has no ID")
+                identity = "runtime-" + hashlib.sha256(json.dumps([execution.id, native_id]).encode()).hexdigest()
+                execution.interaction_ids[identity] = native_id
+                value = {**value, "payload": {**payload, "interaction_id": identity}}
             append_event_locked(execution, value)
 
     async def finish_execution(execution: Execution, result: dict) -> None:
@@ -230,6 +241,10 @@ def create_app() -> FastAPI:
                 result = {**result, "status": "cancelled", "error_code": "cancelled"}
             append_event_locked(execution, {"type": "result", "result": result})
             execution.result = result
+            for native_id in execution.interaction_ids.values():
+                waiter = app.state.interaction_waiters.get(native_id)
+                if waiter is not None and not waiter.done():
+                    waiter.set_exception(HTTPException(409, "Execution ended before the interaction was answered"))
 
     def persist_job(job: BackgroundJob) -> None:
         target = jobs_root / (job.id + ".json")
@@ -630,44 +645,50 @@ def create_app() -> FastAPI:
     @app.post("/v1/interactions/{interaction_id}")
     async def respond_interaction(interaction_id: str, request: Request):
         response = await request.json()
-        if response.get("action") not in {"approve", "reject", "answer"}:
+        if not isinstance(response, dict) or response.get("action") not in {"approve", "reject", "answer"}:
             raise HTTPException(422, "Invalid interaction action")
-        async with app.state.interaction_response_lock:
-            recorded = app.state.interaction_responses.get(interaction_id)
+        async with app.state.execution_lock, app.state.interaction_response_lock:
+            execution = app.state.execution
+            if not execution or interaction_id not in execution.interaction_ids:
+                raise HTTPException(409, "Interaction does not belong to the current execution")
+            native_id = execution.interaction_ids[interaction_id]
+            recorded = execution.interaction_responses.get(interaction_id)
             if recorded is not None:
                 if recorded != response:
                     raise HTTPException(409, "Interaction already has a different response")
                 return {"accepted": True, "replayed": True}
-            waiter = app.state.interaction_waiters.get(interaction_id)
+            if execution.result is not None or not execution.accepting_inputs:
+                raise HTTPException(409, "Execution is no longer accepting responses")
+            waiter = app.state.interaction_waiters.get(native_id)
             if waiter is not None:
                 if not waiter.done():
                     waiter.set_result(response)
-                app.state.interaction_responses[interaction_id] = response
+                execution.interaction_responses[interaction_id] = response
                 return {"accepted": True}
-            process = app.state.process
-            selected = app.state.process_command
-            if (os.environ.get("HARNESS_KIND") != "codex" or not process or process.returncode is not None
-                    or not selected or not selected.control_input):
+            process, selected = execution.process, execution.selected
+            if process.returncode is not None or not selected.control_input:
                 raise HTTPException(409, "Harness does not support a live native interaction")
             async with app.state.write_lock:
-                process.stdin.write(control_interaction_response(interaction_id, response))
+                if not execution.accepting_inputs:
+                    raise HTTPException(409, "Execution is no longer accepting responses")
+                process.stdin.write(control_interaction_response(native_id, response))
+                execution.interaction_responses[interaction_id] = response
                 await process.stdin.drain()
-            app.state.interaction_responses[interaction_id] = response
             return {"accepted": True}
 
     @app.post("/v1/native-interactions")
     async def start_native_interaction(value: NativeInteractionCreate):
         execution = app.state.execution
-        if execution is None or execution.result is not None:
+        if execution is None or execution.result is not None or not execution.accepting_inputs:
             raise HTTPException(409, "No active Harness execution")
         identity = "runtime-" + uuid.uuid4().hex
         waiter = asyncio.get_running_loop().create_future()
         app.state.interaction_waiters[identity] = waiter
-        await publish(execution, {"kind": "waiting_user", "payload": {
-            "interaction_id": identity, "interaction_kind": value.kind,
-            "prompt": value.prompt, "questions": value.questions, "options": value.options,
-        }})
         try:
+            await publish(execution, {"kind": "waiting_user", "payload": {
+                "interaction_id": identity, "interaction_kind": value.kind,
+                "prompt": value.prompt, "questions": value.questions, "options": value.options,
+            }})
             response = await waiter
             return {"interaction_id": identity, **response}
         finally:

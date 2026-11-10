@@ -100,6 +100,11 @@ class ModelDiscovery:
             for harness, result in zip(Harness, results, strict=True):
                 if isinstance(result, Exception):
                     logger.warning("Model catalog discovery failed for %s: %s", harness.value, result)
+                    # Discovery is not a health signal. Keep the last inventory and
+                    # continue probing explicit per-model routes independently.
+                    discovered[harness] = compatible_models(harness,
+                        [model.id for model in self.catalog.options[harness].models]
+                        + self.routes.configured_models(harness))
                 elif result:
                     discovered[harness] = result
             if discovered:

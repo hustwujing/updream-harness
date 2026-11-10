@@ -122,3 +122,52 @@ async def test_stop_kills_background_job_ignoring_sigterm(tmp_path, monkeypatch)
     assert saved.status == 'cancelled' and saved.process.returncode is not None
     with pytest.raises(ProcessLookupError):
         os.kill(saved.pid, 0)
+
+
+async def test_native_interaction_ids_are_scoped_to_execution(tmp_path, monkeypatch):
+    app = runtime(tmp_path, monkeypatch, '''import sys,json
+msg=json.loads(sys.stdin.readline())
+print(json.dumps({'type':'harness.interaction.requested','id':'same-native-id','interaction_kind':'approval','prompt':'Allow?'}),flush=True)
+reply=json.loads(sys.stdin.readline())
+assert reply['id']=='same-native-id'
+print(json.dumps({'type':'harness.input.completed','input_ids':[msg['id']]}),flush=True)
+''')
+    class Request:
+        async def json(self): return {'action':'approve','answers':{}}
+    async def prompt_id():
+        async with asyncio.timeout(3):
+            while True:
+                for event in app.state.execution.events:
+                    if event.get('kind')=='waiting_user':return event['payload']['interaction_id']
+                await asyncio.sleep(.01)
+    start=endpoint(app,'/v1/turns');answer=endpoint(app,'/v1/interactions/{interaction_id}')
+    await start(runtime_app.TurnRequest(message='first',execution_id='one'))
+    first=await prompt_id()
+    await answer(first,Request())
+    assert (await completed(app))['status']=='completed'
+    assert (await answer(first,Request()))['replayed']
+    await start(runtime_app.TurnRequest(message='second',execution_id='two'))
+    second=await prompt_id()
+    try:
+        assert first!=second
+        with pytest.raises(HTTPException) as exc:await answer(first,Request())
+        assert exc.value.status_code==409
+        assert app.state.execution.result is None
+        await answer(second,Request())
+        assert (await completed(app))['status']=='completed'
+    finally:
+        await endpoint(app,'/v1/cancel')()
+
+
+async def test_terminal_execution_releases_pending_generic_interaction(tmp_path, monkeypatch):
+    app=runtime(tmp_path,monkeypatch,'import sys,time\nsys.stdin.readline()\ntime.sleep(60)\n')
+    await endpoint(app,'/v1/turns')(runtime_app.TurnRequest(message='hold'))
+    pending=asyncio.create_task(endpoint(app,'/v1/native-interactions')(
+        runtime_app.NativeInteractionCreate(kind='question',prompt='Pick?')))
+    async with asyncio.timeout(3):
+        while not app.state.interaction_waiters:await asyncio.sleep(.01)
+    await endpoint(app,'/v1/cancel')()
+    with pytest.raises(HTTPException) as exc:await pending
+    assert exc.value.status_code==409
+    assert not app.state.interaction_waiters
+    await completed(app)

@@ -252,7 +252,8 @@ print(json.dumps({'type':'harness.input.completed','input_ids':[first['id']],'th
             if execution and any(row.get("kind") == "waiting_user" for row in execution.events):
                 break
             time.sleep(.01)
-        response = client.post("/v1/interactions/native-approval", json={"action":"approve","answers":{}})
+        interaction_id = next(row["payload"]["interaction_id"] for row in execution.events if row.get("kind") == "waiting_user")
+        response = client.post(f"/v1/interactions/{interaction_id}", json={"action":"approve","answers":{}})
         worker.join(timeout=5)
     assert response.status_code == 200
     rows = [json.loads(line) for line in result["response"].text.splitlines()]
