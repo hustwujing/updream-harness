@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.domain import Harness, MediaDraftCreate, ThreadCreate, TurnCreate, now
+from sandbox_harness.domain import Harness, MediaDraftCreate, ThreadCreate, TurnCreate, TurnState, now
 from sandbox_harness.media_worker import MediaWorker
 from sandbox_harness.store import ArtifactRow, MediaOutboxRow, Store
 
@@ -21,7 +21,7 @@ async def test_media_draft_confirm_is_idempotent_and_snapshots_provider(tmp_path
         turn, _, _ = await store.create_turn(thread.id,
             TurnCreate(message="generate", idempotency_key="media-turn-1"), profile, owner)
         value = MediaDraftCreate(kind="video", model="sed2", parameters={"duration": 5},
-            idempotency_key="media-key-1", turn_id=turn.id)
+            idempotency_key="media-key-1", turn_id=turn.id, output_role="workspace")
         spec = SimpleNamespace(provider="ark", adapter="ark_video_v2", execution="async", cancellation="unsupported")
         draft, created = await store.create_media_draft(owner, thread.id, value,
             expires_at=now() + timedelta(minutes=10), provider_spec=spec)
@@ -42,8 +42,12 @@ async def test_media_draft_confirm_is_idempotent_and_snapshots_provider(tmp_path
         assert claimed[0]["id"] == first.id
         await store.update_media_job(first.id, "worker", status="succeeded", phase="committed",
             output_object_ref="sha256:" + "1" * 64, output_mime="video/mp4", output_size=1234)
+        ready, _ = await store.media_continuation_group(turn.id)
+        assert ready is False
+        await store.set_turn_state(turn.id, TurnState.COMPLETED)
         ready, group = await store.media_continuation_group(turn.id)
-        assert ready is True and [item["id"] for item in group] == [first.id]
+        assert ready is True and [item["id"] for item in group] == [first.id, cancellable.id]
+        assert [item["status"] for item in group] == ["succeeded", "cancelled"]
         assert group[0]["project_path"] == f"artifacts/media/{first.id}.mp4"
         project_files = await store.current_project_files(thread.id, owner)
         assert [item.path for item in project_files] == [f"artifacts/media/{first.id}.mp4"]
@@ -57,6 +61,10 @@ async def test_media_draft_confirm_is_idempotent_and_snapshots_provider(tmp_path
         assert len(rows) == 1 and rows[0].status == "pending"
         assert len(artifacts) == 1 and artifacts[0].id == completed.artifact_ids[0]
         assert artifacts[0].object_ref == "sha256:" + "1" * 64
+        with pytest.raises(RuntimeError, match="media_turn_terminal"):
+            await store.create_media_draft(owner, thread.id,
+                value.model_copy(update={"idempotency_key": "media-key-after-terminal"}),
+                expires_at=now() + timedelta(minutes=10), provider_spec=spec)
         with pytest.raises(KeyError, match="media_turn_not_found"):
             await store.create_media_draft(owner, "b" * 32,
                 value.model_copy(update={"idempotency_key": "media-key-cross-thread"}),
@@ -76,6 +84,89 @@ async def test_expired_media_draft_cannot_confirm(tmp_path):
             expires_at=now() - timedelta(seconds=1), provider_spec=spec)
         with pytest.raises(RuntimeError, match="not_confirmable"):
             await store.confirm_media_draft(draft.id, "a" * 64, provider_spec=spec)
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_media_continuation_waits_for_every_image_and_video_job(tmp_path):
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "media-group.db"))
+    await store.initialize()
+    try:
+        owner = "a" * 64
+        profile = HarnessCatalog().resolve("claude", "claude-4.6-sonnet", "standard")
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Media group"), profile, owner)
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="generate a media set", idempotency_key="media-group-turn"), profile, owner)
+        spec = SimpleNamespace(provider="ark", adapter="media", execution="async", cancellation="unsupported")
+        jobs = []
+        for index, kind in enumerate(("image", "video", "image", "video")):
+            draft, _ = await store.create_media_draft(owner, thread.id,
+                MediaDraftCreate(kind=kind, model="test-model", turn_id=turn.id,
+                    idempotency_key=f"media-group-{index}"),
+                expires_at=now() + timedelta(minutes=10), provider_spec=spec)
+            jobs.append(await store.confirm_media_draft(draft.id, owner, provider_spec=spec))
+        sealed = await store.seal_media_batch(turn.id, thread.id, owner)
+        assert sealed == {"turn_id": turn.id, "status": "sealed", "draft_count": 4}
+        with pytest.raises(RuntimeError, match="media_batch_sealed"):
+            await store.create_media_draft(owner, thread.id,
+                MediaDraftCreate(kind="image", model="test-model", turn_id=turn.id,
+                    idempotency_key="media-group-after-seal"),
+                expires_at=now() + timedelta(minutes=10), provider_spec=spec)
+        claimed = await store.claim_media_jobs("worker", limit=10)
+        assert {item["id"] for item in claimed} == {job.id for job in jobs}
+        await store.set_turn_state(turn.id, TurnState.COMPLETED)
+        for index, job in enumerate(jobs[:-1]):
+            await store.update_media_job(job.id, "worker", status="succeeded", phase="committed",
+                output_object_ref="sha256:" + str(index + 1) * 64,
+                output_mime="image/png" if job.kind == "image" else "video/mp4", output_size=10)
+        ready, group = await store.media_continuation_group(turn.id)
+        assert ready is False and len(group) == 4
+        await store.update_media_job(jobs[-1].id, "worker", status="failed", phase="failed",
+            error_code="provider_failed", error_detail="provider failed")
+        ready, group = await store.media_continuation_group(turn.id)
+        assert ready is True
+        assert [item["status"] for item in group].count("succeeded") == 3
+        assert [item["status"] for item in group].count("failed") == 1
+        assert await store.current_project_files(thread.id, owner) == []
+        output = await store.media_job_output_for_thread(jobs[0].id, thread.id)
+        assert output and output["mime"] == "image/png" and output["size"] == 10
+        promoted = await store.promote_media_job_for_thread(jobs[0].id, thread.id, "workspace")
+        repeated = await store.promote_media_job_for_thread(jobs[0].id, thread.id, "workspace")
+        assert promoted == repeated
+        assert [item.path for item in await store.current_project_files(thread.id, owner)] == [promoted["project_path"]]
+        with pytest.raises(RuntimeError, match="media_job_output_unavailable"):
+            await store.promote_media_job_for_thread(jobs[-1].id, thread.id, "delivery")
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_media_only_batch_still_becomes_ready(tmp_path):
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "media-cancelled-group.db"))
+    await store.initialize()
+    try:
+        owner = "a" * 64
+        profile = HarnessCatalog().resolve("claude", "claude-4.6-sonnet", "standard")
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Cancelled media"), profile, owner)
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="generate", idempotency_key="cancelled-group-turn"), profile, owner)
+        spec = SimpleNamespace(provider="ark", adapter="media", execution="async", cancellation="unsupported")
+        draft, _ = await store.create_media_draft(owner, thread.id,
+            MediaDraftCreate(kind="image", model="test-model", turn_id=turn.id,
+                idempotency_key="cancelled-group-draft"),
+            expires_at=now() + timedelta(minutes=10), provider_spec=spec)
+        await store.cancel_media_draft(draft.id, owner)
+        await store.seal_media_batch(turn.id, thread.id, owner)
+        await store.set_turn_state(turn.id, TurnState.COMPLETED)
+        ready, group = await store.media_continuation_group(turn.id)
+        assert ready is True and group[0]["status"] == "cancelled" and not group[0]["job_id"]
+        claimed = await store.claim_media_batches("dispatcher")
+        assert claimed == [{"turn_id": turn.id, "thread_id": thread.id, "owner_id": owner}]
+        await store.finish_media_batch(turn.id, "dispatcher", delivered=True)
+        assert await store.claim_media_batches("dispatcher") == []
     finally:
         await store.close()
 

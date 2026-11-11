@@ -127,33 +127,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await broker.start()
         media_outbox_stop = asyncio.Event()
         media_outbox_owner = "media-outbox-" + uuid.uuid4().hex
-        async def continue_media(outbox: dict):
-            turn_id = outbox.get("turn_id") or ""
+        async def continue_media(batch: dict):
+            turn_id = batch.get("turn_id") or ""
             if not turn_id:
                 return
             ready, jobs = await store.media_continuation_group(turn_id)
             if not ready:
                 raise RuntimeError("media_group_pending")
             results = []
-            for job in jobs:
-                results.append({"job_id": job["id"], "kind": job["kind"], "model": job["model"],
-                    "status": job["status"], "path": "/workspace/project/" + job["project_path"] if job["project_path"] else "",
-                    "error": job["error_code"] or ""})
+            for item in jobs:
+                candidate = (item["status"] == "succeeded" and item["output_role"] == "candidate"
+                    and bool(item["job_id"]))
+                results.append({"draft_id": item["draft_id"], "job_id": item["job_id"],
+                    "kind": item["kind"], "model": item["model"], "status": item["status"],
+                    "output_role": item["output_role"],
+                    "path": "/workspace/project/" + item["project_path"] if item["project_path"] else "",
+                    "inspect_command": f"sandbox-media fetch --job-id {item['job_id']} --output /workspace/outputs/{item['job_id']}"
+                        if candidate else "",
+                    "error": item["error_code"] or ""})
             message = ("[media_group_completed] Continue the original user task using these media results: "
                 + json.dumps(results, ensure_ascii=False, sort_keys=True))
-            await broker.submit(outbox["thread_id"], TurnCreate(message=message,
+            await broker.submit(batch["thread_id"], TurnCreate(message=message,
                 idempotency_key=f"media-continuation-{turn_id}", delivery_mode="queue"),
                 network_access="restricted")
         async def dispatch_media_outbox():
             while not media_outbox_stop.is_set():
-                for outbox in await store.claim_media_outbox(media_outbox_owner):
+                for batch in await store.claim_media_batches(media_outbox_owner):
                     try:
-                        await continue_media(outbox)
+                        await continue_media(batch)
                     except Exception as exc:
-                        await store.finish_media_outbox(outbox["outbox_id"], media_outbox_owner,
+                        await store.finish_media_batch(batch["turn_id"], media_outbox_owner,
                             delivered=False, error=type(exc).__name__)
                     else:
-                        await store.finish_media_outbox(outbox["outbox_id"], media_outbox_owner, delivered=True)
+                        await store.finish_media_batch(batch["turn_id"], media_outbox_owner, delivered=True)
                 try:
                     await asyncio.wait_for(media_outbox_stop.wait(), timeout=2)
                 except asyncio.TimeoutError:

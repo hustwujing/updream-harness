@@ -334,6 +334,7 @@ class MediaDraftCreate(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
     idempotency_key: str = Field(min_length=8, max_length=160)
     turn_id: str = Field(default="", pattern=r"^$|^[0-9a-f]{32}$")
+    output_role: Literal["candidate", "workspace", "delivery"] = "candidate"
 
 
 class MediaDraftUpdate(BaseModel):
@@ -351,6 +352,7 @@ class MediaDraftView(BaseModel):
     status: Literal["awaiting_confirmation", "confirmed", "cancelled", "expired"]
     expires_at: datetime
     job_id: str = ""
+    output_role: Literal["candidate", "workspace", "delivery"] = "candidate"
 
 
 class MediaJobView(BaseModel):
@@ -369,3 +371,4 @@ class MediaJobView(BaseModel):
     cancelable: bool = False
     cancel_reason: str = ""
     artifact_ids: list[str] = Field(default_factory=list)
+    output_role: Literal["candidate", "workspace", "delivery"] = "candidate"

@@ -12,7 +12,7 @@ import re
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from redis.asyncio import Redis
 import uvicorn
 
@@ -23,6 +23,7 @@ from .domain import Harness, MediaDraftCreate, now
 from .model_routes import ModelRoutes
 from .model_activity import ModelActivity
 from .media_catalog import MediaCatalog
+from .objects import object_store
 from .store import Store
 from .public_proxy import DestinationPolicy, start_proxy
 
@@ -85,6 +86,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     clients: dict[str, httpx.AsyncClient] = {}
     model_routes = ModelRoutes(settings)
     activity_store = Store(settings.database_url, settings.redis_url, settings.redis_prefix)
+    objects = object_store(settings)
     media_catalog = MediaCatalog(settings.media_catalog_json)
     upstreams = {
         "/v1/models/codex": (settings.upstream_codex, os.environ.get("SANDBOX_HARNESS_UPSTREAM_CODEX_KEY", "")),
@@ -258,6 +260,19 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(409, str(exc))
         return {**draft.model_dump(mode="json"), "requires_confirmation": True}
 
+    @app.post("/v1/media/batch/commit")
+    async def runtime_commit_media_batch(request: Request):
+        claims = await authorize_runtime_request(request, "/v1/media/drafts")
+        owner_id = await activity_store.owner_id_for_thread(claims.thread_id)
+        if not owner_id:
+            raise HTTPException(404, "Thread not found")
+        try:
+            return await activity_store.seal_media_batch(claims.turn_id, claims.thread_id, owner_id)
+        except KeyError:
+            raise HTTPException(404, "Media Turn not found")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+
     @app.post("/v1/media/jobs/{job_id}/cancel")
     async def runtime_cancel_media_job(job_id: str, request: Request):
         claims = await authorize_runtime_request(request, "/v1/media/jobs")
@@ -265,6 +280,38 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             return await activity_store.request_media_cancel_for_thread(job_id, claims.thread_id)
         except KeyError:
             raise HTTPException(404, "Media job not found")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+
+    @app.get("/v1/media/jobs/{job_id}/content")
+    async def runtime_media_job_content(job_id: str, request: Request):
+        claims = await authorize_runtime_request(request, "/v1/media/jobs")
+        output = await activity_store.media_job_output_for_thread(job_id, claims.thread_id)
+        if not output:
+            raise HTTPException(404, "Media output not found")
+        try:
+            data = await asyncio.to_thread(objects.get, output["object_ref"], maximum=settings.max_artifact_bytes)
+        except (KeyError, ValueError, OSError):
+            raise HTTPException(404, "Media output not found")
+        except Exception as exc:
+            event("media.output.read_failed", level=40, job_id=job_id, exception_type=type(exc).__name__)
+            raise HTTPException(502, "Media output is temporarily unavailable")
+        if len(data) != output["size"]:
+            raise HTTPException(409, "Media output size mismatch")
+        return Response(data, media_type=output["mime"] or "application/octet-stream",
+            headers={"X-Media-Filename": output["filename"]})
+
+    @app.post("/v1/media/jobs/{job_id}/promote")
+    async def runtime_promote_media_job(job_id: str, request: Request):
+        claims = await authorize_runtime_request(request, "/v1/media/jobs")
+        try:
+            raw = await request.json()
+            return await activity_store.promote_media_job_for_thread(job_id, claims.thread_id,
+                str(raw.get("output_role") or ""))
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
+        except KeyError:
+            raise HTTPException(404, "Media Job not found")
         except RuntimeError as exc:
             raise HTTPException(409, str(exc))
 

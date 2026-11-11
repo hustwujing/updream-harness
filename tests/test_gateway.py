@@ -86,6 +86,9 @@ async def test_gateway_media_prepare_creates_turn_bound_draft(tmp_path, monkeypa
         async def create_media_draft(self, owner_id, thread_id, value, **kwargs):
             calls.append((owner_id, thread_id, value.turn_id, value.kind, value.model, value.parameters))
             return SimpleNamespace(model_dump=lambda **_: {"id": "draft-1", "status": "awaiting_confirmation"}), True
+        async def seal_media_batch(self, turn_id, thread_id, owner_id):
+            calls.append(("commit", owner_id, thread_id, turn_id))
+            return {"turn_id": turn_id, "status": "sealed", "draft_count": 1}
     monkeypatch.setattr(gateway.Redis, "from_url", lambda *args, **kwargs: Redis())
     monkeypatch.setattr(gateway, "Store", Store)
     settings = Settings(backend="fake", database_url="sqlite+aiosqlite:///" + str(tmp_path / "gateway.db"))
@@ -108,6 +111,60 @@ async def test_gateway_media_prepare_creates_turn_bound_draft(tmp_path, monkeypa
     result = await endpoint(request)
     assert result["id"] == "draft-1" and result["requires_confirmation"] is True
     assert calls == [("owner-1", "thread-1", turn_id, "image", "seedream-5.0", {"prompt": "test"})]
+    commit_endpoint = next(route.endpoint for route in app.routes
+        if getattr(route, "path", None) == "/v1/media/batch/commit")
+    committed = await commit_endpoint(Request({"type": "http", "method": "POST",
+        "path": "/v1/media/batch/commit", "query_string": b"", "headers": [
+            (b"authorization", ("Bearer " + token).encode())]}))
+    assert committed["status"] == "sealed"
+    assert calls[-1] == ("commit", "owner-1", "thread-1", turn_id)
+
+
+async def test_gateway_media_candidate_content_and_promotion_are_thread_scoped(tmp_path, monkeypatch):
+    import json
+    from starlette.requests import Request
+    import sandbox_harness.gateway as gateway
+    from sandbox_harness.capability import CapabilityCodec
+    from sandbox_harness.config import Settings
+    from sandbox_harness.domain import Harness
+    promoted = []
+    class Redis:
+        async def eval(self, *args): return 1
+    class Store:
+        def __init__(self, *args, **kwargs): pass
+        async def media_job_output_for_thread(self, job_id, thread_id):
+            assert (job_id, thread_id) == ("job-1", "thread-1")
+            return {"object_ref": "sha256:" + "1" * 64, "mime": "image/png",
+                "size": 9, "filename": "job-1.png"}
+        async def promote_media_job_for_thread(self, job_id, thread_id, role):
+            promoted.append((job_id, thread_id, role))
+            return {"job_id": job_id, "output_role": role, "project_path": "artifacts/media/job-1.png"}
+    class Objects:
+        def get(self, reference, *, maximum):
+            assert reference == "sha256:" + "1" * 64 and maximum > 9
+            return b"candidate"
+    monkeypatch.setattr(gateway.Redis, "from_url", lambda *args, **kwargs: Redis())
+    monkeypatch.setattr(gateway, "Store", Store)
+    monkeypatch.setattr(gateway, "object_store", lambda settings: Objects())
+    settings = Settings(backend="fake", database_url="sqlite+aiosqlite:///" + str(tmp_path / "gateway-output.db"))
+    app = gateway.create_gateway(settings)
+    token, _ = CapabilityCodec(settings.gateway_signing_key).issue(thread_id="thread-1", turn_id="a" * 32,
+        sandbox_id="sandbox-1", harness=Harness.CODEX, model="gpt-5.6", routes=["/v1/media"],
+        ttl_seconds=60, max_requests=10, max_public_requests=1, token_budget=1000)
+    headers = [(b"authorization", ("Bearer " + token).encode())]
+    content_endpoint = next(route.endpoint for route in app.routes
+        if getattr(route, "path", None) == "/v1/media/jobs/{job_id}/content")
+    response = await content_endpoint("job-1", Request({"type": "http", "method": "GET",
+        "path": "/v1/media/jobs/job-1/content", "query_string": b"", "headers": headers}))
+    assert response.body == b"candidate" and response.media_type == "image/png"
+    body = json.dumps({"output_role": "delivery"}).encode()
+    async def receive(): return {"type": "http.request", "body": body, "more_body": False}
+    promote_endpoint = next(route.endpoint for route in app.routes
+        if getattr(route, "path", None) == "/v1/media/jobs/{job_id}/promote")
+    result = await promote_endpoint("job-1", Request({"type": "http", "method": "POST",
+        "path": "/v1/media/jobs/job-1/promote", "query_string": b"", "headers": headers}, receive))
+    assert result["output_role"] == "delivery"
+    assert promoted == [("job-1", "thread-1", "delivery")]
 
 
 async def test_terminal_model_step_is_saved_before_last_frame_is_forwarded(tmp_path, monkeypatch):

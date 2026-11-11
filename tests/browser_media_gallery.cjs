@@ -30,12 +30,13 @@ function image(label,color){return Buffer.from(`<svg xmlns="http://www.w3.org/20
   if(path.endsWith('/api/threads'))return json([thread]);
   if(path.endsWith('/api/threads/gallery/turns'))return json([{id:'turn-gallery',thread_id:'gallery',harness:'codex',model:'gpt-5.6',reasoning_level:'standard',state:'COMPLETED',updated_at:now}]);
   if(path.includes('/api/threads/gallery/items'))return json(items);
-  if(path.includes('/interactions')||path.includes('/project-files')||path.includes('/background-jobs'))return json([]);
+  if(path.includes('/interactions')||path.includes('/project-files')||path.includes('/background-jobs')||path.includes('/media/drafts')||path.includes('/media/jobs'))return json([]);
   if(path.includes('/events'))return route.fulfill({status:200,contentType:'text/event-stream',body:''});
   return json({});
  });
  await page.goto(process.env.TEST_BASE_URL||'http://127.0.0.1:22766/');await page.waitForSelector('.new-thread');
- await page.locator('.thread-list button').filter({hasText:'媒体缩略图画廊'}).click();await page.waitForSelector('.artifact-gallery');
+ await page.locator('.thread-list button').filter({hasText:'媒体缩略图画廊'}).click();
+ try{await page.waitForSelector('.artifact-gallery',{timeout:5000})}catch(error){throw new Error(`媒体画廊未渲染: ${await page.locator('body').innerText()}\n页面错误: ${errors.join(' | ')}\n${error.message}`)}
  const tiles=page.locator('.artifact-gallery .artifact-media');assert.equal(await tiles.count(),5);assert.equal(await page.locator('.artifact-row').count(),1);
  const desktopColumns=(await page.locator('.artifact-gallery').evaluate(node=>getComputedStyle(node).gridTemplateColumns.split(' ').length));assert.equal(desktopColumns,4);
  const desktopBoxes=await tiles.evaluateAll(nodes=>nodes.map(node=>{const box=node.getBoundingClientRect();return {x:box.x,y:box.y,width:box.width,height:box.height}}));

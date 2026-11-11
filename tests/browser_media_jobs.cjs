@@ -6,11 +6,11 @@ const assert=require('node:assert/strict');
  const page=await browser.newPage({viewport:{width:1280,height:820}}),errors=[];page.on('pageerror',error=>errors.push(error.message));
  const now=new Date().toISOString(),thread={id:'media-thread',title:'媒体任务检查',harness:'claude',model:'claude-4.6-sonnet',reasoning_level:'standard',updated_at:now,latest_turn_id:'turn-media',latest_turn_state:'COMPLETED',unread_completion:false};
  const jobs=[
-  {id:'job-image',thread_id:thread.id,kind:'image',model:'seedream-5.0',provider:'ark',adapter:'ark_image',execution_mode:'sync',cancellation_mode:'unsupported',status:'running',phase:'requesting',progress:null,cancelable:false,artifact_ids:[]},
-  {id:'job-video',thread_id:thread.id,kind:'video',model:'sed2',provider:'ark',adapter:'ark_video_v2',execution_mode:'async',cancellation_mode:'supported',status:'submitted',phase:'provider_queue',progress:15,cancelable:true,artifact_ids:[]},
-  {id:'job-audio',thread_id:thread.id,kind:'audio',model:'speech-2.8-turbo',provider:'minimax',adapter:'minimax_t2a',execution_mode:'async',cancellation_mode:'unsupported',status:'succeeded',phase:'committed',progress:100,cancelable:false,artifact_ids:['artifact-audio']},
+  {id:'job-image',thread_id:thread.id,kind:'image',model:'seedream-5.0',provider:'ark',adapter:'ark_image',execution_mode:'sync',cancellation_mode:'unsupported',status:'running',phase:'requesting',progress:null,cancelable:false,artifact_ids:[],output_role:'workspace'},
+  {id:'job-video',thread_id:thread.id,kind:'video',model:'sed2',provider:'ark',adapter:'ark_video_v2',execution_mode:'async',cancellation_mode:'supported',status:'submitted',phase:'provider_queue',progress:15,cancelable:true,artifact_ids:[],output_role:'delivery'},
+  {id:'job-audio',thread_id:thread.id,kind:'audio',model:'speech-2.8-turbo',provider:'minimax',adapter:'minimax_t2a',execution_mode:'async',cancellation_mode:'unsupported',status:'succeeded',phase:'committed',progress:100,cancelable:false,artifact_ids:['artifact-audio'],output_role:'candidate'},
  ];
- const drafts=[{id:'draft-image',thread_id:thread.id,turn_id:'turn-media',kind:'image',model:'seedream-5.0',parameters:{prompt:'生成一张蓝色圆形海报',size:'2048x2048'},status:'awaiting_confirmation',expires_at:new Date(Date.now()+600000).toISOString(),job_id:''}];
+ const drafts=[{id:'draft-image',thread_id:thread.id,turn_id:'turn-media',kind:'image',model:'seedream-5.0',parameters:{prompt:'生成一张蓝色圆形海报',size:'2048x2048'},status:'awaiting_confirmation',expires_at:new Date(Date.now()+600000).toISOString(),job_id:'',output_role:'workspace'}];
  await page.route('**/api/**',async route=>{const path=new URL(route.request().url()).pathname,json=(value,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(value)});
   if(path.endsWith('/api/session'))return json({ready:true,authentication_required:false,authenticated:false,user:null});
   if(path.endsWith('/api/catalog/harnesses'))return json([{id:'claude',label:'Claude',available:true,default_model:'claude-4.6-sonnet',models:[{id:'claude-4.6-sonnet',label:'Claude 4.6',available:true,reasoning:[{id:'standard',label:'标准'}]}]}]);

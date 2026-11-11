@@ -16,12 +16,20 @@ def main(argv: list[str] | None = None) -> int:
     prepare.add_argument("--model", required=True)
     prepare.add_argument("--parameters", default="{}")
     prepare.add_argument("--idempotency-key", default="")
+    prepare.add_argument("--output-role", choices=("candidate", "workspace", "delivery"), default="candidate")
+    sub.add_parser("commit", help="Seal this Turn's complete media draft batch")
     catalog = sub.add_parser("catalog")
     catalog.add_argument("--kind", choices=("image", "video", "audio"), default="")
     status = sub.add_parser("status")
     status.add_argument("--job-id", required=True)
     cancel = sub.add_parser("cancel")
     cancel.add_argument("--job-id", required=True)
+    fetch = sub.add_parser("fetch", help="Download a completed media candidate for inspection")
+    fetch.add_argument("--job-id", required=True)
+    fetch.add_argument("--output", required=True)
+    promote = sub.add_parser("promote", help="Keep a completed candidate in the persistent project")
+    promote.add_argument("--job-id", required=True)
+    promote.add_argument("--output-role", choices=("workspace", "delivery"), required=True)
     args = parser.parse_args(argv)
     if args.command == "prepare":
         try:
@@ -39,10 +47,34 @@ def main(argv: list[str] | None = None) -> int:
             params={"kind": args.kind} if args.kind else None, timeout=20)
         print(response.text)
         return 0 if response.is_success else 1
+    if args.command == "commit":
+        response = httpx.post(base + "/v1/media/batch/commit",
+            headers={"Authorization": "Bearer " + token}, timeout=20)
+        print(response.text)
+        return 0 if response.is_success else 1
+    if args.command == "fetch":
+        response = httpx.get(base + f"/v1/media/jobs/{args.job_id}/content",
+            headers={"Authorization": "Bearer " + token}, timeout=120)
+        if not response.is_success:
+            print(response.text)
+            return 1
+        output = os.path.abspath(args.output)
+        os.makedirs(os.path.dirname(output), exist_ok=True)
+        with open(output, "wb") as handle:
+            handle.write(response.content)
+        print(json.dumps({"job_id": args.job_id, "path": output, "size": len(response.content)}, ensure_ascii=False))
+        return 0
+    if args.command == "promote":
+        response = httpx.post(base + f"/v1/media/jobs/{args.job_id}/promote",
+            headers={"Authorization": "Bearer " + token},
+            json={"output_role": args.output_role}, timeout=20)
+        print(response.text)
+        return 0 if response.is_success else 1
     if args.command == "prepare":
         response = httpx.post(base + "/v1/media/drafts", headers={"Authorization": "Bearer " + token},
             json={"kind": args.kind, "model": args.model, "parameters": parameters,
-                  "idempotency_key": args.idempotency_key or "sandbox-media-" + uuid.uuid4().hex}, timeout=20)
+                  "idempotency_key": args.idempotency_key or "sandbox-media-" + uuid.uuid4().hex,
+                  "output_role": args.output_role}, timeout=20)
         print(response.text)
         return 0 if response.is_success else 1
     path = f"/v1/media/jobs/{args.job_id}" + ("/cancel" if args.command == "cancel" else "")

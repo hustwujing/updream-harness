@@ -29,6 +29,8 @@ class DeepSeekHarness:
         input=commands, text=True, capture_output=True, env=environment, timeout=5)
     assert result.returncode == 0, result.stderr
     rows = [json.loads(line) for line in result.stdout.splitlines()]
-    assert [row["text"] for row in rows if row.get("type") == "assistant_delta"] == ["reply:first", "reply:second"]
+    replies = [row["text"] for row in rows if row.get("type") == "assistant_delta"]
+    assert len(replies) == 2 and replies[0].endswith("User request:\nfirst") and replies[1].endswith("User request:\nsecond")
+    assert all("sandbox-media commit" in value for value in replies)
     assert [row["input_ids"] for row in rows if row.get("type") == "harness.input.completed"] == [["1"], ["2"]]
     assert len({row["thread_id"] for row in rows if row.get("thread_id")}) == 1

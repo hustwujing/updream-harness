@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .observability import observed
-from .domain import AccountView, RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, identifier, now, MediaDraftView, MediaJobView
+from .domain import AccountView, RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, TERMINAL, identifier, now, MediaDraftView, MediaJobView
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
 
@@ -200,7 +200,24 @@ class MediaDraftRow(Base):
     status: Mapped[str] = mapped_column(String(32), index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     job_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    output_role: Mapped[str] = mapped_column(String(20), default="candidate", server_default="candidate")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MediaBatchRow(Base):
+    __tablename__ = "media_batches"
+    turn_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(20), index=True, default="open", server_default="open")
+    lease_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_error: Mapped[str] = mapped_column(Text, default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    sealed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    continued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -229,6 +246,7 @@ class MediaJobRow(Base):
     output_object_ref: Mapped[str] = mapped_column(Text, default="", server_default="")
     output_mime: Mapped[str] = mapped_column(String(200), default="", server_default="")
     output_size: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    output_role: Mapped[str] = mapped_column(String(20), default="candidate", server_default="candidate")
     lease_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -356,6 +374,12 @@ class Store:
             if "response_expires_at" not in interaction_columns:
                 await connection.execute(text(
                     "ALTER TABLE interactions ADD COLUMN response_expires_at TIMESTAMP WITH TIME ZONE NULL"))
+            for table in ("media_drafts", "media_jobs"):
+                media_columns = await connection.run_sync(
+                    lambda value, table=table: {column["name"] for column in inspect(value).get_columns(table)})
+                if "output_role" not in media_columns:
+                    await connection.execute(text(
+                        f"ALTER TABLE {table} ADD COLUMN output_role VARCHAR(20) NOT NULL DEFAULT 'candidate'"))
 
     async def close(self) -> None:
         if self.events:
@@ -936,6 +960,8 @@ class Store:
             if (json.loads(item.payload_json).get("input_id") in ids
                     or item.type == ItemType.APPROVAL.value and item.status == "in_progress"):
                 item.status = "failed"; item.updated_at = now()
+        await db.execute(update(MediaBatchRow).where(MediaBatchRow.turn_id == turn_id,
+            MediaBatchRow.status == "open").values(status="sealed", sealed_at=now(), updated_at=now()))
 
     @observed("db.turn.cancel")
     async def request_turn_cancel(self, turn_id: str) -> TurnView:
@@ -1566,7 +1592,7 @@ class Store:
         status = "expired" if row.status == "awaiting_confirmation" and utc_datetime(row.expires_at) <= now() else row.status
         return MediaDraftView(id=row.id, thread_id=row.thread_id, kind=row.kind, model=row.model,
             parameters=json.loads(row.parameters_json or "{}"), status=status,
-            expires_at=utc_datetime(row.expires_at), job_id=row.job_id or "")
+            expires_at=utc_datetime(row.expires_at), job_id=row.job_id or "", output_role=row.output_role)
 
     @staticmethod
     def _media_job_view(row: MediaJobRow, artifact_ids: list[str] | None = None) -> MediaJobView:
@@ -1575,7 +1601,7 @@ class Store:
             model=row.model, provider=row.provider, adapter=row.adapter, execution_mode=row.execution_mode,
             cancellation_mode=row.cancellation_mode, status=row.status, phase=row.phase or "",
             progress=row.progress, cancelable=row.execution_mode == "async" and row.cancellation_mode == "supported",
-            cancel_reason=reason, artifact_ids=artifact_ids or [])
+            cancel_reason=reason, artifact_ids=artifact_ids or [], output_role=row.output_role)
 
     @staticmethod
     def _media_project_path(job_id: str, mime: str) -> str:
@@ -1596,25 +1622,55 @@ class Store:
 
     async def create_media_draft(self, owner_id: str, thread_id: str, value, *, expires_at: datetime, provider_spec) -> tuple[MediaDraftView, bool]:
         async with self.connections.begin() as db:
+            turn = None
             if value.turn_id:
-                owned_thread = (await db.execute(select(TurnRow.thread_id).join(ThreadRow,
-                    ThreadRow.id == TurnRow.thread_id).where(
-                        TurnRow.id == value.turn_id, ThreadRow.owner_id == owner_id,
-                ))).scalar_one_or_none()
-                if owned_thread != thread_id:
+                turn = await db.get(TurnRow, value.turn_id, with_for_update=True)
+                thread = await db.get(ThreadRow, thread_id)
+                if not turn or not thread or turn.thread_id != thread_id or thread.owner_id != owner_id:
                     raise KeyError("media_turn_not_found")
             existing = (await db.execute(select(MediaDraftRow).where(
                 MediaDraftRow.thread_id == thread_id, MediaDraftRow.idempotency_key == value.idempotency_key))).scalar_one_or_none()
             if existing:
-                if existing.owner_id != owner_id or existing.kind != value.kind or existing.model != value.model:
+                if (existing.owner_id != owner_id or existing.kind != value.kind or existing.model != value.model
+                        or json.loads(existing.parameters_json or "{}") != value.parameters
+                        or existing.output_role != value.output_role):
                     raise RuntimeError("media_draft_idempotency_conflict")
                 return self._media_draft_view(existing), False
+            if turn and TurnState(turn.state) in TERMINAL:
+                raise RuntimeError("media_turn_terminal")
+            if turn:
+                batch = await db.get(MediaBatchRow, turn.id, with_for_update=True)
+                if batch and batch.status != "open":
+                    raise RuntimeError("media_batch_sealed")
+                if not batch:
+                    db.add(MediaBatchRow(turn_id=turn.id, thread_id=thread_id, owner_id=owner_id,
+                        status="open", created_at=now(), updated_at=now()))
             row = MediaDraftRow(id=identifier(), owner_id=owner_id, thread_id=thread_id, turn_id=value.turn_id,
                 kind=value.kind, model=value.model, parameters_json=json.dumps(value.parameters, ensure_ascii=False),
                 idempotency_key=value.idempotency_key, status="awaiting_confirmation", expires_at=expires_at,
-                created_at=now(), updated_at=now())
+                output_role=value.output_role, created_at=now(), updated_at=now())
             db.add(row)
         return self._media_draft_view(row), True
+
+    async def seal_media_batch(self, turn_id: str, thread_id: str, owner_id: str) -> dict:
+        async with self.connections.begin() as db:
+            turn = await db.get(TurnRow, turn_id, with_for_update=True)
+            thread = await db.get(ThreadRow, thread_id)
+            if not turn or not thread or turn.thread_id != thread_id or thread.owner_id != owner_id:
+                raise KeyError("media_turn_not_found")
+            batch = await db.get(MediaBatchRow, turn_id, with_for_update=True)
+            if not batch:
+                raise RuntimeError("media_batch_empty")
+            count = (await db.execute(select(func.count()).select_from(MediaDraftRow).where(
+                MediaDraftRow.turn_id == turn_id,
+            ))).scalar_one()
+            if not count:
+                raise RuntimeError("media_batch_empty")
+            if batch.status == "open":
+                batch.status = "sealed"; batch.sealed_at = now(); batch.updated_at = now()
+            elif batch.status not in {"sealed", "delivering", "continued"}:
+                raise RuntimeError("media_batch_not_sealable")
+            return {"turn_id": turn_id, "status": batch.status, "draft_count": count}
 
     async def get_media_draft(self, draft_id: str, owner_id: str) -> MediaDraftView | None:
         async with self.connections() as db:
@@ -1670,7 +1726,8 @@ class Store:
                 kind=draft.kind, model=draft.model, provider=provider_spec.provider, adapter=provider_spec.adapter,
                 execution_mode=provider_spec.execution, cancellation_mode=provider_spec.cancellation,
                 status="created", phase="prepared", parameters_json=draft.parameters_json,
-                idempotency_key=draft.idempotency_key, created_at=now(), updated_at=now())
+                idempotency_key=draft.idempotency_key, output_role=draft.output_role,
+                created_at=now(), updated_at=now())
             db.add(job); draft.status = "confirmed"; draft.job_id = job.id; draft.updated_at = now()
         return self._media_job_view(job)
 
@@ -1687,6 +1744,36 @@ class Store:
                 MediaJobRow.thread_id == thread_id))).scalar_one_or_none()
             artifact_ids = await self._media_artifact_ids(db, row) if row else []
         return self._media_job_view(row, artifact_ids) if row else None
+
+    async def media_job_output_for_thread(self, job_id: str, thread_id: str) -> dict | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
+                MediaJobRow.thread_id == thread_id))).scalar_one_or_none()
+            if not row or row.status != "succeeded" or not row.output_object_ref:
+                return None
+            return {"object_ref": row.output_object_ref, "mime": row.output_mime,
+                "size": row.output_size, "filename": self._media_project_path(row.id, row.output_mime).rsplit("/", 1)[-1]}
+
+    async def promote_media_job_for_thread(self, job_id: str, thread_id: str, role: str) -> dict:
+        if role not in {"workspace", "delivery"}:
+            raise ValueError("media_output_role_invalid")
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
+                MediaJobRow.thread_id == thread_id).with_for_update())).scalar_one_or_none()
+            if not row:
+                raise KeyError("media_job_not_found")
+            if row.status != "succeeded" or not row.output_object_ref:
+                raise RuntimeError("media_job_output_unavailable")
+            digest = row.output_object_ref.removeprefix("sha256:")
+            if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+                raise RuntimeError("media_job_output_invalid")
+            path = self._media_project_path(row.id, row.output_mime)
+            value, _ = await self._register_project_file_locked(db, row.thread_id, path=path,
+                source_type="artifact", source_turn_id=row.turn_id, sha256=digest,
+                size=row.output_size, mime=row.output_mime or "application/octet-stream",
+                object_ref=row.output_object_ref)
+            row.output_role = role; row.updated_at = now()
+            return {"job_id": row.id, "output_role": role, "project_path": value.path}
 
     async def list_media_jobs(self, thread_id: str, owner_id: str) -> list[MediaJobView]:
         async with self.connections() as db:
@@ -1705,22 +1792,73 @@ class Store:
     async def media_continuation_group(self, turn_id: str) -> tuple[bool, list[dict]]:
         terminal = {"succeeded", "failed", "cancelled", "unknown"}
         async with self.connections() as db:
-            pending_drafts = (await db.execute(select(func.count()).select_from(MediaDraftRow).where(
+            origin_state = (await db.execute(select(TurnRow.state).where(
+                TurnRow.id == turn_id,
+            ))).scalar_one_or_none()
+            batch_status = (await db.execute(select(MediaBatchRow.status).where(
+                MediaBatchRow.turn_id == turn_id,
+            ))).scalar_one_or_none()
+            drafts = (await db.execute(select(MediaDraftRow).where(
                 MediaDraftRow.turn_id == turn_id,
-                MediaDraftRow.status == "awaiting_confirmation",
-                MediaDraftRow.expires_at > now(),
-            ))).scalar_one()
+            ).order_by(MediaDraftRow.created_at, MediaDraftRow.id))).scalars().all()
             rows = (await db.execute(select(MediaJobRow).where(
                 MediaJobRow.turn_id == turn_id,
             ).order_by(MediaJobRow.created_at, MediaJobRow.id))).scalars().all()
-        ready = bool(rows) and not pending_drafts and all(row.status in terminal for row in rows)
-        return ready, [{
-            "id": row.id, "thread_id": row.thread_id, "turn_id": row.turn_id,
-            "kind": row.kind, "model": row.model, "status": row.status,
-            "output_object_ref": row.output_object_ref, "output_mime": row.output_mime,
-            "output_size": row.output_size, "error_code": row.error_code,
-            "project_path": self._media_project_path(row.id, row.output_mime) if row.output_object_ref else "",
-        } for row in rows]
+        origin_finished = origin_state in {state.value for state in TERMINAL}
+        jobs = {row.draft_id: row for row in rows}
+        states = [("expired" if draft.status == "awaiting_confirmation"
+            and utc_datetime(draft.expires_at) <= now() else draft.status) for draft in drafts]
+        complete = all(state in {"cancelled", "expired"} or state == "confirmed"
+            and draft.id in jobs and jobs[draft.id].status in terminal
+            for draft, state in zip(drafts, states))
+        ready = (origin_finished and batch_status in {"sealed", "delivering"}
+            and bool(drafts) and complete)
+        group = []
+        for draft, draft_state in zip(drafts, states):
+            row = jobs.get(draft.id)
+            group.append({
+                "id": row.id if row else draft.id, "job_id": row.id if row else "",
+                "draft_id": draft.id, "thread_id": draft.thread_id, "turn_id": draft.turn_id,
+                "kind": draft.kind, "model": draft.model,
+                "status": row.status if row else draft_state,
+                "output_object_ref": row.output_object_ref if row else "",
+                "output_mime": row.output_mime if row else "",
+                "output_size": row.output_size if row else 0,
+                "error_code": row.error_code if row else "",
+                "output_role": draft.output_role,
+                "project_path": self._media_project_path(row.id, row.output_mime)
+                    if row and row.output_object_ref and row.output_role in {"workspace", "delivery"} else "",
+            })
+        return ready, group
+
+    async def claim_media_batches(self, owner: str, limit: int = 20) -> list[dict]:
+        async with self.connections.begin() as db:
+            rows = (await db.execute(select(MediaBatchRow).where(
+                MediaBatchRow.status.in_(["sealed", "delivering"]),
+                or_(MediaBatchRow.lease_expires_at.is_(None), MediaBatchRow.lease_expires_at < now()),
+            ).order_by(MediaBatchRow.created_at).limit(limit).with_for_update())).scalars().all()
+            result = []
+            for row in rows:
+                row.status = "delivering"; row.lease_owner = owner
+                row.lease_expires_at = now() + timedelta(seconds=60)
+                row.attempt_count += 1; row.updated_at = now()
+                result.append({"turn_id": row.turn_id, "thread_id": row.thread_id,
+                    "owner_id": row.owner_id})
+            return result
+
+    async def finish_media_batch(self, turn_id: str, owner: str, *, delivered: bool, error: str = "") -> None:
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(MediaBatchRow).where(MediaBatchRow.turn_id == turn_id,
+                MediaBatchRow.lease_owner == owner).with_for_update())).scalar_one_or_none()
+            if not row:
+                return
+            row.status = "continued" if delivered else "sealed"
+            row.continued_at = now() if delivered else None
+            row.last_error = error[:2000]; row.lease_owner = ""; row.lease_expires_at = None; row.updated_at = now()
+            if delivered:
+                job_ids = select(MediaJobRow.id).where(MediaJobRow.turn_id == turn_id)
+                await db.execute(update(MediaOutboxRow).where(MediaOutboxRow.job_id.in_(job_ids)).values(
+                    status="delivered", lease_owner="", lease_expires_at=None, updated_at=now()))
 
     async def request_media_cancel(self, job_id: str, owner_id: str) -> MediaJobView:
         async with self.connections.begin() as db:
@@ -1787,11 +1925,12 @@ class Store:
                         db.add(ArtifactRow(id=identifier(), turn_id=row.turn_id, path=path,
                             sha256=digest, size=output_size, mime=output_mime or "application/octet-stream",
                             object_ref=output_object_ref, created_at=now()))
-                    project_path = self._media_project_path(row.id, output_mime)
-                    await self._register_project_file_locked(db, row.thread_id, path=project_path,
-                        source_type="artifact", source_turn_id=row.turn_id, sha256=digest,
-                        size=output_size, mime=output_mime or "application/octet-stream",
-                        object_ref=output_object_ref)
+                    if row.output_role in {"workspace", "delivery"}:
+                        project_path = self._media_project_path(row.id, output_mime)
+                        await self._register_project_file_locked(db, row.thread_id, path=project_path,
+                            source_type="artifact", source_turn_id=row.turn_id, sha256=digest,
+                            size=output_size, mime=output_mime or "application/octet-stream",
+                            object_ref=output_object_ref)
                 existing = (await db.execute(select(MediaOutboxRow).where(
                     MediaOutboxRow.job_id == row.id, MediaOutboxRow.event_type == "media.job.terminal"))).scalar_one_or_none()
                 if not existing:

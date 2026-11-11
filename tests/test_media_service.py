@@ -43,12 +43,55 @@ def test_media_cli_prepare_creates_confirmation_draft_only(tmp_path, monkeypatch
     monkeypatch.setattr(media_cli.httpx, "post", lambda url, **kwargs:
         calls.append((url, kwargs["json"])) or Response())
     assert media_cli.main(["prepare", "image", "--model", "seedream-5.0",
-        "--parameters", '{"prompt":"test"}', "--idempotency-key", "prepare-key-1"]) == 0
+        "--parameters", '{"prompt":"test"}', "--idempotency-key", "prepare-key-1",
+        "--output-role", "workspace"]) == 0
     assert calls == [("http://gateway.test/v1/media/drafts", {
         "kind": "image", "model": "seedream-5.0", "parameters": {"prompt": "test"},
-        "idempotency_key": "prepare-key-1",
+        "idempotency_key": "prepare-key-1", "output_role": "workspace",
     })]
     assert '{"ok":true}' in capsys.readouterr().out
+
+
+def test_media_cli_commit_seals_complete_batch(tmp_path, monkeypatch, capsys):
+    from sandbox_runtime import media_cli
+    token = tmp_path / "token"
+    token.write_text("capability")
+    monkeypatch.setenv("HARNESS_GATEWAY_URL", "http://gateway.test")
+    monkeypatch.setenv("HARNESS_CAPABILITY_TOKEN_FILE", str(token))
+    calls = []
+    class Response:
+        is_success = True
+        text = '{"status":"sealed","draft_count":3}'
+    monkeypatch.setattr(media_cli.httpx, "post", lambda url, **kwargs:
+        calls.append((url, kwargs)) or Response())
+    assert media_cli.main(["commit"]) == 0
+    assert calls[0][0] == "http://gateway.test/v1/media/batch/commit"
+    assert calls[0][1]["headers"] == {"Authorization": "Bearer capability"}
+    assert '"status":"sealed"' in capsys.readouterr().out
+
+
+def test_media_cli_fetch_and_promote_candidate(tmp_path, monkeypatch, capsys):
+    from sandbox_runtime import media_cli
+    token = tmp_path / "token"
+    token.write_text("capability")
+    monkeypatch.setenv("HARNESS_GATEWAY_URL", "http://gateway.test")
+    monkeypatch.setenv("HARNESS_CAPABILITY_TOKEN_FILE", str(token))
+    class Response:
+        def __init__(self, *, content=b"", text="{}"):
+            self.is_success = True; self.content = content; self.text = text
+    monkeypatch.setattr(media_cli.httpx, "get", lambda *args, **kwargs: Response(content=b"candidate"))
+    posts = []
+    monkeypatch.setattr(media_cli.httpx, "post", lambda url, **kwargs:
+        posts.append((url, kwargs)) or Response(text='{"output_role":"delivery"}'))
+    output = tmp_path / "candidate.png"
+    assert media_cli.main(["fetch", "--job-id", "job-1", "--output", str(output)]) == 0
+    assert output.read_bytes() == b"candidate"
+    assert media_cli.main(["promote", "--job-id", "job-1", "--output-role", "delivery"]) == 0
+    assert posts == [("http://gateway.test/v1/media/jobs/job-1/promote", {
+        "headers": {"Authorization": "Bearer capability"},
+        "json": {"output_role": "delivery"}, "timeout": 20,
+    })]
+    assert '"output_role":"delivery"' in capsys.readouterr().out
 
 
 def test_media_cli_status_uses_get_and_cancel_uses_post(tmp_path, monkeypatch):
