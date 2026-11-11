@@ -9,14 +9,14 @@ No credential, signed Provider URL or raw Provider response is recorded here.
 
 ## Runtime images
 
-The Runtime source revision is `c3e926a92b5a`. All images use immutable local
+The Runtime source revision is `b15205a41cf3`. All images use immutable local
 registry digests:
 
 | Harness | Digest |
 | --- | --- |
-| Codex | `sha256:02c1dcb61abc1df8035275950c17c13eb2eb6a7bfe91d3af5dbde48adefba2df` |
-| Claude | `sha256:ad7805e6b98dfeace301565bf3412d62a7423062d9d851b5d07153b809a3cafd` |
-| DeepSeek | `sha256:ea26fc94666c99b80902decb4d6d5f0955862fc7acc3c1a9c121d81755884670` |
+| Codex | `sha256:ce264d6fe27e8c75780fcd25091b2350ca01a257c560b89eb44e7ea8e05fc504` |
+| Claude | `sha256:873c4760f26dd980642cca527d4e60cb1944a28f4482439dc9b0f7e8aec798b7` |
+| DeepSeek | `sha256:5c00866d15cb4aa9b3ad1d7665cacbcce0b864c9eba4ce465e8400cbedfc47e5` |
 
 Each image passed the same UID 10001, network-disabled smoke. The smoke
 materialized all 25 native Skill links for all three Harness layouts and
@@ -63,14 +63,14 @@ continuation. The origin Turn must be terminal and every draft and confirmed
 Job terminal. Cancelled and expired drafts are included, candidate outputs can
 be inspected and explicitly promoted, and all-cancelled batches converge.
 
-The Host release `c3e926a92b5a` also supports pasted attachments and lazy online
+The Host release `b15205a41cf3` also supports pasted attachments and lazy online
 previews: PDF continuous pages, PPT/PPTX paging, DOCX scrolling, spreadsheet
 sheet switching, matching document thumbnails and CSP-sandboxed SVG thumbnails.
 The provided production PPT Artifact converted to a valid 207,429-byte PDF.
 
 ## Gates
 
-- Python suite: `221 passed` after all service separation, recovery, MIME and
+- Python suite: `228 passed` after all service separation, recovery, MIME and
   ownership validation changes.
 - Frontend production build: passed.
 - Browser media Job Inspector: passed with no page errors.
@@ -86,6 +86,12 @@ The provided production PPT Artifact converted to a valid 207,429-byte PDF.
   releases leases. Runtime catalog responses include exact parameter schemas,
   and internal continuation payloads remain auditable without appearing as
   user-authored chat messages.
+- MiniMax MP3 and WAV downloads were observed as tar archives containing one
+  audio member plus metadata. Worker now performs bounded in-memory extraction
+  before MIME/decode validation. Unprobed voices are rejected before Provider
+  submission, empty expired repair batches stop instead of looping, Seedance
+  clips are limited to 4-15 seconds, and one narration draft is capped at an
+  estimated 180 seconds.
 - Real OpenSandbox: final Codex digest started, exposed 25 Skills, executed
   `sandbox-media prepare`, then used a Turn Capability to execute
   `sandbox-media status` through Gateway against a same-Thread completed Job;
