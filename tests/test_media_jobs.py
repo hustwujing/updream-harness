@@ -3,8 +3,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from sandbox_harness.domain import MediaDraftCreate, now
-from sandbox_harness.store import MediaOutboxRow, Store
+from sandbox_harness.catalog import HarnessCatalog
+from sandbox_harness.domain import Harness, MediaDraftCreate, ThreadCreate, TurnCreate, now
+from sandbox_harness.media_worker import MediaWorker
+from sandbox_harness.store import ArtifactRow, MediaOutboxRow, Store
 
 
 @pytest.mark.asyncio
@@ -13,9 +15,15 @@ async def test_media_draft_confirm_is_idempotent_and_snapshots_provider(tmp_path
     await store.initialize()
     try:
         owner = "a" * 64
-        value = MediaDraftCreate(kind="video", model="sed2", parameters={"duration": 5}, idempotency_key="media-key-1")
+        profile = HarnessCatalog().resolve("claude", "claude-4.6-sonnet", "standard")
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="Media"), profile, owner)
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="generate", idempotency_key="media-turn-1"), profile, owner)
+        value = MediaDraftCreate(kind="video", model="sed2", parameters={"duration": 5},
+            idempotency_key="media-key-1", turn_id=turn.id)
         spec = SimpleNamespace(provider="ark", adapter="ark_video_v2", execution="async", cancellation="unsupported")
-        draft, created = await store.create_media_draft(owner, "b" * 32, value,
+        draft, created = await store.create_media_draft(owner, thread.id, value,
             expires_at=now() + timedelta(minutes=10), provider_spec=spec)
         assert created and draft.status == "awaiting_confirmation"
         first = await store.confirm_media_draft(draft.id, owner, provider_spec=spec)
@@ -23,10 +31,19 @@ async def test_media_draft_confirm_is_idempotent_and_snapshots_provider(tmp_path
         assert first.id == second.id and first.provider == "ark"
         assert not first.cancelable
         claimed = await store.claim_media_jobs("worker")
-        await store.update_media_job(first.id, "worker", status="succeeded", phase="committed")
+        assert claimed[0]["id"] == first.id
+        await store.update_media_job(first.id, "worker", status="succeeded", phase="committed",
+            output_object_ref="sha256:" + "1" * 64, output_mime="video/mp4", output_size=1234)
+        completed = await store.get_media_job(first.id, owner)
+        listed = await store.list_media_jobs(thread.id, owner)
+        assert completed and len(completed.artifact_ids) == 1
+        assert listed[0].artifact_ids == completed.artifact_ids
         async with store.connections() as db:
             rows = (await db.execute(__import__('sqlalchemy').select(MediaOutboxRow))).scalars().all()
+            artifacts = (await db.execute(__import__('sqlalchemy').select(ArtifactRow))).scalars().all()
         assert len(rows) == 1 and rows[0].status == "pending"
+        assert len(artifacts) == 1 and artifacts[0].id == completed.artifact_ids[0]
+        assert artifacts[0].object_ref == "sha256:" + "1" * 64
     finally:
         await store.close()
 
@@ -44,3 +61,13 @@ async def test_expired_media_draft_cannot_confirm(tmp_path):
             await store.confirm_media_draft(draft.id, "a" * 64, provider_spec=spec)
     finally:
         await store.close()
+
+
+def test_media_worker_corrects_bad_provider_mime_from_file_signature():
+    assert MediaWorker._validated_mime(b"ID3" + b"\0" * 20, "application/x-tar", "audio") == "audio/mpeg"
+    assert MediaWorker._validated_mime(b"\0\0\0\x18ftypmp42" + b"\0" * 12,
+        "application/octet-stream", "video") == "video/mp4"
+    assert MediaWorker._validated_mime(b"\xff\xd8\xff" + b"\0" * 20,
+        "application/octet-stream", "image") == "image/jpeg"
+    with pytest.raises(ValueError, match="mime_mismatch"):
+        MediaWorker._validated_mime(b"not media", "application/x-tar", "audio")

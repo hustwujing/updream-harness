@@ -1559,13 +1559,22 @@ class Store:
             expires_at=utc_datetime(row.expires_at), job_id=row.job_id or "")
 
     @staticmethod
-    def _media_job_view(row: MediaJobRow) -> MediaJobView:
+    def _media_job_view(row: MediaJobRow, artifact_ids: list[str] | None = None) -> MediaJobView:
         reason = "" if row.cancellation_mode == "supported" and row.execution_mode == "async" else "provider_not_cancelable"
         return MediaJobView(id=row.id, thread_id=row.thread_id, turn_id=row.turn_id or "", kind=row.kind,
             model=row.model, provider=row.provider, adapter=row.adapter, execution_mode=row.execution_mode,
             cancellation_mode=row.cancellation_mode, status=row.status, phase=row.phase or "",
             progress=row.progress, cancelable=row.execution_mode == "async" and row.cancellation_mode == "supported",
-            cancel_reason=reason)
+            cancel_reason=reason, artifact_ids=artifact_ids or [])
+
+    @staticmethod
+    async def _media_artifact_ids(db: AsyncSession, row: MediaJobRow) -> list[str]:
+        if not row.turn_id:
+            return []
+        return list((await db.execute(select(ArtifactRow.id).where(
+            ArtifactRow.turn_id == row.turn_id,
+            ArtifactRow.path == f"artifacts/{row.id}",
+        ).order_by(ArtifactRow.created_at))).scalars().all())
 
     async def create_media_draft(self, owner_id: str, thread_id: str, value, *, expires_at: datetime, provider_spec) -> tuple[MediaDraftView, bool]:
         async with self.connections.begin() as db:
@@ -1622,13 +1631,22 @@ class Store:
         async with self.connections() as db:
             row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
                 MediaJobRow.owner_id == owner_id))).scalar_one_or_none()
-        return self._media_job_view(row) if row else None
+            artifact_ids = await self._media_artifact_ids(db, row) if row else []
+        return self._media_job_view(row, artifact_ids) if row else None
 
     async def list_media_jobs(self, thread_id: str, owner_id: str) -> list[MediaJobView]:
         async with self.connections() as db:
             rows = (await db.execute(select(MediaJobRow).where(MediaJobRow.thread_id == thread_id,
                 MediaJobRow.owner_id == owner_id).order_by(MediaJobRow.created_at.desc()))).scalars().all()
-        return [self._media_job_view(row) for row in rows]
+            paths = {f"artifacts/{row.id}": row.id for row in rows if row.turn_id}
+            artifact_ids: dict[str, list[str]] = {row.id: [] for row in rows}
+            if paths:
+                artifacts = (await db.execute(select(ArtifactRow.id, ArtifactRow.path).where(
+                    ArtifactRow.path.in_(paths),
+                ).order_by(ArtifactRow.created_at))).all()
+                for artifact_id, path in artifacts:
+                    artifact_ids[paths[path]].append(artifact_id)
+        return [self._media_job_view(row, artifact_ids[row.id]) for row in rows]
 
     async def request_media_cancel(self, job_id: str, owner_id: str) -> MediaJobView:
         async with self.connections.begin() as db:
@@ -1671,6 +1689,18 @@ class Store:
             row.error_code = error_code; row.error_detail = error_detail; row.updated_at = now()
             if status in {"succeeded", "failed", "cancelled", "unknown"}:
                 row.lease_owner = ""; row.lease_expires_at = None
+                if status == "succeeded" and output_object_ref and row.turn_id:
+                    digest = output_object_ref.removeprefix("sha256:")
+                    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+                        raise ValueError("Invalid media output object reference")
+                    path = f"artifacts/{row.id}"
+                    existing_artifact = (await db.execute(select(ArtifactRow.id).where(
+                        ArtifactRow.turn_id == row.turn_id, ArtifactRow.path == path,
+                    ).limit(1))).scalar_one_or_none()
+                    if not existing_artifact:
+                        db.add(ArtifactRow(id=identifier(), turn_id=row.turn_id, path=path,
+                            sha256=digest, size=output_size, mime=output_mime or "application/octet-stream",
+                            object_ref=output_object_ref, created_at=now()))
                 existing = (await db.execute(select(MediaOutboxRow).where(
                     MediaOutboxRow.job_id == row.id, MediaOutboxRow.event_type == "media.job.terminal"))).scalar_one_or_none()
                 if not existing:

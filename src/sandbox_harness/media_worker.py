@@ -65,7 +65,7 @@ class MediaWorker:
                 await self.store.update_media_job(job["id"], self.owner, status="failed", phase="terminal",
                     provider_job_id=result.provider_job_id, error_code="provider_failed", error_detail=result.error[:2000])
                 return
-            data, mime = await self._download(result.url)
+            data, mime = await self._download(result.url, expected_kind=job["kind"])
             object_ref, _ = await asyncio.to_thread(self.objects.put, data)
             await self.store.update_media_job(job["id"], self.owner, status="succeeded", phase="committed",
                 provider_job_id=result.provider_job_id, output_object_ref=object_ref,
@@ -158,10 +158,41 @@ class MediaWorker:
                 return ProviderResult("failed", provider_job_id=task_id, error="audio_provider_failed")
         return ProviderResult("failed", provider_job_id=task_id, error="audio_timeout")
 
-    async def _download(self, url: str) -> tuple[bytes, str]:
+    @staticmethod
+    def _validated_mime(data: bytes, reported: str, expected_kind: str) -> str:
+        detected = ""
+        if data.startswith(b"\xff\xd8\xff"):
+            detected = "image/jpeg"
+        elif data.startswith(b"\x89PNG\r\n\x1a\n"):
+            detected = "image/png"
+        elif data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+            detected = "image/webp"
+        elif data.startswith(b"RIFF") and data[8:12] == b"WAVE":
+            detected = "audio/wav"
+        elif data.startswith(b"fLaC"):
+            detected = "audio/flac"
+        elif data.startswith(b"OggS"):
+            detected = "audio/ogg"
+        elif data.startswith(b"ID3") or (len(data) >= 2 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0):
+            detected = "audio/mpeg"
+        elif len(data) >= 12 and data[4:8] == b"ftyp":
+            detected = "audio/mp4" if expected_kind == "audio" else "video/mp4"
+        elif data.startswith(b"\x1a\x45\xdf\xa3"):
+            detected = "audio/webm" if expected_kind == "audio" else "video/webm"
+        prefix = expected_kind + "/"
+        if detected.startswith(prefix):
+            return detected
+        normalized = reported.split(";", 1)[0].strip().lower()
+        if normalized.startswith(prefix):
+            return normalized
+        raise ValueError("provider_result_mime_mismatch")
+
+    async def _download(self, url: str, *, expected_kind: str) -> tuple[bytes, str]:
         if not url or not url.startswith(("http://", "https://")):
             raise ValueError("invalid_provider_result_url")
         async with await self._client() as client:
             response = await client.get(url)
         response.raise_for_status()
-        return response.content, response.headers.get("content-type", "application/octet-stream").split(";", 1)[0]
+        data = response.content
+        return data, self._validated_mime(data,
+            response.headers.get("content-type", "application/octet-stream"), expected_kind)

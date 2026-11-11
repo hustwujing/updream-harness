@@ -128,10 +128,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await broker.start()
         async def continue_media(outbox: dict):
             artifact_note = outbox.get("output_object_ref", "")
-            if outbox.get("turn_id") and artifact_note.startswith("sha256:"):
-                await store.add_artifact(outbox["turn_id"], path=f"artifacts/{outbox['job_id']}",
-                    sha256=artifact_note.removeprefix("sha256:"), size=int(outbox.get("output_size") or 0),
-                    mime=outbox.get("output_mime") or "application/octet-stream", object_ref=artifact_note)
             message = (f"[media_job_completed] job_id={outbox['job_id']} status={outbox['status']} "
                        f"artifact={artifact_note or 'none'} error={outbox.get('error_code') or 'none'}")
             if outbox.get("turn_id"):
