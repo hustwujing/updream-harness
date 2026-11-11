@@ -73,23 +73,19 @@ function Sidebar({threads,readTurns,current,onSelect,onNew,onDelete,onArchive,ar
  </aside>;
 }
 
-function Activity({items,active,endedAt,failed}){
+function Activity({items,active,endedAt}){
  const [now,setNow]=useState(Date.now());
  const timing=active&&items.some(item=>item.status==='in_progress');
  useEffect(()=>{if(!timing)return;setNow(Date.now());const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer)},[timing]);
  if(!items.length)return null;
- const failures=items.filter(item=>item.type==='error'||['failed','interrupted','cancelled'].includes(item.status));
- const failureIds=new Set(failures.map(item=>item.id)),running=items.filter(item=>item.status==='in_progress'&&!failureIds.has(item.id));
- const completed=items.filter(item=>!failureIds.has(item.id)&&item.status!=='in_progress');
- const summary=`正在执行 ${running.length} · 失败 ${failures.length} · 已完成 ${completed.length}`;
+ const running=items.filter(item=>item.status==='in_progress'),history=items.filter(item=>item.status!=='in_progress');
+ const summary=active?`正在执行 ${running.length} · 已记录 ${history.length}`:`${history.length} 个执行步骤`;
  const row=item=>{const elapsed=activityTiming(item,active,now,endedAt);return <div className={`activity-row ${item.status}`} key={item.id}><ActivityStatus status={item.status} active={active}/><span><b>{activityName(item)}</b><small title={activityDetail(item)}>{activityDetail(item)}</small></span><time className={`activity-duration ${elapsed.running?'running':''}`} aria-label={elapsed.label}>{elapsed.label}</time></div>};
  const runningMiddle=running.length>5?running.slice(2,-3):[],runningStart=runningMiddle.length?running.slice(0,2):running,runningEnd=runningMiddle.length?running.slice(-3):[];
- const olderFailures=failures.length>5?failures.slice(0,-5):[],recentFailures=olderFailures.length?failures.slice(-5):failures;
- const olderCompleted=completed.length>6?completed.slice(0,-6):[],recentCompleted=olderCompleted.length?completed.slice(-6):completed;
- return <details className="activity" open={active||Boolean(failed)}><summary><span className={running.length?'activity-pulse':''}></span><b>{summary}</b><ChevronDown size={14}/></summary><div>
+ const olderHistory=history.length>8?history.slice(0,-8):[],recentHistory=olderHistory.length?history.slice(-8):history;
+ return <details className="activity" open={active}><summary><span className={running.length?'activity-pulse':''}></span><b>{summary}</b><ChevronDown size={14}/></summary><div>
   {running.length>0&&<section className="activity-group running"><h3>执行中</h3>{runningStart.map(row)}{runningMiddle.length>0&&<details className="activity-history"><summary>另有 {runningMiddle.length} 个正在执行</summary>{runningMiddle.map(row)}</details>}{runningEnd.map(row)}</section>}
-  {failures.length>0&&<section className="activity-group failed"><h3>失败或中断</h3>{olderFailures.length>0&&<details className="activity-history"><summary>较早的 {olderFailures.length} 个失败步骤</summary>{olderFailures.map(row)}</details>}{recentFailures.map(row)}</section>}
-  {completed.length>0&&<section className="activity-group completed"><h3>已完成</h3>{olderCompleted.length>0&&<details className="activity-history"><summary>较早的 {olderCompleted.length} 个已完成步骤</summary>{olderCompleted.map(row)}</details>}{recentCompleted.map(row)}</section>}
+  {history.length>0&&<section className="activity-group history"><h3>执行记录</h3>{olderHistory.length>0&&<details className="activity-history"><summary>较早的 {olderHistory.length} 个步骤</summary>{olderHistory.map(row)}</details>}{recentHistory.map(row)}</section>}
  </div></details>;
 }
 
@@ -181,7 +177,7 @@ function MediaProgress({jobs,turnId}){
  if(!group.length){for(const id of turnIds){const succeeded=jobs.filter(job=>job.turn_id===id&&job.status==='succeeded').slice().reverse();if(succeeded.length){origin=id;group=succeeded;break}}}
  if(!group.length)return null;
  const active=group.some(job=>!terminalMediaStatuses.has(job.status)),failed=group.some(job=>['failed','unknown'].includes(job.status));
- return <><section className="media-progress" aria-label="媒体生成进度"><header>{active?<LoaderCircle className="media-progress-spinner" size={16}/>:failed?<CircleAlert size={16}/>:<CircleCheck size={16}/>}<div><b>{active?'媒体生成中':failed?'媒体生成已结束':'媒体生成已完成'}</b><small>{group.length} 个任务</small></div>{failed&&!active&&<button className="media-progress-dismiss" onClick={()=>setDismissedFailures(origin)} aria-label="关闭媒体任务提示"><X size={14}/></button>}</header><div>{group.map(job=>{const result=mediaJobPreview(job);return <article className={result?'previewable':''} key={job.id} onClick={()=>result&&setPreview(result)} onKeyDown={event=>{if(result&&['Enter',' '].includes(event.key)){event.preventDefault();setPreview(result)}}} role={result?'button':undefined} tabIndex={result?0:undefined}><span>{activeMediaStatuses.has(job.status)?<LoaderCircle className="media-card-spinner" size={15}/>:result&&job.kind!=='image'?<Play size={14} fill="currentColor"/>:<MediaKindIcon kind={job.kind}/>}</span><div><b>{mediaLabels[job.kind]} · {job.model}</b><small>{mediaStatuses[job.status]||job.status} · {mediaPhases[job.phase]||job.phase||'等待更新'} · <MediaElapsed job={job}/></small>{job.progress!=null&&<i><em style={{width:`${Math.max(0,Math.min(100,job.progress))}%`}}/></i>}</div></article>})}</div></section>{preview&&<MediaPreview value={preview} onClose={()=>setPreview(null)}/>}</>;
+ return <><details className={`media-progress ${active?'active':''}`} aria-label="媒体生成进度"><summary>{active?<LoaderCircle className="media-progress-spinner" size={16}/>:failed?<CircleAlert size={16}/>:<CircleCheck size={16}/>}<div><b>{active?'媒体任务执行中':failed?'媒体任务需要处理':'媒体成果'}</b><small>{group.length} 个任务 · 点击展开</small></div>{failed&&!active&&<button className="media-progress-dismiss" onClick={event=>{event.preventDefault();event.stopPropagation();setDismissedFailures(origin)}} aria-label="关闭媒体任务提示"><X size={14}/></button>}<ChevronDown className="media-progress-chevron" size={14}/></summary><div>{group.map(job=>{const result=mediaJobPreview(job);return <article className={result?'previewable':''} key={job.id} onClick={()=>result&&setPreview(result)} onKeyDown={event=>{if(result&&['Enter',' '].includes(event.key)){event.preventDefault();setPreview(result)}}} role={result?'button':undefined} tabIndex={result?0:undefined}><span>{activeMediaStatuses.has(job.status)?<LoaderCircle className="media-card-spinner" size={15}/>:result&&job.kind!=='image'?<Play size={14} fill="currentColor"/>:<MediaKindIcon kind={job.kind}/>}</span><div><b>{mediaLabels[job.kind]} · {job.model}</b><small>{mediaStatuses[job.status]||job.status} · {mediaPhases[job.phase]||job.phase||'等待更新'} · <MediaElapsed job={job}/></small>{job.progress!=null&&<i><em style={{width:`${Math.max(0,Math.min(100,job.progress))}%`}}/></i>}</div></article>})}</div></details>{preview&&<MediaPreview value={preview} onClose={()=>setPreview(null)}/>}</>;
 }
 
 function MediaConfirmations({drafts,onRefresh}){

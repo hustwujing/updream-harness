@@ -41,7 +41,7 @@ RUNTIME_GUIDANCE = """Sandbox runtime contract:
 - Public HTTP/S uses a capability-checked proxy. A destination may still reject or rate-limit this host; after a timeout, TLS failure or repeated 4xx, do not keep retrying the same site.
 - curl, Python HTTP clients, `chromium`, Playwright scripts and `sandbox-browser-screenshot URL OUTPUT` automatically use the authenticated sandbox proxy. Do not remove their proxy environment or launch options.
 - ImageMagick (`convert` and `identify`), Pillow, FFmpeg and the locked media toolchain are installed. Probe a less common command with `command -v` before building a long pipeline.
-- For a long subprocess that should outlive the immediate tool call, use `sandbox-background start --name NAME -- argv...`; its exit status is part of this Turn.
+- For a long subprocess that should outlive the immediate tool call, use `sandbox-background start --name NAME -- argv...`; its exit status is part of this Turn. When retrying a failed job, use `sandbox-background start --name NAME --replaces FAILED_JOB_ID -- argv...`; only a successful explicit replacement resolves the old failure.
 - When a material user decision is required, use `sandbox-interact question --prompt TEXT --question id=TEXT` or `sandbox-interact approval --prompt TEXT`; continue only after its JSON response. Do not ask for confirmation when the request already authorizes the action.
 
 User message:
@@ -76,6 +76,7 @@ class BackgroundJobCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     argv: list[str] = Field(min_length=1, max_length=256)
     cwd: str = Field(default="/workspace/project", min_length=1, max_length=1000)
+    replaces: str = Field(default="", pattern=r"^$|^[0-9a-f]{32}$")
 
 
 class NativeInteractionCreate(BaseModel):
@@ -92,6 +93,7 @@ class BackgroundJob:
     argv: list[str]
     cwd: str
     execution_id: str
+    replaces: str = ""
     status: str = "running"
     pid: int = 0
     returncode: int | None = None
@@ -105,7 +107,22 @@ class BackgroundJob:
         return {"id": self.id, "name": self.name, "argv": self.argv, "cwd": self.cwd,
             "execution_id": self.execution_id, "status": self.status, "pid": self.pid,
             "returncode": self.returncode, "created_at": self.created_at,
-            "completed_at": self.completed_at, "log_tail": log_tail}
+            "completed_at": self.completed_at, "replaces": self.replaces, "log_tail": log_tail}
+
+
+def unresolved_background_jobs(jobs: list[BackgroundJob]) -> list[BackgroundJob]:
+    replacements: dict[str, list[BackgroundJob]] = {}
+    for job in jobs:
+        if job.replaces:
+            replacements.setdefault(job.replaces, []).append(job)
+
+    def recovered(job_id: str, seen: set[str]) -> bool:
+        if job_id in seen:
+            return False
+        return any(child.status == "completed" or recovered(child.id, seen | {job_id})
+            for child in replacements.get(job_id, []))
+
+    return [job for job in jobs if job.status != "completed" and not recovered(job.id, set())]
 
 
 @dataclass
@@ -294,7 +311,7 @@ def create_app() -> FastAPI:
         if execution and execution.id == job.execution_id:
             await publish(execution, {"kind": "step_finished", "payload": {
                 "name": "后台任务 · " + job.name, "background_job_id": job.id,
-                "status": job.status, "returncode": job.returncode,
+                "status": job.status, "returncode": job.returncode, "replaces": job.replaces,
             }})
 
     async def wait_background(execution: Execution) -> list[BackgroundJob]:
@@ -378,14 +395,14 @@ def create_app() -> FastAPI:
                             native.get("status") == "failed"
                             or bool(native.get("is_error"))
                             or native.get("subtype") in {"error", "error_max_turns", "error_during_execution"}
-                            or any(job.status != "completed" for job in background)
+                            or bool(unresolved_background_jobs(background))
                         )
                         detail = native.get("error_detail") or native.get("result") or native.get("message") or ""
                         await finish_execution(execution, {
                             "status": "failed" if failed else "completed",
                             "native_thread_id": execution.native_thread_id,
                             "error_code": (native.get("error_code") or (
-                                "background_job_failed" if any(job.status != "completed" for job in background)
+                                "background_job_failed" if unresolved_background_jobs(background)
                                 else "harness_failed")) if failed else "",
                             "error_detail": str(detail)[:4000] if failed else "",
                             "input_ids": execution.completed_input_ids,
@@ -408,7 +425,7 @@ def create_app() -> FastAPI:
                 })
                 return
             background = await wait_background(execution)
-            background_failed = any(job.status != "completed" for job in background)
+            background_failed = bool(unresolved_background_jobs(background))
             await finish_execution(execution, {
                 "status": "completed" if code == 0 and not background_failed else "failed",
                 "native_thread_id": execution.native_thread_id,
@@ -767,17 +784,25 @@ def create_app() -> FastAPI:
             execution = app.state.execution
             if execution is None or execution.result is not None or not execution.accepting_inputs:
                 raise HTTPException(409, "No active Harness execution")
+            if value.replaces:
+                previous = app.state.background_jobs.get(value.replaces)
+                if not previous or previous.execution_id != execution.id:
+                    raise HTTPException(422, "Replacement job must belong to the active execution")
+                if previous.status not in {"failed", "cancelled", "interrupted"}:
+                    raise HTTPException(422, "Replacement target must be a terminal unsuccessful job")
             identity = uuid.uuid4().hex
             process = await asyncio.create_subprocess_exec(*value.argv, cwd=cwd, env=os.environ.copy(),
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
                 start_new_session=True, limit=HARNESS_JSONL_LIMIT)
             job = BackgroundJob(id=identity, name=value.name, argv=value.argv, cwd=str(cwd),
-                execution_id=execution.id, pid=process.pid, log_path=str(jobs_root / (identity + ".log")),
+                execution_id=execution.id, replaces=value.replaces, pid=process.pid,
+                log_path=str(jobs_root / (identity + ".log")),
                 process=process)
             app.state.background_jobs[job.id] = job; persist_job(job)
             event("runtime.background.started",job_id=job.id,execution_id=job.execution_id)
             await publish(execution, {"kind": "step_started", "payload": {
-                "name": "后台任务 · " + job.name, "background_job_id": job.id, "pid": job.pid,
+                "name": "后台任务 · " + job.name, "background_job_id": job.id,
+                "pid": job.pid, "replaces": job.replaces,
             }})
             job.task = asyncio.create_task(watch_job(job), name="background-job-" + job.id)
             return job.public()

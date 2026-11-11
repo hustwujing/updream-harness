@@ -19,6 +19,18 @@ def test_runtime_guidance_has_network_and_browser_fallbacks():
     assert "chromium" in runtime_app.RUNTIME_GUIDANCE and "Playwright scripts" in runtime_app.RUNTIME_GUIDANCE
     assert "ImageMagick (`convert` and `identify`)" in runtime_app.RUNTIME_GUIDANCE
     assert "current Turn's publication directory" in runtime_app.RUNTIME_GUIDANCE
+    assert "--replaces FAILED_JOB_ID" in runtime_app.RUNTIME_GUIDANCE
+
+
+def test_background_failure_requires_successful_explicit_replacement():
+    failed = runtime_app.BackgroundJob(id="a" * 32, name="render", argv=["false"], cwd="/workspace/project",
+        execution_id="execution", status="failed", returncode=1)
+    unrelated = runtime_app.BackgroundJob(id="b" * 32, name="render-2", argv=["true"], cwd="/workspace/project",
+        execution_id="execution", status="completed", returncode=0)
+    replacement = runtime_app.BackgroundJob(id="c" * 32, name="render-3", argv=["true"], cwd="/workspace/project",
+        execution_id="execution", replaces=failed.id, status="completed", returncode=0)
+    assert runtime_app.unresolved_background_jobs([failed, unrelated]) == [failed]
+    assert runtime_app.unresolved_background_jobs([failed, unrelated, replacement]) == []
 
 
 def test_runtime_configuration_freezes_turn_harness_and_model(tmp_path, monkeypatch):
