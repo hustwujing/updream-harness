@@ -125,6 +125,8 @@ class MediaWorker:
         p = job["parameters"]
         model = {"sed2": p.get("provider_model", "") or os.environ.get("SANDBOX_HARNESS_ARK_VIDEO_MODEL_SED2", "seedance-2.0")}.get(job["model"], job["model"])
         task_id = str(job.get("provider_job_id") or "")
+        if task_id:
+            event("media.provider.resumed", job_id=job["id"], provider="ark", provider_job_id=task_id)
         if not task_id:
             payload = {"model": model, "content": [{"type": "text", "text": p.get("prompt", "")}],
                        "duration": p.get("duration", 5), "ratio": p.get("aspect_ratio", "16:9"),
@@ -138,6 +140,7 @@ class MediaWorker:
             if not await self.store.update_media_job(job["id"], self.owner, status="running",
                     phase="provider_polling", provider_job_id=task_id):
                 return ProviderResult("failed", provider_job_id=task_id, error="media_job_lease_lost")
+            event("media.provider.submitted", job_id=job["id"], provider="ark", provider_job_id=task_id)
         for _ in range(360):
             await asyncio.sleep(5)
             async with await self._client() as client:
@@ -163,6 +166,8 @@ class MediaWorker:
                    "audio_setting": {"format": p.get("audio_format", "mp3"), "audio_sample_rate": 32000, "bitrate": 128000, "channel": 2}}
         headers = {"Authorization": "Bearer " + key, "Content-Type": "application/json"}
         task_id = str(job.get("provider_job_id") or "")
+        if task_id:
+            event("media.provider.resumed", job_id=job["id"], provider="minimax", provider_job_id=task_id)
         if not task_id:
             async with await self._client() as client:
                 response = await client.post(urljoin(base + "/", "t2a_async_v2"), headers=headers, json=payload)
@@ -172,6 +177,7 @@ class MediaWorker:
             if not await self.store.update_media_job(job["id"], self.owner, status="running",
                     phase="provider_polling", provider_job_id=task_id):
                 return ProviderResult("failed", provider_job_id=task_id, error="media_job_lease_lost")
+            event("media.provider.submitted", job_id=job["id"], provider="minimax", provider_job_id=task_id)
         for _ in range(120):
             await asyncio.sleep(5)
             async with await self._client() as client:
