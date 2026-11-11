@@ -7,6 +7,17 @@ from typing import Any
 
 
 SUPPORTED_AUDIO_VOICES = ("male-qn-qingse",)
+MAX_AUDIO_CHARACTERS = 9_999
+MAX_AUDIO_ESTIMATED_SECONDS = 180
+
+
+def estimate_audio_duration_seconds(text: str, speed: float = 1) -> float:
+    intervals = sum(float(value) for value in re.findall(r"<#([0-9]+(?:\.[0-9]{1,2})?)#>", text))
+    spoken = re.sub(r"<#[0-9]+(?:\.[0-9]{1,2})?#>", "", text)
+    cjk = len(re.findall(r"[\u3400-\u9fff]", spoken))
+    words = len(re.findall(r"[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*", spoken))
+    punctuation = len(re.findall(r"[，。！？；：,.!?;:]", spoken))
+    return round((cjk / 4.5 + words / 2.5 + punctuation * 0.08) / speed + intervals, 1)
 
 
 @dataclass(frozen=True)
@@ -27,12 +38,14 @@ class MediaModelSpec:
         value.pop("credential_env", None)
         value["parameter_schema"] = {
             "image": {"required": ["prompt"], "optional": {"size": "256x256..4096x4096"}},
-            "video": {"required": ["prompt"], "optional": {"duration": "integer 1..12",
+            "video": {"required": ["prompt"], "optional": {"duration": "integer 4..15",
                 "resolution": ["480p", "720p", "1080p"],
                 "aspect_ratio": ["16:9", "9:16", "1:1", "4:3", "3:4"],
                 "generate_audio": "boolean"}},
             "audio": {"required": ["text"], "optional": {"voice_id": list(SUPPORTED_AUDIO_VOICES),
-                "speed": "number 0.5..2", "audio_format": ["mp3", "wav", "flac"]}},
+                "speed": "number 0.5..2", "audio_format": ["mp3", "wav", "flac"]},
+                "limits": {"max_characters": MAX_AUDIO_CHARACTERS,
+                    "max_estimated_duration_seconds": MAX_AUDIO_ESTIMATED_SECONDS}},
         }[self.kind]
         return value
 
@@ -95,8 +108,8 @@ class MediaCatalog:
             raise ValueError("Unsupported media parameter")
         text_key = "text" if kind == "audio" else "prompt"
         text = parameters.get(text_key)
-        if not isinstance(text, str) or not text.strip() or len(text) > 10_000:
-            raise ValueError(f"{text_key} must be a non-empty string of at most 10000 characters")
+        if not isinstance(text, str) or not text.strip() or len(text) > MAX_AUDIO_CHARACTERS:
+            raise ValueError(f"{text_key} must be a non-empty string shorter than 10000 characters")
         if kind == "image":
             size = parameters.get("size", "2048x2048")
             match = re.fullmatch(r"([1-9][0-9]{2,3})x([1-9][0-9]{2,3})", size) if isinstance(size, str) else None
@@ -104,8 +117,8 @@ class MediaCatalog:
                 raise ValueError("Invalid image size")
         elif kind == "video":
             duration = parameters.get("duration", 5)
-            if isinstance(duration, bool) or not isinstance(duration, int) or not 1 <= duration <= 12:
-                raise ValueError("Invalid video duration")
+            if isinstance(duration, bool) or not isinstance(duration, int) or not 4 <= duration <= 15:
+                raise ValueError("Video duration must be an integer from 4 to 15 seconds; split longer videos into clips")
             if parameters.get("resolution", "480p") not in {"480p", "720p", "1080p"}:
                 raise ValueError("Invalid video resolution")
             if parameters.get("aspect_ratio", "16:9") not in {"16:9", "9:16", "1:1", "4:3", "3:4"}:
@@ -119,6 +132,9 @@ class MediaCatalog:
             speed = parameters.get("speed", 1)
             if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not 0.5 <= speed <= 2:
                 raise ValueError("Invalid audio speed")
+            estimated = estimate_audio_duration_seconds(text, float(speed))
+            if estimated > MAX_AUDIO_ESTIMATED_SECONDS:
+                raise ValueError(f"Audio estimated duration is {estimated:.1f}s; split text into segments of at most 180s")
             if parameters.get("audio_format", "mp3") not in {"mp3", "wav", "flac"}:
                 raise ValueError("Invalid audio format")
 

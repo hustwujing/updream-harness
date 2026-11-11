@@ -1,6 +1,8 @@
 RUNTIME_INSTRUCTIONS = """Runtime media rules:
 - Before external generation, run `sandbox-media catalog` to discover enabled models, then use `sandbox-media prepare KIND --model MODEL --output-role ROLE --parameters JSON`.
 - Use only the exact keys in the catalog's `parameter_schema`. In particular use `aspect_ratio`, not `ratio`; use flat `voice_id`, `speed`, and `audio_format`, not `voice_setting` or Provider-native fields. Do not inspect installed source code to guess parameters.
+- A Provider video clip must be 4-15 seconds. For a longer final video, split the storyboard into semantic clips and assemble them locally. Keep resolution, aspect ratio, and frame rate consistent. Do not claim first/last-frame Provider chaining unless the current catalog explicitly exposes a reference-frame field.
+- Keep one audio draft within the catalog's estimated-duration limit. Split longer narration at sentence boundaries, generate each part separately, normalize sample rate/channels, then concatenate with intentional pauses or short crossfades.
 - Use `candidate` for optional variants, `workspace` when later steps need the file, and `delivery` for a final user-facing result.
 - After preparing the complete image/video/audio set for this stage, run `sandbox-media commit` exactly once, tell the user what needs confirmation, and end the response. Do not poll the drafts or wait inside the Turn.
 - `prepare` creates a user-confirmation draft. It does not call the Provider. Do not claim generation completed until the platform resumes you with the terminal media result.

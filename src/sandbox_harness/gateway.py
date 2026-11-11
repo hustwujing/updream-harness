@@ -244,10 +244,16 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         try:
             raw = await request.json()
             value = MediaDraftCreate.model_validate({**raw, "turn_id": claims.turn_id})
-            spec = media_catalog.resolve(value.kind, value.model)
-            media_catalog.validate_parameters(value.kind, value.model, value.parameters)
-        except (ValueError, KeyError, TypeError):
+        except (ValueError, TypeError):
             raise HTTPException(422, "Invalid media draft")
+        try:
+            spec = media_catalog.resolve(value.kind, value.model)
+        except KeyError:
+            raise HTTPException(422, "Media model is not enabled")
+        try:
+            media_catalog.validate_parameters(value.kind, value.model, value.parameters)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
         owner_id = await activity_store.owner_id_for_thread(claims.thread_id)
         if not owner_id:
             raise HTTPException(404, "Thread not found")

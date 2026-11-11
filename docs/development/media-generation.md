@@ -21,6 +21,14 @@ The resolved provider, adapter, model, capabilities and config version are
 snapshotted on Job creation. Only models that pass a real minimal request and
 result validation may be enabled.
 
+Limits apply to one Provider Job, not to the final production. Seedance 2.0
+clips are 4-15 seconds. Longer videos are storyboarded into clips and assembled
+locally. MiniMax text must be shorter than 10,000 characters; this product also
+caps one audio draft at an estimated 180 seconds and requires longer narration
+to be split at sentence boundaries. A future first/last-frame chain must use
+durable draft dependencies and frame Artifacts; prompts and temporary paths are
+not a recovery-safe substitute for that DAG.
+
 ## Confirmation gate
 
 Generation is two-phase: `prepare intent -> user confirms/edits -> create Job ->
