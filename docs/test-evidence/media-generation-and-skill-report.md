@@ -66,4 +66,6 @@ PostgreSQL transaction, and media Job listing fetches Artifact IDs in one batch.
 - Browser media gallery: desktop 4 columns, mobile 2 columns, video thumbnail,
   preview and download passed.
 - Real OpenSandbox: final Codex digest started, exposed 25 Skills, executed
-  `sandbox-media prepare`, and deleted cleanly.
+  `sandbox-media prepare`, then used a Turn Capability to execute
+  `sandbox-media status` through Gateway against a same-Thread completed Job;
+  the isolated Sandbox deleted cleanly.
