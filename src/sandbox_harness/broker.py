@@ -615,6 +615,7 @@ class Broker:
                         model=turn.model,
                         model_start_timeout_seconds=self.settings.runtime_model_start_timeout_seconds,
                         event_idle_timeout_seconds=self.settings.runtime_event_idle_timeout_seconds,
+                        defer_skill_install=bool(thread.checkpoint_ref and not sandbox.reused),
                     )
                     if thread.checkpoint_ref and not sandbox.reused:
                         archive = await asyncio.to_thread(self.objects.get, thread.checkpoint_ref, maximum=self.settings.max_checkpoint_bytes)

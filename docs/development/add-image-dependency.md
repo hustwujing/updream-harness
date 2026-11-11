@@ -29,6 +29,8 @@ checksum/version mismatch where the upstream publishes one.
 Playwright browser against `toolchain.lock.json`. An intentional foundation
 change requires generating and reviewing a new snapshot from the built image;
 do not hand-edit a version string merely to make verification pass.
+Use `python runtime/toolchain_probe.py --output runtime/toolchain.lock.json`
+inside the newly built foundation image to write that snapshot.
 
 Python media modules are imported by `media_probe.py`. Add the distribution to
 the `runtime-media` extra and its import name to the probe. A successful pip

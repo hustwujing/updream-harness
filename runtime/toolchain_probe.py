@@ -8,15 +8,20 @@ from pathlib import Path
 
 
 PACKAGES = (
-    "build-essential", "ca-certificates", "chromium", "cmake", "curl", "ffmpeg", "file",
-    "fonts-noto-color-emoji", "fonts-wqy-zenhei", "git", "imagemagick", "jq", "libgbm1", "libgl1-mesa-dri",
-    "libglx-mesa0", "mesa-utils", "pkg-config", "procps", "ripgrep", "unzip", "xauth", "xvfb", "xz-utils",
+    "build-essential", "ca-certificates", "chromium", "cmake", "curl", "draw.io", "ffmpeg", "file",
+    "fonts-liberation2", "fonts-noto-color-emoji", "fonts-wqy-zenhei", "git", "graphviz",
+    "imagemagick", "jq", "libgbm1", "libgl1-mesa-dri", "libglx-mesa0", "libreoffice-calc",
+    "libreoffice-core", "libreoffice-impress", "libreoffice-writer", "mesa-utils", "pandoc", "pkg-config",
+    "poppler-utils", "procps", "qpdf", "ripgrep", "tesseract-ocr", "tesseract-ocr-chi-sim", "unzip",
+    "xauth", "xvfb", "xz-utils", "zip",
 )
 
 COMMANDS = {
     "cmake": ["cmake", "--version"],
     "chromium": ["chromium", "--version"],
     "curl": ["curl", "--version"],
+    "dot": ["dot", "-V"],
+    "drawio": ["xvfb-run", "-a", "/usr/bin/drawio", "--no-sandbox", "--version"],
     "ffmpeg": ["ffmpeg", "-version"],
     "ffprobe": ["ffprobe", "-version"],
     "file": ["file", "--version"],
@@ -27,17 +32,24 @@ COMMANDS = {
     "gcc": ["gcc", "--version"],
     "jq": ["jq", "--version"],
     "make": ["make", "--version"],
+    "libreoffice": ["libreoffice", "--version"],
     "node": ["node", "--version"],
     "npm": ["npm", "--version"],
+    "pandoc": ["pandoc", "--version"],
+    "pdftoppm": ["pdftoppm", "-v"],
     "pkg-config": ["pkg-config", "--version"],
     "playwright": ["playwright", "--version"],
     "python": ["python", "--version"],
+    "qpdf": ["qpdf", "--version"],
     "rg": ["rg", "--version"],
     "unzip": ["unzip", "-v"],
+    "tesseract": ["tesseract", "--version"],
     "xz": ["xz", "--version"],
+    "zip": ["zip", "-v"],
 }
 
-NPM_PACKAGES = ("playwright", "three", "esbuild")
+NPM_PACKAGES = ("docx", "esbuild", "playwright", "pnpm", "pptxgenjs", "react", "react-dom",
+    "react-icons", "sharp", "three", "typescript")
 
 
 def first_line(command: list[str]) -> str:
@@ -69,12 +81,18 @@ def snapshot() -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--verify", type=Path)
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+    if args.verify and args.output:
+        parser.error("--verify and --output are mutually exclusive")
     actual = snapshot()
     if args.verify:
         expected = json.loads(args.verify.read_text())
         if actual != expected:
             raise SystemExit("runtime toolchain does not match toolchain.lock.json")
+    elif args.output:
+        args.output.write_text(json.dumps(actual, indent=2, sort_keys=True) + "\n")
+        print(args.output)
     else:
         print(json.dumps(actual, indent=2, sort_keys=True))
 

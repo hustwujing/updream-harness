@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from sandbox_harness.observability import RequestLoggingMiddleware, observed, event, enrich, telemetry, ToolObservations
 
 from .adapters import command, control_interaction_response, control_user_message, normalize, streaming_user_message
+from .skills import materialize_skills
 
 
 WORKSPACE = Path("/workspace")
@@ -55,6 +56,7 @@ class Configure(BaseModel):
     harness: str = Field(pattern=r"^(codex|claude|deepseek)$")
     model: str = Field(min_length=1, max_length=160)
     proxy_url: str = Field(pattern=r"^http://")
+    defer_skill_install: bool = False
     model_start_timeout_seconds: float = Field(default=150, ge=10, le=900)
     event_idle_timeout_seconds: float = Field(default=900, ge=60, le=3600)
 
@@ -151,6 +153,7 @@ def create_app() -> FastAPI:
     app.state.interaction_response_lock = asyncio.Lock()
     app.state.model_start_timeout_seconds = 150.0
     app.state.event_idle_timeout_seconds = 900.0
+    app.state.harness = ""
     app.state.stream_heartbeat_seconds = 15.0
     jobs_root = WORKSPACE / "state" / "background-jobs"
     jobs_root.mkdir(parents=True, exist_ok=True)
@@ -475,6 +478,13 @@ def create_app() -> FastAPI:
         os.environ["HARNESS_GATEWAY_URL"] = value.gateway_url
         os.environ["HARNESS_KIND"] = value.harness
         os.environ["HARNESS_MODEL"] = value.model
+        app.state.harness = value.harness
+        runtime_home = WORKSPACE / "state" / "home"
+        runtime_home.mkdir(parents=True, exist_ok=True)
+        os.environ["HOME"] = str(runtime_home)
+        os.environ["PIP_INDEX_URL"] = "http://mirrors.cloud.aliyuncs.com/pypi/simple/"
+        os.environ["PIP_TRUSTED_HOST"] = "mirrors.cloud.aliyuncs.com"
+        os.environ["npm_config_registry"] = "https://registry.npmmirror.com"
         app.state.model_start_timeout_seconds = value.model_start_timeout_seconds
         app.state.event_idle_timeout_seconds = value.event_idle_timeout_seconds
         proxy = urlsplit(value.proxy_url)
@@ -486,7 +496,12 @@ def create_app() -> FastAPI:
         no_proxy = ",".join(filter(None, {"127.0.0.1", "localhost", proxy.hostname, urlsplit(value.gateway_url).hostname}))
         os.environ["NO_PROXY"] = no_proxy
         os.environ["no_proxy"] = no_proxy
-        return {"configured": True}
+        skills = None
+        if not value.defer_skill_install:
+            skills = materialize_skills(value.harness, WORKSPACE)
+            event("runtime.skills.materialized", harness=value.harness,
+                bundle_version=skills["bundle_version"], skill_count=skills["skill_count"])
+        return {"configured": True, "skills": skills, "skills_deferred": value.defer_skill_install}
 
     @app.put("/v1/checkpoint")
     async def restore(request: Request):
@@ -503,8 +518,17 @@ def create_app() -> FastAPI:
                         raise HTTPException(400, "Invalid checkpoint member")
                     if member.issym() or member.islnk() or member.isdev():
                         continue
+                    current = WORKSPACE
+                    for part in path.parts[:-1]:
+                        current = current / part
+                        if current.is_symlink():
+                            raise HTTPException(400, "Checkpoint member traverses a link")
                     safe_members.append(member)
                 archive.extractall(WORKSPACE, members=safe_members, filter="data")
+        if app.state.harness:
+            skills = materialize_skills(app.state.harness, WORKSPACE)
+            event("runtime.skills.materialized", harness=app.state.harness,
+                bundle_version=skills["bundle_version"], skill_count=skills["skill_count"])
         load_jobs()
         return {"restored": True}
 

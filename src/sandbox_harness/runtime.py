@@ -27,11 +27,13 @@ class RuntimeClient:
 
     @observed("runtime.configure")
     async def inject(self, sandbox: Sandbox, *, capability_token: str, gateway_url: str, proxy_url: str, harness: str, model: str,
-                     model_start_timeout_seconds: float = 150, event_idle_timeout_seconds: float = 900) -> None:
+                     model_start_timeout_seconds: float = 150, event_idle_timeout_seconds: float = 900,
+                     defer_skill_install: bool = False) -> None:
         payload = {"capability_token": capability_token, "gateway_url": gateway_url,
             "harness": harness, "model": model, "proxy_url": proxy_url,
             "model_start_timeout_seconds": model_start_timeout_seconds,
             "event_idle_timeout_seconds": event_idle_timeout_seconds,
+            "defer_skill_install": defer_skill_install,
             "thread_id":sandbox.thread_id or sandbox.metadata.get("sandbox-harness.io/thread", ""),
             "turn_id":sandbox.turn_id or sandbox.metadata.get("sandbox-harness.io/turn", ""),"sandbox_id":sandbox.id}
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()}, timeout=20,

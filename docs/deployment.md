@@ -26,6 +26,7 @@ Project dependencies, caches, database files, logs, temporary files and build ou
 
 - Every OpenSandbox create request includes the product namespace. Reconciliation and cleanup query both namespace and Turn identity.
 - Runtime images use immutable digests under `127.0.0.1:25001/sandbox-harness/*`.
+- The read-only Runtime Skill bundle is digest-verified at build time and materialized into native Harness roots after fresh configuration or checkpoint restore.
 - PostgreSQL connects only to the dedicated cluster as the `sandbox_harness` role and database.
 - Every Redis key starts with the configured prefix. Lua scripts and scans must include that prefix.
 - Only authenticated FRPC Turn submissions freeze `network_access=public`; direct and other submissions remain restricted. Both modes still reject private destinations and raw egress.
@@ -38,7 +39,7 @@ Project dependencies, caches, database files, logs, temporary files and build ou
 1. Create `.data/config/platform.env` from `.env.example`; keep every cache and temporary path under `.data`.
 2. Verify the shared services are healthy; do not restart them.
 3. Run `deploy/install-units.sh`, then `deploy/init-postgresql.sh` to initialize the fresh project database on `/data2`.
-4. Build the three runtime images through the shared Docker socket and push them under the product registry namespace.
+4. Place the ignored, checksum-pinned draw.io package under `runtime/vendor/`, verify the Skill manifest, then build the three Runtime images through the shared Docker socket and push them under the product registry namespace.
 5. Record immutable image digests in the project environment file and start API/Gateway.
 6. Run a real OpenSandbox smoke Turn and verify its metadata namespace, image digest, event stream, checkpoint and artifact prefix.
 

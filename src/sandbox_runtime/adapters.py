@@ -63,7 +63,8 @@ def command(harness: str, model: str, native_thread_id: str = "") -> HarnessComm
                 "--permission-mode", "bypassPermissions", "--model", model]
         if native_thread_id:
             argv += ["--resume", native_thread_id]
-        return HarnessCommand(argv, {**common, "ANTHROPIC_BASE_URL": gateway + "/v1/models/claude",
+        return HarnessCommand(argv, {**common, "CLAUDE_CONFIG_DIR": "/workspace/state/claude",
+            "ANTHROPIC_BASE_URL": gateway + "/v1/models/claude",
             "ANTHROPIC_API_KEY": capability_token}, streaming_input=True, batched_completion=True)
     if harness == "deepseek":
         argv = ["python", "-m", "sandbox_runtime.deepseek_runner", "--model", model]

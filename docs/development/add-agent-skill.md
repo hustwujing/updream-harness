@@ -5,39 +5,45 @@
 Required when adding reusable instructions, scripts, references or assets that
 a sandboxed Codex, Claude or DeepSeek Harness should discover and apply.
 
-## Current state
+## Distribution contract
 
-This repository does not currently own a versioned Skill bundle or a common
-Skill installer. Native Harness source images may contain built-in Skills, and
-Harness state is checkpointed under `/workspace/state`, but that is not a
-product-level distribution contract. Do not claim a Skill is available to all
-Harnesses based on one source image or one retained sandbox.
+The repository-owned bundle lives in `runtime/skills/`. `sources.json` records
+upstream commits, versions, licenses, dependencies, network needs and tests.
+`runtime/skill_bundle.py freeze` computes content digests and writes
+`manifest.json`; image builds run `verify` and fail on drift.
 
-Before the first repository-owned Skill, implement an explicit distribution
-contract rather than copying files ad hoc during a test.
+`sandbox_runtime.skills` materializes the same immutable bundle into each
+native Harness root:
+
+```text
+Codex     /workspace/state/codex/skills
+Claude    /workspace/state/claude/skills  (CLAUDE_CONFIG_DIR)
+DeepSeek  /workspace/state/dsh/skills     (DSH_HOME)
+```
+
+Entries link to the read-only image bundle. Checkpoints exclude links. Restore
+defers installation until extraction completes and then replaces prior managed
+copies, so old state cannot shadow a new image or write through a bundle link.
 
 ## Required Skill manifest
 
-Each Skill needs a stable ID, version, supported Harnesses, entry instruction,
-owned scripts/assets, required commands/libraries, network needs and test cases.
+Each Skill needs a stable ID, version, pinned source commit, supported Harnesses,
+entry instruction, owned scripts/assets, required commands/libraries, network
+needs, license provenance and test cases.
 Skill text must describe task behavior; credentials and private service tokens
 must remain Gateway capabilities.
 
-The repository should keep one canonical Skill source plus a small
-Harness-specific installer/adapter for each native discovery format. Verify the
-actual discovery directory and precedence with the pinned native client version
-before documenting it. Do not assume Codex, Claude and DeepSeek use identical
-paths or metadata.
+Keep one canonical source in `runtime/skills`; do not fork instructions per
+Harness. Verify native discovery with pinned client versions on Harness upgrade.
 
 ## Persistence and upgrades
 
 Skill installation must define the interaction with checkpointed state:
 
-- image-bundled version available in every fresh sandbox;
-- whether a Thread checkpoint may override it;
-- how a newer image upgrades an older retained/checkpointed copy;
-- how removed Skills stop being discoverable;
-- how version used by a Turn is observable without logging prompts/content.
+- image-bundled version is available in every fresh sandbox;
+- a Thread checkpoint cannot override a managed ID;
+- the marker removes managed IDs deleted from a newer bundle;
+- `runtime.skills.materialized` records bounded bundle version/count metadata.
 
 Prefer immutable image-bundled sources and deterministic materialization at
 Runtime configuration. Never mutate another Thread's checkpoint or a shared
@@ -55,9 +61,9 @@ warm sandbox.
 
 ## Completion
 
-Test manifest validation and installation for every declared Harness. In real
-OpenSandbox cases, prove discovery in a fresh sandbox, execution, checkpoint,
-resume in a different sandbox, version upgrade behavior and cleanup. Record the
-Skill version and Runtime image digest. A response that happens to follow the
-Skill is insufficient; verify native discovery evidence and expected artifact
-or tool behavior.
+Test manifest validation and installation for every declared Harness. Run
+dependency imports/commands as UID 10001 in every final image. In real
+OpenSandbox cases, prove native discovery, representative artifact execution,
+checkpoint, resume in a different sandbox, version upgrade and cleanup. Record
+the bundle version and image digest. A response that merely follows the Skill
+is insufficient evidence.

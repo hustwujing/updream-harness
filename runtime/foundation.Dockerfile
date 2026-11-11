@@ -46,6 +46,36 @@ RUN sed -i -e "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}/debian|g" \
     chmod -R a+rX /ms-playwright && \
     npm cache clean --force
 ENV NODE_PATH=/usr/local/lib/node_modules
+ENV npm_config_registry=https://registry.npmmirror.com
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV CHROME_PATH=/usr/bin/chromium
 ENV LIBGL_ALWAYS_SOFTWARE=1
+ARG DRAWIO_VERSION=32.6.10
+ARG DRAWIO_SHA256=fc96faafe68cb4e06c0b7116779891592b20fce2cde7907adec504f23c5af83c
+ARG REACT_VERSION=19.3.1
+ARG TYPESCRIPT_VERSION=7.0.2
+ARG REACT_ICONS_VERSION=5.7.0
+ARG SHARP_VERSION=0.35.5
+ARG DOCX_VERSION=9.15.3
+ARG PPTXGENJS_VERSION=4.0.1
+ARG PNPM_VERSION=12.18.0
+COPY runtime/vendor/drawio-amd64-${DRAWIO_VERSION}.deb /tmp/drawio.deb
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      fonts-liberation2 \
+      graphviz \
+      libreoffice-calc \
+      libreoffice-core \
+      libreoffice-impress \
+      libreoffice-writer \
+      pandoc \
+      poppler-utils \
+      qpdf \
+      tesseract-ocr \
+      tesseract-ocr-chi-sim \
+      zip && \
+    echo "${DRAWIO_SHA256}  /tmp/drawio.deb" | sha256sum -c - && \
+    apt-get install -y --no-install-recommends /tmp/drawio.deb && \
+    rm -f /tmp/drawio.deb && \
+    rm -rf /var/lib/apt/lists/*
+COPY runtime/vendor/npm-prefix/lib/node_modules/ /usr/local/lib/node_modules/
+COPY runtime/vendor/npm-prefix/bin/ /usr/local/bin/

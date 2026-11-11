@@ -39,6 +39,8 @@ def test_runtime_configuration_freezes_turn_harness_and_model(tmp_path, monkeypa
     assert response.status_code == 200
     assert runtime_app.os.environ["HARNESS_KIND"] == "deepseek"
     assert runtime_app.os.environ["HARNESS_MODEL"] == "deepseek-v4.1"
+    assert runtime_app.os.environ["HOME"] == str(tmp_path / "workspace" / "state" / "home")
+    assert runtime_app.os.environ["npm_config_registry"] == "https://registry.npmmirror.com"
     assert runtime_app.os.environ["HTTPS_PROXY"].startswith("http://" + "x" * 32 + ":@")
     assert "172.31.0.1" in runtime_app.os.environ["NO_PROXY"]
     assert (tmp_path / "run" / "capability-token").read_text() == "x" * 32
@@ -51,6 +53,7 @@ def test_harness_commands_preload_the_playwright_proxy_bridge(monkeypatch, tmp_p
     for harness in ('codex','claude','deepseek'):
         configured=__import__('sandbox_runtime.adapters',fromlist=['command']).command(harness,'model')
         assert '--require=/usr/local/lib/sandbox-playwright-proxy.cjs' in configured.environment['NODE_OPTIONS']
+        if harness=='claude':assert configured.environment['CLAUDE_CONFIG_DIR']=='/workspace/state/claude'
 
 
 def test_runtime_stream_accepts_bounded_large_native_json_lines(tmp_path, monkeypatch):

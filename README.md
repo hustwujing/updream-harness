@@ -43,6 +43,11 @@ Turn ownership is a renewable PostgreSQL lease. The Sandbox Runtime consumes Har
 
 Harnesses can request user decisions with `sandbox-interact`; Codex native user-input and approval requests map to the same durable Interaction protocol. Long commands can be delegated to `sandbox-background`, whose process group, bounded log, cancellation and exit status are supervised by the Runtime and remain part of the Turn result.
 
+Every Runtime image carries one pinned 25-Skill bundle shared by Codex, Claude
+and DeepSeek. It includes diagram, documentation, editable/image-based
+PowerPoint and the complete pinned `anthropics/skills` collection with declared
+runtime dependencies. See [Runtime Skill Bundle](docs/skills.md).
+
 ## Workspace
 
 ```text
@@ -74,7 +79,7 @@ Before changing code, read [AGENTS.md](AGENTS.md) and use the
 [development guide index](docs/development/README.md) to load the rules for the
 affected lifecycle, Gateway, Runtime, image, Skill, API or deployment boundary.
 
-See [architecture.md](docs/architecture.md), [client API](docs/api.md), [data model](docs/data-model.md), [product interface](docs/product-interface.md), [gateway.md](docs/gateway.md) and [deployment.md](docs/deployment.md).
+See [architecture.md](docs/architecture.md), [client API](docs/api.md), [data model](docs/data-model.md), [product interface](docs/product-interface.md), [gateway.md](docs/gateway.md), [Runtime Skill Bundle](docs/skills.md) and [deployment.md](docs/deployment.md).
 
 Real deployment evidence for code execution, media processing, autonomous repair, checkpoint recovery, discovered models and browser isolation is recorded in [first-capability-report.md](docs/test-evidence/first-capability-report.md).
 

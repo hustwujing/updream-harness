@@ -39,7 +39,8 @@ BUSINESS = {'thread_id','turn_id','input_id','execution_id','sandbox_id','broker
     'state','previous_state','outcome','reason','error_code','failure_origin','count','bytes',
     'input_tokens','output_tokens','usage_source','duration_ms','first_output_ms','header_ms','queue_ms','namespace','dropped_count','gap_count',
     'export_failures','disk_errors','last_export_http_status','last_sequence','retained_from','source_service','source_instance','origin','source_event_id',
-    'source_trace_id','source_span_id','object_digest','image_digest','exit_code','request_bytes','response_bytes','ingress'}
+    'source_trace_id','source_span_id','object_digest','image_digest','exit_code','request_bytes','response_bytes','ingress',
+    'bundle_version','skill_count'}
 STANDARD = {'http.request.method','http.route','http.response.status_code','http.request.resend_count',
     'error.type','exception.type','exception.stacktrace','code.function.name','code.file.path','code.line.number'}
 EVENT = re.compile(r'^[a-z][a-z0-9_.-]{0,119}$')
