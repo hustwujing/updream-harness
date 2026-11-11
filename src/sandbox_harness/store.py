@@ -58,7 +58,6 @@ class TurnRow(Base):
     __table_args__ = (UniqueConstraint("thread_id", "idempotency_key"),)
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     thread_id: Mapped[str] = mapped_column(String(32), index=True)
-    turn_id: Mapped[str] = mapped_column(String(32), default="", index=True)
     idempotency_key: Mapped[str] = mapped_column(String(160))
     message: Mapped[str] = mapped_column(Text)
     attachments_json: Mapped[str] = mapped_column(Text, default="[]")
