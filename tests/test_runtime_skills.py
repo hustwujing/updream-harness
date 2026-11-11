@@ -1,3 +1,4 @@
+import ast
 import io
 import importlib.util
 import json
@@ -28,6 +29,16 @@ def test_skill_bundle_manifest_is_frozen_complete_and_licensed():
         if row['license']=='per-skill LICENSE.txt':assert (directory/'LICENSE.txt').is_file()
         elif row['license']=='MIT':assert (directory/'LICENSE').is_file()
         else:assert row['id']=='doc-coauthoring' and row['license']=='not declared upstream'
+
+
+def test_skill_smoke_matrix_covers_every_bundled_skill():
+    tree=ast.parse((ROOT/'runtime/skill_smoke.py').read_text())
+    assignment=next(node for node in tree.body
+        if isinstance(node,ast.Assign) and any(isinstance(target,ast.Name)
+            and target.id=='REQUIRED_FILES' for target in node.targets))
+    matrix=ast.literal_eval(assignment.value)
+    manifest=json.loads((ROOT/'runtime/skills/manifest.json').read_text())
+    assert set(matrix)=={row['id'] for row in manifest['skills']}
 
 
 def test_skills_materialize_for_each_native_harness_and_upgrade_managed_entries(tmp_path, monkeypatch):
