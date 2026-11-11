@@ -346,7 +346,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not await store.attachments_owned(request.state.owner_id, value.attachments):
             raise HTTPException(404, "Attachment not found")
         try:
-            result = await broker.submit(thread_id, value)
+            network_access = "public" if request.state.ingress == "frpc" else "restricted"
+            result = await broker.submit(thread_id, value, network_access=network_access)
             request.state.log_context.update({"thread_id":thread_id,"turn_id":result.id})
             return result
         except KeyError:

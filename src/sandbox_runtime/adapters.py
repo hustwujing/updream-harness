@@ -20,7 +20,10 @@ def command(harness: str, model: str, native_thread_id: str = "") -> HarnessComm
     gateway = os.environ["HARNESS_GATEWAY_URL"].rstrip("/")
     token_file = os.environ.get("HARNESS_CAPABILITY_TOKEN_FILE", "/run/harness/capability-token")
     capability_token = Path(token_file).read_text().strip()
-    common = {"HARNESS_CAPABILITY_TOKEN_FILE": token_file, "HARNESS_MODEL": model}
+    preload = "--require=/usr/local/lib/sandbox-playwright-proxy.cjs"
+    node_options = " ".join(filter(None, [os.environ.get("NODE_OPTIONS", ""), preload]))
+    common = {"HARNESS_CAPABILITY_TOKEN_FILE": token_file, "HARNESS_MODEL": model,
+        "NODE_OPTIONS": node_options}
     override = os.environ.get("HARNESS_COMMAND_JSON")
     if override:
         value = json.loads(override)

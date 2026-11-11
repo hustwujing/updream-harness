@@ -148,7 +148,7 @@ def proxy_token(headers: dict[str, str]) -> str:
 
 @observed("public_proxy.request",new_trace=True)
 async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, authorize, *, connections=None,
-        policy: DestinationPolicy | None = None) -> None:
+        policy: DestinationPolicy | None = None, policy_selector=None) -> None:
     upstream_writer = None
     registered_nonce = None
     expiry = None
@@ -180,6 +180,7 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
                     raise ValueError("Proxy request body is too large")
             headers.append((name.strip(), value.strip()))
         claims = await authorize(proxy_token(header_map))
+        request_policy = policy_selector(claims) if policy_selector else policy
         log_context={key:getattr(claims,key,"") for key in ("turn_id","thread_id","sandbox_id")}
         enrich(**log_context);add_link(getattr(claims,"traceparent",""))
         event("public_proxy.authorized",**log_context)
@@ -194,7 +195,7 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
             if not separator or not host:
                 raise ValueError("Invalid CONNECT target")
             port = int(port_text)
-            address = await resolve_public(host, port, policy)
+            address = await resolve_public(host, port, request_policy)
             upstream_reader, upstream_writer = await asyncio.open_connection(address, port)
             writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             await writer.drain()
@@ -204,7 +205,7 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
         if parsed.scheme != "http" or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("Proxy requires an absolute HTTP URL")
         port = parsed.port or 80
-        address = await resolve_public(parsed.hostname, port, policy)
+        address = await resolve_public(parsed.hostname, port, request_policy)
         upstream_reader, upstream_writer = await asyncio.open_connection(address, port)
         path = parsed.path or "/"
         if parsed.query:
@@ -245,8 +246,9 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
 
 
 async def start_proxy(host: str, port: int, authorize, *, connections=None,
-        policy: DestinationPolicy | None = None) -> asyncio.Server:
+        policy: DestinationPolicy | None = None, policy_selector=None) -> asyncio.Server:
     async def handle(reader, writer):
-        await handle_proxy(reader, writer, authorize, connections=connections, policy=policy)
+        await handle_proxy(reader, writer, authorize, connections=connections, policy=policy,
+            policy_selector=policy_selector)
 
     return await asyncio.start_server(handle, host, port, limit=MAX_HEADER + 1)

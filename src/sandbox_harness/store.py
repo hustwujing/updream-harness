@@ -66,6 +66,7 @@ class TurnRow(Base):
     reasoning_level: Mapped[str] = mapped_column(String(32))
     reasoning_effort: Mapped[str] = mapped_column(String(20))
     delivery_mode: Mapped[str] = mapped_column(String(20))
+    network_access: Mapped[str] = mapped_column(String(20), default="restricted", server_default="restricted")
     state: Mapped[str] = mapped_column(String(24), index=True)
     sandbox_id: Mapped[str] = mapped_column(String(200), default="")
     error_code: Mapped[str] = mapped_column(String(100), default="")
@@ -252,6 +253,7 @@ class Store:
             inspected_turn_columns = await connection.run_sync(lambda value: inspect(value).get_columns("turns"))
             turn_columns = {column["name"] for column in inspected_turn_columns}
             additions = {
+                "network_access": "VARCHAR(20) NOT NULL DEFAULT 'restricted'",
                 "lease_owner": "VARCHAR(64) NOT NULL DEFAULT ''",
                 "lease_expires_at": "TIMESTAMP WITH TIME ZONE NULL",
                 "recovery_generation": "INTEGER NOT NULL DEFAULT 0",
@@ -515,7 +517,10 @@ class Store:
         return turn_ids
 
     @observed("db.turn.create")
-    async def create_turn(self, thread_id: str, value: TurnCreate, resolved: ResolvedProfile, owner_id: str, *, traceparent: str = "") -> tuple[TurnView, bool, bool]:
+    async def create_turn(self, thread_id: str, value: TurnCreate, resolved: ResolvedProfile, owner_id: str, *,
+                          traceparent: str = "", network_access: str = "restricted") -> tuple[TurnView, bool, bool]:
+        if network_access not in {"restricted", "public"}:
+            raise ValueError("Invalid Turn network access")
         async with self.connections.begin() as db:
             thread = (await db.execute(update(ThreadRow).where(ThreadRow.id == thread_id,
                 ThreadRow.owner_id == owner_id).values(updated_at=ThreadRow.updated_at)
@@ -530,7 +535,8 @@ class Store:
                 if (existing.message != value.message or json.loads(existing.attachments_json) != attachments
                         or existing.harness != resolved.harness.value or existing.model != resolved.model
                         or existing.reasoning_level != resolved.reasoning_level
-                        or existing.delivery_mode != value.delivery_mode):
+                        or existing.delivery_mode != value.delivery_mode
+                        or existing.network_access != network_access):
                     raise RuntimeError("idempotency_conflict")
                 return self.turn_view(existing), False, thread.active_turn_id == existing.id
             active_running = False
@@ -555,6 +561,7 @@ class Store:
                 message=value.message, attachments_json=json.dumps([a.model_dump(mode="json") for a in value.attachments]),
                 harness=resolved.harness.value, model=resolved.model, reasoning_level=resolved.reasoning_level,
                 reasoning_effort=resolved.reasoning_effort, delivery_mode=value.delivery_mode,
+                network_access=network_access,
                 state=TurnState.QUEUED.value, submit_traceparent=traceparent, created_at=timestamp, updated_at=timestamp,
             )
             db.add(row)

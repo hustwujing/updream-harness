@@ -14,8 +14,9 @@ from sandbox_runtime.adapters import HarnessCommand
 
 
 def test_runtime_guidance_has_network_and_browser_fallbacks():
-    assert "do not keep retrying the same foreign site" in runtime_app.RUNTIME_GUIDANCE
+    assert "do not keep retrying the same site" in runtime_app.RUNTIME_GUIDANCE
     assert "sandbox-browser-screenshot URL OUTPUT" in runtime_app.RUNTIME_GUIDANCE
+    assert "chromium" in runtime_app.RUNTIME_GUIDANCE and "Playwright scripts" in runtime_app.RUNTIME_GUIDANCE
     assert "ImageMagick (`convert` and `identify`)" in runtime_app.RUNTIME_GUIDANCE
 
 
@@ -41,6 +42,15 @@ def test_runtime_configuration_freezes_turn_harness_and_model(tmp_path, monkeypa
     assert runtime_app.os.environ["HTTPS_PROXY"].startswith("http://" + "x" * 32 + ":@")
     assert "172.31.0.1" in runtime_app.os.environ["NO_PROXY"]
     assert (tmp_path / "run" / "capability-token").read_text() == "x" * 32
+
+
+def test_harness_commands_preload_the_playwright_proxy_bridge(monkeypatch, tmp_path):
+    token=tmp_path/'token';token.write_text('x'*32)
+    monkeypatch.setenv('HARNESS_GATEWAY_URL','http://gateway:28600')
+    monkeypatch.setenv('HARNESS_CAPABILITY_TOKEN_FILE',str(token))
+    for harness in ('codex','claude','deepseek'):
+        configured=__import__('sandbox_runtime.adapters',fromlist=['command']).command(harness,'model')
+        assert '--require=/usr/local/lib/sandbox-playwright-proxy.cjs' in configured.environment['NODE_OPTIONS']
 
 
 def test_runtime_stream_accepts_bounded_large_native_json_lines(tmp_path, monkeypatch):

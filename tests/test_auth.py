@@ -57,8 +57,17 @@ def test_frpc_requires_account_while_direct_ingress_remains_anonymous(tmp_path):
         assert authenticated['authenticated'] and not authenticated['authentication_required']
         thread=client.post('/api/threads',headers={'X-Updream-Ingress':'frpc'},json={
             'harness':'codex','model':'gpt-5.6','reasoning_level':'standard','title':'Account thread'}).json()
+        client.app.state.broker._schedule=lambda turn_id: None
+        public_turn=client.post(f"/api/threads/{thread['id']}/turns",headers={'X-Updream-Ingress':'frpc'},json={
+            'message':'public network','idempotency_key':'frpc-public-network'}).json()
+        assert public_turn['network_access']=='public'
         # The same account cookie resolves to the same owner on the direct ingress.
         assert [row['id'] for row in client.get('/api/threads',headers={'X-Updream-Ingress':'direct'}).json()]==[thread['id']]
+        direct_thread=client.post('/api/threads',headers={'X-Updream-Ingress':'direct'},json={
+            'harness':'codex','model':'gpt-5.6','reasoning_level':'standard','title':'Direct thread'}).json()
+        restricted_turn=client.post(f"/api/threads/{direct_thread['id']}/turns",headers={'X-Updream-Ingress':'direct'},json={
+            'message':'restricted network','idempotency_key':'direct-restricted-network'}).json()
+        assert restricted_turn['network_access']=='restricted'
         changed=client.post('/api/auth/change-username',headers={'X-Updream-Ingress':'frpc'},json={
             'username':'renamed.user','current_password':'initial account password'})
         assert changed.status_code==200 and changed.json()['user']['username']=='renamed.user'

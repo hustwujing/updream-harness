@@ -46,11 +46,14 @@ for operation-specific ownership, budget and idempotency rules.
 Runtime injects the Turn token into `HTTP_PROXY` and `HTTPS_PROXY`. The public
 proxy accepts only ports 80/443, resolves destinations itself, rejects every
 non-public answer, then applies domain/IP/CIDR allow and deny rules. Deny rules
-take precedence. A non-empty allowlist changes the default to deny.
+take precedence. Restricted Turns use the configured allowlist. Public Turns
+are issued only for authenticated FRPC submissions and skip the allowlist while
+retaining deny rules, public-address validation, port limits, budgets and revocation.
 
-The same path is used by Requests and `sandbox-browser-screenshot`. The helper's
-loopback bridge only supplies Chromium's proxy authorization. Raw sandbox
-egress remains blocked by the host firewall.
+The same path is used by curl, Requests, the Chromium wrapper, arbitrary
+Playwright scripts and `sandbox-browser-screenshot`. Browser loopback bridges
+only supply proxy authorization. Raw sandbox egress remains blocked by the host
+firewall.
 
 HTTPS CONNECT exposes only host and port; path filtering is not implemented and
 must not be claimed. A domain rule alone does not authorize private resolved

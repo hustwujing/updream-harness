@@ -28,6 +28,7 @@ Project dependencies, caches, database files, logs, temporary files and build ou
 - Runtime images use immutable digests under `127.0.0.1:25001/sandbox-harness/*`.
 - PostgreSQL connects only to the dedicated cluster as the `sandbox_harness` role and database.
 - Every Redis key starts with the configured prefix. Lua scripts and scans must include that prefix.
+- Only authenticated FRPC Turn submissions freeze `network_access=public`; direct and other submissions remain restricted. Both modes still reject private destinations and raw egress.
 - Every checkpoint, attachment and artifact key starts with the configured BOSS/S3 prefix. Sandboxes never receive object-store credentials.
 - API and Gateway secrets live in `.data/config/platform.env` with restricted permissions.
 - The shared OpenSandbox Docker network is internal and has no public NAT. Its host firewall permits `172.31.0.0/24` to reach only the existing runtime range plus this product's `172.31.0.1:28600-28601`; port 28601 proxies public HTTP/S only and rejects private destinations after DNS resolution. OpenSandbox rejects per-sandbox `networkPolicy` on this user-defined network, so create requests do not claim unsupported enforcement.

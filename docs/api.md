@@ -71,6 +71,11 @@ actual steer is delivered through the active Turn's `/inputs` endpoint;
 idempotency key. A transport loss after input submission records `unknown`
 instead of automatically replaying it.
 
+The API derives `network_access` from the trusted ingress marker rather than
+the request body. An authenticated FRPC submission freezes `public`; every
+other submission freezes `restricted`. The returned Turn exposes the frozen
+value, and an idempotency-key replay through a different ingress is rejected.
+
 ## Events
 
 ```text

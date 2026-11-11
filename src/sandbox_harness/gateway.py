@@ -74,6 +74,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     validate_service_settings(settings)
     public_policy = DestinationPolicy(settings.public_proxy_allowlist, settings.public_proxy_denylist)
+    unrestricted_public_policy = DestinationPolicy([], settings.public_proxy_denylist)
     codec = CapabilityCodec(settings.gateway_signing_key)
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     active: dict[str, set[httpx.Response]] = defaultdict(set)
@@ -114,7 +115,9 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             return claims
 
         proxy = await start_proxy(settings.gateway_bind_host, settings.gateway_proxy_port, authorize_public,
-            connections=public_connections, policy=public_policy)
+            connections=public_connections, policy=public_policy,
+            policy_selector=lambda claims: unrestricted_public_policy
+                if claims.network_access == "public" else public_policy)
         try:
             yield
         finally:
@@ -132,8 +135,9 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     @app.get("/health")
     async def health():
         return {"status": "ok","observability":telemetry().status() if telemetry() else {"enabled":False},
-            "public_proxy_policy":{"mode":"allowlist" if public_policy.allowlist else "public",
-                "allowlist_rules":len(public_policy.allowlist),"denylist_rules":len(public_policy.denylist)}}
+            "public_proxy_policy":{"restricted_mode":"allowlist" if public_policy.allowlist else "public",
+                "frpc_mode":"public", "allowlist_rules":len(public_policy.allowlist),
+                "denylist_rules":len(public_policy.denylist)}}
 
     @app.post("/internal/revoke/{nonce}")
     async def revoke(nonce: str, request: Request):

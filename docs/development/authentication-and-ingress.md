@@ -18,6 +18,10 @@ uses that trusted marker as follows:
 
 Changing username/password never changes `owner_id`. Direct users may log in
 voluntarily and then see the same account-owned Threads as FRPC users.
+Network access is decided for each new Turn from its submission ingress:
+authenticated FRPC submissions receive public HTTP/S access, while direct and
+all other submissions remain on the configured restricted allowlist. Switching
+entry points later does not change an existing or queued Turn.
 
 ## Credentials and Sessions
 
@@ -54,3 +58,4 @@ is not implemented.
 - Username change preserves owner; password change revokes other Sessions.
 - Wrong-owner account operations return 404 at resource boundaries.
 - Nginx direct/FRPC configs and PROXY v2 behavior are tested separately.
+- Turn network access follows the trusted ingress and remains frozen on replay/recovery.

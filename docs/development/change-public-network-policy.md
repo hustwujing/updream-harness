@@ -13,13 +13,14 @@ Gateway port 28601. Host firewall rules allow the internal sandbox network to
 reach only the Gateway/Runtime ranges and drop other traffic.
 
 Gateway normalizes the requested host, resolves it itself, rejects the request
-if any answer is non-public, then evaluates `DestinationPolicy`:
+if any answer is non-public, then evaluates the Turn's frozen network access:
 
 1. exact/wildcard domain deny;
 2. resolved IP/CIDR deny;
-3. when allowlist is non-empty, exact/wildcard domain allow or all resolved
-   addresses allowed by IP/CIDR;
-4. connect to the already validated numeric address.
+3. for `restricted`, require an exact/wildcard domain allow or all resolved
+   addresses allowed by IP/CIDR when the allowlist is non-empty;
+4. for `public`, skip the allowlist;
+5. connect to the already validated numeric address.
 
 Deny takes precedence. `*.example.com` does not match the apex `example.com`;
 configure both when both are intended. `*` matches all destinations. Only ports
@@ -48,7 +49,8 @@ SANDBOX_HARNESS_PUBLIC_PROXY_DENYLIST='["blocked.example.com","203.0.113.0/24"]'
 
 Validate configuration before restart, confirm no active model/public streams
 will be interrupted, restart Gateway only, inspect `/health` policy counts and
-test one allowed and one denied destination with a short-lived capability.
+test an FRPC public destination plus a direct restricted rejection with
+short-lived capabilities.
 
 Run `test_public_proxy.py`, `test_gateway.py`, `test_config.py`, capability tests
 and the Runtime/browser proxy contract tests.

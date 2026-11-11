@@ -16,10 +16,14 @@ async def test_thread_turn_items_and_idempotency(tmp_path):
         thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
             reasoning_level="deep", title="Thread"), profile, owner)
         value = TurnCreate(message="hello", idempotency_key="idempotency-1")
-        turn, created, start = await store.create_turn(thread.id, value, profile, owner)
-        assert created and start and turn.reasoning_effort == "high"
-        duplicate, created, _ = await store.create_turn(thread.id, value, profile, owner)
+        turn, created, start = await store.create_turn(thread.id, value, profile, owner,
+            network_access="public")
+        assert created and start and turn.reasoning_effort == "high" and turn.network_access == "public"
+        duplicate, created, _ = await store.create_turn(thread.id, value, profile, owner,
+            network_access="public")
         assert not created and duplicate.id == turn.id
+        with pytest.raises(RuntimeError, match="idempotency_conflict"):
+            await store.create_turn(thread.id, value, profile, owner, network_access="restricted")
         with pytest.raises(RuntimeError, match="idempotency_conflict"):
             await store.create_turn(thread.id,
                 TurnCreate(message="different", idempotency_key="idempotency-1"), profile, owner)
@@ -105,6 +109,25 @@ async def test_initialize_adds_archived_at_to_existing_database(tmp_path):
         assert "archived_at" in columns
     finally:
         await upgraded.close()
+
+
+async def test_initialize_adds_restricted_network_access_to_existing_turns(tmp_path):
+    import sqlite3
+    database = tmp_path / "network-access-migration.db"
+    store = Store("sqlite+aiosqlite:///" + str(database));await store.initialize()
+    catalog = HarnessCatalog();profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
+    thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+        reasoning_level="standard", title="Migration"), profile, "a" * 64)
+    turn,_,_=await store.create_turn(thread.id,TurnCreate(message="hello",idempotency_key="migration-turn"),
+        profile,"a" * 64)
+    await store.close()
+    with sqlite3.connect(database) as connection:
+        connection.execute("ALTER TABLE turns DROP COLUMN network_access")
+    upgraded=Store("sqlite+aiosqlite:///"+str(database));await upgraded.initialize()
+    try:
+        restored=await upgraded.get_turn(turn.id)
+        assert restored.network_access == "restricted"
+    finally:await upgraded.close()
 
 
 async def test_turn_lease_generation_fences_stale_broker_writes(tmp_path):

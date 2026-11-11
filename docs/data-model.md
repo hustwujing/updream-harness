@@ -18,9 +18,13 @@ Turn until restored.
 ## Turns
 
 `turns` stores the original message and attachments, frozen model/reasoning
-selection, delivery mode, state, sandbox ID, error, lease owner/expiry,
+selection, delivery mode, ingress-derived network access, state, sandbox ID, error, lease owner/expiry,
 recovery generation, Runtime execution/cursor, capability nonce, trace context,
 cancellation intent and pending final state.
+
+`network_access` is frozen as `public` only for a Turn submitted through the
+authenticated FRPC ingress. All other submissions are `restricted`. It is part
+of the idempotency contract and survives queueing, restart and lease recovery.
 
 `(thread_id, idempotency_key)` is unique. Implemented states are:
 

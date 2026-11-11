@@ -101,7 +101,13 @@ SANDBOX_HARNESS_PUBLIC_PROXY_ALLOWLIST='["bilibili.com","*.bilibili.com"]'
 SANDBOX_HARNESS_PUBLIC_PROXY_DENYLIST='[]'
 ```
 
-Rules may be exact domains, wildcard subdomains, individual IPs or CIDRs. An empty allowlist permits every otherwise-valid public destination; a non-empty allowlist changes the default to deny. The denylist always takes precedence, including over a permitted domain whose resolved address is denied. HTTPS encryption means policy can filter hosts and resolved addresses, but not URL paths. See [gateway.md](docs/gateway.md) for the complete contract.
+Rules may be exact domains, wildcard subdomains, individual IPs or CIDRs. The
+allowlist restricts direct and other non-FRPC Turns. Authenticated FRPC Turn
+submissions may reach every otherwise-valid public HTTP/S destination; the
+denylist, private-address rejection, 80/443 port limit, request budget and
+capability revocation still apply. curl, Requests, Chromium and Playwright use
+the same authenticated proxy. See [gateway.md](docs/gateway.md) for the complete
+contract.
 
 Runtime boundary handling: execution creation and stdin submission are serialized. An input ID is bound to its original body; a replay returns the existing execution and conflicting content is rejected before attachment metadata changes. Streaming Harnesses must acknowledge their pending inputs: EOF alone is not success. Protocol failures and cancellation quiesce the Harness process group and supervised background jobs before publishing a terminal result; jobs ignoring SIGTERM are killed after a bounded grace period.
 

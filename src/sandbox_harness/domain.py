@@ -207,6 +207,7 @@ class TurnView(BaseModel):
     reasoning_level: str
     reasoning_effort: str
     delivery_mode: Literal["start", "queue", "steer"]
+    network_access: Literal["restricted", "public"] = "restricted"
     state: TurnState
     sandbox_id: str = ""
     error_code: str = ""
@@ -311,6 +312,7 @@ class CapabilityClaims(BaseModel):
     harness: Harness
     model: str
     routes: list[str]
+    network_access: Literal["restricted", "public"] = "restricted"
     max_requests: int = Field(ge=1)
     max_public_requests: int = Field(ge=1)
     token_budget: int = Field(ge=1)

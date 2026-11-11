@@ -18,13 +18,19 @@ def test_runtime_installs_supported_public_browser_helper():
     source = (ROOT / "runtime/base.Dockerfile").read_text()
     helper = ROOT / "runtime/browser_screenshot.mjs"
     assert "runtime/browser_screenshot.mjs /usr/local/bin/sandbox-browser-screenshot" in source
+    assert "runtime/chromium_proxy.cjs /usr/local/bin/chromium" in source
+    assert "runtime/playwright_proxy_patch.cjs /usr/local/lib/sandbox-playwright-proxy.cjs" in source
+    assert "runtime/proxy_bridge.cjs /usr/local/lib/sandbox-proxy-bridge.cjs" in source
     assert helper.is_file()
     text = helper.read_text()
     assert "proxy: proxyBridge.value" in text
-    assert "HTTPS_PROXY" in text
-    assert "Proxy-Authorization: ${authorization}" in text
-    assert "server.listen(0, '127.0.0.1'" in text
-    assert "for (const socket of sockets) socket.destroy()" in text
+    bridge = (ROOT / "runtime/proxy_bridge.cjs").read_text()
+    assert "HTTPS_PROXY" in bridge
+    assert "Proxy-Authorization: ${authorization}" in bridge
+    assert "server.listen(0, '127.0.0.1'" in bridge
+    assert "for (const socket of sockets) socket.destroy()" in bridge
+    patch = (ROOT / "runtime/playwright_proxy_patch.cjs").read_text()
+    assert "patchBrowserType(exported?.chromium)" in patch
 
 
 def test_runtime_installs_patch_helper_and_probes_recovered_dependencies():

@@ -36,6 +36,7 @@ class CapabilityCodec:
         max_requests: int,
         max_public_requests: int,
         token_budget: int,
+        network_access: str = "restricted",
     ) -> tuple[str, CapabilityClaims]:
         issued = int(time.time())
         claims = CapabilityClaims(
@@ -46,6 +47,7 @@ class CapabilityCodec:
             harness=harness,
             model=model,
             routes=list(routes),
+            network_access=network_access,
             max_requests=max_requests,
             max_public_requests=max_public_requests,
             token_budget=token_budget,
