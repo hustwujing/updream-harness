@@ -42,6 +42,19 @@ class MediaModelSpec:
     def public(self) -> dict[str, Any]:
         value = asdict(self)
         value.pop("credential_env", None)
+        value["reference_schema"] = {
+            "image": {"roles": ["reference_image"],
+                "usages": ["subject", "style", "composition"],
+                "recommended_usage": {"reference_image": "subject"}},
+            "video": {"roles": ["reference_image", "reference_video", "reference_audio",
+                    "first_frame", "last_frame"],
+                "usages": ["subject", "style", "composition", "action", "camera", "audio",
+                    "edit_source", "extend_source"],
+                "recommended_usage": {"first_frame": "composition", "last_frame": "composition",
+                    "reference_image": "subject", "reference_video": "action",
+                    "reference_audio": "audio"}},
+            "audio": {"roles": [], "usages": [], "recommended_usage": {}},
+        }[self.kind]
         value["parameter_schema"] = {
             "image": {"required": ["prompt"], "optional": {
                 "size": [*SEEDREAM_LITE_SIZE_TIERS, "explicit WIDTHxHEIGHT"]},

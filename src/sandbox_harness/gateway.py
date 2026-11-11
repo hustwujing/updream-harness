@@ -9,6 +9,7 @@ import time
 import json
 import logging
 import re
+from pydantic import ValidationError
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -33,6 +34,13 @@ logger = logging.getLogger(__name__)
 
 
 HOP_HEADERS = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length"}
+
+
+def validation_detail(error: ValidationError) -> dict:
+    return {"code": "invalid_media_draft", "errors": [{
+        "path": ".".join(str(item) for item in value.get("loc", ())),
+        "message": value.get("msg", "Invalid value"),
+    } for value in error.errors(include_url=False, include_context=False, include_input=False)[:12]]}
 
 CONSUME_CAPABILITY = """
 if redis.call('EXISTS', KEYS[1]) == 1 then return -1 end
@@ -247,6 +255,8 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         try:
             raw = await request.json()
             value = MediaDraftCreate.model_validate({**raw, "turn_id": claims.turn_id})
+        except ValidationError as exc:
+            raise HTTPException(422, validation_detail(exc))
         except (ValueError, TypeError):
             raise HTTPException(422, "Invalid media draft")
         try:

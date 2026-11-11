@@ -18,6 +18,9 @@ def test_default_catalog_contains_only_real_probe_models():
     assert set(schemas["video"]["generation_modes"]) == {"text_to_video", "first_frame",
         "first_last_frame", "multimodal_reference", "edit_video", "extend_video"}
     assert schemas["image"]["generation_modes"]["reference_image"]["max_references"] == 14
+    video=next(item for item in catalog.public("video") if item["model"]=="sed2")
+    assert video["reference_schema"]["recommended_usage"]["first_frame"]=="composition"
+    assert "first_frame" not in video["reference_schema"]["usages"]
     assert schemas["image"]["limits"]["min_total_pixels"] == 2560 * 1440
     assert "voice_id" in schemas["audio"]["optional"] and "voice_setting" not in schemas["audio"]["optional"]
     assert schemas["audio"]["limits"]["max_estimated_duration_seconds"] == 180

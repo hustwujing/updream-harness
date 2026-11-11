@@ -5,6 +5,21 @@ from fastapi import HTTPException
 from sandbox_harness.gateway import bytes_with_idle_timeout, send_with_start_timeout, upstream_suffix
 
 
+def test_gateway_media_validation_reports_field_path_without_echoing_input():
+    from pydantic import ValidationError
+    from sandbox_harness.domain import MediaDraftCreate
+    from sandbox_harness.gateway import validation_detail
+    with pytest.raises(ValidationError) as error:
+        MediaDraftCreate.model_validate({"kind":"video","model":"sed2",
+            "generation_mode":"first_frame","parameters":{"prompt":"test"},
+            "references":[{"project_path":"assets/start.png","role":"first_frame",
+                "usage":"first_frame"}],"idempotency_key":"gateway-invalid-reference"})
+    detail=validation_detail(error.value)
+    assert detail["code"]=="invalid_media_draft"
+    assert detail["errors"][0]["path"]=="references.0.usage"
+    assert "first_frame" not in str(detail)
+
+
 def test_gateway_normalizes_native_client_v1_paths_against_versioned_base_url():
     prefix = "/v1/models/claude"
     assert upstream_suffix(prefix + "/v1/messages", prefix) == "/messages"

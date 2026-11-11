@@ -17,7 +17,9 @@ def main(argv: list[str] | None = None) -> int:
     prepare.add_argument("--parameters", default="{}")
     prepare.add_argument("--generation-mode", default="")
     prepare.add_argument("--reference", action="append", default=[],
-        help='Repeatable JSON: {"project_path":"assets/input.png","role":"reference_image","usage":"subject"}')
+        help=('Repeatable JSON with a protocol role and semantic usage, for example '
+            '{"project_path":"assets/input.png","role":"first_frame","usage":"composition"}. '
+            'Read allowed roles/usages from sandbox-media catalog.'))
     prepare.add_argument("--idempotency-key", default="")
     prepare.add_argument("--output-role", choices=("candidate", "workspace", "delivery"), default="candidate")
     sub.add_parser("commit", help="Seal this Turn's complete media draft batch")
