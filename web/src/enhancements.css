@@ -240,6 +240,10 @@
 .auth-close { position:absolute; right:9px; top:9px; z-index:1; display:grid; place-items:center; width:30px; height:30px; border:0; border-radius:6px; background:transparent; }
 .auth-close:hover { background:#f0f0ed; }
 .auth-form,.account-settings { padding:26px; }
+.auth-form>form{margin:0}
+.auth-switch{display:grid;grid-template-columns:1fr 1fr;gap:3px;margin:-8px 0 18px;padding:3px;border-radius:7px;background:#f0f0ed}
+.auth-switch button{height:29px;border:0;border-radius:5px;background:transparent;color:#777872;font-size:10px}
+.auth-switch button.active{background:#fff;color:#292a27;box-shadow:0 1px 4px #00000014}
 .auth-title { display:flex; align-items:center; gap:11px; margin-bottom:23px; }
 .auth-title img { width:34px; height:34px; }
 .auth-title h1 { margin:0; font-size:16px; font-weight:650; }
@@ -256,6 +260,9 @@
 .auth-logout { border:1px solid #d5d5d0; background:#fff; color:#555650; }
 .auth-error { margin:10px 0; color:#a1443d; font-size:10px; line-height:1.5; }
 .auth-notice { margin:10px 0; color:#4f7b4c; font-size:10px; }
+.topbar>div:nth-child(2)>span::after{font-weight:550}
+body[data-network-access="public"] .topbar>div:nth-child(2)>span::after{content:" · 公网访问";color:#38735c}
+body[data-network-access="restricted"] .topbar>div:nth-child(2)>span::after{content:" · 网络受限";color:#8a6a35}
 
 .activity-history > summary { padding: 8px 0; color: #858680; font-size: 9px; cursor: pointer; }
 

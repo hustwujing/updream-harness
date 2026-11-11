@@ -416,6 +416,36 @@ class Store:
             raise RuntimeError("username_taken") from exc
         return self.account_view(row)
 
+    async def register_user(self, username: str, password_hash: str, source_owner_id: str = "") -> AccountView:
+        timestamp = now(); identity = identifier()
+        row = UserRow(id=identity, owner_id=hashlib.sha256(("account:" + identity).encode()).hexdigest(),
+            username=username, password_hash=password_hash, created_at=timestamp, updated_at=timestamp)
+        try:
+            async with self.connections.begin() as db:
+                if (await db.execute(select(UserRow.id).where(UserRow.username == username))).scalar_one_or_none():
+                    raise RuntimeError("username_taken")
+                if source_owner_id:
+                    active = (await db.execute(select(TurnRow.id).join(ThreadRow,
+                        ThreadRow.id == TurnRow.thread_id).where(ThreadRow.owner_id == source_owner_id,
+                        TurnRow.state.not_in([state.value for state in TERMINAL])).limit(1))).scalar_one_or_none()
+                    if active:
+                        raise RuntimeError("active_work_prevents_registration")
+                db.add(row)
+                if source_owner_id:
+                    await db.execute(update(ThreadRow).where(ThreadRow.owner_id == source_owner_id)
+                        .values(owner_id=row.owner_id))
+                    await db.execute(update(UploadRow).where(UploadRow.owner_id == source_owner_id)
+                        .values(owner_id=row.owner_id))
+                    await db.execute(update(MediaDraftRow).where(MediaDraftRow.owner_id == source_owner_id)
+                        .values(owner_id=row.owner_id))
+                    await db.execute(update(MediaBatchRow).where(MediaBatchRow.owner_id == source_owner_id)
+                        .values(owner_id=row.owner_id))
+                    await db.execute(update(MediaJobRow).where(MediaJobRow.owner_id == source_owner_id)
+                        .values(owner_id=row.owner_id))
+        except IntegrityError as exc:
+            raise RuntimeError("username_taken") from exc
+        return self.account_view(row)
+
     async def get_user_by_username(self, username: str) -> tuple[AccountView, str] | None:
         async with self.connections() as db:
             row = (await db.execute(select(UserRow).where(UserRow.username == username))).scalar_one_or_none()

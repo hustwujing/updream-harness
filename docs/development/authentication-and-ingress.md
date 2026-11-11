@@ -43,11 +43,16 @@ caller-supplied `X-Forwarded-For` or ingress header without nginx overwrite.
 
 ## Account administration
 
-Use `sandbox-harness-user create|list|rename|reset-password|disable|enable`.
-Passwords must contain 8-256 characters. The CLI reads new passwords from a
-mode-0600 file so credentials do not appear in command arguments or logs.
-Password files must be mode 0600 and are not tracked. Public self-registration
-is not implemented.
+Use `sandbox-harness-user create|list|rename|reset-password|disable|enable` for
+administration. Direct-ingress users may also register from the browser account
+panel. FRPC users may log in, log out and change passwords, but cannot register
+or rename accounts; both UI and API enforce this boundary.
+Passwords must contain 8-256 characters. Direct anonymous registration moves
+the current owner's Threads, uploads and media records to a new account owner
+in one transaction, and clears the anonymous Cookie. Registration is rejected
+while that owner has active work. FRPC registration starts with an empty owner.
+The CLI reads new passwords from a mode-0600 file so credentials do not appear
+in command arguments or logs. Password files must be mode 0600 and are not tracked.
 
 ## Required checks
 
@@ -55,6 +60,7 @@ is not implemented.
 - FRPC denies owner-scoped APIs before login.
 - Account Cookie resolves to the same owner on both ingress paths.
 - Invalid login is generic and rate limited; logs contain no password/Cookie.
+- Registration enforces username uniqueness and preserves direct anonymous data without leaving it reachable through the old anonymous owner.
 - Username change preserves owner; password change revokes other Sessions.
 - Wrong-owner account operations return 404 at resource boundaries.
 - Nginx direct/FRPC configs and PROXY v2 behavior are tested separately.

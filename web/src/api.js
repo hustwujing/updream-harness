@@ -2,7 +2,7 @@ export function apiUrl(path){return new URL(`api/${path}`,document.baseURI).toSt
 
 export async function api(path,options={}){
   const response=await fetch(apiUrl(path),{...options,headers:{...(options.body instanceof Blob?{}:{'Content-Type':'application/json'}),...(options.headers||{})}});
-  if(!response.ok){const raw=await response.text();let detail=raw;try{detail=JSON.parse(raw).detail||raw}catch{}const labels={authentication_required:'请先登录。',invalid_credentials:'账号或密码不正确。',login_rate_limited:'尝试次数过多，请稍后再试。',username_taken:'该用户名已被使用。',input_delivery_failed:'追加消息未能确认送达，请查看消息状态后再继续。',interaction_delivery_failed:'回答暂未确认送达，请稍后重试。',interaction_response_in_progress:'回答正在处理中，请稍后重试。',interaction_response_conflict:'上一次回答尚未确认，请先重试原回答，不能更改为不同决定。',interaction_expired:'该确认已失效，请按当前任务状态继续。',turn_not_accepting_input:'本轮已进入收尾，请发送到下一轮。'};const error=new Error(labels[detail]|| (typeof detail==='string'?detail:'请求参数不符合要求'));error.code=detail;error.status=response.status;error.requestId=response.headers.get('x-request-id');error.traceId=response.headers.get('x-trace-id');if(error.requestId)error.message+=`（排查编号：${error.requestId}）`;throw error;}
+  if(!response.ok){const raw=await response.text();let detail=raw;try{detail=JSON.parse(raw).detail||raw}catch{}const labels={authentication_required:'请先登录。',invalid_credentials:'账号或密码不正确。',login_rate_limited:'尝试次数过多，请稍后再试。',username_taken:'该用户名已被使用。',active_work_prevents_registration:'当前仍有任务执行，请等待结束后注册。',already_authenticated:'当前已经登录。',registration_not_available:'FRPC 入口不开放注册。',account_action_not_available:'FRPC 入口不允许修改用户名。',input_delivery_failed:'追加消息未能确认送达，请查看消息状态后再继续。',interaction_delivery_failed:'回答暂未确认送达，请稍后重试。',interaction_response_in_progress:'回答正在处理中，请稍后重试。',interaction_response_conflict:'上一次回答尚未确认，请先重试原回答，不能更改为不同决定。',interaction_expired:'该确认已失效，请按当前任务状态继续。',turn_not_accepting_input:'本轮已进入收尾，请发送到下一轮。'};const error=new Error(labels[detail]|| (typeof detail==='string'?detail:'请求参数不符合要求'));error.code=detail;error.status=response.status;error.requestId=response.headers.get('x-request-id');error.traceId=response.headers.get('x-trace-id');if(error.requestId)error.message+=`（排查编号：${error.requestId}）`;throw error;}
   return response.status===204?null:response.json();
 }
 
@@ -10,6 +10,7 @@ export const listThreads=(archived=false)=>api(`threads?archived=${archived}`);
 export const markThreadRead=(id,turnId)=>api(`threads/${id}/read`,{method:'POST',body:JSON.stringify({turn_id:turnId})});
 export const ensureSession=()=>api('session');
 export const loginAccount=value=>api('auth/login',{method:'POST',body:JSON.stringify(value)});
+export const registerAccount=value=>api('auth/register',{method:'POST',body:JSON.stringify(value)});
 export const logoutAccount=()=>api('auth/logout',{method:'POST'});
 export const changeAccountUsername=value=>api('auth/change-username',{method:'POST',body:JSON.stringify(value)});
 export const changeAccountPassword=value=>api('auth/change-password',{method:'POST',body:JSON.stringify(value)});

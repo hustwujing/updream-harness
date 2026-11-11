@@ -25,7 +25,7 @@ from .auth import AUTH_COOKIE, AccountAuth, normalize_username
 from .catalog import HarnessCatalog
 from .config import Settings, load_settings, validate_service_settings
 from .observability import RequestLoggingMiddleware, telemetry, event
-from .domain import Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, MediaDraftCreate, MediaDraftUpdate, ProjectFileRename, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, valid_attachment_name, now
+from .domain import Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, RegisterRequest, MediaDraftCreate, MediaDraftUpdate, ProjectFileRename, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, valid_attachment_name, now
 from .document_preview import is_presentation, presentation_pdf
 from .model_discovery import ModelDiscovery
 from .media_catalog import MediaCatalog
@@ -249,7 +249,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request.state.account = account
         request.state.auth_token_hash = auth_token_hash
         request.state.owner_id = owner_id
-        public_auth = request.url.path in {"/api/health", "/api/session", "/api/auth/login"}
+        public_auth = request.url.path in {"/api/health", "/api/session", "/api/auth/login", "/api/auth/register"}
         if ingress == "frpc" and not account and request.url.path.startswith("/api/") and not public_auth:
             return JSONResponse({"detail":"authentication_required"},status_code=401,
                 headers={"Cache-Control":"no-store"})
@@ -411,6 +411,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             max_age=settings.auth_session_ttl_seconds, path=cookie_path(request))
         return response
 
+    @app.post("/api/auth/register")
+    async def register(value: RegisterRequest, request: Request):
+        if request.state.ingress == "frpc":
+            raise HTTPException(403, "registration_not_available")
+        if request.state.account:
+            raise HTTPException(409, "already_authenticated")
+        try:
+            username = normalize_username(value.username)
+            password_hash = await account_auth.hash_password(value.password)
+            account = await store.register_user(username, password_hash, request.state.owner_id)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+        token, _ = await account_auth.create_session(account.id)
+        response = JSONResponse({"authenticated": True, "user": account.model_dump(mode="json")})
+        response.delete_cookie(COOKIE, path=cookie_path(request))
+        response.set_cookie(AUTH_COOKIE, token, httponly=True, samesite="lax", secure=secure_cookie(request),
+            max_age=settings.auth_session_ttl_seconds, path=cookie_path(request))
+        return response
+
     @app.post("/api/auth/logout")
     async def logout(request: Request):
         if request.state.auth_token_hash:await store.delete_auth_session(request.state.auth_token_hash)
@@ -420,6 +441,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/auth/change-username")
     async def change_username(value: ChangeUsernameRequest, request: Request):
+        if request.state.ingress == "frpc":
+            raise HTTPException(403, "account_action_not_available")
         account = request.state.account
         if not account:raise HTTPException(401,"authentication_required")
         if not await account_auth.verify_account(account,value.current_password):

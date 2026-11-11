@@ -47,6 +47,9 @@ def test_frpc_requires_account_while_direct_ingress_remains_anonymous(tmp_path):
         required=client.get('/api/session',headers={'X-Updream-Ingress':'frpc'})
         assert required.json()=={'ready':True,'ingress':'frpc','authentication_required':True,'authenticated':False,'user':None}
         assert COOKIE not in required.cookies
+        unavailable=client.post('/api/auth/register',headers={'X-Updream-Ingress':'frpc'},json={
+            'username':'new.frpc.user','password':'new account password'})
+        assert unavailable.status_code==403 and unavailable.json()['detail']=='registration_not_available'
         blocked=client.get('/api/threads',headers={'X-Updream-Ingress':'frpc'})
         assert blocked.status_code==401 and blocked.json()['detail']=='authentication_required'
         failed=client.post('/api/auth/login',headers={'X-Updream-Ingress':'frpc'},json={'username':'frpc.user','password':'wrong'})
@@ -70,15 +73,50 @@ def test_frpc_requires_account_while_direct_ingress_remains_anonymous(tmp_path):
         assert restricted_turn['network_access']=='restricted'
         changed=client.post('/api/auth/change-username',headers={'X-Updream-Ingress':'frpc'},json={
             'username':'renamed.user','current_password':'initial account password'})
-        assert changed.status_code==200 and changed.json()['user']['username']=='renamed.user'
+        assert changed.status_code==403 and changed.json()['detail']=='account_action_not_available'
         changed=client.post('/api/auth/change-password',headers={'X-Updream-Ingress':'frpc'},json={
             'current_password':'initial account password','new_password':'newpass8'})
         assert changed.status_code==200
         logout=client.post('/api/auth/logout',headers={'X-Updream-Ingress':'frpc'});assert logout.status_code==200
         assert client.get('/api/threads',headers={'X-Updream-Ingress':'frpc'}).status_code==401
         relogin=client.post('/api/auth/login',headers={'X-Updream-Ingress':'frpc'},json={
-            'username':'renamed.user','password':'newpass8'})
+            'username':'frpc.user','password':'newpass8'})
         assert relogin.status_code==200
+
+
+def test_direct_registration_migrates_anonymous_threads_and_rotates_identity(tmp_path):
+    database='sqlite+aiosqlite:///'+str(tmp_path/'register.db')
+    settings=Settings(data_root=tmp_path,database_url=database,redis_url='',backend='fake',object_backend='local',
+        model_catalog_discovery=False,session_signing_key='register-session-secret')
+    with TestClient(create_app(settings)) as client:
+        session=client.get('/api/session').json();assert session['ingress']=='direct' and not session['authenticated']
+        thread=client.post('/api/threads',json={'harness':'codex','model':'gpt-5.6',
+            'reasoning_level':'standard','title':'Anonymous work'}).json()
+        registered=client.post('/api/auth/register',json={'username':'direct.user','password':'new account password'})
+        assert registered.status_code==200 and registered.json()['user']['username']=='direct.user'
+        assert [row['id'] for row in client.get('/api/threads').json()]==[thread['id']]
+        assert client.post('/api/auth/logout').status_code==200
+        assert client.get('/api/threads').json()==[]
+        login=client.post('/api/auth/login',json={'username':'direct.user','password':'new account password'})
+        assert login.status_code==200
+        assert [row['id'] for row in client.get('/api/threads').json()]==[thread['id']]
+
+
+def test_direct_registration_waits_for_active_anonymous_work(tmp_path):
+    database='sqlite+aiosqlite:///'+str(tmp_path/'register-active.db')
+    settings=Settings(data_root=tmp_path,database_url=database,redis_url='',backend='fake',object_backend='local',
+        model_catalog_discovery=False,session_signing_key='register-active-secret')
+    with TestClient(create_app(settings)) as client:
+        client.get('/api/session')
+        thread=client.post('/api/threads',json={'harness':'codex','model':'gpt-5.6',
+            'reasoning_level':'standard','title':'Active anonymous work'}).json()
+        client.app.state.broker._schedule=lambda turn_id: None
+        turn=client.post(f"/api/threads/{thread['id']}/turns",json={
+            'message':'still running','idempotency_key':'active-registration-turn'})
+        assert turn.status_code==200
+        blocked=client.post('/api/auth/register',json={
+            'username':'blocked.user','password':'new account password'})
+        assert blocked.status_code==409 and blocked.json()['detail']=='active_work_prevents_registration'
 
 
 def test_login_rate_limit_is_scoped_to_source_and_username(tmp_path):
