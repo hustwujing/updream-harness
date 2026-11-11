@@ -251,6 +251,7 @@ class MediaJobRow(Base):
     lease_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -382,6 +383,12 @@ class Store:
                 if "output_role" not in media_columns:
                     await connection.execute(text(
                         f"ALTER TABLE {table} ADD COLUMN output_role VARCHAR(20) NOT NULL DEFAULT 'candidate'"))
+                if table == "media_jobs" and "finished_at" not in media_columns:
+                    definition = "TIMESTAMP WITH TIME ZONE NULL" if connection.dialect.name == "postgresql" else "DATETIME NULL"
+                    await connection.execute(text(f"ALTER TABLE media_jobs ADD COLUMN finished_at {definition}"))
+                    await connection.execute(text(
+                        "UPDATE media_jobs SET finished_at = updated_at "
+                        "WHERE status IN ('succeeded', 'failed', 'cancelled', 'unknown')"))
 
     async def close(self) -> None:
         if self.events:
@@ -1103,6 +1110,17 @@ class Store:
                             item.summary = summary
                         item.payload_json = json.dumps({**json.loads(item.payload_json), **payload, "name": item.summary}, ensure_ascii=False)
                         item.updated_at = timestamp
+                elif value.kind == EventKind.STEP_FINISHED and payload.get("background_job_id"):
+                    candidates = (await db.execute(select(ItemRow).where(ItemRow.turn_id == turn_id,
+                        ItemRow.type == ItemType.PLAN.value).order_by(ItemRow.sequence.desc()))).scalars().all()
+                    item = next((row for row in candidates if
+                        json.loads(row.payload_json).get("background_job_id") == payload["background_job_id"] and
+                        json.loads(row.payload_json).get("_execution_id", execution_id) == execution_id), None)
+                    if item:
+                        item.status = status
+                        item.summary = summary
+                        item.payload_json = json.dumps({**json.loads(item.payload_json), **payload}, ensure_ascii=False)
+                        item.updated_at = timestamp
                 elif value.kind == EventKind.WAITING_USER:
                     native_id = str(payload.get("interaction_id") or "")
                     kind = payload.get("interaction_kind", "approval")
@@ -1605,7 +1623,8 @@ class Store:
             model=row.model, provider=row.provider, adapter=row.adapter, execution_mode=row.execution_mode,
             cancellation_mode=row.cancellation_mode, status=row.status, phase=row.phase or "",
             progress=row.progress, cancelable=row.execution_mode == "async" and row.cancellation_mode == "supported",
-            cancel_reason=reason, artifact_ids=artifact_ids or [], output_role=row.output_role)
+            cancel_reason=reason, artifact_ids=artifact_ids or [], output_role=row.output_role,
+            created_at=row.created_at, finished_at=row.finished_at)
 
     @staticmethod
     def _media_project_path(job_id: str, mime: str) -> str:
@@ -1932,6 +1951,7 @@ class Store:
             if output_object_ref: row.output_object_ref = output_object_ref; row.output_mime = output_mime; row.output_size = output_size
             row.error_code = error_code; row.error_detail = error_detail; row.updated_at = now()
             if status in {"succeeded", "failed", "cancelled", "unknown"}:
+                if row.finished_at is None: row.finished_at = row.updated_at
                 row.lease_owner = ""; row.lease_expires_at = None
                 if row.turn_id:
                     await db.execute(update(MediaBatchRow).where(MediaBatchRow.turn_id == row.turn_id,

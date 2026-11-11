@@ -373,3 +373,5 @@ class MediaJobView(BaseModel):
     cancel_reason: str = ""
     artifact_ids: list[str] = Field(default_factory=list)
     output_role: Literal["candidate", "workspace", "delivery"] = "candidate"
+    created_at: datetime
+    finished_at: datetime | None = None

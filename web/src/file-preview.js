@@ -8,6 +8,7 @@ export function previewKind(value){
  if(mime.includes('spreadsheetml')||mime==='application/vnd.ms-excel'||['xls','xlsx'].includes(ext))return 'spreadsheet';
  if(mime.startsWith('image/'))return 'image';
  if(mime.startsWith('video/'))return 'video';
+ if(mime.startsWith('audio/'))return 'audio';
  if(mime.startsWith('text/'))return 'text';
  return '';
 }

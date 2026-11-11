@@ -40,11 +40,13 @@ def presentation_pdf(data: bytes, *, filename: str, mime: str, digest: str,
         source.chmod(0o600)
         profile = root / "libreoffice-profile"
         profile.mkdir()
+        shared_cache = root / "libreoffice-shared-cache"
         environment = {**os.environ, "HOME": str(root), "TMPDIR": str(root)}
         try:
             result = subprocess.run([
                 "/usr/bin/libreoffice", "--headless", "--nologo", "--nodefault", "--nolockcheck",
                 "--nofirststartwizard", f"-env:UserInstallation={profile.resolve().as_uri()}",
+                f"-env:UNO_SHARED_PACKAGES_CACHE={shared_cache.resolve().as_uri()}",
                 "--convert-to", "pdf", "--outdir", str(root), str(source),
             ], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                 timeout=90, check=False, env=environment)

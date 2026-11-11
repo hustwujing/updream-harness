@@ -24,6 +24,9 @@ def main() -> None:
     start.add_argument("--cwd", default="/workspace/project")
     start.add_argument("argv", nargs=argparse.REMAINDER)
     commands.add_parser("list")
+    status = commands.add_parser("status")
+    status.add_argument("job_id", nargs="?")
+    status.add_argument("--name")
     cancel = commands.add_parser("cancel"); cancel.add_argument("job_id")
     args = parser.parse_args()
     if args.command == "start":
@@ -33,6 +36,15 @@ def main() -> None:
         result = call("POST", value={"name": args.name, "argv": argv, "cwd": args.cwd})
     elif args.command == "cancel":
         result = call("POST", "/" + args.job_id + "/cancel")
+    elif args.command == "status":
+        if not args.job_id and not args.name:
+            parser.error("status requires a job_id or --name")
+        items = call("GET").get("items", [])
+        matches = [item for item in items if item.get("id") == args.job_id] if args.job_id else [
+            item for item in items if item.get("name") == args.name]
+        if not matches:
+            parser.error("background job not found")
+        result = matches[-1]
     else:
         result = call("GET")
     print(json.dumps(result, ensure_ascii=False))

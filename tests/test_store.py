@@ -1,7 +1,7 @@
 from sandbox_harness.catalog import HarnessCatalog
 from datetime import timedelta
 
-from sandbox_harness.domain import EventKind, Harness, ItemType, ThreadCreate, TurnCreate, TurnInputCreate, TurnState, now
+from sandbox_harness.domain import EventKind, Harness, ItemType, RuntimeEvent, ThreadCreate, TurnCreate, TurnInputCreate, TurnState, now
 from sandbox_harness.store import Store, ThreadRow, TurnRow, valid_project_file_path
 import pytest
 
@@ -83,6 +83,30 @@ async def test_thread_turn_items_and_idempotency(tmp_path):
             summary="late step")
         await store.set_turn_state(turn.id, TurnState.COMPLETED)
         assert next(item for item in await store.items_after(thread.id) if item.id == lingering.id).status == "interrupted"
+    finally:
+        await store.close()
+
+
+async def test_background_job_finished_event_updates_started_activity(tmp_path):
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "background-activity.db")); await store.initialize()
+    try:
+        catalog = HarnessCatalog(); profile = catalog.resolve("codex", "gpt-5.6", "standard"); owner = "a" * 64
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CODEX, model=profile.model,
+            reasoning_level="standard", title="Background"), profile, owner)
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="render", idempotency_key="background-event-key"), profile, owner)
+        identity = "b" * 32
+        await store.persist_runtime_event(thread.id, turn.id, RuntimeEvent(kind=EventKind.STEP_STARTED,
+            payload={"name":"后台任务 · render", "background_job_id":identity}, runtime_sequence=1), "execution")
+        await store.persist_runtime_event(thread.id, turn.id, RuntimeEvent(kind=EventKind.STEP_FINISHED,
+            payload={"name":"后台任务 · render", "background_job_id":identity,
+                "status":"completed", "returncode":0}, runtime_sequence=2), "execution")
+        rows = [item for item in await store.items_after(thread.id) if item.type == ItemType.PLAN]
+        assert len(rows) == 1 and rows[0].status == "completed"
+        assert rows[0].payload["background_job_id"] == identity and rows[0].payload["returncode"] == 0
+        await store.set_turn_state(turn.id, TurnState.COMPLETED)
+        assert rows[0].id == (await store.items_after(thread.id))[1].id
+        assert (await store.items_after(thread.id))[1].status == "completed"
     finally:
         await store.close()
 

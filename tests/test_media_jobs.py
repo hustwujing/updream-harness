@@ -35,6 +35,7 @@ async def test_media_draft_confirm_is_idempotent_and_snapshots_provider(tmp_path
         first = await store.confirm_media_draft(draft.id, owner, provider_spec=spec)
         second = await store.confirm_media_draft(draft.id, owner, provider_spec=spec)
         assert first.id == second.id and first.provider == "ark"
+        assert first.created_at and first.finished_at is None
         assert not first.cancelable
         ready, _ = await store.media_continuation_group(turn.id)
         assert ready is False
@@ -60,6 +61,7 @@ async def test_media_draft_confirm_is_idempotent_and_snapshots_provider(tmp_path
         completed = await store.get_media_job(first.id, owner)
         listed = await store.list_media_jobs(thread.id, owner)
         assert completed and len(completed.artifact_ids) == 1
+        assert completed.finished_at and completed.finished_at >= completed.created_at
         assert listed[0].artifact_ids == completed.artifact_ids
         async with store.connections() as db:
             rows = (await db.execute(__import__('sqlalchemy').select(MediaOutboxRow))).scalars().all()
