@@ -325,3 +325,46 @@ class CapabilityClaims(BaseModel):
         if self.expires_at <= self.issued_at:
             raise ValueError("Capability expiration must follow issuance")
         return self
+
+
+class MediaDraftCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["image", "video", "audio"]
+    model: str = Field(min_length=1, max_length=160)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: str = Field(min_length=8, max_length=160)
+
+
+class MediaDraftUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model: str | None = Field(default=None, min_length=1, max_length=160)
+    parameters: dict[str, Any] | None = None
+
+
+class MediaDraftView(BaseModel):
+    id: str
+    thread_id: str
+    kind: Literal["image", "video", "audio"]
+    model: str
+    parameters: dict[str, Any]
+    status: Literal["awaiting_confirmation", "confirmed", "cancelled", "expired"]
+    expires_at: datetime
+    job_id: str = ""
+
+
+class MediaJobView(BaseModel):
+    id: str
+    thread_id: str
+    turn_id: str = ""
+    kind: Literal["image", "video", "audio"]
+    model: str
+    provider: str
+    adapter: str
+    execution_mode: Literal["sync", "async"]
+    cancellation_mode: Literal["supported", "unsupported"]
+    status: str
+    phase: str = ""
+    progress: int | None = None
+    cancelable: bool = False
+    cancel_reason: str = ""
+    artifact_ids: list[str] = Field(default_factory=list)

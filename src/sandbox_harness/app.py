@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import time
+from datetime import timedelta
 from collections import defaultdict, deque
 from contextlib import suppress
 from contextlib import asynccontextmanager
@@ -23,8 +24,9 @@ from .auth import AUTH_COOKIE, AccountAuth, normalize_username
 from .catalog import HarnessCatalog
 from .config import Settings, load_settings, validate_service_settings
 from .observability import RequestLoggingMiddleware, telemetry, event
-from .domain import Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, ProjectFileRename, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, valid_attachment_name
+from .domain import Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, MediaDraftCreate, MediaDraftUpdate, ProjectFileRename, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, valid_attachment_name, now
 from .model_discovery import ModelDiscovery
+from .media_catalog import MediaCatalog
 from .objects import object_store
 from .pool import SandboxPool
 from .runtime import RuntimeClient
@@ -103,16 +105,17 @@ def components(settings: Settings):
     pool = SandboxPool(backend, images, targets, max_sandboxes=settings.max_sandboxes)
     runtime = RuntimeClient(timeout_seconds=settings.sandbox_timeout_seconds)
     catalog = HarnessCatalog(settings.harness_catalog_json or None)
+    media_catalog = MediaCatalog(settings.media_catalog_json)
     discovery = ModelDiscovery(settings, catalog)
     if settings.model_catalog_discovery:
         discovery.load_snapshot()
-    return store, objects, pool, catalog, discovery, Broker(settings, store, objects, pool, runtime, catalog)
+    return store, objects, pool, catalog, discovery, media_catalog, Broker(settings, store, objects, pool, runtime, catalog)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     validate_service_settings(settings)
-    store, objects, pool, catalog, discovery, broker = components(settings)
+    store, objects, pool, catalog, discovery, media_catalog, broker = components(settings)
     sessions = Sessions(settings.session_signing_key)
     account_auth = AccountAuth(store, settings.auth_session_ttl_seconds)
     login_failures: dict[str, deque[float]] = defaultdict(deque)
@@ -223,6 +226,75 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/catalog/harnesses")
     async def harness_catalog():
         return catalog.public()
+
+    @app.get("/api/catalog/media")
+    async def media_catalog_route(kind: str | None = None):
+        if kind is not None and kind not in {"image", "video", "audio"}:
+            raise HTTPException(422, "Invalid media kind")
+        return {"models": media_catalog.public(kind)}
+
+    @app.post("/api/threads/{thread_id}/media/drafts")
+    async def create_media_draft(thread_id: str, value: MediaDraftCreate, request: Request):
+        if not await store.get_thread(thread_id, request.state.owner_id):
+            raise HTTPException(404, "Thread not found")
+        try:
+            spec = media_catalog.resolve(value.kind, value.model)
+            result, _ = await store.create_media_draft(request.state.owner_id, thread_id, value,
+                expires_at=now() + timedelta(minutes=10), provider_spec=spec)
+            return result
+        except KeyError:
+            raise HTTPException(422, "Media model is not enabled")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+
+    @app.get("/api/media/drafts/{draft_id}")
+    async def get_media_draft(draft_id: str, request: Request):
+        value = await store.get_media_draft(draft_id, request.state.owner_id)
+        if not value: raise HTTPException(404, "Media draft not found")
+        return value
+
+    @app.patch("/api/media/drafts/{draft_id}")
+    async def update_media_draft(draft_id: str, value: MediaDraftUpdate, request: Request):
+        try:
+            current = await store.get_media_draft(draft_id, request.state.owner_id)
+            if not current: raise KeyError("media_draft_not_found")
+            model = value.model or current.model
+            media_catalog.resolve(current.kind, model)
+            return await store.update_media_draft(draft_id, request.state.owner_id,
+                model=value.model, parameters=value.parameters)
+        except KeyError:
+            raise HTTPException(404, "Media draft not found")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+
+    @app.post("/api/media/drafts/{draft_id}/confirm")
+    async def confirm_media_draft(draft_id: str, request: Request):
+        current = await store.get_media_draft(draft_id, request.state.owner_id)
+        if not current: raise HTTPException(404, "Media draft not found")
+        try:
+            spec = media_catalog.resolve(current.kind, current.model)
+            return await store.confirm_media_draft(draft_id, request.state.owner_id, provider_spec=spec)
+        except KeyError:
+            raise HTTPException(404, "Media draft not found")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+
+    @app.get("/api/media/jobs/{job_id}")
+    async def get_media_job(job_id: str, request: Request):
+        value = await store.get_media_job(job_id, request.state.owner_id)
+        if not value: raise HTTPException(404, "Media job not found")
+        return value
+
+    @app.post("/api/media/jobs/{job_id}/cancel")
+    async def cancel_media_job(job_id: str, request: Request):
+        try:
+            return await store.request_media_cancel(job_id, request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404, "Media job not found")
+        except RuntimeError as exc:
+            if str(exc) == "media_cancel_not_supported":
+                raise HTTPException(409, str(exc))
+            raise HTTPException(409, str(exc))
 
     @app.get("/api/session")
     async def session_ready(request: Request):

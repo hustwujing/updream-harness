@@ -21,6 +21,7 @@ Every code change requires:
 | Recovery, cancellation, cleanup, pool or checkpoint change | [State and data contracts](state-and-data-contracts.md), [Recovery and observability](recovery-and-observability.md), [Lifecycle changes](change-lifecycle.md) |
 | Add or change a Harness | [Sandbox and Harness](sandbox-and-harness.md), [Adding a Harness](add-harness.md) |
 | Add a model route or Provider | [Gateway, security and Providers](gateway-security-providers.md), [Adding a model Provider](add-model-provider.md) |
+| Add image/video/audio generation | [Media Generation Design and Provider Integration Standard](media-generation.md) |
 | Add a Runtime CLI or image dependency | [Sandbox and Harness](sandbox-and-harness.md), [Adding a Runtime tool](add-runtime-tool.md) |
 | Add an OS, Python, Node or media dependency to Runtime images | [Adding an image dependency](add-image-dependency.md) |
 | Add an Agent Skill | [Adding an Agent Skill](add-agent-skill.md), [Sandbox and Harness](sandbox-and-harness.md) |

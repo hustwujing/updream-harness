@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .observability import observed
-from .domain import AccountView, RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, identifier, now
+from .domain import AccountView, RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, identifier, now, MediaDraftView, MediaJobView
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
 
@@ -182,6 +182,51 @@ class InteractionRow(Base):
     response_key: Mapped[str] = mapped_column(String(160), default="")
     response_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
     response_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MediaDraftRow(Base):
+    __tablename__ = "media_drafts"
+    __table_args__ = (UniqueConstraint("thread_id", "idempotency_key"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    model: Mapped[str] = mapped_column(String(160))
+    parameters_json: Mapped[str] = mapped_column(Text, default="{}")
+    idempotency_key: Mapped[str] = mapped_column(String(160))
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    job_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MediaJobRow(Base):
+    __tablename__ = "media_jobs"
+    __table_args__ = (UniqueConstraint("draft_id"), UniqueConstraint("thread_id", "idempotency_key"))
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    turn_id: Mapped[str] = mapped_column(String(32), default="", index=True)
+    draft_id: Mapped[str] = mapped_column(String(32), index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    model: Mapped[str] = mapped_column(String(160))
+    provider: Mapped[str] = mapped_column(String(80))
+    adapter: Mapped[str] = mapped_column(String(120))
+    execution_mode: Mapped[str] = mapped_column(String(16))
+    cancellation_mode: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    phase: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    progress: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    parameters_json: Mapped[str] = mapped_column(Text, default="{}")
+    provider_job_id: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    idempotency_key: Mapped[str] = mapped_column(String(160))
+    error_code: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    error_detail: Mapped[str] = mapped_column(Text, default="", server_default="")
+    lease_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -1487,3 +1532,87 @@ class Store:
                 if not row or row.sha256 != attachment.sha256 or row.size != attachment.size:
                     return False
         return True
+
+    @staticmethod
+    def _media_draft_view(row: MediaDraftRow) -> MediaDraftView:
+        return MediaDraftView(id=row.id, thread_id=row.thread_id, kind=row.kind, model=row.model,
+            parameters=json.loads(row.parameters_json or "{}"), status=row.status,
+            expires_at=utc_datetime(row.expires_at), job_id=row.job_id or "")
+
+    @staticmethod
+    def _media_job_view(row: MediaJobRow) -> MediaJobView:
+        reason = "" if row.cancellation_mode == "supported" and row.execution_mode == "async" else "provider_not_cancelable"
+        return MediaJobView(id=row.id, thread_id=row.thread_id, turn_id=row.turn_id or "", kind=row.kind,
+            model=row.model, provider=row.provider, adapter=row.adapter, execution_mode=row.execution_mode,
+            cancellation_mode=row.cancellation_mode, status=row.status, phase=row.phase or "",
+            progress=row.progress, cancelable=row.execution_mode == "async" and row.cancellation_mode == "supported",
+            cancel_reason=reason)
+
+    async def create_media_draft(self, owner_id: str, thread_id: str, value, *, expires_at: datetime, provider_spec) -> tuple[MediaDraftView, bool]:
+        async with self.connections.begin() as db:
+            existing = (await db.execute(select(MediaDraftRow).where(
+                MediaDraftRow.thread_id == thread_id, MediaDraftRow.idempotency_key == value.idempotency_key))).scalar_one_or_none()
+            if existing:
+                if existing.owner_id != owner_id or existing.kind != value.kind or existing.model != value.model:
+                    raise RuntimeError("media_draft_idempotency_conflict")
+                return self._media_draft_view(existing), False
+            row = MediaDraftRow(id=identifier(), owner_id=owner_id, thread_id=thread_id,
+                kind=value.kind, model=value.model, parameters_json=json.dumps(value.parameters, ensure_ascii=False),
+                idempotency_key=value.idempotency_key, status="awaiting_confirmation", expires_at=expires_at,
+                created_at=now(), updated_at=now())
+            db.add(row)
+        return self._media_draft_view(row), True
+
+    async def get_media_draft(self, draft_id: str, owner_id: str) -> MediaDraftView | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(MediaDraftRow).where(MediaDraftRow.id == draft_id,
+                MediaDraftRow.owner_id == owner_id))).scalar_one_or_none()
+        return self._media_draft_view(row) if row else None
+
+    async def update_media_draft(self, draft_id: str, owner_id: str, *, model: str | None, parameters: dict | None) -> MediaDraftView:
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(MediaDraftRow).where(MediaDraftRow.id == draft_id,
+                MediaDraftRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
+            if not row: raise KeyError("media_draft_not_found")
+            if row.status != "awaiting_confirmation" or utc_datetime(row.expires_at) <= now():
+                raise RuntimeError("media_draft_not_editable")
+            if model is not None: row.model = model
+            if parameters is not None: row.parameters_json = json.dumps(parameters, ensure_ascii=False)
+            row.updated_at = now()
+        return self._media_draft_view(row)
+
+    async def confirm_media_draft(self, draft_id: str, owner_id: str, *, provider_spec) -> MediaJobView:
+        async with self.connections.begin() as db:
+            draft = (await db.execute(select(MediaDraftRow).where(MediaDraftRow.id == draft_id,
+                MediaDraftRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
+            if not draft: raise KeyError("media_draft_not_found")
+            if draft.job_id:
+                job = await db.get(MediaJobRow, draft.job_id)
+                if job: return self._media_job_view(job)
+            if draft.status != "awaiting_confirmation" or utc_datetime(draft.expires_at) <= now():
+                raise RuntimeError("media_draft_not_confirmable")
+            job = MediaJobRow(id=identifier(), owner_id=owner_id, thread_id=draft.thread_id, draft_id=draft.id,
+                kind=draft.kind, model=draft.model, provider=provider_spec.provider, adapter=provider_spec.adapter,
+                execution_mode=provider_spec.execution, cancellation_mode=provider_spec.cancellation,
+                status="created", phase="prepared", parameters_json=draft.parameters_json,
+                idempotency_key=draft.idempotency_key, created_at=now(), updated_at=now())
+            db.add(job); draft.status = "confirmed"; draft.job_id = job.id; draft.updated_at = now()
+        return self._media_job_view(job)
+
+    async def get_media_job(self, job_id: str, owner_id: str) -> MediaJobView | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
+                MediaJobRow.owner_id == owner_id))).scalar_one_or_none()
+        return self._media_job_view(row) if row else None
+
+    async def request_media_cancel(self, job_id: str, owner_id: str) -> MediaJobView:
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
+                MediaJobRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
+            if not row: raise KeyError("media_job_not_found")
+            if not (row.execution_mode == "async" and row.cancellation_mode == "supported"):
+                raise RuntimeError("media_cancel_not_supported")
+            if row.status in {"succeeded", "failed", "cancelled"}:
+                return self._media_job_view(row)
+            row.status = "cancel_requested"; row.updated_at = now()
+        return self._media_job_view(row)

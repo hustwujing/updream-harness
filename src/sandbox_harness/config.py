@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     upstream_image: str = ""
     upstream_video: str = ""
     upstream_audio: str = ""
+    media_catalog_json: str = ""
     model_routes_json: str = ""
     harness_catalog_json: str = ""
     model_catalog_discovery: bool = True
