@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from contextlib import asynccontextmanager
+from datetime import timedelta
 import os
 import time
 import json
@@ -18,9 +19,10 @@ import uvicorn
 from .observability import configure, RequestLoggingMiddleware, event, enrich, add_link, telemetry, operation, carrier
 from .capability import CapabilityCodec
 from .config import Settings, load_settings, validate_service_settings
-from .domain import Harness
+from .domain import Harness, MediaDraftCreate, now
 from .model_routes import ModelRoutes
 from .model_activity import ModelActivity
+from .media_catalog import MediaCatalog
 from .store import Store
 from .public_proxy import DestinationPolicy, start_proxy
 
@@ -83,6 +85,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     clients: dict[str, httpx.AsyncClient] = {}
     model_routes = ModelRoutes(settings)
     activity_store = Store(settings.database_url, settings.redis_url, settings.redis_prefix)
+    media_catalog = MediaCatalog(settings.media_catalog_json)
     upstreams = {
         "/v1/models/codex": (settings.upstream_codex, os.environ.get("SANDBOX_HARNESS_UPSTREAM_CODEX_KEY", "")),
         "/v1/models/claude": (settings.upstream_claude, os.environ.get("SANDBOX_HARNESS_UPSTREAM_CLAUDE_KEY", "")),
@@ -225,6 +228,35 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         if not value:
             raise HTTPException(404, "Media job not found")
         return value
+
+    @app.get("/v1/media/catalog")
+    async def runtime_media_catalog(request: Request, kind: str | None = None):
+        await authorize_runtime_request(request, "/v1/media/catalog")
+        if kind is not None and kind not in {"image", "video", "audio"}:
+            raise HTTPException(422, "Invalid media kind")
+        return {"models": media_catalog.public(kind)}
+
+    @app.post("/v1/media/drafts")
+    async def runtime_create_media_draft(request: Request):
+        claims = await authorize_runtime_request(request, "/v1/media/drafts")
+        try:
+            raw = await request.json()
+            value = MediaDraftCreate.model_validate({**raw, "turn_id": claims.turn_id})
+            spec = media_catalog.resolve(value.kind, value.model)
+            media_catalog.validate_parameters(value.kind, value.model, value.parameters)
+        except (ValueError, KeyError, TypeError):
+            raise HTTPException(422, "Invalid media draft")
+        owner_id = await activity_store.owner_id_for_thread(claims.thread_id)
+        if not owner_id:
+            raise HTTPException(404, "Thread not found")
+        try:
+            draft, _ = await activity_store.create_media_draft(owner_id, claims.thread_id, value,
+                expires_at=now() + timedelta(minutes=10), provider_spec=spec)
+        except KeyError:
+            raise HTTPException(404, "Media Turn not found")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+        return {**draft.model_dump(mode="json"), "requires_confirmation": True}
 
     @app.post("/v1/media/jobs/{job_id}/cancel")
     async def runtime_cancel_media_job(job_id: str, request: Request):

@@ -128,12 +128,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         media_outbox_stop = asyncio.Event()
         media_outbox_owner = "media-outbox-" + uuid.uuid4().hex
         async def continue_media(outbox: dict):
-            artifact_note = outbox.get("output_object_ref", "")
-            message = (f"[media_job_completed] job_id={outbox['job_id']} status={outbox['status']} "
-                       f"artifact={artifact_note or 'none'} error={outbox.get('error_code') or 'none'}")
-            if outbox.get("turn_id"):
-                await broker.submit(outbox["thread_id"], TurnCreate(message=message,
-                    idempotency_key=f"media-continuation-{outbox['job_id']}", delivery_mode="queue"), network_access="restricted")
+            turn_id = outbox.get("turn_id") or ""
+            if not turn_id:
+                return
+            ready, jobs = await store.media_continuation_group(turn_id)
+            if not ready:
+                raise RuntimeError("media_group_pending")
+            results = []
+            extensions = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp",
+                "video/mp4": "mp4", "video/webm": "webm", "audio/mpeg": "mp3",
+                "audio/wav": "wav", "audio/flac": "flac", "audio/mp4": "m4a", "audio/webm": "webm"}
+            for job in jobs:
+                path = ""
+                reference = job["output_object_ref"]
+                if job["status"] == "succeeded" and reference.startswith("sha256:"):
+                    extension = extensions.get(job["output_mime"], "bin")
+                    path = f"artifacts/media/{job['id']}.{extension}"
+                    await store.register_project_file(job["thread_id"], path=path, source_type="artifact",
+                        source_turn_id=turn_id, sha256=reference.removeprefix("sha256:"),
+                        size=int(job["output_size"] or 0), mime=job["output_mime"] or "application/octet-stream",
+                        object_ref=reference)
+                results.append({"job_id": job["id"], "kind": job["kind"], "model": job["model"],
+                    "status": job["status"], "path": "/workspace/project/" + path if path else "",
+                    "error": job["error_code"] or ""})
+            message = ("[media_group_completed] Continue the original user task using these media results: "
+                + json.dumps(results, ensure_ascii=False, sort_keys=True))
+            await broker.submit(outbox["thread_id"], TurnCreate(message=message,
+                idempotency_key=f"media-continuation-{turn_id}", delivery_mode="queue"),
+                network_access="restricted")
         async def dispatch_media_outbox():
             while not media_outbox_stop.is_set():
                 for outbox in await store.claim_media_outbox(media_outbox_owner):
@@ -286,6 +308,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not value: raise HTTPException(404, "Media draft not found")
         return value
 
+    @app.get("/api/threads/{thread_id}/media/drafts")
+    async def list_media_drafts(thread_id: str, request: Request):
+        if not await store.get_thread(thread_id, request.state.owner_id):
+            raise HTTPException(404, "Thread not found")
+        return await store.list_media_drafts(thread_id, request.state.owner_id)
+
     @app.patch("/api/media/drafts/{draft_id}")
     async def update_media_draft(draft_id: str, value: MediaDraftUpdate, request: Request):
         current = await store.get_media_draft(draft_id, request.state.owner_id)
@@ -312,6 +340,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return await store.confirm_media_draft(draft_id, request.state.owner_id, provider_spec=spec)
         except (KeyError, ValueError) as exc:
             raise HTTPException(422, str(exc))
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+
+    @app.post("/api/media/drafts/{draft_id}/cancel")
+    async def cancel_media_draft(draft_id: str, request: Request):
+        try:
+            return await store.cancel_media_draft(draft_id, request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404, "Media draft not found")
         except RuntimeError as exc:
             raise HTTPException(409, str(exc))
 

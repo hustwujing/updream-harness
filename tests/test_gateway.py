@@ -69,6 +69,47 @@ async def test_gateway_media_status_is_capability_and_thread_scoped(tmp_path, mo
     assert calls == [("job-1", "thread-1")]
 
 
+async def test_gateway_media_prepare_creates_turn_bound_draft(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+    from starlette.requests import Request
+    import sandbox_harness.gateway as gateway
+    from sandbox_harness.capability import CapabilityCodec
+    from sandbox_harness.config import Settings
+    from sandbox_harness.domain import Harness
+    calls = []
+    class Redis:
+        async def eval(self, *args): return 1
+    class Store:
+        def __init__(self, *args, **kwargs): pass
+        async def owner_id_for_thread(self, thread_id): return "owner-1"
+        async def create_media_draft(self, owner_id, thread_id, value, **kwargs):
+            calls.append((owner_id, thread_id, value.turn_id, value.kind, value.model, value.parameters))
+            return SimpleNamespace(model_dump=lambda **_: {"id": "draft-1", "status": "awaiting_confirmation"}), True
+    monkeypatch.setattr(gateway.Redis, "from_url", lambda *args, **kwargs: Redis())
+    monkeypatch.setattr(gateway, "Store", Store)
+    settings = Settings(backend="fake", database_url="sqlite+aiosqlite:///" + str(tmp_path / "gateway.db"))
+    app = gateway.create_gateway(settings)
+    turn_id = "a" * 32
+    token, _ = CapabilityCodec(settings.gateway_signing_key).issue(thread_id="thread-1", turn_id=turn_id,
+        sandbox_id="sandbox-1", harness=Harness.CODEX, model="gpt-5.6", routes=["/v1/media"],
+        ttl_seconds=60, max_requests=10, max_public_requests=1, token_budget=1000)
+    body = json.dumps({"kind": "image", "model": "seedream-5.0", "parameters": {"prompt": "test"},
+        "idempotency_key": "prepare-key-1"}).encode()
+    sent = False
+    async def receive():
+        nonlocal sent
+        if sent: return {"type": "http.request", "body": b"", "more_body": False}
+        sent = True; return {"type": "http.request", "body": body, "more_body": False}
+    request = Request({"type": "http", "method": "POST", "path": "/v1/media/drafts",
+        "query_string": b"", "headers": [(b"authorization", ("Bearer " + token).encode()),
+        (b"content-type", b"application/json")]}, receive)
+    endpoint = next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/v1/media/drafts")
+    result = await endpoint(request)
+    assert result["id"] == "draft-1" and result["requires_confirmation"] is True
+    assert calls == [("owner-1", "thread-1", turn_id, "image", "seedream-5.0", {"prompt": "test"})]
+
+
 async def test_terminal_model_step_is_saved_before_last_frame_is_forwarded(tmp_path, monkeypatch):
     import httpx,json
     from starlette.requests import Request

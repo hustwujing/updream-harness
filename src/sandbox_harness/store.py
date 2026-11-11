@@ -1554,8 +1554,9 @@ class Store:
 
     @staticmethod
     def _media_draft_view(row: MediaDraftRow) -> MediaDraftView:
+        status = "expired" if row.status == "awaiting_confirmation" and utc_datetime(row.expires_at) <= now() else row.status
         return MediaDraftView(id=row.id, thread_id=row.thread_id, kind=row.kind, model=row.model,
-            parameters=json.loads(row.parameters_json or "{}"), status=row.status,
+            parameters=json.loads(row.parameters_json or "{}"), status=status,
             expires_at=utc_datetime(row.expires_at), job_id=row.job_id or "")
 
     @staticmethod
@@ -1604,6 +1605,17 @@ class Store:
                 MediaDraftRow.owner_id == owner_id))).scalar_one_or_none()
         return self._media_draft_view(row) if row else None
 
+    async def list_media_drafts(self, thread_id: str, owner_id: str) -> list[MediaDraftView]:
+        async with self.connections() as db:
+            rows = (await db.execute(select(MediaDraftRow).where(
+                MediaDraftRow.thread_id == thread_id, MediaDraftRow.owner_id == owner_id,
+            ).order_by(MediaDraftRow.created_at.desc()))).scalars().all()
+        return [self._media_draft_view(row) for row in rows]
+
+    async def owner_id_for_thread(self, thread_id: str) -> str:
+        async with self.connections() as db:
+            return (await db.execute(select(ThreadRow.owner_id).where(ThreadRow.id == thread_id))).scalar_one_or_none() or ""
+
     async def update_media_draft(self, draft_id: str, owner_id: str, *, model: str | None, parameters: dict | None) -> MediaDraftView:
         async with self.connections.begin() as db:
             row = (await db.execute(select(MediaDraftRow).where(MediaDraftRow.id == draft_id,
@@ -1614,6 +1626,17 @@ class Store:
             if model is not None: row.model = model
             if parameters is not None: row.parameters_json = json.dumps(parameters, ensure_ascii=False)
             row.updated_at = now()
+        return self._media_draft_view(row)
+
+    async def cancel_media_draft(self, draft_id: str, owner_id: str) -> MediaDraftView:
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(MediaDraftRow).where(MediaDraftRow.id == draft_id,
+                MediaDraftRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
+            if not row: raise KeyError("media_draft_not_found")
+            if row.status == "confirmed":
+                raise RuntimeError("media_draft_already_confirmed")
+            if row.status == "awaiting_confirmation":
+                row.status = "cancelled"; row.updated_at = now()
         return self._media_draft_view(row)
 
     async def confirm_media_draft(self, draft_id: str, owner_id: str, *, provider_spec) -> MediaJobView:
@@ -1661,6 +1684,25 @@ class Store:
                 for artifact_id, path in artifacts:
                     artifact_ids[paths[path]].append(artifact_id)
         return [self._media_job_view(row, artifact_ids[row.id]) for row in rows]
+
+    async def media_continuation_group(self, turn_id: str) -> tuple[bool, list[dict]]:
+        terminal = {"succeeded", "failed", "cancelled", "unknown"}
+        async with self.connections() as db:
+            pending_drafts = (await db.execute(select(func.count()).select_from(MediaDraftRow).where(
+                MediaDraftRow.turn_id == turn_id,
+                MediaDraftRow.status == "awaiting_confirmation",
+                MediaDraftRow.expires_at > now(),
+            ))).scalar_one()
+            rows = (await db.execute(select(MediaJobRow).where(
+                MediaJobRow.turn_id == turn_id,
+            ).order_by(MediaJobRow.created_at, MediaJobRow.id))).scalars().all()
+        ready = bool(rows) and not pending_drafts and all(row.status in terminal for row in rows)
+        return ready, [{
+            "id": row.id, "thread_id": row.thread_id, "turn_id": row.turn_id,
+            "kind": row.kind, "model": row.model, "status": row.status,
+            "output_object_ref": row.output_object_ref, "output_mime": row.output_mime,
+            "output_size": row.output_size, "error_code": row.error_code,
+        } for row in rows]
 
     async def request_media_cancel(self, job_id: str, owner_id: str) -> MediaJobView:
         async with self.connections.begin() as db:

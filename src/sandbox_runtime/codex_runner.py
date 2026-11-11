@@ -9,6 +9,8 @@ import subprocess
 import sys
 import threading
 
+from .instructions import RUNTIME_INSTRUCTIONS
+
 
 class Bridge:
     def __init__(self, interaction_responses, interaction_condition):
@@ -103,7 +105,8 @@ def main():
     try:
         bridge.rpc("initialize", {"clientInfo": {"name": "sandbox-harness-platform", "version": "0.1.0"}})
         bridge.write({"method": "initialized", "params": {}})
-        params = {"cwd": "/workspace/project", "model": args.model, "approvalPolicy": "never", "sandbox": "danger-full-access"}
+        params = {"cwd": "/workspace/project", "model": args.model, "approvalPolicy": "never",
+            "sandbox": "danger-full-access", "developerInstructions": RUNTIME_INSTRUCTIONS}
         if args.thread_id: params["threadId"] = args.thread_id
         opened = bridge.rpc("thread/resume" if args.thread_id else "thread/start", params); thread_id = opened["thread"]["id"]
         bridge.emit({"type": "thread.started", "thread_id": thread_id})

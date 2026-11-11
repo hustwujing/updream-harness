@@ -16,11 +16,13 @@ export const changeAccountPassword=value=>api('auth/change-password',{method:'PO
 export const getHarnessCatalog=()=>api('catalog/harnesses');
 export const getMediaCatalog=(kind='')=>api(`catalog/media${kind?`?kind=${encodeURIComponent(kind)}`:''}`);
 export const listMediaJobs=threadId=>api(`threads/${threadId}/media/jobs`);
+export const listMediaDrafts=threadId=>api(`threads/${threadId}/media/drafts`);
 export const getMediaJob=jobId=>api(`media/jobs/${jobId}`);
 export const cancelMediaJob=jobId=>api(`media/jobs/${jobId}/cancel`,{method:'POST'});
 export const createMediaDraft=(threadId,value)=>api(`threads/${threadId}/media/drafts`,{method:'POST',body:JSON.stringify(value)});
 export const updateMediaDraft=(draftId,value)=>api(`media/drafts/${draftId}`,{method:'PATCH',body:JSON.stringify(value)});
 export const confirmMediaDraft=draftId=>api(`media/drafts/${draftId}/confirm`,{method:'POST'});
+export const cancelMediaDraft=draftId=>api(`media/drafts/${draftId}/cancel`,{method:'POST'});
 export const createThread=value=>api('threads',{method:'POST',body:JSON.stringify(value)});
 export const setThreadArchived=(id,archived)=>api(`threads/${id}/${archived?'archive':'unarchive'}`,{method:'POST'});
 export const deleteThread=id=>api(`threads/${id}`,{method:'DELETE'});

@@ -26,14 +26,24 @@ async def test_media_draft_confirm_is_idempotent_and_snapshots_provider(tmp_path
         draft, created = await store.create_media_draft(owner, thread.id, value,
             expires_at=now() + timedelta(minutes=10), provider_spec=spec)
         assert created and draft.status == "awaiting_confirmation"
+        cancel_value = value.model_copy(update={"idempotency_key": "media-key-cancel"})
+        cancellable, _ = await store.create_media_draft(owner, thread.id, cancel_value,
+            expires_at=now() + timedelta(minutes=10), provider_spec=spec)
         first = await store.confirm_media_draft(draft.id, owner, provider_spec=spec)
         second = await store.confirm_media_draft(draft.id, owner, provider_spec=spec)
         assert first.id == second.id and first.provider == "ark"
         assert not first.cancelable
+        ready, _ = await store.media_continuation_group(turn.id)
+        assert ready is False
+        cancelled = await store.cancel_media_draft(cancellable.id, owner)
+        assert cancelled.status == "cancelled"
+        assert {item.id for item in await store.list_media_drafts(thread.id, owner)} == {draft.id, cancellable.id}
         claimed = await store.claim_media_jobs("worker")
         assert claimed[0]["id"] == first.id
         await store.update_media_job(first.id, "worker", status="succeeded", phase="committed",
             output_object_ref="sha256:" + "1" * 64, output_mime="video/mp4", output_size=1234)
+        ready, group = await store.media_continuation_group(turn.id)
+        assert ready is True and [item["id"] for item in group] == [first.id]
         completed = await store.get_media_job(first.id, owner)
         listed = await store.list_media_jobs(thread.id, owner)
         assert completed and len(completed.artifact_ids) == 1
