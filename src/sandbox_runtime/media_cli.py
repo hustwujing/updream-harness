@@ -35,7 +35,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     token = open(token_file, encoding="utf-8").read().strip()
     path = f"/api/media/jobs/{args.job_id}" + ("/cancel" if args.command == "cancel" else "")
-    response = httpx.post(base + path, headers={"Authorization": "Bearer " + token}, timeout=20)
+    request = httpx.get if args.command == "status" else httpx.post
+    response = request(base + path, headers={"Authorization": "Bearer " + token}, timeout=20)
     print(response.text)
     return 0 if response.is_success else 1
 

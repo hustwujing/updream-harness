@@ -26,7 +26,8 @@ object storage as part of this product's release.
 5. Confirm no active Turn would be interrupted.
 6. Run `deploy/check-service-access.sh`.
 7. Use `deploy/record-release.py` to pin Git revision and `PYTHONPATH`.
-8. Restart only affected services and verify health version/counters.
+8. Restart only affected services and verify API/Gateway health plus Media
+   Worker systemd state. API and Media Worker are independent failure domains.
 9. Run a focused deployed case and confirm state, logs and cleanup.
 
 `record-release.py` refuses staged or unstaged changes to tracked files in the

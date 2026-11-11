@@ -9,6 +9,7 @@ runuser -u "$service_user" -- .venv/bin/python - <<'PY'
 from pathlib import Path
 import sandbox_harness.app
 import sandbox_harness.gateway
+import sandbox_harness.media_service
 for file in Path('web/dist').rglob('*'):
     if file.is_file():
         with file.open('rb') as stream:

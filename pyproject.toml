@@ -78,6 +78,7 @@ runtime-media = [
 [project.scripts]
 sandbox-harness-api = "sandbox_harness.main:run"
 sandbox-harness-gateway = "sandbox_harness.gateway:run"
+sandbox-harness-media-worker = "sandbox_harness.media_service:run"
 sandbox-harness-logs = "sandbox_harness.log_query:main"
 sandbox-harness-user = "sandbox_harness.auth_cli:main"
 sandbox-harness-runtime = "sandbox_runtime.main:run"

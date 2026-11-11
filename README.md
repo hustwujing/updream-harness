@@ -1,6 +1,6 @@
 # updream-harness
 
-A thin, stateful OpenSandbox platform that sends every user message to a Codex, Claude or DeepSeek Harness. The platform restores the Harness workspace, streams its public output and steps, exports files, checkpoints the environment and removes the sandbox. It contains no DAG, planner, reviewer or media workflow engine.
+A thin, stateful OpenSandbox platform that sends every user message to a Codex, Claude or DeepSeek Harness. The platform restores the Harness workspace, streams its public output and steps, exports files, checkpoints the environment and removes the sandbox. It contains no DAG, planner or reviewer; media generation uses a small durable Job service with an independent Provider Worker.
 
 ## Services
 
@@ -8,6 +8,10 @@ A thin, stateful OpenSandbox platform that sends every user message to a Codex, 
 Web → Session API → Leased Turn Worker → Warm Sandbox Pool → OpenSandbox/gVisor
                                       │                     │
                                       └──── Capability Gateway ◄── Harness
+
+Media confirmation → Session API → PostgreSQL Job → Media Worker → Provider
+                                      │
+                                      └── terminal Outbox → Broker continuation
 
 PostgreSQL: Session, Turn, event and artifact metadata
 Redis: live event fan-out and short-lived capability revocation
@@ -17,6 +21,11 @@ Object storage: content-addressed checkpoints and artifacts
 Production runs a dedicated PostgreSQL cluster on `127.0.0.1:25432` and reuses the host Redis, Docker/runsc, OpenSandbox and BOSS/S3 services. PostgreSQL data, service logs, caches, browser dependencies, test temporaries and other local writable state stay under `/data2/wujing03/sandbox-harness-platform/.data`; the root filesystem is not used for project-generated data. Shared services remain isolated by Redis key prefix, image repository, OpenSandbox metadata namespace and object prefix.
 
 The Capability Gateway is an infrastructure proxy. It injects model and Provider credentials after validating a Turn-scoped token. It does not understand prompts, plans or media quality.
+
+The Media Worker is a separate systemd service. API creates and queries Jobs;
+the Worker alone submits external Provider requests, persists external IDs,
+resumes polling after crashes and commits the Artifact, terminal state and
+Outbox transaction. API and Worker can restart independently.
 
 Direct browser access keeps the existing signed anonymous identity. The FRPC
 entry is identified through PROXY Protocol/nginx and requires an account; an

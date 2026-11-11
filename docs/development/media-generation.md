@@ -4,8 +4,10 @@
 
 All image, video and audio generation is an asynchronous platform Job, even
 when a Provider exposes a synchronous HTTP request. Harness submits an intent
-and returns; a Media Worker owns Provider execution, persistence, polling and
-result download. Broker owns ownership, artifacts, SSE and model continuation.
+and returns; the independent `sandbox-harness-media-worker.service` owns
+Provider execution, persistence, polling and result download. API owns Job
+creation, query and cancel requests. Broker owns SSE and model continuation;
+PostgreSQL is the authoritative state shared across services.
 
 Provider credentials remain in the host environment; Sandboxes receive only a
 short-lived capability token.
@@ -52,15 +54,22 @@ Sync execution persists `PREPARED`, `REQUESTING`, `RESPONSE_RECEIVED`,
 after `REQUESTING`, recovery must reconcile by idempotency key or mark
 `UNKNOWN`, never blindly resubmit. Async jobs resume by `provider_job_id`.
 
+API and Media Worker are separate processes. Every Worker instance has a
+unique lease owner and persists an async Provider ID before polling. After a
+restart it may resume only that ID. A `REQUESTING` Job without a Provider ID
+has an ambiguous submission outcome and becomes `UNKNOWN`. Artifact
+registration, terminal Job state and Outbox creation use one transaction.
+
 Only `async + cancellation=supported` is cancellable. Other cancel requests
 return `media_cancel_not_supported` and leave the Job unchanged. Ambiguous
 Provider cancellation becomes `CANCEL_UNKNOWN`.
 
 ## Harness, UI and progress
 
-The model-facing CLI is a thin client: `sandbox-media ... prepare`,
-`update-draft`, `confirm`, `status` and `cancel`. It does not persist state or
-call Providers directly. UI buttons use the same Job Service. Progress travels
+The model-facing CLI is a thin client: `sandbox-media prepare`, `status` and
+`cancel`. It does not persist state, confirm a draft or call Providers
+directly. Draft editing and confirmation remain owner-scoped API/UI actions.
+Progress travels
 through durable events and SSE; the model is resumed only at terminal state.
 
 In-progress cards use distinct animation: image skeleton/shimmer, video

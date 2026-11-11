@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import time
+import uuid
 from datetime import timedelta
 from collections import defaultdict, deque
 from contextlib import suppress
@@ -27,7 +28,6 @@ from .observability import RequestLoggingMiddleware, telemetry, event
 from .domain import Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, MediaDraftCreate, MediaDraftUpdate, ProjectFileRename, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, valid_attachment_name, now
 from .model_discovery import ModelDiscovery
 from .media_catalog import MediaCatalog
-from .media_worker import MediaWorker
 from .objects import object_store
 from .pool import SandboxPool
 from .runtime import RuntimeClient
@@ -107,17 +107,16 @@ def components(settings: Settings):
     runtime = RuntimeClient(timeout_seconds=settings.sandbox_timeout_seconds)
     catalog = HarnessCatalog(settings.harness_catalog_json or None)
     media_catalog = MediaCatalog(settings.media_catalog_json)
-    media_worker = MediaWorker(settings, store, objects, media_catalog)
     discovery = ModelDiscovery(settings, catalog)
     if settings.model_catalog_discovery:
         discovery.load_snapshot()
-    return store, objects, pool, catalog, discovery, media_catalog, media_worker, Broker(settings, store, objects, pool, runtime, catalog)
+    return store, objects, pool, catalog, discovery, media_catalog, Broker(settings, store, objects, pool, runtime, catalog)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     validate_service_settings(settings)
-    store, objects, pool, catalog, discovery, media_catalog, media_worker, broker = components(settings)
+    store, objects, pool, catalog, discovery, media_catalog, broker = components(settings)
     sessions = Sessions(settings.session_signing_key)
     account_auth = AccountAuth(store, settings.auth_session_ttl_seconds)
     login_failures: dict[str, deque[float]] = defaultdict(deque)
@@ -126,6 +125,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         await store.initialize()
         await broker.start()
+        media_outbox_stop = asyncio.Event()
+        media_outbox_owner = "media-outbox-" + uuid.uuid4().hex
         async def continue_media(outbox: dict):
             artifact_note = outbox.get("output_object_ref", "")
             message = (f"[media_job_completed] job_id={outbox['job_id']} status={outbox['status']} "
@@ -133,8 +134,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if outbox.get("turn_id"):
                 await broker.submit(outbox["thread_id"], TurnCreate(message=message,
                     idempotency_key=f"media-continuation-{outbox['job_id']}", delivery_mode="queue"), network_access="restricted")
-        media_worker.continuation_callback = continue_media
-        media_worker_task = asyncio.create_task(media_worker.run(), name="media-worker")
+        async def dispatch_media_outbox():
+            while not media_outbox_stop.is_set():
+                for outbox in await store.claim_media_outbox(media_outbox_owner):
+                    try:
+                        await continue_media(outbox)
+                    except Exception as exc:
+                        await store.finish_media_outbox(outbox["outbox_id"], media_outbox_owner,
+                            delivered=False, error=type(exc).__name__)
+                    else:
+                        await store.finish_media_outbox(outbox["outbox_id"], media_outbox_owner, delivered=True)
+                try:
+                    await asyncio.wait_for(media_outbox_stop.wait(), timeout=2)
+                except asyncio.TimeoutError:
+                    pass
+        media_outbox_task = asyncio.create_task(dispatch_media_outbox(), name="media-outbox-dispatcher")
         pool_task = None
         catalog_task = None
         if settings.model_catalog_discovery:
@@ -170,8 +184,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             pool_task.cancel()
             with suppress(asyncio.CancelledError):
                 await pool_task
-        media_worker.stop_event.set()
-        await media_worker_task
+        media_outbox_stop.set()
+        await media_outbox_task
         await broker.close()
         await pool.close(preserve_sandbox_ids={sandbox.id for sandbox in broker.active_sandboxes.values()})
         await store.close()

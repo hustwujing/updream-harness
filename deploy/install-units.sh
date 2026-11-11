@@ -39,5 +39,5 @@ chmod 0755 "$root/deploy/network-rule.sh"
 install -m 0644 "$root"/deploy/systemd/*.service /etc/systemd/system/
 python3 "$root/deploy/record-release.py" --env-file "$env_file"
 systemctl daemon-reload
-systemctl enable sandbox-harness-postgresql.service sandbox-harness-network.service sandbox-harness-gateway.service sandbox-harness-api.service
+systemctl enable sandbox-harness-postgresql.service sandbox-harness-network.service sandbox-harness-gateway.service sandbox-harness-api.service sandbox-harness-media-worker.service
 echo "units installed but not started"
