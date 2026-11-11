@@ -14,6 +14,9 @@ export const registerAccount=value=>api('auth/register',{method:'POST',body:JSON
 export const logoutAccount=()=>api('auth/logout',{method:'POST'});
 export const changeAccountUsername=value=>api('auth/change-username',{method:'POST',body:JSON.stringify(value)});
 export const changeAccountPassword=value=>api('auth/change-password',{method:'POST',body:JSON.stringify(value)});
+export const updateAccountProfile=value=>api('auth/profile',{method:'POST',body:JSON.stringify(value)});
+export const uploadAccountAvatar=file=>api('auth/avatar',{method:'POST',body:file,headers:{'Content-Type':file.type||'application/octet-stream'}});
+export const deleteAccountAvatar=()=>api('auth/avatar',{method:'DELETE'});
 export const getHarnessCatalog=()=>api('catalog/harnesses');
 export const getMediaCatalog=(kind='')=>api(`catalog/media${kind?`?kind=${encodeURIComponent(kind)}`:''}`);
 export const listMediaJobs=threadId=>api(`threads/${threadId}/media/jobs`);

@@ -236,7 +236,7 @@
 .auth-loading img { width:38px; height:38px; }
 .auth-overlay { position:fixed; inset:0; z-index:120; display:grid; place-items:center; padding:18px; background:#17181799; }
 .auth-overlay.required { background:#f5f5f3; }
-.auth-panel { position:relative; width:min(390px,100%); max-height:calc(100dvh - 36px); overflow:auto; border:1px solid #d8d8d3; border-radius:8px; background:#fff; box-shadow:0 22px 70px #0003; }
+.auth-panel { position:relative; width:min(430px,100%); max-height:calc(100dvh - 36px); overflow:auto; border:1px solid #d8d8d3; border-radius:8px; background:#fff; box-shadow:0 22px 70px #0003; }
 .auth-close { position:absolute; right:9px; top:9px; z-index:1; display:grid; place-items:center; width:30px; height:30px; border:0; border-radius:6px; background:transparent; }
 .auth-close:hover { background:#f0f0ed; }
 .auth-form,.account-settings { padding:26px; }
@@ -260,9 +260,25 @@
 .auth-logout { border:1px solid #d5d5d0; background:#fff; color:#555650; }
 .auth-error { margin:10px 0; color:#a1443d; font-size:10px; line-height:1.5; }
 .auth-notice { margin:10px 0; color:#4f7b4c; font-size:10px; }
+.account-settings{padding:0}
+.profile-header{display:flex;align-items:center;gap:14px;padding:25px 26px 18px;background:#f7f7f4;border-bottom:1px solid #e7e7e2}
+.profile-header>div{min-width:0}.profile-header h1{margin:0;overflow:hidden;text-overflow:ellipsis;font-size:17px;font-weight:650}.profile-header p{margin:4px 0 0;color:#777872;font-size:10px}
+.account-avatar{display:grid;place-items:center;flex:none;overflow:hidden;border:1px solid #d5d5d0;border-radius:50%;background:#fff center/cover no-repeat;color:#676862}
+.avatar-control{position:relative;display:grid;place-items:center;flex:none;border:0;border-radius:50%;padding:0;background:transparent}
+.avatar-edit-badge{position:absolute;right:-2px;bottom:-2px;display:grid;place-items:center;width:21px;height:21px;border:2px solid #f7f7f4;border-radius:50%;background:#292a27;color:#fff}
+.avatar-control:disabled{cursor:default}.avatar-control:disabled>.avatar-edit-badge{display:none}
+.avatar-remove{display:block;margin:9px 26px 0 auto;border:0;background:transparent;color:#8a5c56;font-size:9px}
+.account-settings .profile-form{padding:18px 26px 20px;border-top:0}
+.profile-form h2{font-size:12px!important}.profile-passwords{display:grid;grid-template-columns:1fr 1fr;gap:9px}.profile-passwords label{min-width:0}
+.account-settings .profile-save{margin:5px 0 0 auto}
+.profile-footer{display:flex;justify-content:flex-end;padding:14px 26px;border-top:1px solid #ecece8;background:#fafaf8}
+.account-settings>.auth-notice,.account-settings>.auth-error{margin-left:26px;margin-right:26px}
+body[data-has-avatar="true"] .top-actions>button:first-child{border-radius:50%;background:var(--account-avatar) center/cover no-repeat;box-shadow:inset 0 0 0 1px #00000014}
+body[data-has-avatar="true"] .top-actions>button:first-child>svg{opacity:0}
 .topbar>div:nth-child(2)>span::after{font-weight:550}
 body[data-network-access="public"] .topbar>div:nth-child(2)>span::after{content:" · 公网访问";color:#38735c}
 body[data-network-access="restricted"] .topbar>div:nth-child(2)>span::after{content:" · 网络受限";color:#8a6a35}
+@media(max-width:520px){.auth-overlay{padding:8px}.auth-panel{max-height:calc(100dvh - 16px)}.profile-header{padding:22px 18px 16px}.account-settings .profile-form{padding:17px 18px}.profile-passwords{grid-template-columns:1fr}.profile-footer{padding:12px 18px}.account-settings>.auth-notice,.account-settings>.auth-error{margin-left:18px;margin-right:18px}}
 
 .activity-history > summary { padding: 8px 0; color: #858680; font-size: 9px; cursor: pointer; }
 

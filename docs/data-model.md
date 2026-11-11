@@ -83,8 +83,8 @@ execution can receive a response.
 ## Users and account Sessions
 
 `users` stores stable account ID/owner ID, normalized unique username, Argon2id
-password hash, disabled flag and timestamps. Username changes do not change the
-owner ID used by Threads and uploads.
+password hash, optional avatar object reference/MIME/version, disabled flag and
+timestamps. Username changes do not change the owner ID used by Threads and uploads.
 
 `auth_sessions` stores only the SHA-256 hash of a random Cookie token, account
 ID, expiry, creation and last-seen timestamps. Password reset/disable revokes

@@ -101,6 +101,7 @@ class AccountView(BaseModel):
     owner_id: str = Field(exclude=True)
     username: str
     disabled: bool = False
+    avatar_version: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -127,6 +128,19 @@ class ChangePasswordRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     current_password: str = Field(min_length=1, max_length=256)
     new_password: str = Field(min_length=8, max_length=256)
+
+
+class UpdateAccountRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    current_password: str = Field(min_length=1, max_length=256)
+    username: str | None = Field(default=None, min_length=3, max_length=64)
+    new_password: str | None = Field(default=None, min_length=8, max_length=256)
+
+    @model_validator(mode="after")
+    def has_change(self):
+        if self.username is None and self.new_password is None:
+            raise ValueError("At least one profile change is required")
+        return self
 
 
 class ThreadView(BaseModel):

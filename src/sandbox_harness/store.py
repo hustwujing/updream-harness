@@ -277,6 +277,9 @@ class UserRow(Base):
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(Text)
     disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    avatar_object_ref: Mapped[str] = mapped_column(Text, default="", server_default="")
+    avatar_mime: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    avatar_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -389,6 +392,16 @@ class Store:
                     await connection.execute(text(
                         "UPDATE media_jobs SET finished_at = updated_at "
                         "WHERE status IN ('succeeded', 'failed', 'cancelled', 'unknown')"))
+            user_columns = await connection.run_sync(
+                lambda value: {column["name"] for column in inspect(value).get_columns("users")})
+            user_additions = {
+                "avatar_object_ref": "TEXT NOT NULL DEFAULT ''",
+                "avatar_mime": "VARCHAR(100) NOT NULL DEFAULT ''",
+                "avatar_version": "INTEGER NOT NULL DEFAULT 0",
+            }
+            for name, definition in user_additions.items():
+                if name not in user_columns:
+                    await connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))
 
     async def close(self) -> None:
         if self.events:
@@ -503,6 +516,42 @@ class Store:
             query = delete(AuthSessionRow).where(AuthSessionRow.user_id == user_id)
             if keep_token_hash:query = query.where(AuthSessionRow.token_hash != keep_token_hash)
             await db.execute(query)
+
+    async def update_account(self, user_id: str, *, username: str | None = None,
+                             password_hash: str | None = None, keep_token_hash: str = "") -> AccountView:
+        try:
+            async with self.connections.begin() as db:
+                row = await db.get(UserRow, user_id, with_for_update=True)
+                if not row: raise KeyError("user_not_found")
+                if username is not None and username != row.username:
+                    if (await db.execute(select(UserRow.id).where(
+                            UserRow.username == username, UserRow.id != user_id))).scalar_one_or_none():
+                        raise RuntimeError("username_taken")
+                    row.username = username
+                if password_hash is not None:
+                    row.password_hash = password_hash
+                    query = delete(AuthSessionRow).where(AuthSessionRow.user_id == user_id)
+                    if keep_token_hash: query = query.where(AuthSessionRow.token_hash != keep_token_hash)
+                    await db.execute(query)
+                row.updated_at = now()
+        except IntegrityError as exc:
+            raise RuntimeError("username_taken") from exc
+        return self.account_view(row)
+
+    async def set_user_avatar(self, user_id: str, object_ref: str = "", mime: str = "") -> AccountView:
+        async with self.connections.begin() as db:
+            row = await db.get(UserRow, user_id, with_for_update=True)
+            if not row: raise KeyError("user_not_found")
+            row.avatar_object_ref = object_ref; row.avatar_mime = mime
+            row.avatar_version += 1; row.updated_at = now()
+        return self.account_view(row)
+
+    async def get_user_avatar(self, user_id: str) -> tuple[str, str] | None:
+        async with self.connections() as db:
+            row = await db.get(UserRow, user_id)
+        if not row or not row.avatar_object_ref or not row.avatar_mime:
+            return None
+        return row.avatar_object_ref, row.avatar_mime
 
     async def set_user_disabled(self, user_id: str, disabled: bool) -> AccountView:
         async with self.connections.begin() as db:

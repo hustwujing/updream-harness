@@ -74,9 +74,11 @@ def test_frpc_requires_account_while_direct_ingress_remains_anonymous(tmp_path):
         changed=client.post('/api/auth/change-username',headers={'X-Updream-Ingress':'frpc'},json={
             'username':'renamed.user','current_password':'initial account password'})
         assert changed.status_code==403 and changed.json()['detail']=='account_action_not_available'
-        changed=client.post('/api/auth/change-password',headers={'X-Updream-Ingress':'frpc'},json={
+        changed=client.post('/api/auth/profile',headers={'X-Updream-Ingress':'frpc'},json={
             'current_password':'initial account password','new_password':'newpass8'})
-        assert changed.status_code==200
+        assert changed.status_code==200 and changed.json()['user']['username']=='frpc.user'
+        avatar=client.post('/api/auth/avatar',headers={'X-Updream-Ingress':'frpc'},content=b'not allowed')
+        assert avatar.status_code==403 and avatar.json()['detail']=='account_action_not_available'
         logout=client.post('/api/auth/logout',headers={'X-Updream-Ingress':'frpc'});assert logout.status_code==200
         assert client.get('/api/threads',headers={'X-Updream-Ingress':'frpc'}).status_code==401
         relogin=client.post('/api/auth/login',headers={'X-Updream-Ingress':'frpc'},json={
@@ -95,11 +97,22 @@ def test_direct_registration_migrates_anonymous_threads_and_rotates_identity(tmp
         registered=client.post('/api/auth/register',json={'username':'direct.user','password':'new account password'})
         assert registered.status_code==200 and registered.json()['user']['username']=='direct.user'
         assert [row['id'] for row in client.get('/api/threads').json()]==[thread['id']]
+        invalid_avatar=client.post('/api/auth/avatar',content=b'not-an-image')
+        assert invalid_avatar.status_code==422 and 'PNG' in invalid_avatar.json()['detail']
+        png=b'\x89PNG\r\n\x1a\n'+b'avatar-bytes'
+        avatar=client.post('/api/auth/avatar',content=png)
+        assert avatar.status_code==200 and avatar.json()['user']['avatar_version']==1
+        loaded=client.get('/api/auth/avatar');assert loaded.status_code==200 and loaded.content==png
+        profile=client.post('/api/auth/profile',json={'current_password':'new account password',
+            'username':'direct.renamed','new_password':'replacement password'})
+        assert profile.status_code==200 and profile.json()['user']['username']=='direct.renamed'
         assert client.post('/api/auth/logout').status_code==200
         assert client.get('/api/threads').json()==[]
-        login=client.post('/api/auth/login',json={'username':'direct.user','password':'new account password'})
+        login=client.post('/api/auth/login',json={'username':'direct.renamed','password':'replacement password'})
         assert login.status_code==200
         assert [row['id'] for row in client.get('/api/threads').json()]==[thread['id']]
+        removed=client.delete('/api/auth/avatar');assert removed.status_code==200
+        assert removed.json()['user']['avatar_version']==2 and client.get('/api/auth/avatar').status_code==404
 
 
 def test_direct_registration_waits_for_active_anonymous_work(tmp_path):
@@ -117,6 +130,26 @@ def test_direct_registration_waits_for_active_anonymous_work(tmp_path):
         blocked=client.post('/api/auth/register',json={
             'username':'blocked.user','password':'new account password'})
         assert blocked.status_code==409 and blocked.json()['detail']=='active_work_prevents_registration'
+
+
+def test_initialize_adds_avatar_fields_to_existing_users(tmp_path):
+    import sqlite3
+    database=tmp_path/'avatar-migration.db';url='sqlite+aiosqlite:///'+str(database)
+    async def seed():
+        store=Store(url);await store.initialize()
+        try:await store.create_user('avatar.user',PasswordHasher().hash('avatar password'))
+        finally:await store.close()
+    asyncio.run(seed())
+    with sqlite3.connect(database) as connection:
+        for column in ('avatar_object_ref','avatar_mime','avatar_version'):
+            connection.execute(f'ALTER TABLE users DROP COLUMN {column}')
+    async def upgrade():
+        store=Store(url);await store.initialize()
+        try:
+            user=(await store.get_user_by_username('avatar.user'))[0]
+            assert user.avatar_version==0 and await store.get_user_avatar(user.id) is None
+        finally:await store.close()
+    asyncio.run(upgrade())
 
 
 def test_login_rate_limit_is_scoped_to_source_and_username(tmp_path):

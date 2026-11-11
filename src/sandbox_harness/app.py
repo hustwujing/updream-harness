@@ -25,7 +25,7 @@ from .auth import AUTH_COOKIE, AccountAuth, normalize_username
 from .catalog import HarnessCatalog
 from .config import Settings, load_settings, validate_service_settings
 from .observability import RequestLoggingMiddleware, telemetry, event
-from .domain import Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, RegisterRequest, MediaDraftCreate, MediaDraftUpdate, ProjectFileRename, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, valid_attachment_name, now
+from .domain import Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, RegisterRequest, UpdateAccountRequest, MediaDraftCreate, MediaDraftUpdate, ProjectFileRename, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, valid_attachment_name, now
 from .document_preview import is_presentation, presentation_pdf
 from .model_discovery import ModelDiscovery
 from .media_catalog import MediaCatalog
@@ -42,6 +42,15 @@ SAFE_INLINE_MIMES = {
     "image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp", "image/svg+xml",
     "text/plain", "application/pdf",
 }
+MAX_AVATAR_BYTES = 5 * 1024 * 1024
+
+
+def avatar_mime(data: bytes) -> str:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"): return "image/png"
+    if data.startswith(b"\xff\xd8\xff"): return "image/jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")): return "image/gif"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP": return "image/webp"
+    raise ValueError("Avatar must be PNG, JPEG, WebP or GIF")
 
 
 def media_group_has_executed_job(items: list[dict]) -> bool:
@@ -463,6 +472,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:raise HTTPException(422,str(exc))
         await store.update_password(account.id,password_hash,keep_token_hash=request.state.auth_token_hash)
         return {"changed":True}
+
+    @app.post("/api/auth/profile")
+    async def update_profile(value: UpdateAccountRequest, request: Request):
+        account = request.state.account
+        if not account: raise HTTPException(401, "authentication_required")
+        if request.state.ingress == "frpc" and value.username is not None:
+            raise HTTPException(403, "account_action_not_available")
+        if not await account_auth.verify_account(account, value.current_password):
+            raise HTTPException(401, "invalid_credentials")
+        try:
+            username = normalize_username(value.username) if value.username is not None else None
+            password_hash = await account_auth.hash_password(value.new_password) if value.new_password else None
+            updated = await store.update_account(account.id, username=username, password_hash=password_hash,
+                keep_token_hash=request.state.auth_token_hash)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+        return {"authenticated": True, "user": updated.model_dump(mode="json")}
+
+    @app.get("/api/auth/avatar")
+    async def get_avatar(request: Request):
+        account = request.state.account
+        if not account: raise HTTPException(401, "authentication_required")
+        value = await store.get_user_avatar(account.id)
+        if not value: raise HTTPException(404, "avatar_not_found")
+        object_ref, mime = value
+        data = await asyncio.to_thread(objects.get, object_ref, maximum=MAX_AVATAR_BYTES)
+        return Response(data, media_type=mime, headers={"Cache-Control":"private, no-store",
+            "Content-Security-Policy":"sandbox; default-src 'none'"})
+
+    @app.post("/api/auth/avatar")
+    async def set_avatar(request: Request):
+        account = request.state.account
+        if not account: raise HTTPException(401, "authentication_required")
+        if request.state.ingress == "frpc": raise HTTPException(403, "account_action_not_available")
+        data = await limited_body(request, MAX_AVATAR_BYTES)
+        try: mime = avatar_mime(data)
+        except ValueError as exc: raise HTTPException(422, str(exc))
+        object_ref, _ = await asyncio.to_thread(objects.put, data)
+        updated = await store.set_user_avatar(account.id, object_ref, mime)
+        return {"authenticated": True, "user": updated.model_dump(mode="json")}
+
+    @app.delete("/api/auth/avatar")
+    async def delete_avatar(request: Request):
+        account = request.state.account
+        if not account: raise HTTPException(401, "authentication_required")
+        if request.state.ingress == "frpc": raise HTTPException(403, "account_action_not_available")
+        updated = await store.set_user_avatar(account.id)
+        return {"authenticated": True, "user": updated.model_dump(mode="json")}
 
     @app.post("/api/threads")
     async def create_thread(value: ThreadCreate, request: Request):
