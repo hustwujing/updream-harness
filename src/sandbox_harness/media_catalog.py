@@ -6,6 +6,9 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 
+SUPPORTED_AUDIO_VOICES = ("male-qn-qingse",)
+
+
 @dataclass(frozen=True)
 class MediaModelSpec:
     kind: str
@@ -28,7 +31,7 @@ class MediaModelSpec:
                 "resolution": ["480p", "720p", "1080p"],
                 "aspect_ratio": ["16:9", "9:16", "1:1", "4:3", "3:4"],
                 "generate_audio": "boolean"}},
-            "audio": {"required": ["text"], "optional": {"voice_id": "string",
+            "audio": {"required": ["text"], "optional": {"voice_id": list(SUPPORTED_AUDIO_VOICES),
                 "speed": "number 0.5..2", "audio_format": ["mp3", "wav", "flac"]}},
         }[self.kind]
         return value
@@ -111,7 +114,7 @@ class MediaCatalog:
                 raise ValueError("generate_audio must be boolean")
         else:
             voice = parameters.get("voice_id", "male-qn-qingse")
-            if not isinstance(voice, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", voice):
+            if voice not in SUPPORTED_AUDIO_VOICES:
                 raise ValueError("Invalid audio voice")
             speed = parameters.get("speed", 1)
             if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not 0.5 <= speed <= 2:

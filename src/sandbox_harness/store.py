@@ -1714,6 +1714,9 @@ class Store:
                 raise RuntimeError("media_draft_already_confirmed")
             if row.status == "awaiting_confirmation":
                 row.status = "cancelled"; row.updated_at = now()
+                if row.turn_id:
+                    await db.execute(update(MediaBatchRow).where(MediaBatchRow.turn_id == row.turn_id,
+                        MediaBatchRow.status == "sealed").values(lease_expires_at=None, updated_at=now()))
         return self._media_draft_view(row)
 
     async def confirm_media_draft(self, draft_id: str, owner_id: str, *, provider_spec) -> MediaJobView:
@@ -1733,6 +1736,9 @@ class Store:
                 idempotency_key=draft.idempotency_key, output_role=draft.output_role,
                 created_at=now(), updated_at=now())
             db.add(job); draft.status = "confirmed"; draft.job_id = job.id; draft.updated_at = now()
+            if draft.turn_id:
+                await db.execute(update(MediaBatchRow).where(MediaBatchRow.turn_id == draft.turn_id,
+                    MediaBatchRow.status == "sealed").values(lease_expires_at=None, updated_at=now()))
         return self._media_job_view(job)
 
     async def get_media_job(self, job_id: str, owner_id: str) -> MediaJobView | None:
@@ -1858,7 +1864,9 @@ class Store:
                 return
             row.status = "continued" if delivered else "sealed"
             row.continued_at = now() if delivered else None
-            row.last_error = error[:2000]; row.lease_owner = ""; row.lease_expires_at = None; row.updated_at = now()
+            row.last_error = error[:2000]; row.lease_owner = ""
+            row.lease_expires_at = None if delivered else now() + timedelta(seconds=15)
+            row.updated_at = now()
             if delivered:
                 job_ids = select(MediaJobRow.id).where(MediaJobRow.turn_id == turn_id)
                 await db.execute(update(MediaOutboxRow).where(MediaOutboxRow.job_id.in_(job_ids)).values(
@@ -1925,6 +1933,9 @@ class Store:
             row.error_code = error_code; row.error_detail = error_detail; row.updated_at = now()
             if status in {"succeeded", "failed", "cancelled", "unknown"}:
                 row.lease_owner = ""; row.lease_expires_at = None
+                if row.turn_id:
+                    await db.execute(update(MediaBatchRow).where(MediaBatchRow.turn_id == row.turn_id,
+                        MediaBatchRow.status == "sealed").values(lease_expires_at=None, updated_at=now()))
                 if status == "succeeded" and output_object_ref and row.turn_id:
                     digest = output_object_ref.removeprefix("sha256:")
                     if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):

@@ -48,6 +48,7 @@ def test_media_parameters_accept_only_enabled_model_contract(kind, model, parame
     ("image", "seedream-5.0", {"prompt": "test", "provider_model": "bypass"}),
     ("video", "sed2", {"prompt": "test", "duration": 999}),
     ("audio", "speech-2.8-turbo", {"text": "test", "audio_format": "exe"}),
+    ("audio", "speech-2.8-turbo", {"text": "test", "voice_id": "Chinese_Mandarin_Explainer"}),
 ])
 def test_media_parameters_reject_invalid_or_provider_controlled_values(kind, model, parameters):
     with pytest.raises(ValueError):

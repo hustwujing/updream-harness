@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import tarfile
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -203,6 +204,37 @@ class MediaWorker:
         return ProviderResult("failed", provider_job_id=task_id, error="audio_timeout")
 
     @staticmethod
+    def _unwrap_provider_media(data: bytes, reported: str, expected_kind: str,
+                               maximum: int) -> tuple[bytes, str]:
+        normalized = reported.split(";", 1)[0].strip().lower()
+        if expected_kind != "audio" or normalized not in {"application/x-tar", "application/tar"}:
+            return data, reported
+        try:
+            with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
+                members = archive.getmembers()
+                if len(members) > 64:
+                    raise ValueError("provider_audio_archive_too_many_members")
+                extensions = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".flac": "audio/flac",
+                    ".m4a": "audio/mp4", ".mp4": "audio/mp4", ".ogg": "audio/ogg",
+                    ".webm": "audio/webm"}
+                candidates = [member for member in members if member.isfile()
+                    and os.path.splitext(member.name)[1].lower() in extensions]
+                if len(candidates) != 1:
+                    raise ValueError("provider_audio_archive_requires_one_audio_file")
+                member = candidates[0]
+                if member.size <= 0 or member.size > maximum:
+                    raise ValueError("provider_audio_archive_member_too_large")
+                stream = archive.extractfile(member)
+                if stream is None:
+                    raise ValueError("provider_audio_archive_member_missing")
+                payload = stream.read(maximum + 1)
+                if len(payload) != member.size or len(payload) > maximum:
+                    raise ValueError("provider_audio_archive_member_size_mismatch")
+                return payload, extensions[os.path.splitext(member.name)[1].lower()]
+        except tarfile.TarError as exc:
+            raise ValueError("provider_audio_archive_invalid") from exc
+
+    @staticmethod
     def _validated_mime(data: bytes, reported: str, expected_kind: str) -> str:
         detected = ""
         if data.startswith(b"\xff\xd8\xff"):
@@ -253,5 +285,10 @@ class MediaWorker:
             response = await client.get(url)
         response.raise_for_status()
         data = response.content
+        maximum = getattr(self.settings, "max_artifact_bytes", 2 * 1024 * 1024 * 1024)
+        if len(data) > maximum:
+            raise ValueError("provider_result_too_large")
+        data, reported = self._unwrap_provider_media(data,
+            response.headers.get("content-type", "application/octet-stream"), expected_kind, maximum)
         return data, self._validated_mime(data,
-            response.headers.get("content-type", "application/octet-stream"), expected_kind)
+            reported, expected_kind)

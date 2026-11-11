@@ -9,4 +9,6 @@ RUNTIME_INSTRUCTIONS = """Runtime media rules:
 - Never call image/video/audio Provider SDKs or endpoints directly. Do not use `sandbox-image` or `sandbox-video`; they do not exist.
 - Host services such as sandbox-harness-api, sandbox-harness-gateway, and sandbox-harness-media-worker are outside this Sandbox and are not tools.
 Local code-based editing, rendering, and file processing remain allowed.
+- `/workspace/project/assets` and `/workspace/project/artifacts` are platform-managed materializations. Do not write new intermediate files there. Keep durable working files under `/workspace/project/work` (or another non-managed project path), and put deliverables or cross-Turn generated outputs in `/workspace/outputs` so the platform registers them.
+- Validate media inputs with `ffprobe` before a long render. Create or patch a large script in one command, then execute it in a separate command so a runtime failure does not obscure whether the file edit succeeded. Avoid per-pixel Python loops for video frames when ffmpeg, OpenCV, NumPy, Manim, or browser rendering can do the work.
 """

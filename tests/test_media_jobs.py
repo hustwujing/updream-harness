@@ -1,4 +1,6 @@
 from datetime import timedelta
+import io
+import tarfile
 from types import SimpleNamespace
 
 import pytest
@@ -6,6 +8,7 @@ import pytest
 from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.domain import Harness, MediaDraftCreate, ThreadCreate, TurnCreate, TurnState, now
 from sandbox_harness.media_worker import MediaWorker
+from sandbox_harness.app import media_group_has_executed_job
 from sandbox_harness.store import ArtifactRow, MediaOutboxRow, Store
 
 
@@ -166,6 +169,7 @@ async def test_cancelled_media_only_batch_still_becomes_ready(tmp_path):
         await store.set_turn_state(turn.id, TurnState.COMPLETED)
         ready, group = await store.media_continuation_group(turn.id)
         assert ready is True and group[0]["status"] == "cancelled" and not group[0]["job_id"]
+        assert not media_group_has_executed_job(group)
         claimed = await store.claim_media_batches("dispatcher")
         assert claimed == [{"turn_id": turn.id, "thread_id": thread.id, "owner_id": owner}]
         await store.finish_media_batch(turn.id, "dispatcher", delivered=True)
@@ -182,6 +186,30 @@ def test_media_worker_corrects_bad_provider_mime_from_file_signature():
         "application/octet-stream", "image") == "image/jpeg"
     with pytest.raises(ValueError, match="mime_mismatch"):
         MediaWorker._validated_mime(b"not media", "application/x-tar", "audio")
+
+
+def test_media_worker_extracts_single_audio_member_from_provider_tar():
+    audio = b"ID3" + b"\0" * 32
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w") as value:
+        member = tarfile.TarInfo("result/audio.mp3"); member.size = len(audio)
+        value.addfile(member, io.BytesIO(audio))
+        metadata = b"timestamps"; member = tarfile.TarInfo("result/audio.titles"); member.size = len(metadata)
+        value.addfile(member, io.BytesIO(metadata))
+    payload, mime = MediaWorker._unwrap_provider_media(
+        archive.getvalue(), "application/x-tar", "audio", 1024)
+    assert payload == audio and mime == "audio/mpeg"
+    assert MediaWorker._validated_mime(payload, mime, "audio") == "audio/mpeg"
+
+
+def test_media_worker_rejects_ambiguous_provider_audio_tar():
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w") as value:
+        for name in ("one.mp3", "two.wav"):
+            payload = b"ID3"; member = tarfile.TarInfo(name); member.size = len(payload)
+            value.addfile(member, io.BytesIO(payload))
+    with pytest.raises(ValueError, match="one_audio_file"):
+        MediaWorker._unwrap_provider_media(archive.getvalue(), "application/x-tar", "audio", 1024)
 
 
 def test_media_draft_rejects_malformed_turn_id():

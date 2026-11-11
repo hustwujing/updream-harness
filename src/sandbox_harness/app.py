@@ -44,6 +44,10 @@ SAFE_INLINE_MIMES = {
 }
 
 
+def media_group_has_executed_job(items: list[dict]) -> bool:
+    return any(item.get("job_id") for item in items)
+
+
 def valid_filename(value: str) -> bool:
     return valid_attachment_name(value)
 
@@ -135,6 +139,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ready, jobs = await store.media_continuation_group(turn_id)
             if not ready:
                 raise RuntimeError("media_group_pending")
+            if not media_group_has_executed_job(jobs):
+                event("media.batch.ended_without_jobs", turn_id=turn_id,
+                    cancelled=sum(item["status"] == "cancelled" for item in jobs),
+                    expired=sum(item["status"] == "expired" for item in jobs))
+                return
             results = []
             for item in jobs:
                 candidate = (item["status"] == "succeeded" and item["output_role"] == "candidate"
