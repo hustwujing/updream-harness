@@ -198,29 +198,48 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         if rejected:result.partial_success.error_message="Telemetry queue capacity exceeded"
         return Response(content=result.SerializeToString(),status_code=503 if rows and rejected==len(rows) else 200,media_type="application/x-protobuf")
 
-    @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
-    async def proxy(path: str, request: Request):
-        route = "/" + path
-        token = token_from(request)
+    async def authorize_runtime_request(request: Request, route: str):
         try:
-            claims = codec.verify(token, route=route)
+            claims = codec.verify(token_from(request), route=route)
         except ValueError as exc:
             raise HTTPException(401, str(exc))
-        if not hasattr(request.state,"log_context"):request.state.log_context={}
-        request.state.log_context.update({"turn_id":claims.turn_id,"thread_id":claims.thread_id,"sandbox_id":claims.sandbox_id,"model":claims.model,"harness":claims.harness})
-        enrich(**request.state.log_context);add_link(claims.traceparent)
+        if not hasattr(request.state, "log_context"):
+            request.state.log_context = {}
+        request.state.log_context.update({"turn_id": claims.turn_id, "thread_id": claims.thread_id,
+            "sandbox_id": claims.sandbox_id, "model": claims.model, "harness": claims.harness})
+        enrich(**request.state.log_context); add_link(claims.traceparent)
         remaining = max(1, claims.expires_at - int(time.time()))
-        count = await redis.eval(
-            CONSUME_CAPABILITY,
-            2,
+        count = await redis.eval(CONSUME_CAPABILITY, 2,
             settings.redis_prefix + "capability:revoked:" + claims.nonce,
-            settings.redis_prefix + "capability:usage:" + claims.nonce,
-            remaining,
-        )
+            settings.redis_prefix + "capability:usage:" + claims.nonce, remaining)
         if count == -1:
             raise HTTPException(401, "Capability token revoked")
         if count > claims.max_requests:
             raise HTTPException(429, "Capability request limit reached")
+        return claims
+
+    @app.get("/v1/media/jobs/{job_id}")
+    async def runtime_media_job(job_id: str, request: Request):
+        claims = await authorize_runtime_request(request, "/v1/media/jobs")
+        value = await activity_store.get_media_job_for_thread(job_id, claims.thread_id)
+        if not value:
+            raise HTTPException(404, "Media job not found")
+        return value
+
+    @app.post("/v1/media/jobs/{job_id}/cancel")
+    async def runtime_cancel_media_job(job_id: str, request: Request):
+        claims = await authorize_runtime_request(request, "/v1/media/jobs")
+        try:
+            return await activity_store.request_media_cancel_for_thread(job_id, claims.thread_id)
+        except KeyError:
+            raise HTTPException(404, "Media job not found")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+
+    @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+    async def proxy(path: str, request: Request):
+        route = "/" + path
+        claims = await authorize_runtime_request(request, route)
         prefix = next((candidate for candidate in sorted(upstreams, key=len, reverse=True) if route == candidate or route.startswith(candidate + "/")), None)
         if not prefix:
             raise HTTPException(404, "Gateway route is not configured")

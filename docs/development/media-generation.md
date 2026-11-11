@@ -69,7 +69,8 @@ Provider cancellation becomes `CANCEL_UNKNOWN`.
 The model-facing CLI is a thin client: `sandbox-media prepare`, `status` and
 `cancel`. It does not persist state, confirm a draft or call Providers
 directly. Draft editing and confirmation remain owner-scoped API/UI actions.
-Progress travels
+Status and cancel use the Turn Capability through Gateway and are restricted to
+Jobs in that Capability's Thread. Progress travels
 through durable events and SSE; the model is resumed only at terminal state.
 
 In-progress cards use distinct animation: image skeleton/shimmer, video

@@ -34,7 +34,7 @@ def test_media_cli_prepare_has_no_network_side_effect(monkeypatch, capsys):
 
 def test_media_cli_status_uses_get_and_cancel_uses_post(tmp_path, monkeypatch):
     token = tmp_path / "token"; token.write_text("x" * 32)
-    monkeypatch.setenv("HARNESS_MEDIA_API_URL", "http://media.test")
+    monkeypatch.setenv("HARNESS_GATEWAY_URL", "http://gateway.test")
     monkeypatch.setenv("HARNESS_CAPABILITY_TOKEN_FILE", str(token))
     calls = []
     monkeypatch.setattr(media_cli.httpx, "get", lambda url, **kwargs: calls.append(("GET", url)) or Response())
@@ -42,6 +42,6 @@ def test_media_cli_status_uses_get_and_cancel_uses_post(tmp_path, monkeypatch):
     assert media_cli.main(["status", "--job-id", "job-1"]) == 0
     assert media_cli.main(["cancel", "--job-id", "job-1"]) == 0
     assert calls == [
-        ("GET", "http://media.test/api/media/jobs/job-1"),
-        ("POST", "http://media.test/api/media/jobs/job-1/cancel"),
+        ("GET", "http://gateway.test/v1/media/jobs/job-1"),
+        ("POST", "http://gateway.test/v1/media/jobs/job-1/cancel"),
     ]

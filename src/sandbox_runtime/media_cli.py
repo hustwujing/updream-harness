@@ -28,13 +28,13 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"action": "prepare", "kind": args.kind, "model": args.model,
                           "parameters": parameters, "requires_confirmation": True}, ensure_ascii=False))
         return 0
-    base = os.environ.get("HARNESS_MEDIA_API_URL", "").rstrip("/")
+    base = os.environ.get("HARNESS_GATEWAY_URL", "").rstrip("/")
     token_file = os.environ.get("HARNESS_CAPABILITY_TOKEN_FILE", "/run/harness/capability-token")
     if not base:
-        print(json.dumps({"error": "HARNESS_MEDIA_API_URL is not configured"}), ensure_ascii=False)
+        print(json.dumps({"error": "HARNESS_GATEWAY_URL is not configured"}), ensure_ascii=False)
         return 2
     token = open(token_file, encoding="utf-8").read().strip()
-    path = f"/api/media/jobs/{args.job_id}" + ("/cancel" if args.command == "cancel" else "")
+    path = f"/v1/media/jobs/{args.job_id}" + ("/cancel" if args.command == "cancel" else "")
     request = httpx.get if args.command == "status" else httpx.post
     response = request(base + path, headers={"Authorization": "Bearer " + token}, timeout=20)
     print(response.text)

@@ -1641,6 +1641,13 @@ class Store:
             artifact_ids = await self._media_artifact_ids(db, row) if row else []
         return self._media_job_view(row, artifact_ids) if row else None
 
+    async def get_media_job_for_thread(self, job_id: str, thread_id: str) -> MediaJobView | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
+                MediaJobRow.thread_id == thread_id))).scalar_one_or_none()
+            artifact_ids = await self._media_artifact_ids(db, row) if row else []
+        return self._media_job_view(row, artifact_ids) if row else None
+
     async def list_media_jobs(self, thread_id: str, owner_id: str) -> list[MediaJobView]:
         async with self.connections() as db:
             rows = (await db.execute(select(MediaJobRow).where(MediaJobRow.thread_id == thread_id,
@@ -1659,6 +1666,18 @@ class Store:
         async with self.connections.begin() as db:
             row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
                 MediaJobRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
+            if not row: raise KeyError("media_job_not_found")
+            if not (row.execution_mode == "async" and row.cancellation_mode == "supported"):
+                raise RuntimeError("media_cancel_not_supported")
+            if row.status in {"succeeded", "failed", "cancelled"}:
+                return self._media_job_view(row)
+            row.status = "cancel_requested"; row.updated_at = now()
+        return self._media_job_view(row)
+
+    async def request_media_cancel_for_thread(self, job_id: str, thread_id: str) -> MediaJobView:
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
+                MediaJobRow.thread_id == thread_id).with_for_update())).scalar_one_or_none()
             if not row: raise KeyError("media_job_not_found")
             if not (row.execution_mode == "async" and row.cancellation_mode == "supported"):
                 raise RuntimeError("media_cancel_not_supported")

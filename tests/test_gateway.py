@@ -42,6 +42,33 @@ async def test_gateway_closes_stream_after_idle_timeout():
     assert rows == [b"first"]
 
 
+async def test_gateway_media_status_is_capability_and_thread_scoped(tmp_path, monkeypatch):
+    from starlette.requests import Request
+    import sandbox_harness.gateway as gateway
+    from sandbox_harness.capability import CapabilityCodec
+    from sandbox_harness.config import Settings
+    from sandbox_harness.domain import Harness
+    calls = []
+    class Redis:
+        async def eval(self, *args): return 1
+    class Store:
+        def __init__(self, *args, **kwargs): pass
+        async def get_media_job_for_thread(self, job_id, thread_id):
+            calls.append((job_id, thread_id)); return {"id": job_id, "status": "running"}
+    monkeypatch.setattr(gateway.Redis, "from_url", lambda *args, **kwargs: Redis())
+    monkeypatch.setattr(gateway, "Store", Store)
+    settings = Settings(backend="fake", database_url="sqlite+aiosqlite:///" + str(tmp_path / "gateway.db"))
+    app = gateway.create_gateway(settings)
+    token, _ = CapabilityCodec(settings.gateway_signing_key).issue(thread_id="thread-1", turn_id="turn-1",
+        sandbox_id="sandbox-1", harness=Harness.CODEX, model="gpt-5.6", routes=["/v1/media"],
+        ttl_seconds=60, max_requests=10, max_public_requests=1, token_budget=1000)
+    request = Request({"type": "http", "method": "GET", "path": "/v1/media/jobs/job-1",
+        "query_string": b"", "headers": [(b"authorization", ("Bearer " + token).encode())]})
+    endpoint = next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/v1/media/jobs/{job_id}")
+    assert await endpoint("job-1", request) == {"id": "job-1", "status": "running"}
+    assert calls == [("job-1", "thread-1")]
+
+
 async def test_terminal_model_step_is_saved_before_last_frame_is_forwarded(tmp_path, monkeypatch):
     import httpx,json
     from starlette.requests import Request
