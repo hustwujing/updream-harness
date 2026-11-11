@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {Download} from 'lucide-react';
 import {apiUrl} from './api';
+import {previewable} from './file-preview';
 
 export function workspaceFile(href,artifacts,files){
  let path;try{path=decodeURIComponent(href||'')}catch{return null}
@@ -11,11 +12,11 @@ export function workspaceFile(href,artifacts,files){
  const output=path.replace(/^\/workspace\/outputs\//,'');
  if(output!==path){
   const artifact=artifacts.find(item=>item.summary===output&&item.payload?.artifact_id);
-  if(artifact)return {name:output,mime:artifact.payload.mime||'application/octet-stream',download:apiUrl(`artifacts/${artifact.payload.artifact_id}`)};
+  if(artifact)return {id:artifact.payload.artifact_id,source:'artifact',name:output,mime:artifact.payload.mime||'application/octet-stream',download:apiUrl(`artifacts/${artifact.payload.artifact_id}`),previewUrl:apiUrl(`previews/artifact/${artifact.payload.artifact_id}`)};
  }
  const managed=path.replace(/^\/workspace\/project\//,'');
  const file=files.find(item=>item.path===managed || (output!==path&&item.path===`artifacts/${output}`));
- return file?{name:file.path,mime:file.mime,download:apiUrl(`project-files/${file.id}`)}:null;
+ return file?{id:file.id,source:'project-file',name:file.path,mime:file.mime,download:apiUrl(`project-files/${file.id}`),previewUrl:apiUrl(`previews/project-file/${file.id}`)}:null;
 }
 
 export default function AgentMarkdown({text,artifacts,files,onPreview}){
@@ -23,7 +24,7 @@ export default function AgentMarkdown({text,artifacts,files,onPreview}){
   a:({href,children})=>{
    const file=workspaceFile(href,artifacts,files);
    if(file){
-    const preview=/^(image\/(png|jpeg|gif|webp|avif)|video\/|text\/plain)/.test(file.mime);
+    const preview=previewable(file);
     const open=event=>{if(preview){event.preventDefault();onPreview({...file,url:`${file.download}?inline=true`})}};
     return <span className="message-file"><a href={file.download} onClick={open} download={!preview}>{children}</a>{preview&&<a className="message-download" href={file.download} download title="下载文件" aria-label={`下载 ${file.name}`}><Download size={13}/></a>}</span>;
    }

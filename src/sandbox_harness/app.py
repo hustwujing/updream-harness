@@ -26,6 +26,7 @@ from .catalog import HarnessCatalog
 from .config import Settings, load_settings, validate_service_settings
 from .observability import RequestLoggingMiddleware, telemetry, event
 from .domain import Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, MediaDraftCreate, MediaDraftUpdate, ProjectFileRename, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, valid_attachment_name, now
+from .document_preview import is_presentation, presentation_pdf
 from .model_discovery import ModelDiscovery
 from .media_catalog import MediaCatalog
 from .objects import object_store
@@ -38,8 +39,8 @@ from .store import Store
 logger = logging.getLogger(__name__)
 
 SAFE_INLINE_MIMES = {
-    "image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp",
-    "text/plain",
+    "image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp", "image/svg+xml",
+    "text/plain", "application/pdf",
 }
 
 
@@ -696,6 +697,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return Response(data, media_type=value.mime if safe_inline or not inline else "application/octet-stream",
             headers={"Content-Disposition": content_disposition(filename, inline=safe_inline),
                      "Content-Security-Policy": "sandbox; default-src 'none'"})
+
+    @app.get("/api/previews/{source}/{file_id}")
+    async def document_preview(source: str, file_id: str, request: Request):
+        if source == "artifact":
+            value = await store.get_artifact_for_owner(file_id, request.state.owner_id)
+            maximum = settings.max_artifact_bytes
+            filename = Path(value.path).name if value else ""
+        elif source == "project-file":
+            value = await store.get_project_file_for_owner(file_id, request.state.owner_id)
+            maximum = (settings.max_attachment_bytes if value and value.source_type == "upload"
+                else settings.max_artifact_bytes)
+            filename = Path(value.path).name if value else ""
+        else:
+            raise HTTPException(404, "Preview source not found")
+        if not value:
+            raise HTTPException(404, "Preview file not found")
+        if not is_presentation(filename, value.mime):
+            raise HTTPException(415, "Preview format is not supported by this endpoint")
+        data = await asyncio.to_thread(objects.get, value.object_ref, maximum=maximum)
+        try:
+            pdf = await asyncio.to_thread(presentation_pdf, data, filename=filename, mime=value.mime,
+                digest=value.sha256, cache_root=settings.data_root / "preview-cache", maximum=maximum)
+        except (ValueError, RuntimeError) as exc:
+            event("document.preview.failed", level=40, source=source, file_id=file_id,
+                exception_type=type(exc).__name__)
+            raise HTTPException(422, str(exc))
+        return Response(pdf, media_type="application/pdf",
+            headers={"Content-Disposition": content_disposition(Path(filename).stem + ".pdf", inline=True),
+                     "Content-Security-Policy": "sandbox; default-src 'none'",
+                     "Cache-Control": "private, max-age=3600"})
 
     @app.post("/api/project-files/{file_id}/rename")
     async def rename_project_file(file_id: str, value: ProjectFileRename, request: Request):

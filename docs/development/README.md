@@ -29,6 +29,7 @@ Every code change requires:
 | Public network or proxy policy | [Gateway, security and Providers](gateway-security-providers.md), [Changing public network policy](change-public-network-policy.md) |
 | Account, Cookie, ingress or FRPC authentication | [Authentication and ingress](authentication-and-ingress.md), [Database migrations](database-migration.md) |
 | API, SSE or browser behavior | [API and frontend](api-and-frontend.md), [State and data contracts](state-and-data-contracts.md) when persistence changes |
+| Upload, file card or online document preview | [File upload and preview](file-upload-and-preview.md), [API and frontend](api-and-frontend.md) |
 | Logging, tracing or error reporting | [Recovery and observability](recovery-and-observability.md) and [observability contract](../observability.md) |
 | Deployment, service unit, image or environment change | [Deployment and collaboration](deployment-and-collaboration.md) |
 

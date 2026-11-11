@@ -2878,6 +2878,19 @@ wheels = [
 ]
 
 [[package]]
+name = "python-docx"
+version = "1.2.0"
+source = { registry = "http://mirrors.cloud.aliyuncs.com/pypi/simple/" }
+dependencies = [
+    { name = "lxml" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "http://mirrors.cloud.aliyuncs.com/pypi/packages/a9/f7/eddfe33871520adab45aaa1a71f0402a2252050c14c7e3009446c8f4701c/python_docx-1.2.0.tar.gz", hash = "sha256:7bc9d7b7d8a69c9c02ca09216118c86552704edc23bac179283f2e38f86220ce" }
+wheels = [
+    { url = "http://mirrors.cloud.aliyuncs.com/pypi/packages/d0/00/1e03a4989fa5795da308cd774f05b704ace555a70f9bf9d3be057b680bcf/python_docx-1.2.0-py3-none-any.whl", hash = "sha256:3fd478f3250fbbbfd3b94fe1e985955737c145627498896a8a6bf81f4baf66c7" },
+]
+
+[[package]]
 name = "python-dotenv"
 version = "1.2.4"
 source = { registry = "http://mirrors.cloud.aliyuncs.com/pypi/simple/" }
@@ -3311,8 +3324,12 @@ runtime-media = [
     { name = "xmltodict" },
 ]
 test = [
+    { name = "openpyxl" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "python-docx" },
+    { name = "python-pptx" },
+    { name = "reportlab" },
 ]
 
 [package.metadata]
@@ -3348,6 +3365,7 @@ requires-dist = [
     { name = "openai", marker = "extra == 'runtime-media'", specifier = ">=2,<3" },
     { name = "opencv-python-headless", marker = "extra == 'runtime-media'", specifier = ">=4.10,<5" },
     { name = "openpyxl", marker = "extra == 'runtime-media'", specifier = ">=3.1,<4" },
+    { name = "openpyxl", marker = "extra == 'test'", specifier = ">=3.1,<4" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = "==1.45.2" },
     { name = "opentelemetry-sdk", specifier = "==1.45.2" },
     { name = "pandas", marker = "extra == 'runtime-media'", specifier = ">=2.2,<4" },
@@ -3366,11 +3384,14 @@ requires-dist = [
     { name = "pytesseract", marker = "extra == 'runtime-media'", specifier = ">=0.3,<1" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3,<9" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.25,<1" },
+    { name = "python-docx", marker = "extra == 'test'", specifier = ">=1.1,<2" },
     { name = "python-pptx", marker = "extra == 'runtime-media'", specifier = ">=1.0.2,<2" },
+    { name = "python-pptx", marker = "extra == 'test'", specifier = ">=1.0.2,<2" },
     { name = "pyyaml", marker = "extra == 'runtime-media'", specifier = ">=6,<7" },
     { name = "redis", specifier = ">=5,<7" },
     { name = "rembg", extras = ["cpu"], marker = "extra == 'runtime-media'", specifier = ">=2.0.65,<3" },
     { name = "reportlab", marker = "extra == 'runtime-media'", specifier = ">=4.3,<5" },
+    { name = "reportlab", marker = "extra == 'test'", specifier = ">=4.3,<5" },
     { name = "requests", marker = "extra == 'runtime-media'", specifier = ">=2.31,<3" },
     { name = "scikit-image", marker = "extra == 'runtime-media'", specifier = ">=0.25,<1" },
     { name = "scikit-learn", marker = "extra == 'runtime-media'", specifier = ">=1.6,<2" },
