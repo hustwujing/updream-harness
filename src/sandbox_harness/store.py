@@ -1306,6 +1306,23 @@ class Store:
     def project_file_view(row: ProjectFileRow) -> ProjectFile:
         return ProjectFile.model_validate({key: getattr(row, key) for key in ProjectFile.model_fields})
 
+    @staticmethod
+    async def _register_project_file_locked(db: AsyncSession, thread_id: str, *, path: str,
+                                            source_type: str, source_turn_id: str, sha256: str,
+                                            size: int, mime: str, object_ref: str) -> tuple[ProjectFileRow, bool]:
+        await db.execute(update(ThreadRow).where(ThreadRow.id == thread_id).values(updated_at=ThreadRow.updated_at))
+        latest = (await db.execute(select(ProjectFileRow).where(
+            ProjectFileRow.thread_id == thread_id, ProjectFileRow.path == path,
+        ).order_by(ProjectFileRow.version.desc()).limit(1).with_for_update())).scalar_one_or_none()
+        if latest and latest.sha256 == sha256 and not latest.deleted:
+            return latest, False
+        row = ProjectFileRow(id=identifier(), thread_id=thread_id, path=path,
+            version=(latest.version + 1 if latest else 1), source_type=source_type,
+            source_turn_id=source_turn_id, sha256=sha256, size=size, mime=mime,
+            object_ref=object_ref, created_at=now())
+        db.add(row)
+        return row, True
+
     async def register_project_file(self, thread_id: str, *, path: str, source_type: str,
                                     source_turn_id: str, sha256: str, size: int, mime: str,
                                     object_ref: str, lease_owner: str | None = None,
@@ -1313,20 +1330,12 @@ class Store:
         if not valid_project_file_path(path, source_type):
             raise ValueError("Invalid managed project path")
         async with self.connections.begin() as db:
-            await db.execute(update(ThreadRow).where(ThreadRow.id == thread_id).values(updated_at=ThreadRow.updated_at))
             if lease_owner is not None:
                 await self.require_lease(db, source_turn_id, lease_owner, recovery_generation)
-            latest = (await db.execute(select(ProjectFileRow).where(
-                ProjectFileRow.thread_id == thread_id, ProjectFileRow.path == path,
-            ).order_by(ProjectFileRow.version.desc()).limit(1).with_for_update())).scalar_one_or_none()
-            if latest and latest.sha256 == sha256 and not latest.deleted:
-                return self.project_file_view(latest), False
-            row = ProjectFileRow(id=identifier(), thread_id=thread_id, path=path,
-                version=(latest.version + 1 if latest else 1), source_type=source_type,
-                source_turn_id=source_turn_id, sha256=sha256, size=size, mime=mime,
-                object_ref=object_ref, created_at=now())
-            db.add(row)
-        return self.project_file_view(row), True
+            row, created = await self._register_project_file_locked(db, thread_id, path=path,
+                source_type=source_type, source_turn_id=source_turn_id, sha256=sha256,
+                size=size, mime=mime, object_ref=object_ref)
+        return self.project_file_view(row), created
 
     async def current_project_files(self, thread_id: str, owner_id: str | None = None) -> list[ProjectFile]:
         async with self.connections() as db:
@@ -1569,6 +1578,14 @@ class Store:
             cancel_reason=reason, artifact_ids=artifact_ids or [])
 
     @staticmethod
+    def _media_project_path(job_id: str, mime: str) -> str:
+        extension = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp",
+            "video/mp4": "mp4", "video/webm": "webm", "audio/mpeg": "mp3",
+            "audio/wav": "wav", "audio/flac": "flac", "audio/mp4": "m4a",
+            "audio/webm": "webm"}.get(mime, "bin")
+        return f"artifacts/media/{job_id}.{extension}"
+
+    @staticmethod
     async def _media_artifact_ids(db: AsyncSession, row: MediaJobRow) -> list[str]:
         if not row.turn_id:
             return []
@@ -1702,6 +1719,7 @@ class Store:
             "kind": row.kind, "model": row.model, "status": row.status,
             "output_object_ref": row.output_object_ref, "output_mime": row.output_mime,
             "output_size": row.output_size, "error_code": row.error_code,
+            "project_path": self._media_project_path(row.id, row.output_mime) if row.output_object_ref else "",
         } for row in rows]
 
     async def request_media_cancel(self, job_id: str, owner_id: str) -> MediaJobView:
@@ -1769,6 +1787,11 @@ class Store:
                         db.add(ArtifactRow(id=identifier(), turn_id=row.turn_id, path=path,
                             sha256=digest, size=output_size, mime=output_mime or "application/octet-stream",
                             object_ref=output_object_ref, created_at=now()))
+                    project_path = self._media_project_path(row.id, output_mime)
+                    await self._register_project_file_locked(db, row.thread_id, path=project_path,
+                        source_type="artifact", source_turn_id=row.turn_id, sha256=digest,
+                        size=output_size, mime=output_mime or "application/octet-stream",
+                        object_ref=output_object_ref)
                 existing = (await db.execute(select(MediaOutboxRow).where(
                     MediaOutboxRow.job_id == row.id, MediaOutboxRow.event_type == "media.job.terminal"))).scalar_one_or_none()
                 if not existing:

@@ -135,21 +135,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not ready:
                 raise RuntimeError("media_group_pending")
             results = []
-            extensions = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp",
-                "video/mp4": "mp4", "video/webm": "webm", "audio/mpeg": "mp3",
-                "audio/wav": "wav", "audio/flac": "flac", "audio/mp4": "m4a", "audio/webm": "webm"}
             for job in jobs:
-                path = ""
-                reference = job["output_object_ref"]
-                if job["status"] == "succeeded" and reference.startswith("sha256:"):
-                    extension = extensions.get(job["output_mime"], "bin")
-                    path = f"artifacts/media/{job['id']}.{extension}"
-                    await store.register_project_file(job["thread_id"], path=path, source_type="artifact",
-                        source_turn_id=turn_id, sha256=reference.removeprefix("sha256:"),
-                        size=int(job["output_size"] or 0), mime=job["output_mime"] or "application/octet-stream",
-                        object_ref=reference)
                 results.append({"job_id": job["id"], "kind": job["kind"], "model": job["model"],
-                    "status": job["status"], "path": "/workspace/project/" + path if path else "",
+                    "status": job["status"], "path": "/workspace/project/" + job["project_path"] if job["project_path"] else "",
                     "error": job["error_code"] or ""})
             message = ("[media_group_completed] Continue the original user task using these media results: "
                 + json.dumps(results, ensure_ascii=False, sort_keys=True))

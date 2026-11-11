@@ -44,6 +44,9 @@ async def test_media_draft_confirm_is_idempotent_and_snapshots_provider(tmp_path
             output_object_ref="sha256:" + "1" * 64, output_mime="video/mp4", output_size=1234)
         ready, group = await store.media_continuation_group(turn.id)
         assert ready is True and [item["id"] for item in group] == [first.id]
+        assert group[0]["project_path"] == f"artifacts/media/{first.id}.mp4"
+        project_files = await store.current_project_files(thread.id, owner)
+        assert [item.path for item in project_files] == [f"artifacts/media/{first.id}.mp4"]
         completed = await store.get_media_job(first.id, owner)
         listed = await store.list_media_jobs(thread.id, owner)
         assert completed and len(completed.artifact_ids) == 1
