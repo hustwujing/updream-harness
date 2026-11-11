@@ -6,7 +6,7 @@ ENV SANDBOX_HARNESS_RELEASE=${RELEASE}
 WORKDIR /opt/platform
 COPY . /opt/platform
 RUN pip install --no-cache-dir --trusted-host mirrors.cloud.aliyuncs.com --index-url ${PYPI_INDEX} '.[runtime-media]' && \
-    pip install --no-cache-dir --no-deps runtime/skills/image-to-editable-ppt/cli && \
+    pip install --no-cache-dir --no-deps --trusted-host mirrors.cloud.aliyuncs.com --index-url ${PYPI_INDEX} runtime/skills/image-to-editable-ppt/cli && \
     rm -f /usr/local/bin/sandbox-harness-api /usr/local/bin/sandbox-harness-gateway \
       /usr/local/bin/sandbox-harness-media-worker /usr/local/bin/sandbox-harness-logs \
       /usr/local/bin/sandbox-harness-user && \
