@@ -133,7 +133,10 @@ async def test_turn_heartbeat_renews_active_sandbox_expiration(tmp_path):
         sandbox = await backend.create(Harness.CODEX, "", {"sandbox-harness.io/turn": turn.id}, {})
         broker.active_sandboxes[turn.id] = sandbox
         heartbeat = asyncio.create_task(broker._heartbeat(turn.id, claimed.recovery_generation))
-        await asyncio.sleep(2.1)
+        for _ in range(50):
+            if backend.renewed:
+                break
+            await asyncio.sleep(0.1)
         heartbeat.cancel(); await asyncio.gather(heartbeat, return_exceptions=True)
         assert backend.renewed
     finally:
