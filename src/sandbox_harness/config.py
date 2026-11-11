@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     upstream_video: str = ""
     upstream_audio: str = ""
     media_catalog_json: str = ""
+    media_worker_concurrency: int = Field(default=6, ge=1, le=32)
     model_routes_json: str = ""
     harness_catalog_json: str = ""
     model_catalog_discovery: bool = True

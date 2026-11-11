@@ -36,16 +36,32 @@ class MediaWorker:
         self.catalog = catalog
         self.owner = "media-worker-" + uuid.uuid4().hex
         self.stop_event = asyncio.Event()
+        self.concurrency = getattr(settings, "media_worker_concurrency", 6)
 
     async def run(self) -> None:
-        while not self.stop_event.is_set():
-            jobs = await self.store.claim_media_jobs(self.owner)
-            if jobs:
-                await asyncio.gather(*(self.process(job) for job in jobs), return_exceptions=True)
-            try:
-                await asyncio.wait_for(self.stop_event.wait(), timeout=2)
-            except asyncio.TimeoutError:
-                pass
+        active: set[asyncio.Task] = set()
+        try:
+            while not self.stop_event.is_set():
+                finished = {task for task in active if task.done()}
+                active.difference_update(finished)
+                for task in finished:
+                    if not task.cancelled() and task.exception():
+                        event("media.worker.task_failed", level=40,
+                            exception_type=type(task.exception()).__name__)
+                available = self.concurrency - len(active)
+                if available > 0:
+                    jobs = await self.store.claim_media_jobs(self.owner, limit=available)
+                    for job in jobs:
+                        active.add(asyncio.create_task(self.process(job), name="media-job-" + job["id"]))
+                try:
+                    await asyncio.wait_for(self.stop_event.wait(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    pass
+        finally:
+            for task in active:
+                task.cancel()
+            if active:
+                await asyncio.gather(*active, return_exceptions=True)
 
     async def process(self, job: dict[str, Any]) -> None:
         stage = "claimed"

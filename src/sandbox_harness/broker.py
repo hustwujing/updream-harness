@@ -324,7 +324,8 @@ class Broker:
         return await self.runtime.cancel_background_job(sandbox, job_id)
 
     @observed("turn.submit")
-    async def submit(self, thread_id: str, value: TurnCreate, *, network_access: str = "restricted") -> TurnView:
+    async def submit(self, thread_id: str, value: TurnCreate, *, network_access: str = "restricted",
+                     internal: bool = False) -> TurnView:
         if sum(item.size for item in value.attachments) > self.settings.max_attachment_bytes:
             raise ValueError("Attachments exceed the Turn byte limit")
         thread = await self.store.get_thread(thread_id)
@@ -335,7 +336,7 @@ class Broker:
         resolved = self.catalog.resolve(thread.harness, value.model or thread.model,
             value.reasoning_level or thread.reasoning_level)
         turn, created, start_now = await self.store.create_turn(thread_id, value, resolved, thread.owner_id,
-            traceparent=carrier().get("traceparent", ""), network_access=network_access)
+            traceparent=carrier().get("traceparent", ""), network_access=network_access, internal=internal)
         event("turn.accepted",thread_id=thread_id,turn_id=turn.id,harness=turn.harness,model=turn.model,reasoning_effort=turn.reasoning_effort,reused=not created,state=turn.state)
         if created and start_now:
             self._schedule(turn.id)

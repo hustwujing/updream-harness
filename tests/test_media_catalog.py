@@ -12,6 +12,9 @@ def test_default_catalog_contains_only_real_probe_models():
         ("video", "sed2"),
         ("audio", "speech-2.8-turbo"),
     }
+    schemas = {item["kind"]: item["parameter_schema"] for item in catalog.public()}
+    assert "aspect_ratio" in schemas["video"]["optional"] and "ratio" not in schemas["video"]["optional"]
+    assert "voice_id" in schemas["audio"]["optional"] and "voice_setting" not in schemas["audio"]["optional"]
 
 
 def test_catalog_rejects_sync_cancellation():

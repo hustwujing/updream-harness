@@ -22,6 +22,15 @@ class MediaModelSpec:
     def public(self) -> dict[str, Any]:
         value = asdict(self)
         value.pop("credential_env", None)
+        value["parameter_schema"] = {
+            "image": {"required": ["prompt"], "optional": {"size": "256x256..4096x4096"}},
+            "video": {"required": ["prompt"], "optional": {"duration": "integer 1..12",
+                "resolution": ["480p", "720p", "1080p"],
+                "aspect_ratio": ["16:9", "9:16", "1:1", "4:3", "3:4"],
+                "generate_audio": "boolean"}},
+            "audio": {"required": ["text"], "optional": {"voice_id": "string",
+                "speed": "number 0.5..2", "audio_format": ["mp3", "wav", "flac"]}},
+        }[self.kind]
         return value
 
 

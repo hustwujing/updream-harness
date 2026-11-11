@@ -6,6 +6,26 @@ from sandbox_harness.store import Store, ThreadRow, TurnRow, valid_project_file_
 import pytest
 
 
+async def test_internal_turn_is_auditable_but_marked_hidden_from_user_chat(tmp_path):
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "internal-turn.db")); await store.initialize()
+    try:
+        catalog = HarnessCatalog(); profile = catalog.resolve("codex", "gpt-5.6", "standard"); owner = "a" * 64
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CODEX, model=profile.model,
+            reasoning_level="standard", title="Internal"), profile, owner)
+        value = TurnCreate(message="[media_group_completed] payload",
+            idempotency_key="media-continuation-test", delivery_mode="queue")
+        turn, created, _ = await store.create_turn(thread.id, value, profile, owner, internal=True)
+        assert created and turn.internal
+        item = (await store.items_after(thread.id))[0]
+        assert item.type == ItemType.USER_MESSAGE and item.payload["internal"] is True
+        duplicate, created, _ = await store.create_turn(thread.id, value, profile, owner, internal=True)
+        assert not created and duplicate.id == turn.id
+        with pytest.raises(RuntimeError, match="idempotency_conflict"):
+            await store.create_turn(thread.id, value, profile, owner, internal=False)
+    finally:
+        await store.close()
+
+
 async def test_thread_turn_items_and_idempotency(tmp_path):
     store = Store("sqlite+aiosqlite:///" + str(tmp_path / "store.db"))
     await store.initialize()

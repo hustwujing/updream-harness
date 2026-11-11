@@ -96,3 +96,22 @@ async def test_requesting_job_without_provider_id_becomes_unknown(monkeypatch):
 def test_media_worker_lease_owner_is_instance_unique():
     first = worker(); second = worker()
     assert first.owner.startswith("media-worker-") and first.owner != second.owner
+
+
+@pytest.mark.asyncio
+async def test_media_worker_refills_free_slot_without_waiting_for_long_batch(monkeypatch):
+    class QueueStore(Store):
+        def __init__(self):
+            super().__init__(); self.jobs = [{"id": value} for value in ("long", "quick", "next")]
+        async def claim_media_jobs(self, owner, limit):
+            claimed, self.jobs = self.jobs[:limit], self.jobs[limit:]
+            return claimed
+    store = QueueStore(); value = worker(store); value.concurrency = 2
+    started, release = [], __import__('asyncio').Event()
+    async def process(job):
+        started.append(job["id"])
+        if job["id"] == "long": await release.wait()
+        if job["id"] == "next": value.stop_event.set()
+    monkeypatch.setattr(value, "process", process)
+    await __import__('asyncio').wait_for(value.run(), 2)
+    assert started[:2] == ["long", "quick"] and "next" in started

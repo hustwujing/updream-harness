@@ -150,7 +150,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 + json.dumps(results, ensure_ascii=False, sort_keys=True))
             await broker.submit(batch["thread_id"], TurnCreate(message=message,
                 idempotency_key=f"media-continuation-{turn_id}", delivery_mode="queue"),
-                network_access="restricted")
+                network_access="restricted", internal=True)
         async def dispatch_media_outbox():
             while not media_outbox_stop.is_set():
                 for batch in await store.claim_media_batches(media_outbox_owner):

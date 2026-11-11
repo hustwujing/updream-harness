@@ -40,7 +40,10 @@ async def test_media_draft_confirm_is_idempotent_and_snapshots_provider(tmp_path
         assert {item.id for item in await store.list_media_drafts(thread.id, owner)} == {draft.id, cancellable.id}
         claimed = await store.claim_media_jobs("worker")
         assert claimed[0]["id"] == first.id
-        await store.update_media_job(first.id, "worker", status="succeeded", phase="committed",
+        assert await store.release_media_job_leases("worker") == 1
+        reclaimed = await store.claim_media_jobs("worker-restarted")
+        assert reclaimed[0]["id"] == first.id
+        await store.update_media_job(first.id, "worker-restarted", status="succeeded", phase="committed",
             output_object_ref="sha256:" + "1" * 64, output_mime="video/mp4", output_size=1234)
         ready, _ = await store.media_continuation_group(turn.id)
         assert ready is False

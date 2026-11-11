@@ -1,0 +1,35 @@
+const {chromium}=require('playwright');
+const assert=require('node:assert/strict');
+
+(async()=>{let browser;try{
+ browser=await chromium.launch({headless:true,args:['--no-sandbox'],ignoreDefaultArgs:['--disable-dev-shm-usage']});
+ const page=await browser.newPage({viewport:{width:1280,height:850}}),errors=[];page.on('pageerror',error=>errors.push(error.message));
+ const now=new Date().toISOString(),turnId='turn-confirm',thread={id:'confirm-thread',title:'伯努利原理科普视频',harness:'codex',model:'gpt-6-astra',reasoning_level:'standard',updated_at:now,latest_turn_id:turnId,latest_turn_state:'COMPLETED',unread_completion:false},turns=[{id:turnId,thread_id:'confirm-thread',harness:'codex',model:'gpt-6-astra',reasoning_level:'standard',state:'COMPLETED',updated_at:now}],items=[];
+ const drafts=[
+  {id:'draft-image',thread_id:thread.id,turn_id:turnId,kind:'image',model:'seedream-5.0',parameters:{prompt:'制作一张透明玻璃文丘里管科学示意图，展示流体从宽管进入窄喉再回到宽管，青色粒子清晰可见，画面适合后续动画加工。'.repeat(2),size:'2048x2048'},status:'awaiting_confirmation',expires_at:new Date(Date.now()+600000).toISOString(),job_id:'',output_role:'workspace'},
+  {id:'draft-video',thread_id:thread.id,turn_id:turnId,kind:'video',model:'sed2',parameters:{prompt:'制作文丘里管内粒子加速的科学动画。',duration:12,resolution:'1080p',aspect_ratio:'16:9',generate_audio:false},status:'awaiting_confirmation',expires_at:new Date(Date.now()+600000).toISOString(),job_id:'',output_role:'workspace'},
+  {id:'draft-audio',thread_id:thread.id,turn_id:turnId,kind:'audio',model:'speech-2.8-turbo',parameters:{text:'窄处流速高，静压低。',voice_id:'male-qn-qingse',audio_format:'mp3'},status:'awaiting_confirmation',expires_at:new Date(Date.now()+600000).toISOString(),job_id:'',output_role:'delivery'},
+ ];
+ const jobs=[];
+ await page.route('**/api/**',async route=>{const path=new URL(route.request().url()).pathname,json=value=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(value)});
+  if(path.endsWith('/api/session'))return json({ready:true,authentication_required:false,authenticated:false,user:null});
+  if(path.endsWith('/api/catalog/harnesses'))return json([{id:'codex',label:'Codex',available:true,default_model:'gpt-6-astra',models:[{id:'gpt-6-astra',label:'GPT-6 Astra',available:true,reasoning:[{id:'standard',label:'标准'}]}]}]);
+  if(path.endsWith('/api/threads'))return json([thread]);
+  if(path.endsWith('/api/threads/confirm-thread/turns'))return json(turns);
+  if(path.includes('/api/threads/confirm-thread/items'))return json(items);
+  if(path.includes('/interactions')||path.includes('/project-files')||path.includes('/background-jobs'))return json([]);
+  if(path.endsWith('/api/threads/confirm-thread/media/drafts'))return json(drafts);
+  if(path.endsWith('/api/threads/confirm-thread/media/jobs'))return json(jobs);
+  if(path.endsWith('/api/media/drafts/draft-image/confirm')){drafts[0]={...drafts[0],status:'confirmed',job_id:'job-image'};jobs.push({id:'job-image',thread_id:thread.id,turn_id:turnId,kind:'image',model:'seedream-5.0',provider:'ark',adapter:'ark_image',execution_mode:'sync',cancellation_mode:'unsupported',status:'created',phase:'prepared',progress:null,cancelable:false,artifact_ids:[],output_role:'workspace'});return json(jobs[0])}
+  if(path.includes('/events'))return route.fulfill({status:200,contentType:'text/event-stream',body:''});
+  return json({});
+ });
+ await page.goto(process.env.TEST_BASE_URL||'http://127.0.0.1:22766/');await page.waitForSelector('.new-thread');await page.locator('.thread-list button').filter({hasText:'伯努利原理科普视频'}).click();await page.waitForSelector('.media-confirmation-list');
+ assert.equal(await page.locator('.media-confirmation').count(),3);assert.match(await page.locator('.media-confirmations>header').textContent(),/3 项媒体生成/);const confirm=page.locator('.media-confirmation-confirm').first(),style=await confirm.evaluate(node=>({margin:getComputedStyle(node).marginTop,width:node.getBoundingClientRect().width}));assert.equal(style.margin,'0px');assert.ok(style.width<140);
+ await page.screenshot({path:'/data2/wujing03/sandbox-harness-platform/.data/media-confirmation-desktop.png',fullPage:true});
+ await page.setViewportSize({width:390,height:844});if(await page.locator('.sidebar.open').count())await page.getByLabel('关闭会话列表').click();await page.waitForTimeout(250);await page.screenshot({path:'/data2/wujing03/sandbox-harness-platform/.data/media-confirmation-mobile.png',fullPage:true});assert.ok(await page.locator('.media-confirmation').first().evaluate(node=>node.scrollWidth<=node.clientWidth));
+ await page.setViewportSize({width:1280,height:850});await confirm.click();await page.waitForSelector('.media-progress');assert.match(await page.locator('.media-progress').textContent(),/等待执行/);
+ await page.getByTitle('Workspace').click();await page.waitForSelector('.workspace-media-job');const row=page.locator('.workspace-media-job');assert.equal(await row.count(),1);await page.screenshot({path:'/data2/wujing03/sandbox-harness-platform/.data/media-workspace.png',fullPage:true});await row.click();await page.waitForSelector('.media-job-modal');assert.match(await page.locator('.media-job-modal').textContent(),/后续加工/);await page.screenshot({path:'/data2/wujing03/sandbox-harness-platform/.data/media-job-detail.png',fullPage:true});await page.getByLabel('关闭详情').click();
+ const continuation='turn-continuation';thread.latest_turn_id=continuation;thread.latest_turn_state='RUNNING';thread.updated_at=new Date().toISOString();turns.push({id:continuation,thread_id:thread.id,harness:'codex',model:'gpt-6-astra',reasoning_level:'standard',state:'RUNNING',updated_at:thread.updated_at,internal:true});items.push({id:'continuation-input',thread_id:thread.id,turn_id:continuation,sequence:1,type:'user_message',status:'completed',summary:'[media_group_completed] internal payload',payload:{internal:true},created_at:thread.updated_at,updated_at:thread.updated_at},{id:'continuation-message',thread_id:thread.id,turn_id:continuation,sequence:2,type:'agent_message',status:'in_progress',summary:'媒体已生成，正在继续剪辑完整科普视频。',payload:{},created_at:thread.updated_at,updated_at:thread.updated_at});await page.waitForFunction(()=>document.body.innerText.includes('媒体已生成，正在继续剪辑完整科普视频。'),null,{timeout:6000});assert.ok(await page.locator('.agent-message.streaming').count());assert.equal((await page.locator('body').innerText()).includes('[media_group_completed]'),false);
+ assert.deepEqual(errors,[]);console.log(JSON.stringify({passed:true,desktop:true,mobile:true,long_prompt:true,progress_after_confirm:true,workspace_style:true,internal_turn_auto_discovered:true,page_errors:0}));
+}finally{await browser?.close()}})().catch(error=>{console.error(error);process.exit(1)});

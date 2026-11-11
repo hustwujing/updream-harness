@@ -67,6 +67,7 @@ class TurnRow(Base):
     reasoning_effort: Mapped[str] = mapped_column(String(20))
     delivery_mode: Mapped[str] = mapped_column(String(20))
     network_access: Mapped[str] = mapped_column(String(20), default="restricted", server_default="restricted")
+    internal: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     state: Mapped[str] = mapped_column(String(24), index=True)
     sandbox_id: Mapped[str] = mapped_column(String(200), default="")
     error_code: Mapped[str] = mapped_column(String(100), default="")
@@ -336,6 +337,7 @@ class Store:
             turn_columns = {column["name"] for column in inspected_turn_columns}
             additions = {
                 "network_access": "VARCHAR(20) NOT NULL DEFAULT 'restricted'",
+                "internal": "BOOLEAN NOT NULL DEFAULT FALSE",
                 "lease_owner": "VARCHAR(64) NOT NULL DEFAULT ''",
                 "lease_expires_at": "TIMESTAMP WITH TIME ZONE NULL",
                 "recovery_generation": "INTEGER NOT NULL DEFAULT 0",
@@ -606,7 +608,8 @@ class Store:
 
     @observed("db.turn.create")
     async def create_turn(self, thread_id: str, value: TurnCreate, resolved: ResolvedProfile, owner_id: str, *,
-                          traceparent: str = "", network_access: str = "restricted") -> tuple[TurnView, bool, bool]:
+                          traceparent: str = "", network_access: str = "restricted",
+                          internal: bool = False) -> tuple[TurnView, bool, bool]:
         if network_access not in {"restricted", "public"}:
             raise ValueError("Invalid Turn network access")
         async with self.connections.begin() as db:
@@ -624,7 +627,7 @@ class Store:
                         or existing.harness != resolved.harness.value or existing.model != resolved.model
                         or existing.reasoning_level != resolved.reasoning_level
                         or existing.delivery_mode != value.delivery_mode
-                        or existing.network_access != network_access):
+                        or existing.network_access != network_access or existing.internal != internal):
                     raise RuntimeError("idempotency_conflict")
                 return self.turn_view(existing), False, thread.active_turn_id == existing.id
             active_running = False
@@ -649,14 +652,15 @@ class Store:
                 message=value.message, attachments_json=json.dumps([a.model_dump(mode="json") for a in value.attachments]),
                 harness=resolved.harness.value, model=resolved.model, reasoning_level=resolved.reasoning_level,
                 reasoning_effort=resolved.reasoning_effort, delivery_mode=value.delivery_mode,
-                network_access=network_access,
+                network_access=network_access, internal=internal,
                 state=TurnState.QUEUED.value, submit_traceparent=traceparent, created_at=timestamp, updated_at=timestamp,
             )
             db.add(row)
             item_sequence = await self.next_item_sequence(db, thread_id)
             db.add(ItemRow(id=identifier(), thread_id=thread_id, turn_id=row.id, sequence=item_sequence,
                 type=ItemType.USER_MESSAGE.value, status="completed", summary=value.message,
-                payload_json=json.dumps({"attachments":[item.model_dump(mode="json") for item in value.attachments]}),
+                payload_json=json.dumps({"attachments":[item.model_dump(mode="json") for item in value.attachments],
+                    "internal": internal}),
                 created_at=timestamp, updated_at=timestamp))
             if not active_running:
                 thread.active_turn_id = row.id
@@ -1898,6 +1902,14 @@ class Store:
                     "adapter": row.adapter, "status": row.status, "phase": row.phase,
                     "parameters": json.loads(row.parameters_json or "{}"), "provider_job_id": row.provider_job_id})
         return result
+
+    async def release_media_job_leases(self, owner: str) -> int:
+        async with self.connections.begin() as db:
+            result = await db.execute(update(MediaJobRow).where(
+                MediaJobRow.lease_owner == owner,
+                MediaJobRow.status.not_in(["succeeded", "failed", "cancelled", "unknown"]),
+            ).values(lease_owner="", lease_expires_at=None, updated_at=now()))
+            return result.rowcount or 0
 
     async def update_media_job(self, job_id: str, owner: str, *, status: str, phase: str = "",
                                progress: int | None = None, provider_job_id: str = "",

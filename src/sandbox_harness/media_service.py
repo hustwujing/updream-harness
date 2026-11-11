@@ -25,6 +25,7 @@ async def serve() -> None:
         await worker.run()
     finally:
         event("media.worker.stopped", worker_id=worker.owner)
+        await store.release_media_job_leases(worker.owner)
         await store.close()
 
 

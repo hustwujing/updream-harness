@@ -208,6 +208,7 @@ class TurnView(BaseModel):
     reasoning_effort: str
     delivery_mode: Literal["start", "queue", "steer"]
     network_access: Literal["restricted", "public"] = "restricted"
+    internal: bool = False
     state: TurnState
     sandbox_id: str = ""
     error_code: str = ""
