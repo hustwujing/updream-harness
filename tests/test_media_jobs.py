@@ -44,6 +44,10 @@ async def test_media_draft_confirm_is_idempotent_and_snapshots_provider(tmp_path
         assert len(rows) == 1 and rows[0].status == "pending"
         assert len(artifacts) == 1 and artifacts[0].id == completed.artifact_ids[0]
         assert artifacts[0].object_ref == "sha256:" + "1" * 64
+        with pytest.raises(KeyError, match="media_turn_not_found"):
+            await store.create_media_draft(owner, "b" * 32,
+                value.model_copy(update={"idempotency_key": "media-key-cross-thread"}),
+                expires_at=now() + timedelta(minutes=10), provider_spec=spec)
     finally:
         await store.close()
 
@@ -71,3 +75,9 @@ def test_media_worker_corrects_bad_provider_mime_from_file_signature():
         "application/octet-stream", "image") == "image/jpeg"
     with pytest.raises(ValueError, match="mime_mismatch"):
         MediaWorker._validated_mime(b"not media", "application/x-tar", "audio")
+
+
+def test_media_draft_rejects_malformed_turn_id():
+    with pytest.raises(ValueError):
+        MediaDraftCreate(kind="image", model="seedream-5.0", parameters={"prompt": "test"},
+            idempotency_key="media-key-bad-turn", turn_id="not-a-turn")

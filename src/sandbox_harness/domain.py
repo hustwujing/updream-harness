@@ -333,7 +333,7 @@ class MediaDraftCreate(BaseModel):
     model: str = Field(min_length=1, max_length=160)
     parameters: dict[str, Any] = Field(default_factory=dict)
     idempotency_key: str = Field(min_length=8, max_length=160)
-    turn_id: str = Field(default="", max_length=32)
+    turn_id: str = Field(default="", pattern=r"^$|^[0-9a-f]{32}$")
 
 
 class MediaDraftUpdate(BaseModel):

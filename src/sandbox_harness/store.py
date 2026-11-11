@@ -1578,6 +1578,13 @@ class Store:
 
     async def create_media_draft(self, owner_id: str, thread_id: str, value, *, expires_at: datetime, provider_spec) -> tuple[MediaDraftView, bool]:
         async with self.connections.begin() as db:
+            if value.turn_id:
+                owned_thread = (await db.execute(select(TurnRow.thread_id).join(ThreadRow,
+                    ThreadRow.id == TurnRow.thread_id).where(
+                        TurnRow.id == value.turn_id, ThreadRow.owner_id == owner_id,
+                ))).scalar_one_or_none()
+                if owned_thread != thread_id:
+                    raise KeyError("media_turn_not_found")
             existing = (await db.execute(select(MediaDraftRow).where(
                 MediaDraftRow.thread_id == thread_id, MediaDraftRow.idempotency_key == value.idempotency_key))).scalar_one_or_none()
             if existing:

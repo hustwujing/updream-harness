@@ -114,7 +114,7 @@ class MediaWorker:
         base = self.settings.upstream_video.rstrip("/")
         key = os.environ.get("SANDBOX_HARNESS_UPSTREAM_VIDEO_KEY", "")
         p = job["parameters"]
-        model = {"sed2": p.get("provider_model", "") or os.environ.get("SANDBOX_HARNESS_ARK_VIDEO_MODEL_SED2", "seedance-2.0")}.get(job["model"], job["model"])
+        model = {"sed2": os.environ.get("SANDBOX_HARNESS_ARK_VIDEO_MODEL_SED2", "seedance-2.0")}.get(job["model"], job["model"])
         task_id = str(job.get("provider_job_id") or "")
         if task_id:
             event("media.provider.resumed", job_id=job["id"], provider="ark", provider_job_id=task_id)

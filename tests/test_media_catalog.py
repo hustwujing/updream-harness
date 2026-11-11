@@ -27,3 +27,25 @@ def test_catalog_rejects_sync_cancellation():
 def test_public_catalog_does_not_expose_credential_environment():
     value = MediaCatalog().public()
     assert all("credential_env" not in item for item in value)
+
+
+@pytest.mark.parametrize(("kind", "model", "parameters"), [
+    ("image", "seedream-5.0", {"prompt": "test", "size": "2048x2048"}),
+    ("video", "sed2", {"prompt": "test", "duration": 5, "resolution": "480p",
+        "aspect_ratio": "16:9", "generate_audio": False}),
+    ("audio", "speech-2.8-turbo", {"text": "test", "voice_id": "male-qn-qingse",
+        "speed": 1, "audio_format": "mp3"}),
+])
+def test_media_parameters_accept_only_enabled_model_contract(kind, model, parameters):
+    MediaCatalog().validate_parameters(kind, model, parameters)
+
+
+@pytest.mark.parametrize(("kind", "model", "parameters"), [
+    ("image", "seedream-5.0", {"prompt": "", "size": "2048x2048"}),
+    ("image", "seedream-5.0", {"prompt": "test", "provider_model": "bypass"}),
+    ("video", "sed2", {"prompt": "test", "duration": 999}),
+    ("audio", "speech-2.8-turbo", {"text": "test", "audio_format": "exe"}),
+])
+def test_media_parameters_reject_invalid_or_provider_controlled_values(kind, model, parameters):
+    with pytest.raises(ValueError):
+        MediaCatalog().validate_parameters(kind, model, parameters)

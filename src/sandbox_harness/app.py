@@ -266,11 +266,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "Thread not found")
         try:
             spec = media_catalog.resolve(value.kind, value.model)
+            media_catalog.validate_parameters(value.kind, value.model, value.parameters)
+        except KeyError:
+            raise HTTPException(422, "Media model is not enabled")
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
+        try:
             result, _ = await store.create_media_draft(request.state.owner_id, thread_id, value,
                 expires_at=now() + timedelta(minutes=10), provider_spec=spec)
             return result
         except KeyError:
-            raise HTTPException(422, "Media model is not enabled")
+            raise HTTPException(404, "Media Turn not found")
         except RuntimeError as exc:
             raise HTTPException(409, str(exc))
 
@@ -282,15 +288,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.patch("/api/media/drafts/{draft_id}")
     async def update_media_draft(draft_id: str, value: MediaDraftUpdate, request: Request):
+        current = await store.get_media_draft(draft_id, request.state.owner_id)
+        if not current: raise HTTPException(404, "Media draft not found")
+        model = value.model or current.model
+        parameters = value.parameters if value.parameters is not None else current.parameters
         try:
-            current = await store.get_media_draft(draft_id, request.state.owner_id)
-            if not current: raise KeyError("media_draft_not_found")
-            model = value.model or current.model
-            media_catalog.resolve(current.kind, model)
+            media_catalog.validate_parameters(current.kind, model, parameters)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(422, str(exc))
+        try:
             return await store.update_media_draft(draft_id, request.state.owner_id,
                 model=value.model, parameters=value.parameters)
-        except KeyError:
-            raise HTTPException(404, "Media draft not found")
         except RuntimeError as exc:
             raise HTTPException(409, str(exc))
 
@@ -300,9 +308,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not current: raise HTTPException(404, "Media draft not found")
         try:
             spec = media_catalog.resolve(current.kind, current.model)
+            media_catalog.validate_parameters(current.kind, current.model, current.parameters)
             return await store.confirm_media_draft(draft_id, request.state.owner_id, provider_spec=spec)
-        except KeyError:
-            raise HTTPException(404, "Media draft not found")
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(422, str(exc))
         except RuntimeError as exc:
             raise HTTPException(409, str(exc))
 
