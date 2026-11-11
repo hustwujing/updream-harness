@@ -9,14 +9,14 @@ No credential, signed Provider URL or raw Provider response is recorded here.
 
 ## Runtime images
 
-The Runtime source revision is `7e86f8d1c0de`. All images use immutable local
+The Runtime source revision is `c3e926a92b5a`. All images use immutable local
 registry digests:
 
 | Harness | Digest |
 | --- | --- |
-| Codex | `sha256:b1f280b81e91ee83d2b24de587fcd2d6a58841c098d8a0a37a17fbeb7edda648` |
-| Claude | `sha256:40e703433c5bfbd3013f0eaa5eb75b5fdd54149eb49202755b050dbfcc566047` |
-| DeepSeek | `sha256:524979b5a0e64a1c0480125d4dd8df8a78ce480e09656a875f0e364f8591e518` |
+| Codex | `sha256:02c1dcb61abc1df8035275950c17c13eb2eb6a7bfe91d3af5dbde48adefba2df` |
+| Claude | `sha256:ad7805e6b98dfeace301565bf3412d62a7423062d9d851b5d07153b809a3cafd` |
+| DeepSeek | `sha256:ea26fc94666c99b80902decb4d6d5f0955862fc7acc3c1a9c121d81755884670` |
 
 Each image passed the same UID 10001, network-disabled smoke. The smoke
 materialized all 25 native Skill links for all three Harness layouts and
@@ -63,14 +63,14 @@ continuation. The origin Turn must be terminal and every draft and confirmed
 Job terminal. Cancelled and expired drafts are included, candidate outputs can
 be inspected and explicitly promoted, and all-cancelled batches converge.
 
-The Host release `7efbc4df2420` also supports pasted attachments and lazy online
+The Host release `c3e926a92b5a` also supports pasted attachments and lazy online
 previews: PDF continuous pages, PPT/PPTX paging, DOCX scrolling, spreadsheet
 sheet switching, matching document thumbnails and CSP-sandboxed SVG thumbnails.
 The provided production PPT Artifact converted to a valid 207,429-byte PDF.
 
 ## Gates
 
-- Python suite: `219 passed` after all service separation, recovery, MIME and
+- Python suite: `221 passed` after all service separation, recovery, MIME and
   ownership validation changes.
 - Frontend production build: passed.
 - Browser media Job Inspector: passed with no page errors.
@@ -79,6 +79,13 @@ The provided production PPT Artifact converted to a valid 207,429-byte PDF.
 - Browser document suite: pasted file upload, four document thumbnails, PDF
   scrolling, PPT paging, DOCX scrolling and Excel scrolling/sheet switching
   passed with zero page errors.
+- Browser media confirmation suite: desktop/mobile confirmation layout, long
+  prompts, immediate post-confirm progress, Workspace details and automatic
+  discovery of server-created continuation Turns passed with zero page errors.
+- Media Worker concurrency continuously refills six slots; graceful restart
+  releases leases. Runtime catalog responses include exact parameter schemas,
+  and internal continuation payloads remain auditable without appearing as
+  user-authored chat messages.
 - Real OpenSandbox: final Codex digest started, exposed 25 Skills, executed
   `sandbox-media prepare`, then used a Turn Capability to execute
   `sandbox-media status` through Gateway against a same-Thread completed Job;
