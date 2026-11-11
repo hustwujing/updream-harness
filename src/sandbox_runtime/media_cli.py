@@ -6,6 +6,16 @@ import os
 import uuid
 
 import httpx
+from pydantic import ValidationError
+
+from sandbox_harness.domain import MediaDraftCreate
+from sandbox_harness.media_catalog import MediaCatalog
+
+
+def validation_message(error: ValidationError) -> str:
+    return "; ".join((".".join(str(item) for item in value.get("loc", ())) + ": "
+        + value.get("msg", "Invalid value")) for value in error.errors(
+            include_url=False, include_context=False, include_input=False)[:12])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,6 +58,19 @@ def main(argv: list[str] | None = None) -> int:
                     reference["project_path"] = path.removeprefix("/workspace/project/")
         except ValueError as exc:
             parser.error(f"media draft JSON is invalid: {exc}")
+        payload = {"kind": args.kind, "model": args.model, "parameters": parameters,
+            "references": references,
+            "idempotency_key": args.idempotency_key or "sandbox-media-" + uuid.uuid4().hex,
+            "output_role": args.output_role}
+        if args.generation_mode:
+            payload["generation_mode"] = args.generation_mode
+        try:
+            MediaDraftCreate.model_validate(payload)
+            MediaCatalog.validate_parameter_shape(args.kind, parameters)
+        except ValidationError as exc:
+            parser.error("invalid media draft: " + validation_message(exc))
+        except ValueError as exc:
+            parser.error("invalid media parameters: " + str(exc))
     base = os.environ.get("HARNESS_GATEWAY_URL", "").rstrip("/")
     token_file = os.environ.get("HARNESS_CAPABILITY_TOKEN_FILE", "/run/harness/capability-token")
     if not base:
@@ -83,12 +106,6 @@ def main(argv: list[str] | None = None) -> int:
         print(response.text)
         return 0 if response.is_success else 1
     if args.command == "prepare":
-        payload = {"kind": args.kind, "model": args.model, "parameters": parameters,
-            "references": references,
-            "idempotency_key": args.idempotency_key or "sandbox-media-" + uuid.uuid4().hex,
-            "output_role": args.output_role}
-        if args.generation_mode:
-            payload["generation_mode"] = args.generation_mode
         response = httpx.post(base + "/v1/media/drafts", headers={"Authorization": "Bearer " + token},
             json=payload, timeout=120)
         print(response.text)

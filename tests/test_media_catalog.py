@@ -86,3 +86,26 @@ def test_seedance_reference_modes_are_gated_by_ark_asset_configuration():
     with pytest.raises(ValueError,match="Ark Asset"):
         catalog.validate_parameters("video","sed2",{"prompt":"move","duration":5},
             generation_mode="multimodal_reference",references=[reference])
+
+
+def test_domain_enums_and_public_media_catalog_cannot_drift():
+    from sandbox_harness.domain import MediaDraftCreate,MediaReferenceInput
+    reference=MediaReferenceInput.model_json_schema()["properties"]
+    roles=set(reference["role"]["enum"]);usages=set(reference["usage"]["enum"])
+    draft=MediaDraftCreate.model_json_schema()["properties"]["generation_mode"]
+    modes=set(next(value["enum"] for value in draft["anyOf"] if "enum" in value))
+    public=MediaCatalog().public()
+    catalog_roles=set().union(*(set(item["reference_schema"]["roles"]) for item in public))
+    catalog_usages=set().union(*(set(item["reference_schema"]["usages"]) for item in public))
+    catalog_modes=set().union(*(set(item["parameter_schema"]["generation_modes"]) for item in public))
+    assert catalog_roles==roles and catalog_usages==usages and catalog_modes==modes
+    for item in public:
+        assert set(item["reference_schema"]["recommended_usage"].values()) <= usages
+
+
+def test_parameter_shape_error_names_unknown_and_allowed_fields():
+    with pytest.raises(ValueError,match=r"ratio.*allowed:.*aspect_ratio"):
+        MediaCatalog.validate_parameter_shape("video",{"prompt":"test","ratio":"16:9"})
+    with pytest.raises(ValueError,match=r"language_boost, voice_setting.*allowed:.*voice_id"):
+        MediaCatalog.validate_parameter_shape("audio",{"text":"test","voice_setting":{},
+            "language_boost":"Chinese"})

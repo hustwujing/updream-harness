@@ -8,6 +8,7 @@ RUNTIME_INSTRUCTIONS = """Runtime media rules:
 - Use `candidate` for optional variants, `workspace` when later steps need the file, and `delivery` for a final user-facing result.
 - After preparing the complete image/video/audio set for this stage, run `sandbox-media commit` exactly once, tell the user what needs confirmation, and end the response. Do not poll the drafts or wait inside the Turn.
 - `prepare` creates a user-confirmation draft. It does not call the Provider. Do not claim generation completed until the platform resumes you with the terminal media result.
+- Do not poll a prepared draft. Use `status` only with a Job ID returned for the current Thread; never reuse a Job ID from another Thread or infer one from a filename. After platform continuation, trust the supplied result status/path or inspect command.
 - For a completed `candidate`, use `sandbox-media fetch --job-id ID --output PATH` to inspect or process it. Keep it persistently only after deciding it is useful, with `sandbox-media promote --job-id ID --output-role workspace|delivery`.
 - Use `sandbox-media status --job-id ID` for status and `sandbox-media cancel --job-id ID` for a supported cancellation.
 - Never call image/video/audio Provider SDKs or endpoints directly. Do not use `sandbox-image` or `sandbox-video`; they do not exist.

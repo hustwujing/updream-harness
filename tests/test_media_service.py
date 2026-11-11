@@ -37,6 +37,7 @@ def test_media_worker_is_a_separate_service():
     deepseek = (ROOT / "src/sandbox_runtime/deepseek_runner.py").read_text()
     assert "sandbox-media prepare" in instructions and "sandbox-image" in instructions
     assert "Never copy a role name into usage" in instructions and "usage=composition" in instructions
+    assert "never reuse a Job ID from another Thread" in instructions
     assert "current-Turn publication" in instructions and "verify every input path exists" in instructions
     assert "setsar=1" in instructions
     assert "--append-system-prompt" in adapters
@@ -74,6 +75,20 @@ def test_media_cli_normalizes_durable_reference_path(tmp_path, monkeypatch):
     assert calls[0]["generation_mode"] == "first_frame"
     assert calls[0]["references"] == [{"project_path":"assets/start.png",
         "role":"first_frame", "usage":"composition"}]
+
+
+def test_media_cli_rejects_invalid_usage_and_provider_native_parameters_locally(capsys):
+    import pytest
+    with pytest.raises(SystemExit):
+        media_cli.main(["prepare","video","--model","sed2","--generation-mode","first_frame",
+            "--parameters",'{"prompt":"move"}',"--reference",
+            '{"project_path":"assets/start.png","role":"first_frame","usage":"first_frame"}'])
+    assert "references.0.usage" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        media_cli.main(["prepare","audio","--model","speech-2.8-turbo","--parameters",
+            '{"text":"hello","voice_setting":{"voice_id":"x"},"language_boost":"Chinese"}'])
+    error=capsys.readouterr().err
+    assert "voice_setting" in error and "voice_id" in error
 
 
 def test_media_reference_api_freezes_owned_project_file_snapshot(tmp_path):

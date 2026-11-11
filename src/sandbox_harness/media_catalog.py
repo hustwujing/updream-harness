@@ -132,24 +132,21 @@ class MediaCatalog:
                 return item
         raise KeyError("Media model is not enabled")
 
-    def validate_parameters(self, kind: str, model: str, parameters: dict[str, Any], *,
-                            generation_mode: str | None = None,
-                            references: list[dict[str, Any]] | None = None) -> None:
-        self.resolve(kind, model)
-        generation_mode = generation_mode or {"image": "text_to_image", "video": "text_to_video",
-            "audio": "text_to_audio"}[kind]
-        references = references or []
-        if kind == "video" and references and not self.ark_assets_configured:
-            raise ValueError("Seedance reference inputs require Ark Asset credentials and group configuration")
+    @staticmethod
+    def validate_parameter_shape(kind: str, parameters: dict[str, Any]) -> None:
         if not isinstance(parameters, dict):
             raise ValueError("Media parameters must be an object")
-        allowed = {
+        allowed_by_kind = {
             "image": {"prompt", "size"},
             "video": {"prompt", "duration", "resolution", "aspect_ratio", "generate_audio", "extend_direction"},
             "audio": {"text", "voice_id", "speed", "audio_format"},
-        }[kind]
-        if set(parameters) - allowed:
-            raise ValueError("Unsupported media parameter")
+        }
+        if kind not in allowed_by_kind:
+            raise ValueError("Invalid media kind")
+        allowed = allowed_by_kind[kind]
+        unknown = sorted(set(parameters) - allowed)
+        if unknown:
+            raise ValueError(f"Unsupported {kind} parameter(s): {', '.join(unknown)}; allowed: {', '.join(sorted(allowed))}")
         text_key = "text" if kind == "audio" else "prompt"
         text = parameters.get(text_key)
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_AUDIO_CHARACTERS:
@@ -164,16 +161,6 @@ class MediaCatalog:
                 pixels, ratio = width * height, width / height
                 if not MIN_SEEDREAM_LITE_PIXELS <= pixels <= MAX_SEEDREAM_LITE_PIXELS or not 1 / 16 <= ratio <= 16:
                     raise ValueError("Seedream 5.0 image size must have 3686400..16777216 total pixels and aspect ratio 1/16..16; use 2K or at least 2560x1440")
-            if generation_mode == "text_to_image" and references:
-                raise ValueError("Text-to-image does not accept references")
-            if generation_mode == "reference_image":
-                if not 1 <= len(references) <= 14 or any(item.get("role") != "reference_image" for item in references):
-                    raise ValueError("Seedream reference image mode requires 1..14 reference images")
-                self._validate_image_references(references, seedream=True)
-                if sum(item["size"] for item in references) > 45 * 1024 * 1024:
-                    raise ValueError("Seedream inline references may total at most 45 MB")
-            elif generation_mode != "text_to_image":
-                raise ValueError("Invalid image generation mode")
         elif kind == "video":
             duration = parameters.get("duration", 5)
             if isinstance(duration, bool) or not isinstance(duration, int) or duration != -1 and not 4 <= duration <= 15:
@@ -187,7 +174,6 @@ class MediaCatalog:
             direction = parameters.get("extend_direction")
             if direction is not None and direction not in {"forward", "backward"}:
                 raise ValueError("Invalid video extension direction")
-            self._validate_video_mode(generation_mode, parameters, references)
         else:
             voice = parameters.get("voice_id", "male-qn-qingse")
             if voice not in SUPPORTED_AUDIO_VOICES:
@@ -200,6 +186,31 @@ class MediaCatalog:
                 raise ValueError(f"Audio estimated duration is {estimated:.1f}s; split text into segments of at most 180s")
             if parameters.get("audio_format", "mp3") not in {"mp3", "wav", "flac"}:
                 raise ValueError("Invalid audio format")
+
+    def validate_parameters(self, kind: str, model: str, parameters: dict[str, Any], *,
+                            generation_mode: str | None = None,
+                            references: list[dict[str, Any]] | None = None) -> None:
+        self.resolve(kind, model)
+        self.validate_parameter_shape(kind, parameters)
+        generation_mode = generation_mode or {"image": "text_to_image", "video": "text_to_video",
+            "audio": "text_to_audio"}[kind]
+        references = references or []
+        if kind == "video" and references and not self.ark_assets_configured:
+            raise ValueError("Seedance reference inputs require Ark Asset credentials and group configuration")
+        if kind == "image":
+            if generation_mode == "text_to_image" and references:
+                raise ValueError("Text-to-image does not accept references")
+            if generation_mode == "reference_image":
+                if not 1 <= len(references) <= 14 or any(item.get("role") != "reference_image" for item in references):
+                    raise ValueError("Seedream reference image mode requires 1..14 reference images")
+                self._validate_image_references(references, seedream=True)
+                if sum(item["size"] for item in references) > 45 * 1024 * 1024:
+                    raise ValueError("Seedream inline references may total at most 45 MB")
+            elif generation_mode != "text_to_image":
+                raise ValueError("Invalid image generation mode")
+        elif kind == "video":
+            self._validate_video_mode(generation_mode, parameters, references)
+        else:
             if generation_mode != "text_to_audio" or references:
                 raise ValueError("Audio generation does not accept media references")
 
