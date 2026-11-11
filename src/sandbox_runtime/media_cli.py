@@ -15,6 +15,9 @@ def main(argv: list[str] | None = None) -> int:
     prepare.add_argument("kind", choices=("image", "video", "audio"))
     prepare.add_argument("--model", required=True)
     prepare.add_argument("--parameters", default="{}")
+    prepare.add_argument("--generation-mode", default="")
+    prepare.add_argument("--reference", action="append", default=[],
+        help='Repeatable JSON: {"project_path":"assets/input.png","role":"reference_image","usage":"subject"}')
     prepare.add_argument("--idempotency-key", default="")
     prepare.add_argument("--output-role", choices=("candidate", "workspace", "delivery"), default="candidate")
     sub.add_parser("commit", help="Seal this Turn's complete media draft batch")
@@ -34,8 +37,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "prepare":
         try:
             parameters = json.loads(args.parameters)
+            references = [json.loads(value) for value in args.reference]
+            if not all(isinstance(value, dict) for value in references):
+                raise ValueError("references must be JSON objects")
+            for reference in references:
+                path = reference.get("project_path")
+                if isinstance(path, str) and path.startswith("/workspace/project/"):
+                    reference["project_path"] = path.removeprefix("/workspace/project/")
         except ValueError as exc:
-            parser.error(f"--parameters must be JSON: {exc}")
+            parser.error(f"media draft JSON is invalid: {exc}")
     base = os.environ.get("HARNESS_GATEWAY_URL", "").rstrip("/")
     token_file = os.environ.get("HARNESS_CAPABILITY_TOKEN_FILE", "/run/harness/capability-token")
     if not base:
@@ -71,10 +81,14 @@ def main(argv: list[str] | None = None) -> int:
         print(response.text)
         return 0 if response.is_success else 1
     if args.command == "prepare":
+        payload = {"kind": args.kind, "model": args.model, "parameters": parameters,
+            "references": references,
+            "idempotency_key": args.idempotency_key or "sandbox-media-" + uuid.uuid4().hex,
+            "output_role": args.output_role}
+        if args.generation_mode:
+            payload["generation_mode"] = args.generation_mode
         response = httpx.post(base + "/v1/media/drafts", headers={"Authorization": "Bearer " + token},
-            json={"kind": args.kind, "model": args.model, "parameters": parameters,
-                  "idempotency_key": args.idempotency_key or "sandbox-media-" + uuid.uuid4().hex,
-                  "output_role": args.output_role}, timeout=20)
+            json=payload, timeout=120)
         print(response.text)
         return 0 if response.is_success else 1
     path = f"/v1/media/jobs/{args.job_id}" + ("/cancel" if args.command == "cancel" else "")

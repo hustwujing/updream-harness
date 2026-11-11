@@ -10,7 +10,8 @@ The product has its own API, Gateway, PostgreSQL cluster and data namespace. It 
 | Docker/runsc | `opensandbox-docker.service` | image repository `sandbox-harness/*` |
 | image registry | `127.0.0.1:25001` | repository prefix `sandbox-harness/` |
 | OpenSandbox | `sandbox-agent-opensandbox.service`, `127.0.0.1:28090` | metadata `sandbox-harness.io/namespace=sandbox-harness` |
-| BOSS/S3 | existing endpoint and bucket | object prefix `sandbox-harness/` |
+| BOSS/S3 internal | `http://shjd-boss.bilibili.co`, bucket `updream` | object prefix `sandbox-harness/` |
+| BOSS reference media | `https://boss-shjd.biliapi.net`, bucket `updream` | immutable prefix `aniforge/image|video|audio/` |
 | local state | host filesystem | `/data2/wujing03/sandbox-harness-platform/.data` only |
 | web/API | this product | `127.0.0.1:22766`, route `/sandbox-harness/` at the reverse proxy |
 | capability Gateway | this product | sandbox bridge `172.31.0.1:28600` |
@@ -32,6 +33,7 @@ Project dependencies, caches, database files, logs, temporary files and build ou
 - Every Redis key starts with the configured prefix. Lua scripts and scans must include that prefix.
 - Only authenticated FRPC Turn submissions freeze `network_access=public`; direct and other submissions remain restricted. Both modes still reject private destinations and raw egress.
 - Every checkpoint, attachment and artifact key starts with the configured BOSS/S3 prefix. Sandboxes never receive object-store credentials.
+- Model reference media uses the stable HTTPS BOSS URL only. The internal BOSS endpoint and presigned PUT URL must never enter a Provider request. Seedance receives only an Active Ark `asset://` URI.
 - API and Gateway secrets live in `.data/config/platform.env` with restricted permissions.
 - The shared OpenSandbox Docker network is internal and has no public NAT. Its host firewall permits `172.31.0.0/24` to reach only the existing runtime range plus this product's `172.31.0.1:28600-28601`; port 28601 proxies public HTTP/S only and rejects private destinations after DNS resolution. OpenSandbox rejects per-sandbox `networkPolicy` on this user-defined network, so create requests do not claim unsupported enforcement.
 
@@ -47,6 +49,23 @@ Project dependencies, caches, database files, logs, temporary files and build ou
 The API uses 30-second Turn leases, 10-second heartbeats, a 15-second expired-lease scan and a 60-second orphan scan by default. Normal API shutdown preserves currently executing sandboxes so the replacement process can reattach them. Do not add an `ExecStop` command that deletes namespace sandboxes.
 
 Local UI tests may use SQLite, local content-addressed objects and the explicit fake lifecycle backend. Those results do not count as a deployment or real OpenSandbox validation.
+
+Required reference-media settings are:
+
+```dotenv
+SANDBOX_HARNESS_OBJECT_ENDPOINT=http://shjd-boss.bilibili.co
+SANDBOX_HARNESS_OBJECT_BUCKET=updream
+SANDBOX_HARNESS_OBJECT_REGION=updream
+SANDBOX_HARNESS_OBJECT_PUBLIC_ENDPOINT=https://boss-shjd.biliapi.net
+SANDBOX_HARNESS_MEDIA_REFERENCE_PREFIX=aniforge
+SANDBOX_HARNESS_ARK_ACCESS_KEY=<Ark control-plane AK>
+SANDBOX_HARNESS_ARK_SECRET_KEY=<Ark control-plane SK>
+SANDBOX_HARNESS_ARK_PROJECT_NAME=<matching Ark project>
+SANDBOX_HARNESS_ARK_ASSET_GROUP_ID=<AIGC asset group>
+```
+
+Keep secrets only in `.data/config/platform.env`. The Ark Bearer API key,
+BOSS AK/SK and Ark control-plane AK/SK are distinct credential roles.
 
 The foundation image tag includes the SHA-256 prefix of `runtime/foundation.Dockerfile`. `runtime/toolchain.lock.json` is verified while building the common runtime base, and the three final Harness images must expose the same locked toolchain before their immutable registry digests are deployed.
 

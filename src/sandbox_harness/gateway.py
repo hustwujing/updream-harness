@@ -23,6 +23,7 @@ from .domain import Harness, MediaDraftCreate, now
 from .model_routes import ModelRoutes
 from .model_activity import ModelActivity
 from .media_catalog import MediaCatalog
+from .media_references import resolve_media_references
 from .objects import object_store
 from .store import Store
 from .public_proxy import DestinationPolicy, start_proxy
@@ -87,7 +88,9 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     model_routes = ModelRoutes(settings)
     activity_store = Store(settings.database_url, settings.redis_url, settings.redis_prefix)
     objects = object_store(settings)
-    media_catalog = MediaCatalog(settings.media_catalog_json)
+    media_catalog = MediaCatalog(settings.media_catalog_json,
+        ark_assets_configured=bool(settings.ark_access_key and settings.ark_secret_key
+            and settings.ark_asset_group_id and settings.ark_project_name))
     upstreams = {
         "/v1/models/codex": (settings.upstream_codex, os.environ.get("SANDBOX_HARNESS_UPSTREAM_CODEX_KEY", "")),
         "/v1/models/claude": (settings.upstream_claude, os.environ.get("SANDBOX_HARNESS_UPSTREAM_CLAUDE_KEY", "")),
@@ -251,15 +254,19 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(422, "Media model is not enabled")
         try:
-            media_catalog.validate_parameters(value.kind, value.model, value.parameters)
+            owner_id = await activity_store.owner_id_for_thread(claims.thread_id)
+            if not owner_id:
+                raise HTTPException(404, "Thread not found")
+            references = await resolve_media_references(activity_store, objects, claims.thread_id,
+                owner_id, value.references)
+            media_catalog.validate_parameters(value.kind, value.model, value.parameters,
+                generation_mode=value.generation_mode, references=references)
         except ValueError as exc:
             raise HTTPException(422, str(exc))
-        owner_id = await activity_store.owner_id_for_thread(claims.thread_id)
-        if not owner_id:
-            raise HTTPException(404, "Thread not found")
         try:
             draft, _ = await activity_store.create_media_draft(owner_id, claims.thread_id, value,
-                expires_at=now() + timedelta(minutes=10), provider_spec=spec)
+                expires_at=now() + timedelta(minutes=10), provider_spec=spec,
+                reference_snapshots=references)
         except KeyError:
             raise HTTPException(404, "Media Turn not found")
         except RuntimeError as exc:

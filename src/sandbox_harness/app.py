@@ -7,6 +7,7 @@ import json
 import logging
 import time
 import uuid
+from botocore.exceptions import ClientError
 from datetime import timedelta
 from collections import defaultdict, deque
 from contextlib import suppress
@@ -25,10 +26,11 @@ from .auth import AUTH_COOKIE, AccountAuth, normalize_username
 from .catalog import HarnessCatalog
 from .config import Settings, load_settings, validate_service_settings
 from .observability import RequestLoggingMiddleware, telemetry, event
-from .domain import Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, RegisterRequest, UpdateAccountRequest, MediaDraftCreate, MediaDraftUpdate, ProjectFileRename, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, valid_attachment_name, now
+from .domain import Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, RegisterRequest, UpdateAccountRequest, MediaDraftCreate, MediaDraftUpdate, MediaReferenceUploadCreate, ProjectFileRename, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, valid_attachment_name, now
 from .document_preview import is_presentation, presentation_pdf
 from .model_discovery import ModelDiscovery
 from .media_catalog import MediaCatalog
+from .media_references import inspect_reference, resolve_media_references
 from .objects import object_store
 from .pool import SandboxPool
 from .runtime import RuntimeClient
@@ -120,7 +122,9 @@ def components(settings: Settings):
     pool = SandboxPool(backend, images, targets, max_sandboxes=settings.max_sandboxes)
     runtime = RuntimeClient(timeout_seconds=settings.sandbox_timeout_seconds)
     catalog = HarnessCatalog(settings.harness_catalog_json or None)
-    media_catalog = MediaCatalog(settings.media_catalog_json)
+    media_catalog = MediaCatalog(settings.media_catalog_json,
+        ark_assets_configured=bool(settings.ark_access_key and settings.ark_secret_key
+            and settings.ark_asset_group_id and settings.ark_project_name))
     discovery = ModelDiscovery(settings, catalog)
     if settings.model_catalog_discovery:
         discovery.load_snapshot()
@@ -285,6 +289,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                    "model_catalog": discovery.status(),"observability":telemetry().status() if telemetry() else {"enabled":False}}
         return JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
 
+
     @app.get("/api/catalog/harnesses")
     async def harness_catalog():
         return catalog.public()
@@ -295,20 +300,80 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, "Invalid media kind")
         return {"models": media_catalog.public(kind)}
 
+    @app.post("/api/threads/{thread_id}/media/reference-uploads")
+    async def create_media_reference_upload(thread_id: str, value: MediaReferenceUploadCreate,
+                                            request: Request):
+        if not await store.get_thread(thread_id, request.state.owner_id):
+            raise HTTPException(404, "Thread not found")
+        try:
+            prepared = await asyncio.to_thread(objects.prepare_media_upload, kind=value.kind,
+                digest=value.sha256, mime=value.mime, size=value.size, expires_seconds=900)
+            upload = await store.create_media_reference_upload(request.state.owner_id, thread_id, value,
+                object_key=prepared["object_key"], public_url=prepared["public_url"],
+                expires_at=now() + timedelta(minutes=15))
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(422, str(exc))
+        return {**upload.model_dump(mode="json"), "upload": {"method": "PUT",
+            "url": prepared["put_url"], "headers": prepared["headers"]}}
+
+    @app.post("/api/media/reference-uploads/{upload_id}/complete")
+    async def complete_media_reference_upload(upload_id: str, request: Request):
+        upload = await store.get_media_reference_upload(upload_id, request.state.owner_id)
+        if not upload:
+            raise HTTPException(404, "Media reference upload not found")
+        if upload.status == "completed":
+            return upload
+        if upload.status != "pending":
+            raise HTTPException(409, "Media reference upload expired")
+        try:
+            head = await asyncio.to_thread(objects.head_media_upload, upload.object_key)
+            metadata = head["metadata"]
+            if (head["size"] != upload.size or head["mime"] != upload.mime
+                    or metadata.get("sha256") != upload.sha256
+                    or metadata.get("size") != str(upload.size) or metadata.get("kind") != upload.kind):
+                raise ValueError("Uploaded BOSS object metadata does not match the upload ticket")
+            await asyncio.to_thread(objects.verify_media_upload, upload.object_key,
+                digest=upload.sha256, expected_size=upload.size)
+            object_ref = await asyncio.to_thread(objects.promote_media_upload,
+                upload.object_key, upload.sha256)
+            data = await asyncio.to_thread(objects.get, object_ref, maximum=upload.size)
+            role = {"image":"reference_image","video":"reference_video","audio":"reference_audio"}[upload.kind]
+            inspected = await asyncio.to_thread(inspect_reference, data, role, upload.name)
+            if inspected["mime"] != upload.mime:
+                raise ValueError("Uploaded media content does not match the declared MIME")
+            project_file, _ = await store.register_project_file(upload.thread_id,
+                path="assets/" + upload.name, source_type="upload", source_turn_id="",
+                sha256=upload.sha256, size=upload.size, mime=upload.mime, object_ref=object_ref)
+            await store.ensure_media_reference_asset({"sha256": upload.sha256, "kind": upload.kind,
+                "mime": upload.mime, "size": upload.size, "object_ref": object_ref},
+                object_key=upload.object_key, public_url=upload.public_url, boss_status="active")
+            return await store.finish_media_reference_upload(upload.id, request.state.owner_id,
+                project_file.id)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
+        except ClientError as exc:
+            status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            raise HTTPException(409 if status == 404 else 502,
+                "BOSS upload is not available" if status == 404 else "BOSS verification failed")
+
     @app.post("/api/threads/{thread_id}/media/drafts")
     async def create_media_draft(thread_id: str, value: MediaDraftCreate, request: Request):
         if not await store.get_thread(thread_id, request.state.owner_id):
             raise HTTPException(404, "Thread not found")
         try:
             spec = media_catalog.resolve(value.kind, value.model)
-            media_catalog.validate_parameters(value.kind, value.model, value.parameters)
+            references = await resolve_media_references(store, objects, thread_id,
+                request.state.owner_id, value.references)
+            media_catalog.validate_parameters(value.kind, value.model, value.parameters,
+                generation_mode=value.generation_mode, references=references)
         except KeyError:
             raise HTTPException(422, "Media model is not enabled")
         except ValueError as exc:
             raise HTTPException(422, str(exc))
         try:
             result, _ = await store.create_media_draft(request.state.owner_id, thread_id, value,
-                expires_at=now() + timedelta(minutes=10), provider_spec=spec)
+                expires_at=now() + timedelta(minutes=10), provider_spec=spec,
+                reference_snapshots=references)
             return result
         except KeyError:
             raise HTTPException(404, "Media Turn not found")
@@ -331,15 +396,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def update_media_draft(draft_id: str, value: MediaDraftUpdate, request: Request):
         current = await store.get_media_draft(draft_id, request.state.owner_id)
         if not current: raise HTTPException(404, "Media draft not found")
+        snapshot = await store.get_media_draft_snapshot(draft_id, request.state.owner_id)
         model = value.model or current.model
+        generation_mode = value.generation_mode or current.generation_mode
         parameters = value.parameters if value.parameters is not None else current.parameters
         try:
-            media_catalog.validate_parameters(current.kind, model, parameters)
+            references = (await resolve_media_references(store, objects, current.thread_id,
+                request.state.owner_id, value.references)) if value.references is not None else snapshot["references"]
+            media_catalog.validate_parameters(current.kind, model, parameters,
+                generation_mode=generation_mode, references=references)
         except (KeyError, ValueError) as exc:
             raise HTTPException(422, str(exc))
         try:
             return await store.update_media_draft(draft_id, request.state.owner_id,
-                model=value.model, parameters=value.parameters)
+                model=value.model, generation_mode=value.generation_mode, parameters=value.parameters,
+                reference_snapshots=references if value.references is not None else None)
         except RuntimeError as exc:
             raise HTTPException(409, str(exc))
 
@@ -349,7 +420,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not current: raise HTTPException(404, "Media draft not found")
         try:
             spec = media_catalog.resolve(current.kind, current.model)
-            media_catalog.validate_parameters(current.kind, current.model, current.parameters)
+            snapshot = await store.get_media_draft_snapshot(draft_id, request.state.owner_id)
+            media_catalog.validate_parameters(current.kind, current.model, current.parameters,
+                generation_mode=current.generation_mode, references=snapshot["references"])
             return await store.confirm_media_draft(draft_id, request.state.owner_id, provider_spec=spec)
         except (KeyError, ValueError) as exc:
             raise HTTPException(422, str(exc))

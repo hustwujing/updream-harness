@@ -10,7 +10,7 @@ Web → Session API → Leased Turn Worker → Warm Sandbox Pool → OpenSandbox
                                       └──── Capability Gateway ◄── Harness
 
 Media confirmation → Session API → PostgreSQL Job → Media Worker → Provider
-                                      │
+                                      ├── reference → public BOSS → Ark Asset
                                       └── terminal Outbox → Broker continuation
 
 PostgreSQL: Session, Turn, event and artifact metadata
@@ -26,6 +26,13 @@ The Media Worker is a separate systemd service. API creates and queries Jobs;
 the Worker alone submits external Provider requests, persists external IDs,
 resumes polling after crashes and commits the Artifact, terminal state and
 Outbox transaction. API and Worker can restart independently.
+
+Seedream supports immutable single/multi-image references through stable public
+BOSS URLs. Seedance supports first frame, first/last frame, multimodal reference,
+video editing and extension; image/video/audio inputs are registered as Ark
+Assets and submitted only after they become `Active`. Project files, BOSS
+publication and Ark Asset IDs are cached by content digest and survive Worker
+restart without duplicate external submissions.
 
 Direct browser access keeps the existing signed anonymous identity. The FRPC
 entry is identified through PROXY Protocol/nginx and requires an account; an

@@ -25,9 +25,49 @@ Limits apply to one Provider Job, not to the final production. Seedance 2.0
 clips are 4-15 seconds. Longer videos are storyboarded into clips and assembled
 locally. MiniMax text must be shorter than 10,000 characters; this product also
 caps one audio draft at an estimated 180 seconds and requires longer narration
-to be split at sentence boundaries. A future first/last-frame chain must use
-durable draft dependencies and frame Artifacts; prompts and temporary paths are
-not a recovery-safe substitute for that DAG.
+to be split at sentence boundaries.
+
+Reference modes are `reference_image` for Seedream and `first_frame`,
+`first_last_frame`, `multimodal_reference`, `edit_video` and `extend_video` for
+Seedance. A reference is always a frozen ProjectFile version and object digest;
+the Harness supplies a managed project path, role and usage, never a URL.
+
+## Reference publication
+
+The internal content store remains on `http://shjd-boss.bilibili.co` and is
+never visible to a Provider. Confirmed Jobs publish a content-addressed copy
+through a presigned PUT generated for `https://boss-shjd.biliapi.net`:
+
+```text
+aniforge/image/<sha-prefix>/<sha256>.<ext>
+aniforge/video/<sha-prefix>/<sha256>.<ext>
+aniforge/audio/<sha-prefix>/<sha256>.<ext>
+```
+
+The stable model-facing URL is
+`https://boss-shjd.biliapi.net/updream/<object-key>`. It is HTTPS, has no Cookie
+or query signature, and is verified by size, SHA-256, MIME and BOSS metadata.
+The PUT URL is never persisted as a model input. `If-None-Match: *` makes a
+content-addressed publication immutable.
+
+Seedream receives the stable BOSS URL. Seedance never receives that URL: the
+Media Worker calls Ark `CreateAsset`, resumes `GetAsset` until `Active`, and
+submits `asset://<ark_asset_id>`. `media_reference_assets` caches the stable URL
+to Asset ID mapping. A deterministic Asset name derived from SHA-256 lets a
+replacement Worker reconcile a lost CreateAsset response with `ListAssets`
+instead of creating a duplicate.
+
+Direct clients may use:
+
+```text
+POST /api/threads/{thread_id}/media/reference-uploads
+PUT  <returned presigned BOSS URL>
+POST /api/media/reference-uploads/{upload_id}/complete
+```
+
+Completion validates ownership, expiry, metadata and full content digest,
+copies the immutable object into the existing content-addressed namespace and
+registers an `assets/...` ProjectFile.
 
 ## Confirmation gate
 
@@ -72,6 +112,12 @@ unique lease owner and persists an async Provider ID before polling. After a
 restart it may resume only that ID. A `REQUESTING` Job without a Provider ID
 has an ambiguous submission outcome and becomes `UNKNOWN`. Artifact
 registration, terminal Job state and Outbox creation use one transaction.
+
+Reference preparation uses `PREPARING_REFERENCES`, `WAITING_REFERENCE_ASSET`
+and `REGISTERING_ASSETS` before `REQUESTING`. These phases are safe to reclaim.
+Only a crash after the Provider request boundary becomes an unknown submission.
+Ark `Processing` resumes the same Asset ID; `Failed`, timeout, missing
+credentials and invalid media terminate before Seedance submission.
 
 Only `async + cancellation=supported` is cancellable. Other cancel requests
 return `media_cancel_not_supported` and leave the Job unchanged. Ambiguous
@@ -139,3 +185,10 @@ are eligible for the first remote catalog:
 Other local models remain disabled until individually probed. Reports include
 revision, model, route/config mode, elapsed time, result validation and cleanup
 state, never keys, signed URLs or raw prompts.
+
+Reference probes additionally passed with a stable BOSS Seedream input, an
+Active Ark image Asset, an Active two-second H.264 video Asset, and Seedance 2.0
+image/video `asset://` generations. Provider limits are enforced before Draft
+creation: role combinations, 14 Seedream images, 9 Seedance images, 3 videos,
+3 audio files, 15-second aggregate video/audio duration, MIME, dimensions,
+pixel count, FPS, codec and per-file size.

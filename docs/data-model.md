@@ -73,6 +73,21 @@ The latest checkpoint is not a table row. Its object reference and native
 Harness thread ID are committed on `threads` after the content-addressed archive
 write succeeds.
 
+## Media references
+
+`media_drafts` and `media_jobs` freeze `generation_mode` plus reference
+snapshots containing ProjectFile ID/path/version, SHA-256, object reference,
+role, usage and inspected media metadata. Public API responses omit the internal
+object reference.
+
+`media_reference_uploads` stores owner-scoped, expiring presigned PUT tickets
+and the ProjectFile created after full upload verification.
+
+`media_reference_assets` is the cross-Thread content cache keyed by SHA-256. It
+stores the stable `aniforge/...` BOSS key/public URL, BOSS publication status,
+Ark Asset ID/status/error and a renewable preparation lease. The table prevents
+concurrent Workers from uploading or registering the same content twice.
+
 ## Interactions
 
 `interactions` stores execution-bound approvals/questions, request/response,

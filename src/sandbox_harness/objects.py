@@ -8,6 +8,14 @@ import re
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
+from urllib.parse import quote, urlsplit
+
+
+MEDIA_EXTENSIONS = {
+    "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif",
+    "image/bmp": "bmp", "image/tiff": "tiff", "image/heic": "heic", "image/heif": "heif",
+    "video/mp4": "mp4", "video/quicktime": "mov", "audio/mpeg": "mp3", "audio/wav": "wav",
+}
 
 
 class ObjectStore:
@@ -48,11 +56,16 @@ class ObjectStore:
             raise ValueError("Object integrity check failed")
         return data
 
+    def prepare_media_upload(self, **_):
+        raise RuntimeError("Public media upload requires the configured BOSS backend")
+
 
 class S3ObjectStore:
     """Content-addressed BOSS/S3 backend scoped to one immutable key prefix."""
 
-    def __init__(self, *, bucket: str, prefix: str, endpoint: str = "", client: Any = None):
+    def __init__(self, *, bucket: str, prefix: str, endpoint: str = "", region: str = "updream",
+                 public_endpoint: str = "https://boss-shjd.biliapi.net",
+                 media_prefix: str = "aniforge", client: Any = None, public_client: Any = None):
         if not bucket:
             raise ValueError("S3 object backend requires a bucket")
         normalized = prefix.strip("/")
@@ -60,6 +73,14 @@ class S3ObjectStore:
             raise ValueError("S3 object prefix must be a non-empty safe path")
         self.bucket = bucket
         self.prefix = normalized
+        self.region = region
+        self.public_endpoint = public_endpoint.rstrip("/")
+        self.media_prefix = media_prefix.strip("/")
+        parsed = urlsplit(self.public_endpoint)
+        if parsed.scheme != "https" or not parsed.netloc or parsed.path:
+            raise ValueError("BOSS public endpoint must be an HTTPS origin")
+        if self.media_prefix != "aniforge":
+            raise ValueError("Media reference prefix must be aniforge")
         if client is None:
             import boto3
             from botocore.config import Config
@@ -67,6 +88,7 @@ class S3ObjectStore:
             client = boto3.client(
                 "s3",
                 endpoint_url=endpoint or None,
+                region_name=region,
                 config=Config(
                     signature_version="s3v4",
                     connect_timeout=5,
@@ -77,7 +99,12 @@ class S3ObjectStore:
                     response_checksum_validation="when_required",
                 ),
             )
+            public_client = boto3.client("s3", endpoint_url=self.public_endpoint,
+                region_name=region, config=Config(signature_version="s3v4",
+                    connect_timeout=5, read_timeout=30, retries={"max_attempts": 2},
+                    s3={"addressing_style": "path"}))
         self.client = client
+        self.public_client = public_client or client
 
     def _key(self, digest: str) -> str:
         return f"{self.prefix}/objects/{digest[:2]}/{digest[2:]}"
@@ -121,6 +148,73 @@ class S3ObjectStore:
             raise ValueError("Object integrity check failed")
         return data
 
+    def media_object_key(self, kind: str, digest: str, mime: str) -> str:
+        if kind not in {"image", "video", "audio"} or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("Invalid media object identity")
+        extension = MEDIA_EXTENSIONS.get(mime)
+        if not extension or not mime.startswith(kind + "/"):
+            raise ValueError("Unsupported media reference MIME")
+        return f"{self.media_prefix}/{kind}/{digest[:2]}/{digest}.{extension}"
+
+    def media_public_url(self, object_key: str) -> str:
+        if not object_key.startswith(self.media_prefix + "/") or ".." in object_key.split("/"):
+            raise ValueError("Invalid media object key")
+        return f"{self.public_endpoint}/{quote(self.bucket, safe='')}/{quote(object_key, safe='/')}"
+
+    def prepare_media_upload(self, *, kind: str, digest: str, mime: str, size: int,
+                             expires_seconds: int = 900) -> dict[str, Any]:
+        if size <= 0 or size > 200 * 1024 * 1024 or not 60 <= expires_seconds <= 3600:
+            raise ValueError("Invalid media upload size or expiration")
+        object_key = self.media_object_key(kind, digest, mime)
+        metadata = {"sha256": digest, "size": str(size), "kind": kind}
+        parameters = {"Bucket": self.bucket, "Key": object_key, "ContentType": mime,
+            "Metadata": metadata, "IfNoneMatch": "*"}
+        put_url = self.public_client.generate_presigned_url("put_object", Params=parameters,
+            ExpiresIn=expires_seconds)
+        return {"object_key": object_key, "public_url": self.media_public_url(object_key),
+            "put_url": put_url, "headers": {"Content-Type": mime, "x-amz-meta-sha256": digest,
+                "x-amz-meta-size": str(size), "x-amz-meta-kind": kind, "If-None-Match": "*"}}
+
+    def head_media_upload(self, object_key: str) -> dict[str, Any]:
+        if not object_key.startswith(self.media_prefix + "/") or ".." in object_key.split("/"):
+            raise ValueError("Invalid media object key")
+        value = self.client.head_object(Bucket=self.bucket, Key=object_key)
+        return {"size": int(value.get("ContentLength", 0)),
+            "mime": str(value.get("ContentType", "")).split(";", 1)[0].lower(),
+            "metadata": {str(key).lower(): str(item) for key, item in (value.get("Metadata") or {}).items()}}
+
+    def verify_media_upload(self, object_key: str, *, digest: str, expected_size: int) -> None:
+        if (not object_key.startswith(self.media_prefix + "/") or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or expected_size <= 0 or expected_size > 200 * 1024 * 1024):
+            raise ValueError("Invalid media upload verification")
+        response = self.client.get_object(Bucket=self.bucket, Key=object_key)
+        body = response["Body"]; hasher = hashlib.sha256(); size = 0
+        try:
+            while chunk := body.read(1024 * 1024):
+                size += len(chunk)
+                if size > expected_size:
+                    raise ValueError("Media upload size mismatch")
+                hasher.update(chunk)
+        finally:
+            body.close()
+        if size != expected_size or hasher.hexdigest() != digest:
+            raise ValueError("Media upload digest mismatch")
+
+    def promote_media_upload(self, object_key: str, digest: str) -> str:
+        if not object_key.startswith(self.media_prefix + "/") or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("Invalid media object promotion")
+        target = self._key(digest)
+        try:
+            self.client.head_object(Bucket=self.bucket, Key=target)
+        except Exception as exc:
+            response = getattr(exc, "response", {})
+            status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if status not in (404,):
+                raise
+            self.client.copy_object(Bucket=self.bucket, Key=target,
+                CopySource={"Bucket": self.bucket, "Key": object_key}, MetadataDirective="COPY")
+        return "sha256:" + digest
+
 
 def object_store(settings):
     if settings.object_backend == "s3":
@@ -128,5 +222,8 @@ def object_store(settings):
             bucket=settings.object_bucket,
             prefix=settings.object_prefix,
             endpoint=settings.object_endpoint,
+            region=settings.object_region,
+            public_endpoint=settings.object_public_endpoint,
+            media_prefix=settings.media_reference_prefix,
         )
     return ObjectStore(settings.data_root / "objects")

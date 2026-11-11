@@ -218,3 +218,21 @@ def test_media_draft_rejects_malformed_turn_id():
     with pytest.raises(ValueError):
         MediaDraftCreate(kind="image", model="seedream-5.0", parameters={"prompt": "test"},
             idempotency_key="media-key-bad-turn", turn_id="not-a-turn")
+
+
+def test_initialize_adds_media_generation_mode_and_reference_snapshots(tmp_path):
+    import asyncio
+    import sqlite3
+    database=tmp_path/"media-reference-migration.db";url="sqlite+aiosqlite:///"+str(database)
+    async def create():
+        store=Store(url);await store.initialize();await store.close()
+    asyncio.run(create())
+    with sqlite3.connect(database) as connection:
+        for table in ("media_drafts","media_jobs"):
+            connection.execute(f"ALTER TABLE {table} DROP COLUMN generation_mode")
+            connection.execute(f"ALTER TABLE {table} DROP COLUMN references_json")
+    asyncio.run(create())
+    with sqlite3.connect(database) as connection:
+        for table in ("media_drafts","media_jobs"):
+            columns={row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+            assert {"generation_mode","references_json"} <= columns

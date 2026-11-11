@@ -117,6 +117,34 @@ Uploads and downloads enforce ownership, safe names/paths, byte limits and
 content-addressed integrity. Inline rendering is limited to approved media/text
 types and uses a sandboxing Content-Security-Policy.
 
+## Media generation and reference uploads
+
+```text
+GET    /api/catalog/media
+POST   /api/threads/{thread_id}/media/reference-uploads
+POST   /api/media/reference-uploads/{upload_id}/complete
+POST   /api/threads/{thread_id}/media/drafts
+GET    /api/threads/{thread_id}/media/drafts
+PATCH  /api/media/drafts/{draft_id}
+POST   /api/media/drafts/{draft_id}/confirm
+POST   /api/media/drafts/{draft_id}/cancel
+GET    /api/threads/{thread_id}/media/jobs
+GET    /api/media/jobs/{job_id}
+POST   /api/media/jobs/{job_id}/cancel
+```
+
+Reference upload creation accepts `name`, `kind`, `mime`, `size` and `sha256`.
+It returns a 15-minute `PUT` URL plus required headers, a stable `object_key`
+and public URL. The caller uploads exactly once and then calls `complete`.
+Completion checks the owner, ticket expiry, BOSS metadata, byte count, SHA-256,
+actual media type and decodability before registering a ProjectFile. A repeated
+PUT may return 412 because reference object keys are immutable; completion may
+still succeed when the existing object matches the ticket.
+
+Draft `generation_mode` and `references` are validated before confirmation.
+References identify a managed ProjectFile by ID or path and provide only a
+role/usage. Callers cannot provide Provider URLs or Ark Asset IDs.
+
 ## Runtime API
 
 The in-sandbox Runtime API is private to `RuntimeClient`; it includes configure,

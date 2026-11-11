@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from sandbox_harness.media_worker import MediaWorker
+from sandbox_harness.media_reference_publisher import MediaReferencePreparationError
 
 
 class Response:
@@ -45,10 +46,19 @@ class Store:
         return True
 
 
-def worker(store=None):
+class Objects:
+    def signed_get_url(self, reference, *, expires_seconds):
+        return "https://objects.test/" + reference.removeprefix("sha256:")
+    def get(self, reference, *, maximum):
+        return b"\x89PNG\r\n\x1a\nreference"
+
+
+def worker(store=None, objects=None):
     settings = SimpleNamespace(upstream_image="http://image.test", upstream_video="http://video.test",
-        upstream_audio="http://audio.test")
-    return MediaWorker(settings, store or Store(), None, None)
+        upstream_audio="http://audio.test", ark_control_endpoint="https://ark.test",
+        ark_access_key="", ark_secret_key="", ark_project_name="default",
+        ark_asset_group_id="", ark_asset_group_type="AIGC")
+    return MediaWorker(settings, store or Store(), objects or Objects(), None)
 
 
 @pytest.mark.asyncio
@@ -93,6 +103,72 @@ async def test_image_provider_failure_preserves_safe_http_and_business_code(monk
 
 
 @pytest.mark.asyncio
+async def test_seedream_reference_payload_uses_frozen_object_urls(monkeypatch):
+    value = worker(); client = Client([Response({"data":[{"url":"https://result.test/image.png"}]})])
+    async def client_factory(): return client
+    monkeypatch.setattr(value, "_client", client_factory)
+    refs=[{"object_ref":"sha256:"+"1"*64,"role":"reference_image","usage":"subject","mime":"image/png","size":100,"public_url":"https://boss-shjd.biliapi.net/updream/aniforge/image/one.png"},
+        {"object_ref":"sha256:"+"2"*64,"role":"reference_image","usage":"style","mime":"image/png","size":100,"public_url":"https://boss-shjd.biliapi.net/updream/aniforge/image/two.png"}]
+    result=await value._ark_image({"id":"job","model":"seedream-5.0",
+        "generation_mode":"reference_image","references":refs,
+        "parameters":{"prompt":"merge","size":"2K"}})
+    payload=client.posts[0][1]["json"]
+    assert result.status=="success" and payload["image"]==[refs[0]["public_url"],refs[1]["public_url"]]
+    assert payload["sequential_image_generation"]=="disabled"
+
+
+@pytest.mark.asyncio
+async def test_seedance_edit_payload_orders_source_and_compiles_constraints(monkeypatch):
+    value=worker();client=Client([Response({"id":"provider-job"}),
+        Response({"status":"succeeded","content":{"video_url":"https://result.test/video.mp4"}})])
+    async def client_factory(): return client
+    async def no_sleep(_): return None
+    monkeypatch.setattr(value,"_client",client_factory)
+    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep",no_sleep)
+    references=[
+        {"object_ref":"sha256:"+"1"*64,"role":"reference_image","usage":"style","mime":"image/png","size":100,"asset_uri":"asset://asset-image-1"},
+        {"object_ref":"sha256:"+"2"*64,"role":"reference_video","usage":"edit_source","mime":"video/mp4","size":100,"asset_uri":"asset://asset-video-1"},
+    ]
+    result=await value._ark_video({"id":"job","model":"sed2","provider_job_id":"",
+        "generation_mode":"edit_video","references":references,
+        "parameters":{"prompt":"remove the logo","duration":-1,"aspect_ratio":"adaptive"}})
+    payload=client.posts[0][1]["json"]
+    assert result.status=="success" and payload["duration"]==-1 and payload["ratio"]=="adaptive"
+    assert payload["content"][0]["text"].startswith("严格编辑视频1")
+    assert payload["content"][1]["type"]=="video_url" and payload["content"][1]["role"]=="reference_video"
+    assert payload["content"][1]["video_url"]["url"]=="asset://asset-video-1"
+    assert payload["content"][2]["type"]=="image_url"
+
+
+@pytest.mark.asyncio
+async def test_seedance_first_last_frame_payload_preserves_roles(monkeypatch):
+    value=worker();client=Client([Response({"id":"provider-job"}),
+        Response({"status":"succeeded","video_url":"https://result.test/video.mp4"})])
+    async def client_factory(): return client
+    async def no_sleep(_): return None
+    monkeypatch.setattr(value,"_client",client_factory)
+    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep",no_sleep)
+    refs=[{"object_ref":"sha256:"+"3"*64,"role":"first_frame","usage":"composition","mime":"image/png","size":100,"asset_uri":"asset://asset-first"},
+        {"object_ref":"sha256:"+"4"*64,"role":"last_frame","usage":"composition","mime":"image/png","size":100,"asset_uri":"asset://asset-last"}]
+    await value._ark_video({"id":"job","model":"sed2","provider_job_id":"",
+        "generation_mode":"first_last_frame","references":refs,
+        "parameters":{"prompt":"transition","duration":5,"aspect_ratio":"adaptive"}})
+    content=client.posts[0][1]["json"]["content"]
+    assert [item.get("role") for item in content[1:]]==["first_frame","last_frame"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("url",[
+    "http://shjd-boss.bilibili.co/updream/aniforge/image/ref.png",
+    "https://boss-shjd.biliapi.net/updream/aniforge/image/ref.png?X-Amz-Signature=secret",
+])
+async def test_provider_reference_rejects_internal_or_presigned_urls(url):
+    value=worker()
+    with pytest.raises(MediaReferencePreparationError,match="unstable_or_internal"):
+        await value._reference_url({"public_url":url})
+
+
+@pytest.mark.asyncio
 async def test_requesting_job_without_provider_id_becomes_unknown(monkeypatch):
     store = Store(); value = worker(store)
     async def should_not_execute(_):
@@ -102,6 +178,20 @@ async def test_requesting_job_without_provider_id_becomes_unknown(monkeypatch):
         "provider_job_id": "", "provider": "ark", "model": "seedream-5.0"})
     assert store.updates[-1][2]["status"] == "unknown"
     assert store.updates[-1][2]["error_code"] == "provider_submission_outcome_unknown"
+
+
+@pytest.mark.asyncio
+async def test_reference_preparation_phase_is_safe_to_resume(monkeypatch):
+    store=Store();value=worker(store)
+    async def failed(_):return __import__('sandbox_harness.media_worker',fromlist=['ProviderResult']).ProviderResult(
+        "failed",error="reference preparation resumed")
+    monkeypatch.setattr(value,"_execute",failed)
+    await value.process({"id":"job","kind":"video","model":"sed2","provider":"ark",
+        "adapter":"ark_video_v2","status":"running","phase":"preparing_references",
+        "provider_job_id":"","references":[{"sha256":"1"*64}]})
+    assert store.updates[-1][2]["status"]=="failed"
+    assert store.updates[-1][2]["error_code"]=="provider_failed"
+    assert all(update[2].get("error_code")!="provider_submission_outcome_unknown" for update in store.updates)
 
 
 def test_media_worker_lease_owner_is_instance_unique():

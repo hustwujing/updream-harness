@@ -14,7 +14,10 @@ def test_default_catalog_contains_only_real_probe_models():
     }
     schemas = {item["kind"]: item["parameter_schema"] for item in catalog.public()}
     assert "aspect_ratio" in schemas["video"]["optional"] and "ratio" not in schemas["video"]["optional"]
-    assert schemas["video"]["optional"]["duration"] == "integer 4..15"
+    assert schemas["video"]["optional"]["duration"] == "integer 4..15 or -1"
+    assert set(schemas["video"]["generation_modes"]) == {"text_to_video", "first_frame",
+        "first_last_frame", "multimodal_reference", "edit_video", "extend_video"}
+    assert schemas["image"]["generation_modes"]["reference_image"]["max_references"] == 14
     assert schemas["image"]["limits"]["min_total_pixels"] == 2560 * 1440
     assert "voice_id" in schemas["audio"]["optional"] and "voice_setting" not in schemas["audio"]["optional"]
     assert schemas["audio"]["limits"]["max_estimated_duration_seconds"] == 180
@@ -69,3 +72,14 @@ def test_audio_duration_estimate_includes_speed_words_and_explicit_pauses():
     normal = estimate_audio_duration_seconds("这是中文。 hello world! <#2.5#>", 1)
     faster = estimate_audio_duration_seconds("这是中文。 hello world! <#2.5#>", 2)
     assert normal > faster >= 2.5
+
+
+def test_seedance_reference_modes_are_gated_by_ark_asset_configuration():
+    catalog=MediaCatalog(ark_assets_configured=False)
+    video=next(item for item in catalog.public("video") if item["model"]=="sed2")
+    assert video["reference_inputs_available"] is False
+    reference={"role":"reference_image","usage":"subject","width":640,"height":480,
+        "size":1000,"mime":"image/png","duration_seconds":None,"fps":None}
+    with pytest.raises(ValueError,match="Ark Asset"):
+        catalog.validate_parameters("video","sed2",{"prompt":"move","duration":5},
+            generation_mode="multimodal_reference",references=[reference])

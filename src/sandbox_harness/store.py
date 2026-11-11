@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .observability import observed
-from .domain import AccountView, RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, TERMINAL, identifier, now, MediaDraftView, MediaJobView
+from .domain import AccountView, RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, TERMINAL, identifier, now, MediaDraftView, MediaJobView, MediaReferenceUploadView
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
 
@@ -196,12 +196,52 @@ class MediaDraftRow(Base):
     turn_id: Mapped[str] = mapped_column(String(32), default="", index=True)
     kind: Mapped[str] = mapped_column(String(16))
     model: Mapped[str] = mapped_column(String(160))
+    generation_mode: Mapped[str] = mapped_column(String(40), default="", server_default="")
     parameters_json: Mapped[str] = mapped_column(Text, default="{}")
+    references_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
     idempotency_key: Mapped[str] = mapped_column(String(160))
     status: Mapped[str] = mapped_column(String(32), index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     job_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
     output_role: Mapped[str] = mapped_column(String(20), default="candidate", server_default="candidate")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MediaReferenceUploadRow(Base):
+    __tablename__ = "media_reference_uploads"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    kind: Mapped[str] = mapped_column(String(16))
+    mime: Mapped[str] = mapped_column(String(200))
+    size: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    object_key: Mapped[str] = mapped_column(Text)
+    public_url: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    project_file_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MediaReferenceAssetRow(Base):
+    __tablename__ = "media_reference_assets"
+    sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    mime: Mapped[str] = mapped_column(String(200))
+    size: Mapped[int] = mapped_column(Integer)
+    object_ref: Mapped[str] = mapped_column(Text)
+    object_key: Mapped[str] = mapped_column(Text, unique=True)
+    public_url: Mapped[str] = mapped_column(Text, unique=True)
+    boss_status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending")
+    ark_asset_id: Mapped[str] = mapped_column(String(160), default="", server_default="")
+    ark_status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending")
+    ark_error: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    lease_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -232,6 +272,7 @@ class MediaJobRow(Base):
     draft_id: Mapped[str] = mapped_column(String(32), index=True)
     kind: Mapped[str] = mapped_column(String(16))
     model: Mapped[str] = mapped_column(String(160))
+    generation_mode: Mapped[str] = mapped_column(String(40), default="", server_default="")
     provider: Mapped[str] = mapped_column(String(80))
     adapter: Mapped[str] = mapped_column(String(120))
     execution_mode: Mapped[str] = mapped_column(String(16))
@@ -240,6 +281,7 @@ class MediaJobRow(Base):
     phase: Mapped[str] = mapped_column(String(32), default="", server_default="")
     progress: Mapped[int | None] = mapped_column(Integer, nullable=True)
     parameters_json: Mapped[str] = mapped_column(Text, default="{}")
+    references_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
     provider_job_id: Mapped[str] = mapped_column(String(200), default="", server_default="")
     idempotency_key: Mapped[str] = mapped_column(String(160))
     error_code: Mapped[str] = mapped_column(String(100), default="", server_default="")
@@ -386,6 +428,12 @@ class Store:
                 if "output_role" not in media_columns:
                     await connection.execute(text(
                         f"ALTER TABLE {table} ADD COLUMN output_role VARCHAR(20) NOT NULL DEFAULT 'candidate'"))
+                if "generation_mode" not in media_columns:
+                    await connection.execute(text(
+                        f"ALTER TABLE {table} ADD COLUMN generation_mode VARCHAR(40) NOT NULL DEFAULT ''"))
+                if "references_json" not in media_columns:
+                    await connection.execute(text(
+                        f"ALTER TABLE {table} ADD COLUMN references_json TEXT NOT NULL DEFAULT '[]'"))
                 if table == "media_jobs" and "finished_at" not in media_columns:
                     definition = "TIMESTAMP WITH TIME ZONE NULL" if connection.dialect.name == "postgresql" else "DATETIME NULL"
                     await connection.execute(text(f"ALTER TABLE media_jobs ADD COLUMN finished_at {definition}"))
@@ -1544,6 +1592,32 @@ class Store:
                 ))).scalar_one_or_none()
         return self.project_file_view(row) if row else None
 
+    async def resolve_project_file_reference(self, thread_id: str, owner_id: str, *,
+                                             file_id: str = "", path: str = "") -> ProjectFile | None:
+        async with self.connections() as db:
+            if file_id:
+                row = (await db.execute(select(ProjectFileRow).join(ThreadRow,
+                    ThreadRow.id == ProjectFileRow.thread_id).where(
+                        ProjectFileRow.id == file_id, ProjectFileRow.thread_id == thread_id,
+                        ThreadRow.owner_id == owner_id,
+                    ))).scalar_one_or_none()
+                if not row:
+                    return None
+                latest = (await db.execute(select(ProjectFileRow).where(
+                    ProjectFileRow.thread_id == thread_id, ProjectFileRow.path == row.path,
+                ).order_by(ProjectFileRow.version.desc()).limit(1))).scalar_one()
+                if latest.id != row.id or latest.deleted:
+                    return None
+            else:
+                row = (await db.execute(select(ProjectFileRow).join(ThreadRow,
+                    ThreadRow.id == ProjectFileRow.thread_id).where(
+                        ProjectFileRow.thread_id == thread_id, ProjectFileRow.path == path,
+                        ThreadRow.owner_id == owner_id,
+                    ).order_by(ProjectFileRow.version.desc()).limit(1))).scalar_one_or_none()
+                if not row or row.deleted:
+                    return None
+        return self.project_file_view(row)
+
     @staticmethod
     def interaction_view(row: InteractionRow) -> Interaction:
         return Interaction.model_validate({
@@ -1689,17 +1763,129 @@ class Store:
         return True
 
     @staticmethod
+    def _media_reference_upload_view(row: MediaReferenceUploadRow) -> MediaReferenceUploadView:
+        status = "expired" if row.status == "pending" and utc_datetime(row.expires_at) <= now() else row.status
+        return MediaReferenceUploadView(id=row.id, thread_id=row.thread_id, name=row.name,
+            kind=row.kind, mime=row.mime, size=row.size, sha256=row.sha256,
+            object_key=row.object_key, public_url=row.public_url, status=status,
+            project_file_id=row.project_file_id or "", expires_at=utc_datetime(row.expires_at))
+
+    async def create_media_reference_upload(self, owner_id: str, thread_id: str, value, *,
+                                            object_key: str, public_url: str,
+                                            expires_at: datetime) -> MediaReferenceUploadView:
+        async with self.connections.begin() as db:
+            thread = await db.get(ThreadRow, thread_id)
+            if not thread or thread.owner_id != owner_id:
+                raise KeyError("thread_not_found")
+            row = MediaReferenceUploadRow(id=identifier(), owner_id=owner_id, thread_id=thread_id,
+                name=value.name, kind=value.kind, mime=value.mime, size=value.size,
+                sha256=value.sha256, object_key=object_key, public_url=public_url,
+                status="pending", expires_at=expires_at, created_at=now(), updated_at=now())
+            db.add(row)
+        return self._media_reference_upload_view(row)
+
+    async def get_media_reference_upload(self, upload_id: str, owner_id: str) -> MediaReferenceUploadView | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(MediaReferenceUploadRow).where(
+                MediaReferenceUploadRow.id == upload_id,
+                MediaReferenceUploadRow.owner_id == owner_id))).scalar_one_or_none()
+        return self._media_reference_upload_view(row) if row else None
+
+    async def finish_media_reference_upload(self, upload_id: str, owner_id: str,
+                                            project_file_id: str) -> MediaReferenceUploadView:
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(MediaReferenceUploadRow).where(
+                MediaReferenceUploadRow.id == upload_id,
+                MediaReferenceUploadRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
+            if not row:
+                raise KeyError("media_reference_upload_not_found")
+            if row.status == "completed":
+                return self._media_reference_upload_view(row)
+            if row.status != "pending" or utc_datetime(row.expires_at) <= now():
+                raise RuntimeError("media_reference_upload_expired")
+            row.status = "completed"; row.project_file_id = project_file_id; row.updated_at = now()
+        return self._media_reference_upload_view(row)
+
+    @staticmethod
+    def _media_reference_asset(row: MediaReferenceAssetRow) -> dict:
+        return {"sha256": row.sha256, "kind": row.kind, "mime": row.mime, "size": row.size,
+            "object_ref": row.object_ref, "object_key": row.object_key, "public_url": row.public_url,
+            "boss_status": row.boss_status, "ark_asset_id": row.ark_asset_id,
+            "ark_status": row.ark_status, "ark_error": row.ark_error,
+            "lease_owner": row.lease_owner, "lease_expires_at": row.lease_expires_at}
+
+    async def ensure_media_reference_asset(self, reference: dict, *, object_key: str,
+                                           public_url: str, boss_status: str = "pending") -> dict:
+        async with self.connections.begin() as db:
+            row = await db.get(MediaReferenceAssetRow, reference["sha256"], with_for_update=True)
+            if row:
+                expected = (reference["kind"], reference["mime"], reference["size"],
+                    reference["object_ref"], object_key, public_url)
+                actual = (row.kind, row.mime, row.size, row.object_ref, row.object_key, row.public_url)
+                if actual != expected:
+                    raise RuntimeError("media_reference_asset_identity_conflict")
+            else:
+                row = MediaReferenceAssetRow(sha256=reference["sha256"], kind=reference["kind"],
+                    mime=reference["mime"], size=reference["size"], object_ref=reference["object_ref"],
+                    object_key=object_key, public_url=public_url, boss_status=boss_status,
+                    ark_status="pending", created_at=now(), updated_at=now())
+                db.add(row)
+        return self._media_reference_asset(row)
+
+    async def get_media_reference_asset(self, digest: str) -> dict | None:
+        async with self.connections() as db:
+            row = await db.get(MediaReferenceAssetRow, digest)
+        return self._media_reference_asset(row) if row else None
+
+    async def claim_media_reference_asset(self, digest: str, owner: str,
+                                          lease_seconds: int = 60) -> tuple[dict, bool]:
+        async with self.connections.begin() as db:
+            row = await db.get(MediaReferenceAssetRow, digest, with_for_update=True)
+            if not row:
+                raise KeyError("media_reference_asset_not_found")
+            timestamp = now()
+            if (row.lease_owner and row.lease_owner != owner and row.lease_expires_at
+                    and utc_datetime(row.lease_expires_at) > timestamp):
+                return self._media_reference_asset(row), False
+            row.lease_owner = owner; row.lease_expires_at = timestamp + timedelta(seconds=lease_seconds)
+            row.updated_at = timestamp
+        return self._media_reference_asset(row), True
+
+    async def update_media_reference_asset(self, digest: str, owner: str, *,
+                                           boss_status: str | None = None,
+                                           ark_asset_id: str | None = None,
+                                           ark_status: str | None = None,
+                                           ark_error: str | None = None,
+                                           release: bool = False) -> dict:
+        async with self.connections.begin() as db:
+            row = await db.get(MediaReferenceAssetRow, digest, with_for_update=True)
+            if not row or row.lease_owner != owner:
+                raise RuntimeError("media_reference_asset_lease_lost")
+            if boss_status is not None: row.boss_status = boss_status
+            if ark_asset_id is not None: row.ark_asset_id = ark_asset_id
+            if ark_status is not None: row.ark_status = ark_status
+            if ark_error is not None: row.ark_error = ark_error[:200]
+            row.updated_at = now()
+            if release:
+                row.lease_owner = ""; row.lease_expires_at = None
+            else:
+                row.lease_expires_at = now() + timedelta(seconds=60)
+        return self._media_reference_asset(row)
+
+    @staticmethod
     def _media_draft_view(row: MediaDraftRow) -> MediaDraftView:
         status = "expired" if row.status == "awaiting_confirmation" and utc_datetime(row.expires_at) <= now() else row.status
         return MediaDraftView(id=row.id, thread_id=row.thread_id, kind=row.kind, model=row.model,
-            parameters=json.loads(row.parameters_json or "{}"), status=status,
+            generation_mode=row.generation_mode or {"image":"text_to_image","video":"text_to_video","audio":"text_to_audio"}[row.kind],
+            parameters=json.loads(row.parameters_json or "{}"), references=json.loads(row.references_json or "[]"), status=status,
             expires_at=utc_datetime(row.expires_at), job_id=row.job_id or "", output_role=row.output_role)
 
     @staticmethod
     def _media_job_view(row: MediaJobRow, artifact_ids: list[str] | None = None) -> MediaJobView:
         reason = "" if row.cancellation_mode == "supported" and row.execution_mode == "async" else "provider_not_cancelable"
         return MediaJobView(id=row.id, thread_id=row.thread_id, turn_id=row.turn_id or "", kind=row.kind,
-            model=row.model, provider=row.provider, adapter=row.adapter, execution_mode=row.execution_mode,
+            model=row.model, generation_mode=row.generation_mode or "", references=json.loads(row.references_json or "[]"),
+            provider=row.provider, adapter=row.adapter, execution_mode=row.execution_mode,
             cancellation_mode=row.cancellation_mode, status=row.status, phase=row.phase or "",
             progress=row.progress, cancelable=row.execution_mode == "async" and row.cancellation_mode == "supported",
             cancel_reason=reason, artifact_ids=artifact_ids or [], output_role=row.output_role,
@@ -1722,7 +1908,9 @@ class Store:
             ArtifactRow.path == f"artifacts/{row.id}",
         ).order_by(ArtifactRow.created_at))).scalars().all())
 
-    async def create_media_draft(self, owner_id: str, thread_id: str, value, *, expires_at: datetime, provider_spec) -> tuple[MediaDraftView, bool]:
+    async def create_media_draft(self, owner_id: str, thread_id: str, value, *, expires_at: datetime,
+                                 provider_spec, reference_snapshots: list[dict] | None = None) -> tuple[MediaDraftView, bool]:
+        reference_snapshots = reference_snapshots or []
         async with self.connections.begin() as db:
             turn = None
             if value.turn_id:
@@ -1735,6 +1923,8 @@ class Store:
             if existing:
                 if (existing.owner_id != owner_id or existing.kind != value.kind or existing.model != value.model
                         or json.loads(existing.parameters_json or "{}") != value.parameters
+                        or (existing.generation_mode or "") != (value.generation_mode or "")
+                        or json.loads(existing.references_json or "[]") != reference_snapshots
                         or existing.output_role != value.output_role):
                     raise RuntimeError("media_draft_idempotency_conflict")
                 return self._media_draft_view(existing), False
@@ -1748,7 +1938,9 @@ class Store:
                     db.add(MediaBatchRow(turn_id=turn.id, thread_id=thread_id, owner_id=owner_id,
                         status="open", created_at=now(), updated_at=now()))
             row = MediaDraftRow(id=identifier(), owner_id=owner_id, thread_id=thread_id, turn_id=value.turn_id,
-                kind=value.kind, model=value.model, parameters_json=json.dumps(value.parameters, ensure_ascii=False),
+                kind=value.kind, model=value.model, generation_mode=value.generation_mode or "",
+                parameters_json=json.dumps(value.parameters, ensure_ascii=False),
+                references_json=json.dumps(reference_snapshots, ensure_ascii=False),
                 idempotency_key=value.idempotency_key, status="awaiting_confirmation", expires_at=expires_at,
                 output_role=value.output_role, created_at=now(), updated_at=now())
             db.add(row)
@@ -1780,6 +1972,17 @@ class Store:
                 MediaDraftRow.owner_id == owner_id))).scalar_one_or_none()
         return self._media_draft_view(row) if row else None
 
+    async def get_media_draft_snapshot(self, draft_id: str, owner_id: str) -> dict | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(MediaDraftRow).where(MediaDraftRow.id == draft_id,
+                MediaDraftRow.owner_id == owner_id))).scalar_one_or_none()
+        if not row:
+            return None
+        return {"kind": row.kind, "model": row.model,
+            "generation_mode": row.generation_mode or {"image":"text_to_image","video":"text_to_video","audio":"text_to_audio"}[row.kind],
+            "parameters": json.loads(row.parameters_json or "{}"),
+            "references": json.loads(row.references_json or "[]")}
+
     async def list_media_drafts(self, thread_id: str, owner_id: str) -> list[MediaDraftView]:
         async with self.connections() as db:
             rows = (await db.execute(select(MediaDraftRow).where(
@@ -1791,7 +1994,9 @@ class Store:
         async with self.connections() as db:
             return (await db.execute(select(ThreadRow.owner_id).where(ThreadRow.id == thread_id))).scalar_one_or_none() or ""
 
-    async def update_media_draft(self, draft_id: str, owner_id: str, *, model: str | None, parameters: dict | None) -> MediaDraftView:
+    async def update_media_draft(self, draft_id: str, owner_id: str, *, model: str | None,
+                                 generation_mode: str | None, parameters: dict | None,
+                                 reference_snapshots: list[dict] | None) -> MediaDraftView:
         async with self.connections.begin() as db:
             row = (await db.execute(select(MediaDraftRow).where(MediaDraftRow.id == draft_id,
                 MediaDraftRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
@@ -1799,7 +2004,10 @@ class Store:
             if row.status != "awaiting_confirmation" or utc_datetime(row.expires_at) <= now():
                 raise RuntimeError("media_draft_not_editable")
             if model is not None: row.model = model
+            if generation_mode is not None: row.generation_mode = generation_mode
             if parameters is not None: row.parameters_json = json.dumps(parameters, ensure_ascii=False)
+            if reference_snapshots is not None:
+                row.references_json = json.dumps(reference_snapshots, ensure_ascii=False)
             row.updated_at = now()
         return self._media_draft_view(row)
 
@@ -1828,9 +2036,11 @@ class Store:
             if draft.status != "awaiting_confirmation" or utc_datetime(draft.expires_at) <= now():
                 raise RuntimeError("media_draft_not_confirmable")
             job = MediaJobRow(id=identifier(), owner_id=owner_id, thread_id=draft.thread_id, turn_id=draft.turn_id, draft_id=draft.id,
-                kind=draft.kind, model=draft.model, provider=provider_spec.provider, adapter=provider_spec.adapter,
+                kind=draft.kind, model=draft.model, generation_mode=draft.generation_mode,
+                provider=provider_spec.provider, adapter=provider_spec.adapter,
                 execution_mode=provider_spec.execution, cancellation_mode=provider_spec.cancellation,
                 status="created", phase="prepared", parameters_json=draft.parameters_json,
+                references_json=draft.references_json,
                 idempotency_key=draft.idempotency_key, output_role=draft.output_role,
                 created_at=now(), updated_at=now())
             db.add(job); draft.status = "confirmed"; draft.job_id = job.id; draft.updated_at = now()
@@ -2006,7 +2216,8 @@ class Store:
                 row.lease_owner = owner; row.lease_expires_at = expiry; row.updated_at = now()
                 result.append({"id": row.id, "kind": row.kind, "model": row.model, "provider": row.provider,
                     "adapter": row.adapter, "status": row.status, "phase": row.phase,
-                    "parameters": json.loads(row.parameters_json or "{}"), "provider_job_id": row.provider_job_id})
+                    "generation_mode": row.generation_mode or "", "parameters": json.loads(row.parameters_json or "{}"),
+                    "references": json.loads(row.references_json or "[]"), "provider_job_id": row.provider_job_id})
         return result
 
     async def release_media_job_leases(self, owner: str) -> int:

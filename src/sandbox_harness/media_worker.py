@@ -8,12 +8,13 @@ import tarfile
 import uuid
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 import av
 
 from .media_catalog import MediaCatalog
+from .media_reference_publisher import MediaReferencePreparationError, MediaReferencePublisher
 from .observability import event
 from .objects import ObjectStore, S3ObjectStore
 from .store import Store
@@ -37,6 +38,7 @@ class MediaWorker:
         self.objects = objects
         self.catalog = catalog
         self.owner = "media-worker-" + uuid.uuid4().hex
+        self.reference_publisher = MediaReferencePublisher(settings, store, objects, self.owner)
         self.stop_event = asyncio.Event()
         self.concurrency = getattr(settings, "media_worker_concurrency", 6)
 
@@ -80,7 +82,8 @@ class MediaWorker:
                 return
             stage = "provider_request" if not job.get("provider_job_id") else "provider_poll"
             await self.store.update_media_job(job["id"], self.owner, status="running",
-                phase="provider_polling" if job.get("provider_job_id") else "requesting")
+                phase="provider_polling" if job.get("provider_job_id") else (
+                    "preparing_references" if job.get("references") else "requesting"))
             result = await self._execute(job)
             if result.status != "success":
                 await self.store.update_media_job(job["id"], self.owner, status="failed", phase="terminal",
@@ -95,6 +98,10 @@ class MediaWorker:
                 provider_job_id=result.provider_job_id, output_object_ref=object_ref,
                 output_mime=mime, output_size=len(data), progress=100)
             event("media.job.succeeded", job_id=job["id"], provider=job["provider"], model=job["model"], bytes=len(data))
+        except MediaReferencePreparationError as exc:
+            await self.store.update_media_job(job["id"], self.owner, status="failed", phase="terminal",
+                error_code="media_reference_unavailable", error_detail=str(exc)[:200])
+            event("media.reference.failed", level=30, job_id=job["id"], error_code=str(exc)[:80])
         except Exception as exc:
             await self.store.update_media_job(job["id"], self.owner, status="unknown", phase="recovery_required",
                 error_code="worker_error", error_detail=f"{stage}:{type(exc).__name__}")
@@ -102,6 +109,9 @@ class MediaWorker:
                 failure_stage=stage, exception_type=type(exc).__name__)
 
     async def _execute(self, job: dict[str, Any]) -> ProviderResult:
+        if job.get("references"):
+            job = {**job, "references": await self.reference_publisher.prepare(job,
+                require_ark=job["adapter"] == "ark_video_v2")}
         if job["adapter"] == "ark_image":
             return await self._ark_image(job)
         if job["adapter"] == "ark_video_v2":
@@ -113,13 +123,55 @@ class MediaWorker:
     async def _client(self):
         return httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10), follow_redirects=True, trust_env=False)
 
+    async def _reference_url(self, reference: dict[str, Any]) -> str:
+        value = reference.get("asset_uri") or reference.get("public_url") or ""
+        if not value:
+            raise MediaReferencePreparationError("media_reference_not_published")
+        if value.startswith("asset://"):
+            if not re.fullmatch(r"asset://asset-[A-Za-z0-9-]{4,160}", value):
+                raise MediaReferencePreparationError("invalid_ark_asset_uri")
+            return value
+        parsed = urlsplit(value)
+        prefix = "/updream/aniforge/" + reference.get("kind", "image") + "/"
+        if (parsed.scheme != "https" or parsed.netloc != "boss-shjd.biliapi.net"
+                or not parsed.path.startswith(prefix) or parsed.query or parsed.fragment):
+            raise MediaReferencePreparationError("unstable_or_internal_media_reference_url")
+        return value
+
+    @staticmethod
+    def _ordered_references(job: dict[str, Any]) -> list[dict[str, Any]]:
+        source = {"edit_video": "edit_source", "extend_video": "extend_source"}.get(
+            job.get("generation_mode", ""))
+        values = list(job.get("references") or [])
+        ordered = sorted(enumerate(values),
+            key=lambda item: (0 if source and item[1].get("usage") == source else 1, item[0]))
+        return [item[1] for item in ordered]
+
+    @staticmethod
+    def _video_prompt(mode: str, parameters: dict[str, Any]) -> str:
+        prompt = parameters.get("prompt", "")
+        if mode == "edit_video":
+            return "严格编辑视频1，未提及的内容保持不变。" + prompt
+        if mode == "extend_video":
+            direction = "向前" if parameters.get("extend_direction") == "forward" else "向后"
+            return f"{direction}延长视频1。" + prompt
+        return prompt
+
     async def _ark_image(self, job: dict[str, Any]) -> ProviderResult:
         base = self.settings.upstream_image.rstrip("/")
         key = os.environ.get("SANDBOX_HARNESS_UPSTREAM_IMAGE_KEY", "")
         p = job["parameters"]
-        model = {"seedream-5.0": "doubao-seedream-5-0-260128"}.get(job["model"], job["model"])
+        model = {"seedream-5.0": os.environ.get("SANDBOX_HARNESS_ARK_IMAGE_MODEL_SEEDREAM_5_0",
+            "doubao-seedream-5-0-260128")}.get(job["model"], job["model"])
         payload = {"model": model, "prompt": p.get("prompt", ""), "response_format": "url",
                    "size": p.get("size", "2048x2048"), "watermark": False}
+        references = self._ordered_references(job)
+        if references:
+            urls = [await self._reference_url(item) for item in references]
+            payload["image"] = urls[0] if len(urls) == 1 else urls
+            payload["sequential_image_generation"] = "disabled"
+        if not await self.store.update_media_job(job["id"], self.owner, status="running", phase="requesting"):
+            return ProviderResult("failed", error="media_job_lease_lost")
         async with await self._client() as client:
             response = await client.post(urljoin(base + "/", "images/generations"),
                 headers={"Authorization": "Bearer " + key}, json=payload)
@@ -145,9 +197,24 @@ class MediaWorker:
         if task_id:
             event("media.provider.resumed", job_id=job["id"], provider="ark", provider_job_id=task_id)
         if not task_id:
-            payload = {"model": model, "content": [{"type": "text", "text": p.get("prompt", "")}],
-                       "duration": p.get("duration", 5), "ratio": p.get("aspect_ratio", "16:9"),
+            mode = job.get("generation_mode") or "text_to_video"
+            content = [{"type": "text", "text": self._video_prompt(mode, p)}]
+            for reference in self._ordered_references(job):
+                url = await self._reference_url(reference)
+                role = reference["role"]
+                if role in {"reference_image", "first_frame", "last_frame"}:
+                    content.append({"type": "image_url", "image_url": {"url": url}, "role": role})
+                elif role == "reference_video":
+                    content.append({"type": "video_url", "video_url": {"url": url}, "role": role})
+                else:
+                    content.append({"type": "audio_url", "audio_url": {"url": url}, "role": role})
+            duration = -1 if mode == "edit_video" else p.get("duration", 5)
+            ratio = "adaptive" if mode in {"edit_video", "extend_video"} else p.get("aspect_ratio", "16:9")
+            payload = {"model": model, "content": content,
+                       "duration": duration, "ratio": ratio,
                        "resolution": p.get("resolution", "480p"), "generate_audio": bool(p.get("generate_audio", False))}
+            if not await self.store.update_media_job(job["id"], self.owner, status="running", phase="requesting"):
+                return ProviderResult("failed", error="media_job_lease_lost")
             async with await self._client() as client:
                 response = await client.post(urljoin(base + "/", "contents/generations/tasks"),
                     headers={"Authorization": "Bearer " + key}, json=payload)

@@ -27,6 +27,17 @@ class Settings(BaseSettings):
     object_endpoint: str = ""
     object_bucket: str = ""
     object_prefix: str = "sandbox-harness/"
+    object_region: str = "updream"
+    object_public_endpoint: str = "https://boss-shjd.biliapi.net"
+    media_reference_prefix: str = "aniforge"
+    ark_control_endpoint: str = "https://ark.cn-beijing.volcengineapi.com"
+    ark_access_key: str = ""
+    ark_secret_key: str = ""
+    ark_project_name: str = "default"
+    ark_asset_group_id: str = ""
+    ark_asset_group_type: str = "AIGC"
+    ark_asset_poll_seconds: float = Field(default=2, ge=0.1, le=30)
+    ark_asset_max_wait_seconds: int = Field(default=900, ge=5, le=3600)
     gateway_url: str = "http://172.31.0.1:28600"
     gateway_bind_host: str = "172.31.0.1"
     gateway_bind_port: int = Field(default=28600, ge=1024, le=65535)
