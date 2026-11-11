@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import os
+import uuid
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 from urllib.parse import urljoin
 
 import httpx
+import av
 
 from .media_catalog import MediaCatalog
 from .observability import event
@@ -31,7 +34,7 @@ class MediaWorker:
         self.store = store
         self.objects = objects
         self.catalog = catalog
-        self.owner = "media-worker"
+        self.owner = "media-worker-" + uuid.uuid4().hex
         self.stop_event = asyncio.Event()
         self.continuation_callback: Callable[[dict], Awaitable[None]] | None = None
 
@@ -54,27 +57,40 @@ class MediaWorker:
                 pass
 
     async def process(self, job: dict[str, Any]) -> None:
+        stage = "claimed"
         try:
             if job["status"] == "cancel_requested":
                 await self.store.update_media_job(job["id"], self.owner, status="failed", phase="cancel_refused",
                     error_code="media_cancel_not_supported", error_detail="Provider cancellation is not supported")
                 return
-            await self.store.update_media_job(job["id"], self.owner, status="running", phase="requesting")
+            if (job["status"] == "running" and job["phase"] == "requesting"
+                    and not job.get("provider_job_id")):
+                await self.store.update_media_job(job["id"], self.owner, status="unknown", phase="recovery_required",
+                    error_code="provider_submission_outcome_unknown",
+                    error_detail="Provider request may have been submitted; automatic resubmission is disabled")
+                return
+            stage = "provider_request" if not job.get("provider_job_id") else "provider_poll"
+            await self.store.update_media_job(job["id"], self.owner, status="running",
+                phase="provider_polling" if job.get("provider_job_id") else "requesting")
             result = await self._execute(job)
             if result.status != "success":
                 await self.store.update_media_job(job["id"], self.owner, status="failed", phase="terminal",
                     provider_job_id=result.provider_job_id, error_code="provider_failed", error_detail=result.error[:2000])
                 return
+            stage = "download"
             data, mime = await self._download(result.url, expected_kind=job["kind"])
+            stage = "object_store"
             object_ref, _ = await asyncio.to_thread(self.objects.put, data)
+            stage = "commit"
             await self.store.update_media_job(job["id"], self.owner, status="succeeded", phase="committed",
                 provider_job_id=result.provider_job_id, output_object_ref=object_ref,
                 output_mime=mime, output_size=len(data), progress=100)
             event("media.job.succeeded", job_id=job["id"], provider=job["provider"], model=job["model"], bytes=len(data))
         except Exception as exc:
             await self.store.update_media_job(job["id"], self.owner, status="unknown", phase="recovery_required",
-                error_code="worker_error", error_detail=type(exc).__name__)
-            event("media.job.unknown", level=40, job_id=job["id"], provider=job["provider"], model=job["model"])
+                error_code="worker_error", error_detail=f"{stage}:{type(exc).__name__}")
+            event("media.job.unknown", level=40, job_id=job["id"], provider=job["provider"], model=job["model"],
+                failure_stage=stage, exception_type=type(exc).__name__)
 
     async def _execute(self, job: dict[str, Any]) -> ProviderResult:
         if job["adapter"] == "ark_image":
@@ -108,15 +124,20 @@ class MediaWorker:
         key = os.environ.get("SANDBOX_HARNESS_UPSTREAM_VIDEO_KEY", "")
         p = job["parameters"]
         model = {"sed2": p.get("provider_model", "") or os.environ.get("SANDBOX_HARNESS_ARK_VIDEO_MODEL_SED2", "seedance-2.0")}.get(job["model"], job["model"])
-        payload = {"model": model, "content": [{"type": "text", "text": p.get("prompt", "")}],
-                   "duration": p.get("duration", 5), "ratio": p.get("aspect_ratio", "16:9"),
-                   "resolution": p.get("resolution", "480p"), "generate_audio": bool(p.get("generate_audio", False))}
-        async with await self._client() as client:
-            response = await client.post(urljoin(base + "/", "contents/generations/tasks"),
-                headers={"Authorization": "Bearer " + key}, json=payload)
-        raw = response.json(); task_id = str(raw.get("id") or raw.get("task_id") or "")
-        if not response.is_success or not task_id:
-            return ProviderResult("failed", error="video_submit_failed")
+        task_id = str(job.get("provider_job_id") or "")
+        if not task_id:
+            payload = {"model": model, "content": [{"type": "text", "text": p.get("prompt", "")}],
+                       "duration": p.get("duration", 5), "ratio": p.get("aspect_ratio", "16:9"),
+                       "resolution": p.get("resolution", "480p"), "generate_audio": bool(p.get("generate_audio", False))}
+            async with await self._client() as client:
+                response = await client.post(urljoin(base + "/", "contents/generations/tasks"),
+                    headers={"Authorization": "Bearer " + key}, json=payload)
+            raw = response.json(); task_id = str(raw.get("id") or raw.get("task_id") or "")
+            if not response.is_success or not task_id:
+                return ProviderResult("failed", error="video_submit_failed")
+            if not await self.store.update_media_job(job["id"], self.owner, status="running",
+                    phase="provider_polling", provider_job_id=task_id):
+                return ProviderResult("failed", provider_job_id=task_id, error="media_job_lease_lost")
         for _ in range(360):
             await asyncio.sleep(5)
             async with await self._client() as client:
@@ -128,6 +149,9 @@ class MediaWorker:
                 return ProviderResult("success" if url else "failed", url=url, provider_job_id=task_id)
             if status in {"failed", "cancelled", "canceled"}:
                 return ProviderResult("failed", provider_job_id=task_id, error="video_provider_failed")
+            progress = body.get("progress")
+            await self.store.update_media_job(job["id"], self.owner, status="running", phase="provider_polling",
+                provider_job_id=task_id, progress=progress if isinstance(progress, int) else None)
         return ProviderResult("failed", provider_job_id=task_id, error="video_timeout")
 
     async def _minimax_audio(self, job: dict[str, Any]) -> ProviderResult:
@@ -138,11 +162,16 @@ class MediaWorker:
                    "voice_setting": {"voice_id": p.get("voice_id", "male-qn-qingse"), "speed": p.get("speed", 1), "vol": 1, "pitch": 0},
                    "audio_setting": {"format": p.get("audio_format", "mp3"), "audio_sample_rate": 32000, "bitrate": 128000, "channel": 2}}
         headers = {"Authorization": "Bearer " + key, "Content-Type": "application/json"}
-        async with await self._client() as client:
-            response = await client.post(urljoin(base + "/", "t2a_async_v2"), headers=headers, json=payload)
-        raw = response.json(); task_id = str(raw.get("task_id") or "")
-        if not response.is_success or not task_id:
-            return ProviderResult("failed", error="audio_submit_failed")
+        task_id = str(job.get("provider_job_id") or "")
+        if not task_id:
+            async with await self._client() as client:
+                response = await client.post(urljoin(base + "/", "t2a_async_v2"), headers=headers, json=payload)
+            raw = response.json(); task_id = str(raw.get("task_id") or "")
+            if not response.is_success or not task_id:
+                return ProviderResult("failed", error="audio_submit_failed")
+            if not await self.store.update_media_job(job["id"], self.owner, status="running",
+                    phase="provider_polling", provider_job_id=task_id):
+                return ProviderResult("failed", provider_job_id=task_id, error="media_job_lease_lost")
         for _ in range(120):
             await asyncio.sleep(5)
             async with await self._client() as client:
@@ -156,6 +185,8 @@ class MediaWorker:
                 return ProviderResult("success" if url else "failed", url=url, provider_job_id=task_id)
             if status in {"failed", "expired"}:
                 return ProviderResult("failed", provider_job_id=task_id, error="audio_provider_failed")
+            await self.store.update_media_job(job["id"], self.owner, status="running",
+                phase="provider_polling", provider_job_id=task_id)
         return ProviderResult("failed", provider_job_id=task_id, error="audio_timeout")
 
     @staticmethod
@@ -185,6 +216,21 @@ class MediaWorker:
         normalized = reported.split(";", 1)[0].strip().lower()
         if normalized.startswith(prefix):
             return normalized
+        try:
+            with av.open(io.BytesIO(data)) as container:
+                stream_types = {stream.type for stream in container.streams}
+                formats = set(container.format.name.split(","))
+            if expected_kind in stream_types:
+                if expected_kind == "audio" and "mp3" in formats:
+                    return "audio/mpeg"
+                if expected_kind == "audio" and formats.intersection({"mov", "mp4", "m4a", "3gp", "3g2", "mj2"}):
+                    return "audio/mp4"
+                if expected_kind == "video" and formats.intersection({"mov", "mp4", "m4a", "3gp", "3g2", "mj2"}):
+                    return "video/mp4"
+                if "webm" in formats:
+                    return expected_kind + "/webm"
+        except (av.error.FFmpegError, ValueError):
+            pass
         raise ValueError("provider_result_mime_mismatch")
 
     async def _download(self, url: str, *, expected_kind: str) -> tuple[bytes, str]:
