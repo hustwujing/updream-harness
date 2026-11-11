@@ -59,14 +59,11 @@ PostgreSQL transaction, and media Job listing fetches Artifact IDs in one batch.
 
 ## Gates
 
-- Python suite: `200 passed` before the final media ownership validation; all
-  21 media/service/ownership tests passed after that validation.
+- Python suite: `208 passed` after all service separation, recovery, MIME and
+  ownership validation changes.
 - Frontend production build: passed.
 - Browser media Job Inspector: passed with no page errors.
 - Browser media gallery: desktop 4 columns, mobile 2 columns, video thumbnail,
   preview and download passed.
 - Real OpenSandbox: final Codex digest started, exposed 25 Skills, executed
   `sandbox-media prepare`, and deleted cleanly.
-
-The final release reruns the complete Python suite after all changes and records
-the resulting count in the delivery summary.
