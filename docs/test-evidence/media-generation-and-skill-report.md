@@ -9,14 +9,14 @@ No credential, signed Provider URL or raw Provider response is recorded here.
 
 ## Runtime images
 
-The Runtime source revision is `6313b38a35cf`. All images use immutable local
+The Runtime source revision is `10268bb434d8`. All images use immutable local
 registry digests:
 
 | Harness | Digest |
 | --- | --- |
-| Codex | `sha256:f992bb1e191c326fe2311c5a818559cc25309db89dff4e4c3045a4114d1cb5c2` |
-| Claude | `sha256:b3d9ac8c15b1bfd1b117a9d95a924243403dc3139502f4029e6d07c47a57d184` |
-| DeepSeek | `sha256:32ab6885839ca6b1b063b22e6eef070462750fe7fc07f49a129ca3249ddbf97d` |
+| Codex | `sha256:a28d0b7085341f5199149f72b0c3e87ab0e84c4fc92b56d0002d6c7a39aa8d83` |
+| Claude | `sha256:f0a02435b1d95f9e2cac5a049771fc7e80ad734d58928b3808175847ee312b81` |
+| DeepSeek | `sha256:a1520a3ce91ba8213382fa17d493a0f459128725dc768a957acdbfd400fb28ca` |
 
 Each image passed the same UID 10001, network-disabled smoke. The smoke
 materialized all 25 native Skill links for all three Harness layouts and
@@ -59,7 +59,7 @@ PostgreSQL transaction, and media Job listing fetches Artifact IDs in one batch.
 
 ## Gates
 
-- Python suite: `208 passed` after all service separation, recovery, MIME and
+- Python suite: `209 passed` after all service separation, recovery, MIME and
   ownership validation changes.
 - Frontend production build: passed.
 - Browser media Job Inspector: passed with no page errors.
