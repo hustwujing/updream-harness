@@ -5,7 +5,7 @@ import io
 import os
 import uuid
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any
 from urllib.parse import urljoin
 
 import httpx
@@ -36,21 +36,12 @@ class MediaWorker:
         self.catalog = catalog
         self.owner = "media-worker-" + uuid.uuid4().hex
         self.stop_event = asyncio.Event()
-        self.continuation_callback: Callable[[dict], Awaitable[None]] | None = None
 
     async def run(self) -> None:
         while not self.stop_event.is_set():
             jobs = await self.store.claim_media_jobs(self.owner)
             if jobs:
                 await asyncio.gather(*(self.process(job) for job in jobs), return_exceptions=True)
-            if self.continuation_callback:
-                for outbox in await self.store.claim_media_outbox(self.owner):
-                    try:
-                        await self.continuation_callback(outbox)
-                    except Exception as exc:
-                        await self.store.finish_media_outbox(outbox["outbox_id"], self.owner, delivered=False, error=type(exc).__name__)
-                    else:
-                        await self.store.finish_media_outbox(outbox["outbox_id"], self.owner, delivered=True)
             try:
                 await asyncio.wait_for(self.stop_event.wait(), timeout=2)
             except asyncio.TimeoutError:

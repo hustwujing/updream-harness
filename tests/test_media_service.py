@@ -13,10 +13,12 @@ class Response:
 
 def test_media_worker_is_a_separate_service():
     app = (ROOT / "src/sandbox_harness/app.py").read_text()
+    worker = (ROOT / "src/sandbox_harness/media_worker.py").read_text()
     unit = (ROOT / "deploy/systemd/sandbox-harness-media-worker.service").read_text()
     project = (ROOT / "pyproject.toml").read_text()
     install = (ROOT / "deploy/install-units.sh").read_text()
     assert "MediaWorker(" not in app
+    assert "continuation_callback" not in worker
     assert "ExecStart=/data2/wujing03/sandbox-harness-platform/.venv/bin/sandbox-harness-media-worker" in unit
     assert 'sandbox-harness-media-worker = "sandbox_harness.media_service:run"' in project
     assert "sandbox-harness-media-worker.service" in install
