@@ -24,7 +24,7 @@ KillMode=control-group
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=false
-TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec
+TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,mode=1777
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/data2/wujing03/sandbox-harness-platform/.data
