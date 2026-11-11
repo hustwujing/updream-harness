@@ -30,6 +30,7 @@ def test_media_worker_is_a_separate_service():
     codex = (ROOT / "src/sandbox_runtime/codex_runner.py").read_text()
     deepseek = (ROOT / "src/sandbox_runtime/deepseek_runner.py").read_text()
     assert "sandbox-media prepare" in instructions and "sandbox-image" in instructions
+    assert "current-Turn publication" in instructions and "verify every input path exists" in instructions
     assert "--append-system-prompt" in adapters
     assert '"developerInstructions": RUNTIME_INSTRUCTIONS' in codex
     assert 'RUNTIME_INSTRUCTIONS + "\\nUser request:' in deepseek

@@ -46,7 +46,8 @@ class Store:
 
 
 def worker(store=None):
-    settings = SimpleNamespace(upstream_video="http://video.test", upstream_audio="http://audio.test")
+    settings = SimpleNamespace(upstream_image="http://image.test", upstream_video="http://video.test",
+        upstream_audio="http://audio.test")
     return MediaWorker(settings, store or Store(), None, None)
 
 
@@ -79,6 +80,16 @@ async def test_audio_recovery_polls_persisted_provider_job_without_resubmit(monk
         "provider_job_id": "provider-audio", "parameters": {"text": "test"}})
     assert result.status == "success" and result.provider_job_id == "provider-audio"
     assert not client.posts and len(client.gets) == 2
+
+
+@pytest.mark.asyncio
+async def test_image_provider_failure_preserves_safe_http_and_business_code(monkeypatch):
+    value = worker(); client = Client([Response({"error":{"code":"InvalidParameter"}}, 400)])
+    async def client_factory(): return client
+    monkeypatch.setattr(value, "_client", client_factory)
+    result = await value._ark_image({"id":"job", "model":"seedream-5.0",
+        "parameters":{"prompt":"test", "size":"2560x1440"}})
+    assert result.status == "failed" and result.error == "image_http_400:InvalidParameter"
 
 
 @pytest.mark.asyncio

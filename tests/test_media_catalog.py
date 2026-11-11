@@ -15,6 +15,7 @@ def test_default_catalog_contains_only_real_probe_models():
     schemas = {item["kind"]: item["parameter_schema"] for item in catalog.public()}
     assert "aspect_ratio" in schemas["video"]["optional"] and "ratio" not in schemas["video"]["optional"]
     assert schemas["video"]["optional"]["duration"] == "integer 4..15"
+    assert schemas["image"]["limits"]["min_total_pixels"] == 2560 * 1440
     assert "voice_id" in schemas["audio"]["optional"] and "voice_setting" not in schemas["audio"]["optional"]
     assert schemas["audio"]["limits"]["max_estimated_duration_seconds"] == 180
 
@@ -36,6 +37,8 @@ def test_public_catalog_does_not_expose_credential_environment():
 
 @pytest.mark.parametrize(("kind", "model", "parameters"), [
     ("image", "seedream-5.0", {"prompt": "test", "size": "2048x2048"}),
+    ("image", "seedream-5.0", {"prompt": "test", "size": "2K"}),
+    ("image", "seedream-5.0", {"prompt": "test", "size": "2560x1440"}),
     ("video", "sed2", {"prompt": "test", "duration": 5, "resolution": "480p",
         "aspect_ratio": "16:9", "generate_audio": False}),
     ("video", "sed2", {"prompt": "test", "duration": 15}),
@@ -49,6 +52,8 @@ def test_media_parameters_accept_only_enabled_model_contract(kind, model, parame
 @pytest.mark.parametrize(("kind", "model", "parameters"), [
     ("image", "seedream-5.0", {"prompt": "", "size": "2048x2048"}),
     ("image", "seedream-5.0", {"prompt": "test", "provider_model": "bypass"}),
+    ("image", "seedream-5.0", {"prompt": "test", "size": "1920x1080"}),
+    ("image", "seedream-5.0", {"prompt": "test", "size": "1536x864"}),
     ("video", "sed2", {"prompt": "test", "duration": 999}),
     ("video", "sed2", {"prompt": "test", "duration": 3}),
     ("audio", "speech-2.8-turbo", {"text": "test", "audio_format": "exe"}),

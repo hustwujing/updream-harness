@@ -18,6 +18,7 @@ def test_runtime_guidance_has_network_and_browser_fallbacks():
     assert "sandbox-browser-screenshot URL OUTPUT" in runtime_app.RUNTIME_GUIDANCE
     assert "chromium" in runtime_app.RUNTIME_GUIDANCE and "Playwright scripts" in runtime_app.RUNTIME_GUIDANCE
     assert "ImageMagick (`convert` and `identify`)" in runtime_app.RUNTIME_GUIDANCE
+    assert "current Turn's publication directory" in runtime_app.RUNTIME_GUIDANCE
 
 
 def test_runtime_configuration_freezes_turn_harness_and_model(tmp_path, monkeypatch):

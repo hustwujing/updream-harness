@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import re
 import tarfile
 import uuid
 from dataclasses import dataclass
@@ -124,8 +125,16 @@ class MediaWorker:
                 headers={"Authorization": "Bearer " + key}, json=payload)
         raw = response.json()
         url = next((item.get("url", "") for item in raw.get("data", []) if item.get("url")), "")
+        provider_error = raw.get("error") if isinstance(raw, dict) else None
+        provider_code = (provider_error.get("code") if isinstance(provider_error, dict) else None) or (
+            raw.get("code") if isinstance(raw, dict) else None)
+        error = "" if url else f"image_http_{response.status_code}"
+        if provider_code:
+            error += ":" + re.sub(r"[^A-Za-z0-9_.-]", "_", str(provider_code))[:100]
+        elif response.is_success:
+            error = "image_result_missing"
         return ProviderResult("success" if response.is_success and url else "failed", url=url,
-            error="image_result_missing" if not url else "")
+            error=error)
 
     async def _ark_video(self, job: dict[str, Any]) -> ProviderResult:
         base = self.settings.upstream_video.rstrip("/")

@@ -155,7 +155,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "inspect_command": f"sandbox-media fetch --job-id {item['job_id']} --output /workspace/outputs/{item['job_id']}"
                         if candidate else "",
                     "error": item["error_code"] or ""})
-            message = ("[media_group_completed] Continue the original user task using these media results: "
+            message = ("[media_group_completed] Continue the original user task. Use only results with status=succeeded and a non-empty path or inspect_command; never invent a path for a failed result. Verify input files exist before composition. Media results: "
                 + json.dumps(results, ensure_ascii=False, sort_keys=True))
             await broker.submit(batch["thread_id"], TurnCreate(message=message,
                 idempotency_key=f"media-continuation-{turn_id}", delivery_mode="queue"),

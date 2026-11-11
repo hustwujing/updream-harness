@@ -9,6 +9,9 @@ from typing import Any
 SUPPORTED_AUDIO_VOICES = ("male-qn-qingse",)
 MAX_AUDIO_CHARACTERS = 9_999
 MAX_AUDIO_ESTIMATED_SECONDS = 180
+MIN_SEEDREAM_LITE_PIXELS = 2560 * 1440
+MAX_SEEDREAM_LITE_PIXELS = 4096 * 4096
+SEEDREAM_LITE_SIZE_TIERS = ("2K", "3K", "4K")
 
 
 def estimate_audio_duration_seconds(text: str, speed: float = 1) -> float:
@@ -37,7 +40,11 @@ class MediaModelSpec:
         value = asdict(self)
         value.pop("credential_env", None)
         value["parameter_schema"] = {
-            "image": {"required": ["prompt"], "optional": {"size": "256x256..4096x4096"}},
+            "image": {"required": ["prompt"], "optional": {
+                "size": [*SEEDREAM_LITE_SIZE_TIERS, "explicit WIDTHxHEIGHT"]},
+                "limits": {"min_total_pixels": MIN_SEEDREAM_LITE_PIXELS,
+                    "max_total_pixels": MAX_SEEDREAM_LITE_PIXELS,
+                    "aspect_ratio": "1/16..16"}},
             "video": {"required": ["prompt"], "optional": {"duration": "integer 4..15",
                 "resolution": ["480p", "720p", "1080p"],
                 "aspect_ratio": ["16:9", "9:16", "1:1", "4:3", "3:4"],
@@ -112,9 +119,14 @@ class MediaCatalog:
             raise ValueError(f"{text_key} must be a non-empty string shorter than 10000 characters")
         if kind == "image":
             size = parameters.get("size", "2048x2048")
-            match = re.fullmatch(r"([1-9][0-9]{2,3})x([1-9][0-9]{2,3})", size) if isinstance(size, str) else None
-            if not match or any(not 256 <= int(value) <= 4096 for value in match.groups()):
-                raise ValueError("Invalid image size")
+            if size not in SEEDREAM_LITE_SIZE_TIERS:
+                match = re.fullmatch(r"([1-9][0-9]{1,3})x([1-9][0-9]{1,3})", size) if isinstance(size, str) else None
+                if not match:
+                    raise ValueError("Image size must be 2K, 3K, 4K, or explicit WIDTHxHEIGHT")
+                width, height = (int(value) for value in match.groups())
+                pixels, ratio = width * height, width / height
+                if not MIN_SEEDREAM_LITE_PIXELS <= pixels <= MAX_SEEDREAM_LITE_PIXELS or not 1 / 16 <= ratio <= 16:
+                    raise ValueError("Seedream 5.0 image size must have 3686400..16777216 total pixels and aspect ratio 1/16..16; use 2K or at least 2560x1440")
         elif kind == "video":
             duration = parameters.get("duration", 5)
             if isinstance(duration, bool) or not isinstance(duration, int) or not 4 <= duration <= 15:
