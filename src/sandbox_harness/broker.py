@@ -399,8 +399,9 @@ class Broker:
                 if task:
                     task.cancel()
                 return
+            turn = await self.store.get_turn(turn_id)
             sandbox = self.active_sandboxes.get(turn_id)
-            if sandbox:
+            if sandbox and turn and turn.state != TurnState.CLEANING:
                 try:
                     await self.pool.backend.renew(sandbox)
                 except SandboxNotFound:
@@ -412,7 +413,6 @@ class Broker:
                 except Exception as exc:
                     event("sandbox.renew.failed",level=logging.WARNING,turn_id=turn_id,
                         sandbox_id=sandbox.id,exception_type=type(exc).__name__)
-            turn = await self.store.get_turn(turn_id)
             task = self.tasks.get(turn_id)
             if (turn and turn.cancel_requested and turn.state != TurnState.CLEANING
                     and task and not task.cancelling()):
