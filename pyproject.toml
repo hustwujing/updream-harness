@@ -67,6 +67,7 @@ sandbox-harness-user = "sandbox_harness.auth_cli:main"
 sandbox-harness-runtime = "sandbox_runtime.main:run"
 sandbox-background = "sandbox_runtime.background_cli:main"
 sandbox-interact = "sandbox_runtime.interaction_cli:main"
+sandbox-media = "sandbox_runtime.media_cli:main"
 
 [build-system]
 requires = ["hatchling>=1.27"]

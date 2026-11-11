@@ -302,6 +302,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not value: raise HTTPException(404, "Media job not found")
         return value
 
+    @app.get("/api/threads/{thread_id}/media/jobs")
+    async def list_media_jobs(thread_id: str, request: Request):
+        if not await store.get_thread(thread_id, request.state.owner_id):
+            raise HTTPException(404, "Thread not found")
+        return await store.list_media_jobs(thread_id, request.state.owner_id)
+
     @app.post("/api/media/jobs/{job_id}/cancel")
     async def cancel_media_job(job_id: str, request: Request):
         try:

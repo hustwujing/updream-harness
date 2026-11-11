@@ -1624,6 +1624,12 @@ class Store:
                 MediaJobRow.owner_id == owner_id))).scalar_one_or_none()
         return self._media_job_view(row) if row else None
 
+    async def list_media_jobs(self, thread_id: str, owner_id: str) -> list[MediaJobView]:
+        async with self.connections() as db:
+            rows = (await db.execute(select(MediaJobRow).where(MediaJobRow.thread_id == thread_id,
+                MediaJobRow.owner_id == owner_id).order_by(MediaJobRow.created_at.desc()))).scalars().all()
+        return [self._media_job_view(row) for row in rows]
+
     async def request_media_cancel(self, job_id: str, owner_id: str) -> MediaJobView:
         async with self.connections.begin() as db:
             row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
