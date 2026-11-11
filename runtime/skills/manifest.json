@@ -412,8 +412,8 @@
         ],
         "node_modules": []
       },
-      "content_sha256": "75e1854fe9de18dd6b0920842f4da55376e85af590a85f82f3d88a05f5e6b753",
-      "file_count": 82
+      "content_sha256": "3d26faf6324f8b803fccd7ca3be800051a70e307a434443e18f48f2b72aeb2be",
+      "file_count": 80
     },
     {
       "id": "frontend-design",
@@ -482,8 +482,8 @@
         ],
         "node_modules": []
       },
-      "content_sha256": "558e7cb24d938cb7c6665ce3900ca4e8359ccd735a326904b877f35f3d416aac",
-      "file_count": 41
+      "content_sha256": "340dfc7456bfd97e65bab5cc24d88aa36b1ec9d7e9e1cfeb2f1a4bbd7756fe0f",
+      "file_count": 39
     },
     {
       "id": "internal-comms",

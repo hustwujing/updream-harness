@@ -12,12 +12,20 @@ ROOT = Path(__file__).resolve().parent / "skills"
 SOURCES = ROOT / "sources.json"
 MANIFEST = ROOT / "manifest.json"
 NAME = re.compile(r"^name:\s*['\"]?([a-z0-9][a-z0-9-]*)", re.MULTILINE)
+IGNORED_PARTS = {"__pycache__", ".pytest_cache"}
+IGNORED_SUFFIXES = {".pyc", ".pyo"}
 
 
 def tree_digest(root: Path) -> tuple[str, int]:
     digest = hashlib.sha256()
     count = 0
-    for path in sorted(value for value in root.rglob("*") if value.is_file()):
+    for path in sorted(
+        value
+        for value in root.rglob("*")
+        if value.is_file()
+        and not IGNORED_PARTS.intersection(value.relative_to(root).parts)
+        and value.suffix not in IGNORED_SUFFIXES
+    ):
         relative = path.relative_to(root).as_posix()
         digest.update(relative.encode() + b"\0")
         digest.update(hashlib.sha256(path.read_bytes()).digest())
