@@ -123,7 +123,9 @@ class RuntimeClient:
                 except (httpx.TransportError, httpx.HTTPStatusError) as exc:
                     if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code not in {404, 408, 429, 500, 502, 503, 504}:
                         raise
-                    event("runtime.transport.interrupted",level=logging.WARNING,execution_id=execution_id,attempt=attempt,runtime_sequence=cursor,exc=exc)
+                    status_code = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+                    event("runtime.transport.interrupted",level=logging.WARNING,execution_id=execution_id,
+                        attempt=attempt,runtime_sequence=cursor,http_status_code=status_code,exc=exc)
                     logger.warning("Runtime transport interrupted execution=%s cursor=%s attempt=%s error=%s",
                         execution_id, cursor, attempt + 1, type(exc).__name__)
                 if attempt < 3:

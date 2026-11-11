@@ -116,6 +116,30 @@ async def test_terminal_turn_cannot_be_cancelled(tmp_path):
         await broker.close(); await pool.close(); await store.close()
 
 
+async def test_turn_heartbeat_renews_active_sandbox_expiration(tmp_path):
+    settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "heartbeat.db"),
+        backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9",
+        turn_heartbeat_seconds=2, turn_lease_seconds=10)
+    store = Store(settings.database_url); await store.initialize(); objects = ObjectStore(tmp_path / "objects")
+    backend = FakeSandboxBackend(); pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
+    catalog = HarnessCatalog(); broker = Broker(settings, store, objects, pool, Runtime(), catalog)
+    try:
+        profile = catalog.resolve("codex", "gpt-5.6", "standard"); owner = "a" * 64
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CODEX, model=profile.model,
+            reasoning_level="standard", title="Heartbeat"), profile, owner)
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="long task", idempotency_key="heartbeat-turn-key"), profile, owner)
+        claimed = await store.claim_turn(turn.id, broker.instance_id, settings.turn_lease_seconds)
+        sandbox = await backend.create(Harness.CODEX, "", {"sandbox-harness.io/turn": turn.id}, {})
+        broker.active_sandboxes[turn.id] = sandbox
+        heartbeat = asyncio.create_task(broker._heartbeat(turn.id, claimed.recovery_generation))
+        await asyncio.sleep(2.1)
+        heartbeat.cancel(); await asyncio.gather(heartbeat, return_exceptions=True)
+        assert backend.renewed
+    finally:
+        await pool.close(); await store.close()
+
+
 async def test_broker_runs_harness_and_persists_transcript_checkpoint_and_artifact(tmp_path):
     settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "broker.db"),
         backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9",

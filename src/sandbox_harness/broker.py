@@ -17,6 +17,7 @@ from .objects import ObjectStore
 from .errors import public_failure
 from .pool import SandboxPool
 from .runtime import RuntimeClient, RuntimeStreamInterrupted
+from .sandbox import SandboxNotFound
 from .store import Store
 
 
@@ -398,6 +399,19 @@ class Broker:
                 if task:
                     task.cancel()
                 return
+            sandbox = self.active_sandboxes.get(turn_id)
+            if sandbox:
+                try:
+                    await self.pool.backend.renew(sandbox)
+                except SandboxNotFound:
+                    event("sandbox.renew.not_found",level=logging.ERROR,turn_id=turn_id,sandbox_id=sandbox.id)
+                    task = self.tasks.get(turn_id)
+                    if task:
+                        task.cancel()
+                    return
+                except Exception as exc:
+                    event("sandbox.renew.failed",level=logging.WARNING,turn_id=turn_id,
+                        sandbox_id=sandbox.id,exception_type=type(exc).__name__)
             turn = await self.store.get_turn(turn_id)
             task = self.tasks.get(turn_id)
             if (turn and turn.cancel_requested and turn.state != TurnState.CLEANING

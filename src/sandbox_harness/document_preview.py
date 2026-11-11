@@ -4,7 +4,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 
 
 PRESENTATION_MIMES = {
@@ -58,8 +58,12 @@ def presentation_pdf(data: bytes, *, filename: str, mime: str, digest: str,
             raise RuntimeError("document_preview_conversion_invalid")
         if len(payload) > maximum:
             raise ValueError("document_preview_too_large")
-        staging = cache_root / f".{digest}.{os.getpid()}.tmp"
-        staging.write_bytes(payload)
-        staging.chmod(0o600)
-        os.replace(staging, cached)
+        with NamedTemporaryFile(dir=cache_root, prefix=f".{digest}.", suffix=".tmp", delete=False) as stream:
+            stream.write(payload)
+            staging = Path(stream.name)
+        try:
+            staging.chmod(0o600)
+            os.replace(staging, cached)
+        finally:
+            staging.unlink(missing_ok=True)
         return payload

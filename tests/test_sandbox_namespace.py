@@ -103,6 +103,32 @@ async def test_warm_sandbox_binding_persists_turn_metadata():
     assert sandbox.metadata.get("sandbox-harness.io/pool") is None
     assert sandbox.metadata["sandbox-harness.io/thread"] == "thread-one"
     assert await backend.find_by_turn("turn-one") == [sandbox]
+    assert backend.renewed == [sandbox.id]
+
+
+async def test_opensandbox_binding_renews_expiration_for_full_turn_ttl():
+    requests = []
+    def respond(request: httpx.Request):
+        requests.append(request)
+        if request.url.path.endswith("/metadata"):
+            return httpx.Response(200, json={})
+        if request.url.path.endswith("/renew-expiration"):
+            return httpx.Response(200, json={"expiresAt": json.loads(request.content)["expiresAt"]})
+        return httpx.Response(404)
+    backend = OpenSandboxBackend("http://opensandbox", "", 3600, "sandbox-harness")
+    await backend.client.aclose(); backend.client = httpx.AsyncClient(
+        base_url="http://opensandbox", transport=httpx.MockTransport(respond))
+    sandbox = __import__('sandbox_harness.sandbox', fromlist=['Sandbox']).Sandbox(
+        id="sandbox-one", harness=Harness.CODEX, image="image", runtime_url="http://runtime", metadata={})
+    try:
+        await backend.bind(sandbox, "thread-one", "turn-one")
+        assert [request.url.path for request in requests] == [
+            "/v1/sandboxes/sandbox-one/metadata",
+            "/v1/sandboxes/sandbox-one/renew-expiration",
+        ]
+        assert sandbox.expires_at_monotonic > time.monotonic() + 3500
+    finally:
+        await backend.client.aclose()
 
 
 async def test_create_scopes_sandbox_for_the_shared_internal_network():

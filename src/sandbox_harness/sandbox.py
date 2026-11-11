@@ -4,6 +4,8 @@ from .observability import observed, event, enrich, carrier, add_link, telemetry
 
 import asyncio
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+import time
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
@@ -28,6 +30,7 @@ class Sandbox:
     thread_id: str = ""
     turn_id: str = ""
     reused: bool = False
+    expires_at_monotonic: float = 0
 
 
 class SandboxBackend(Protocol):
@@ -35,6 +38,7 @@ class SandboxBackend(Protocol):
     async def create(self, harness: Harness, image: str, metadata: dict[str, str], environment: dict[str, str]) -> Sandbox: ...
     @observed("sandbox.bind")
     async def bind(self, sandbox: Sandbox, thread_id: str, turn_id: str) -> None: ...
+    async def renew(self, sandbox: Sandbox, *, force: bool = False) -> None: ...
     @observed("sandbox.delete")
     async def delete(self, sandbox: Sandbox) -> None: ...
     async def find_by_turn(self, turn_id: str) -> list[Sandbox]: ...
@@ -107,7 +111,9 @@ class OpenSandboxBackend:
         try:
             response = await self.client.post("/v1/sandboxes", json=body, headers={"X-Request-ID": request_id})
             response.raise_for_status()
-            return await self._ready(self._sandbox(response.json(), harness, image, metadata))
+            sandbox = await self._ready(self._sandbox(response.json(), harness, image, metadata))
+            sandbox.expires_at_monotonic = time.monotonic() + self.timeout_seconds
+            return sandbox
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             matches = await self.find_by_turn(request_id)
             if len(matches) == 1:
@@ -165,11 +171,25 @@ class OpenSandboxBackend:
         if response.status_code == 404:
             raise SandboxNotFound("OpenSandbox no longer has sandbox " + sandbox.id)
         response.raise_for_status()
+        await self.renew(sandbox, force=True)
         sandbox.metadata.pop("sandbox-harness.io/pool", None)
         sandbox.metadata.update({
             "sandbox-harness.io/thread": thread_id,
             "sandbox-harness.io/turn": turn_id,
         })
+
+    @observed("sandbox.renew")
+    async def renew(self, sandbox: Sandbox, *, force: bool = False) -> None:
+        if (not force and sandbox.expires_at_monotonic
+                and sandbox.expires_at_monotonic - time.monotonic() > max(60, self.timeout_seconds / 2)):
+            return
+        target = datetime.now(timezone.utc) + timedelta(seconds=self.timeout_seconds)
+        response = await self.client.post(f"/v1/sandboxes/{sandbox.id}/renew-expiration",
+            json={"expiresAt": target.isoformat()})
+        if response.status_code == 404:
+            raise SandboxNotFound("OpenSandbox no longer has sandbox " + sandbox.id)
+        response.raise_for_status()
+        sandbox.expires_at_monotonic = time.monotonic() + self.timeout_seconds
 
     @observed("sandbox.delete")
     async def delete(self, sandbox: Sandbox) -> None:
@@ -191,6 +211,7 @@ class FakeSandboxBackend:
         self.runtime_url = runtime_url
         self.namespace = namespace
         self.items: dict[str, Sandbox] = {}
+        self.renewed: list[str] = []
 
     @observed("sandbox.create")
     async def create(self, harness: Harness, image: str, metadata: dict[str, str], environment: dict[str, str]) -> Sandbox:
@@ -219,6 +240,12 @@ class FakeSandboxBackend:
             "sandbox-harness.io/thread": thread_id,
             "sandbox-harness.io/turn": turn_id,
         })
+        await self.renew(sandbox, force=True)
+
+    async def renew(self, sandbox: Sandbox, *, force: bool = False) -> None:
+        if sandbox.id not in self.items:
+            raise SandboxNotFound("Fake backend no longer has sandbox " + sandbox.id)
+        self.renewed.append(sandbox.id)
 
     @observed("sandbox.delete")
     async def delete(self, sandbox: Sandbox) -> None:

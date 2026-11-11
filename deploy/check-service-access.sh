@@ -19,6 +19,9 @@ PY
 test -x /usr/bin/libreoffice
 test -r /etc/libreoffice/registry/impress.xcd
 install -d -o "$service_user" -g "$service_user" -m 0700 "$project_root/.data/tmp/preview-runtime" "$project_root/.data/tmp/preview-config"
+install -d -o "$service_user" -g "$service_user" -m 0700 "$project_root/.data/preview-cache"
+chown -R "$service_user:$service_user" "$project_root/.data/preview-cache"
+chmod -R u=rwX,go= "$project_root/.data/preview-cache"
 runuser -u "$service_user" -- env HOME="$project_root/.data/tmp" \
   XDG_RUNTIME_DIR="$project_root/.data/tmp/preview-runtime" XDG_CONFIG_HOME="$project_root/.data/tmp/preview-config" \
   /usr/bin/libreoffice --headless --version >/dev/null

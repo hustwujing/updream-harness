@@ -24,6 +24,12 @@ Cleanup retains capacity ownership until delete converges. OpenSandbox DELETE
 must be followed by absence confirmation. Namespace cleanup never touches
 resources without the product namespace.
 
+Warm and attached sandboxes retain the expiration timestamp from their
+original creation unless explicitly renewed. Every bind must renew a full
+Sandbox TTL, and the active Turn lease heartbeat must continue renewing long
+executions. A reused sandbox must never inherit only the warm pool instance's
+remaining lifetime.
+
 ## Observability contract
 
 Follow [docs/observability.md](../observability.md). Use the shared `event`,
@@ -45,6 +51,8 @@ exposes writer and loss counters.
 - API/Broker SIGKILL while a Runtime execution continues.
 - Lease expiry and stale-generation write rejection.
 - Transport loss with Runtime event replay and no second process.
+- Warm sandbox claimed near its original expiration and a Turn longer than one
+  Sandbox TTL; both must renew instead of receiving `SIGKILL` at the old time.
 - Cancellation racing completion.
 - Capability revoke or sandbox delete failure followed by recovery.
 - Redis unavailable with PostgreSQL SSE replay.
