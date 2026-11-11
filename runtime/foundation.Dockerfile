@@ -79,3 +79,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 COPY runtime/vendor/npm-prefix/lib/node_modules/ /usr/local/lib/node_modules/
 COPY runtime/vendor/npm-prefix/bin/ /usr/local/bin/
+RUN chmod -R a+rX /usr/local/lib/node_modules /usr/local/bin

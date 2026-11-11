@@ -54,6 +54,7 @@ def main() -> None:
     results["artifacts"]["diagram_design_png"] = diagram_png.stat().st_size
 
     anatomy = WORK / "anatomy";shutil.copytree(ROOT/"anatomy",anatomy)
+    run("chmod", "-R", "u+w", str(anatomy))
     run("node","examples/dial-indicator/build.mjs",cwd=anatomy)
     anatomy_html = anatomy / "examples/dial-indicator/dial-indicator.html"
     anatomy_png = WORK / "anatomy.png"
