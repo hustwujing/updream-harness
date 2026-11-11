@@ -94,6 +94,10 @@ Real deployment evidence for code execution, media processing, autonomous repair
 
 Real Chromium, Canvas, Three.js, deterministic animation recording and native multi-input evidence is recorded in [browser-rendering-report.md](docs/test-evidence/browser-rendering-report.md).
 
+The 25-Skill image matrix, real image/video/audio generation and API, Worker,
+Sandbox and reconnect recovery evidence are recorded in
+[media-generation-and-skill-report.md](docs/test-evidence/media-generation-and-skill-report.md).
+
 Non-graceful API restart, Runtime event replay, Turn lease fencing and cleanup recovery evidence is recorded in [broker-recovery-report.md](docs/test-evidence/broker-recovery-report.md).
 
 Versioned uploads and outputs restored into a different Sandbox, plus desktop/mobile Workspace UI evidence, are recorded in [project-files-report.md](docs/test-evidence/project-files-report.md).

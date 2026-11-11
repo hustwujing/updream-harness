@@ -14,5 +14,5 @@ for file in Path('web/dist').rglob('*'):
     if file.is_file():
         with file.open('rb') as stream:
             stream.read(1)
-print('Service user can import API/Gateway and read every web asset')
+print('Service user can import API/Gateway/Media Worker and read every web asset')
 PY
