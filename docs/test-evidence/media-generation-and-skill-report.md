@@ -9,14 +9,14 @@ No credential, signed Provider URL or raw Provider response is recorded here.
 
 ## Runtime images
 
-The Runtime source revision is `10268bb434d8`. All images use immutable local
+The Runtime source revision is `7e86f8d1c0de`. All images use immutable local
 registry digests:
 
 | Harness | Digest |
 | --- | --- |
-| Codex | `sha256:a28d0b7085341f5199149f72b0c3e87ab0e84c4fc92b56d0002d6c7a39aa8d83` |
-| Claude | `sha256:f0a02435b1d95f9e2cac5a049771fc7e80ad734d58928b3808175847ee312b81` |
-| DeepSeek | `sha256:a1520a3ce91ba8213382fa17d493a0f459128725dc768a957acdbfd400fb28ca` |
+| Codex | `sha256:b1f280b81e91ee83d2b24de587fcd2d6a58841c098d8a0a37a17fbeb7edda648` |
+| Claude | `sha256:40e703433c5bfbd3013f0eaa5eb75b5fdd54149eb49202755b050dbfcc566047` |
+| DeepSeek | `sha256:524979b5a0e64a1c0480125d4dd8df8a78ce480e09656a875f0e364f8591e518` |
 
 Each image passed the same UID 10001, network-disabled smoke. The smoke
 materialized all 25 native Skill links for all three Harness layouts and
@@ -50,6 +50,7 @@ fix validates signatures and media streams and now records `audio/mpeg`.
 | OpenSandbox deletion during an audio Provider Job | Sandbox deletion converged; independent Worker completed the same external ID as a 41,984-byte MP3 | Passed |
 | User disconnect/reconnect | Same owner Cookie recovered `200/succeeded`; a new identity received 404 | Passed |
 | Turn recovery after API restart | New Broker acquired the lease and continued the same Runtime event sequence from 74 beyond 96 without replaying input | Passed |
+| Warm Sandbox expires during a long Turn | Docker evidence showed the old Sandbox was killed exactly at its original one-hour `expiresAt`; bind renewal and active heartbeat renewal now extend it, including a real OpenSandbox renewal smoke | Passed |
 
 Ambiguous submission is deliberately not replayed. A lease-expired
 `requesting` Job without a persisted external ID becomes `unknown`; an async
@@ -57,14 +58,27 @@ Job with an external ID resumes polling. Worker lease owners are unique per
 process. Artifact registration, terminal Job state and Outbox creation are one
 PostgreSQL transaction, and media Job listing fetches Artifact IDs in one batch.
 
+Media batches now seal the complete N-image/M-video/audio set before a single
+continuation. The origin Turn must be terminal and every draft and confirmed
+Job terminal. Cancelled and expired drafts are included, candidate outputs can
+be inspected and explicitly promoted, and all-cancelled batches converge.
+
+The Host release `7efbc4df2420` also supports pasted attachments and lazy online
+previews: PDF continuous pages, PPT/PPTX paging, DOCX scrolling, spreadsheet
+sheet switching, matching document thumbnails and CSP-sandboxed SVG thumbnails.
+The provided production PPT Artifact converted to a valid 207,429-byte PDF.
+
 ## Gates
 
-- Python suite: `209 passed` after all service separation, recovery, MIME and
+- Python suite: `219 passed` after all service separation, recovery, MIME and
   ownership validation changes.
 - Frontend production build: passed.
 - Browser media Job Inspector: passed with no page errors.
 - Browser media gallery: desktop 4 columns, mobile 2 columns, video thumbnail,
-  preview and download passed.
+  SVG thumbnail, preview and download passed.
+- Browser document suite: pasted file upload, four document thumbnails, PDF
+  scrolling, PPT paging, DOCX scrolling and Excel scrolling/sheet switching
+  passed with zero page errors.
 - Real OpenSandbox: final Codex digest started, exposed 25 Skills, executed
   `sandbox-media prepare`, then used a Turn Capability to execute
   `sandbox-media status` through Gateway against a same-Thread completed Job;
