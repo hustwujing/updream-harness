@@ -18,6 +18,7 @@ RUN pip install --no-cache-dir --trusted-host mirrors.cloud.aliyuncs.com --index
     install -m 0755 runtime/chromium_proxy.cjs /usr/local/bin/chromium && \
     install -m 0755 runtime/drawio_wrapper.sh /usr/local/bin/drawio && \
     install -m 0755 runtime/browser_screenshot.mjs /usr/local/bin/sandbox-browser-screenshot && \
+    chmod 0755 runtime && \
     find runtime/skills -type d -exec chmod 0555 {} + && \
     find runtime/skills -type f -exec chmod 0444 {} + && \
     python runtime/skill_probe.py && \

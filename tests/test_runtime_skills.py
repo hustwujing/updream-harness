@@ -106,6 +106,7 @@ def test_runtime_image_declares_skill_dependencies_and_domestic_mirrors():
     assert 'DRAWIO_SHA256=' in foundation and 'sha256sum -c -' in foundation
     assert 'mirrors.cloud.aliyuncs.com' in base
     assert 'runtime/skill_bundle.py verify' in base
+    assert 'chmod 0755 runtime' in base
     assert 'runtime/skill_probe.py' in base
     assert 'runtime/skill_smoke.py /usr/local/bin/sandbox-skill-smoke' in base
     assert 'runtime/drawio_wrapper.sh /usr/local/bin/drawio' in base
