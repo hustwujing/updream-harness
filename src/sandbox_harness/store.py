@@ -58,6 +58,7 @@ class TurnRow(Base):
     __table_args__ = (UniqueConstraint("thread_id", "idempotency_key"),)
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    turn_id: Mapped[str] = mapped_column(String(32), default="", index=True)
     idempotency_key: Mapped[str] = mapped_column(String(160))
     message: Mapped[str] = mapped_column(Text)
     attachments_json: Mapped[str] = mapped_column(Text, default="[]")
@@ -192,6 +193,7 @@ class MediaDraftRow(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     owner_id: Mapped[str] = mapped_column(String(64), index=True)
     thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    turn_id: Mapped[str] = mapped_column(String(32), default="", index=True)
     kind: Mapped[str] = mapped_column(String(16))
     model: Mapped[str] = mapped_column(String(160))
     parameters_json: Mapped[str] = mapped_column(Text, default="{}")
@@ -225,8 +227,26 @@ class MediaJobRow(Base):
     idempotency_key: Mapped[str] = mapped_column(String(160))
     error_code: Mapped[str] = mapped_column(String(100), default="", server_default="")
     error_detail: Mapped[str] = mapped_column(Text, default="", server_default="")
+    output_object_ref: Mapped[str] = mapped_column(Text, default="", server_default="")
+    output_mime: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    output_size: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     lease_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MediaOutboxRow(Base):
+    __tablename__ = "media_job_outbox"
+    __table_args__ = (UniqueConstraint("job_id", "event_type"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(32), index=True)
+    event_type: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), index=True, default="pending", server_default="pending")
+    lease_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_error: Mapped[str] = mapped_column(Text, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -1556,7 +1576,7 @@ class Store:
                 if existing.owner_id != owner_id or existing.kind != value.kind or existing.model != value.model:
                     raise RuntimeError("media_draft_idempotency_conflict")
                 return self._media_draft_view(existing), False
-            row = MediaDraftRow(id=identifier(), owner_id=owner_id, thread_id=thread_id,
+            row = MediaDraftRow(id=identifier(), owner_id=owner_id, thread_id=thread_id, turn_id=value.turn_id,
                 kind=value.kind, model=value.model, parameters_json=json.dumps(value.parameters, ensure_ascii=False),
                 idempotency_key=value.idempotency_key, status="awaiting_confirmation", expires_at=expires_at,
                 created_at=now(), updated_at=now())
@@ -1591,7 +1611,7 @@ class Store:
                 if job: return self._media_job_view(job)
             if draft.status != "awaiting_confirmation" or utc_datetime(draft.expires_at) <= now():
                 raise RuntimeError("media_draft_not_confirmable")
-            job = MediaJobRow(id=identifier(), owner_id=owner_id, thread_id=draft.thread_id, draft_id=draft.id,
+            job = MediaJobRow(id=identifier(), owner_id=owner_id, thread_id=draft.thread_id, turn_id=draft.turn_id, draft_id=draft.id,
                 kind=draft.kind, model=draft.model, provider=provider_spec.provider, adapter=provider_spec.adapter,
                 execution_mode=provider_spec.execution, cancellation_mode=provider_spec.cancellation,
                 status="created", phase="prepared", parameters_json=draft.parameters_json,
@@ -1616,3 +1636,65 @@ class Store:
                 return self._media_job_view(row)
             row.status = "cancel_requested"; row.updated_at = now()
         return self._media_job_view(row)
+
+    async def claim_media_jobs(self, owner: str, limit: int = 4) -> list[dict]:
+        async with self.connections.begin() as db:
+            rows = (await db.execute(select(MediaJobRow).where(
+                MediaJobRow.status.in_(["created", "submitted", "running", "cancel_requested"]),
+                or_(MediaJobRow.lease_expires_at.is_(None), MediaJobRow.lease_expires_at < now())
+            ).order_by(MediaJobRow.created_at.asc()).limit(limit).with_for_update())).scalars().all()
+            expiry = now() + timedelta(seconds=60)
+            result = []
+            for row in rows:
+                row.lease_owner = owner; row.lease_expires_at = expiry; row.updated_at = now()
+                result.append({"id": row.id, "kind": row.kind, "model": row.model, "provider": row.provider,
+                    "adapter": row.adapter, "status": row.status, "phase": row.phase,
+                    "parameters": json.loads(row.parameters_json or "{}"), "provider_job_id": row.provider_job_id})
+        return result
+
+    async def update_media_job(self, job_id: str, owner: str, *, status: str, phase: str = "",
+                               progress: int | None = None, provider_job_id: str = "",
+                               output_object_ref: str = "", output_mime: str = "", output_size: int = 0,
+                               error_code: str = "", error_detail: str = "") -> bool:
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
+                MediaJobRow.lease_owner == owner).with_for_update())).scalar_one_or_none()
+            if not row: return False
+            row.status = status; row.phase = phase or row.phase; row.progress = progress
+            if provider_job_id: row.provider_job_id = provider_job_id
+            if output_object_ref: row.output_object_ref = output_object_ref; row.output_mime = output_mime; row.output_size = output_size
+            row.error_code = error_code; row.error_detail = error_detail; row.updated_at = now()
+            if status in {"succeeded", "failed", "cancelled", "unknown"}:
+                row.lease_owner = ""; row.lease_expires_at = None
+                existing = (await db.execute(select(MediaOutboxRow).where(
+                    MediaOutboxRow.job_id == row.id, MediaOutboxRow.event_type == "media.job.terminal"))).scalar_one_or_none()
+                if not existing:
+                    db.add(MediaOutboxRow(id=identifier(), job_id=row.id, event_type="media.job.terminal",
+                        status="pending", created_at=now(), updated_at=now()))
+            else:
+                row.lease_expires_at = now() + timedelta(seconds=60)
+            return True
+
+    async def claim_media_outbox(self, owner: str, limit: int = 20) -> list[dict]:
+        async with self.connections.begin() as db:
+            rows = (await db.execute(select(MediaOutboxRow, MediaJobRow).join(MediaJobRow, MediaJobRow.id == MediaOutboxRow.job_id).where(
+                MediaOutboxRow.status.in_(["pending", "delivering"]),
+                or_(MediaOutboxRow.lease_expires_at.is_(None), MediaOutboxRow.lease_expires_at < now())
+            ).order_by(MediaOutboxRow.created_at.asc()).limit(limit).with_for_update())).all()
+            result = []
+            for outbox, job in rows:
+                outbox.status = "delivering"; outbox.lease_owner = owner; outbox.lease_expires_at = now() + timedelta(seconds=60)
+                outbox.attempt_count += 1; outbox.updated_at = now()
+                result.append({"outbox_id": outbox.id, "job_id": job.id, "thread_id": job.thread_id,
+                    "owner_id": job.owner_id, "turn_id": job.turn_id, "kind": job.kind, "model": job.model, "status": job.status,
+                    "output_object_ref": job.output_object_ref, "output_mime": job.output_mime, "output_size": job.output_size,
+                    "error_code": job.error_code, "error_detail": job.error_detail})
+        return result
+
+    async def finish_media_outbox(self, outbox_id: str, owner: str, *, delivered: bool, error: str = "") -> None:
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(MediaOutboxRow).where(MediaOutboxRow.id == outbox_id,
+                MediaOutboxRow.lease_owner == owner).with_for_update())).scalar_one_or_none()
+            if not row: return
+            row.status = "delivered" if delivered else "pending"; row.last_error = error[:2000]
+            row.lease_owner = ""; row.lease_expires_at = None; row.updated_at = now()

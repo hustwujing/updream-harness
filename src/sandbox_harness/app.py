@@ -27,6 +27,7 @@ from .observability import RequestLoggingMiddleware, telemetry, event
 from .domain import Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, MediaDraftCreate, MediaDraftUpdate, ProjectFileRename, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, valid_attachment_name, now
 from .model_discovery import ModelDiscovery
 from .media_catalog import MediaCatalog
+from .media_worker import MediaWorker
 from .objects import object_store
 from .pool import SandboxPool
 from .runtime import RuntimeClient
@@ -106,16 +107,17 @@ def components(settings: Settings):
     runtime = RuntimeClient(timeout_seconds=settings.sandbox_timeout_seconds)
     catalog = HarnessCatalog(settings.harness_catalog_json or None)
     media_catalog = MediaCatalog(settings.media_catalog_json)
+    media_worker = MediaWorker(settings, store, objects, media_catalog)
     discovery = ModelDiscovery(settings, catalog)
     if settings.model_catalog_discovery:
         discovery.load_snapshot()
-    return store, objects, pool, catalog, discovery, media_catalog, Broker(settings, store, objects, pool, runtime, catalog)
+    return store, objects, pool, catalog, discovery, media_catalog, media_worker, Broker(settings, store, objects, pool, runtime, catalog)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     validate_service_settings(settings)
-    store, objects, pool, catalog, discovery, media_catalog, broker = components(settings)
+    store, objects, pool, catalog, discovery, media_catalog, media_worker, broker = components(settings)
     sessions = Sessions(settings.session_signing_key)
     account_auth = AccountAuth(store, settings.auth_session_ttl_seconds)
     login_failures: dict[str, deque[float]] = defaultdict(deque)
@@ -124,6 +126,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         await store.initialize()
         await broker.start()
+        async def continue_media(outbox: dict):
+            artifact_note = outbox.get("output_object_ref", "")
+            if outbox.get("turn_id") and artifact_note.startswith("sha256:"):
+                await store.add_artifact(outbox["turn_id"], path=f"artifacts/{outbox['job_id']}",
+                    sha256=artifact_note.removeprefix("sha256:"), size=int(outbox.get("output_size") or 0),
+                    mime=outbox.get("output_mime") or "application/octet-stream", object_ref=artifact_note)
+            message = (f"[media_job_completed] job_id={outbox['job_id']} status={outbox['status']} "
+                       f"artifact={artifact_note or 'none'} error={outbox.get('error_code') or 'none'}")
+            if outbox.get("turn_id"):
+                await broker.submit(outbox["thread_id"], TurnCreate(message=message,
+                    idempotency_key=f"media-continuation-{outbox['job_id']}", delivery_mode="queue"), network_access="restricted")
+        media_worker.continuation_callback = continue_media
+        media_worker_task = asyncio.create_task(media_worker.run(), name="media-worker")
         pool_task = None
         catalog_task = None
         if settings.model_catalog_discovery:
@@ -159,6 +174,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             pool_task.cancel()
             with suppress(asyncio.CancelledError):
                 await pool_task
+        media_worker.stop_event.set()
+        await media_worker_task
         await broker.close()
         await pool.close(preserve_sandbox_ids={sandbox.id for sandbox in broker.active_sandboxes.values()})
         await store.close()

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from sandbox_harness.domain import MediaDraftCreate, now
-from sandbox_harness.store import Store
+from sandbox_harness.store import MediaOutboxRow, Store
 
 
 @pytest.mark.asyncio
@@ -22,6 +22,11 @@ async def test_media_draft_confirm_is_idempotent_and_snapshots_provider(tmp_path
         second = await store.confirm_media_draft(draft.id, owner, provider_spec=spec)
         assert first.id == second.id and first.provider == "ark"
         assert not first.cancelable
+        claimed = await store.claim_media_jobs("worker")
+        await store.update_media_job(first.id, "worker", status="succeeded", phase="committed")
+        async with store.connections() as db:
+            rows = (await db.execute(__import__('sqlalchemy').select(MediaOutboxRow))).scalars().all()
+        assert len(rows) == 1 and rows[0].status == "pending"
     finally:
         await store.close()
 
