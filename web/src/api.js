@@ -2,7 +2,7 @@ export function apiUrl(path){return new URL(`api/${path}`,document.baseURI).toSt
 
 export async function api(path,options={}){
   const response=await fetch(apiUrl(path),{...options,headers:{...(options.body instanceof Blob?{}:{'Content-Type':'application/json'}),...(options.headers||{})}});
-  if(!response.ok){const raw=await response.text();let detail=raw;try{detail=JSON.parse(raw).detail||raw}catch{}const labels={authentication_required:'请先登录。',invalid_credentials:'账号或密码不正确。',login_rate_limited:'尝试次数过多，请稍后再试。',username_taken:'该用户名已被使用。',active_work_prevents_registration:'当前仍有任务执行，请等待结束后注册。',already_authenticated:'当前已经登录。',registration_not_available:'FRPC 入口不开放注册。',account_action_not_available:'FRPC 入口不允许修改用户名。',input_delivery_failed:'追加消息未能确认送达，请查看消息状态后再继续。',interaction_delivery_failed:'回答暂未确认送达，请稍后重试。',interaction_response_in_progress:'回答正在处理中，请稍后重试。',interaction_response_conflict:'上一次回答尚未确认，请先重试原回答，不能更改为不同决定。',interaction_expired:'该确认已失效，请按当前任务状态继续。',turn_not_accepting_input:'本轮已进入收尾，请发送到下一轮。',sandbox_takeover_active:'请先保存并释放沙箱，再继续发送消息。',active_turn_prevents_sandbox_takeover:'当前任务仍在执行，请使用“停止并接管”。',sandbox_takeover_waiting_for_turn_cleanup:'任务正在清理，请稍后再次接管。',sandbox_takeover_required:'请先接管沙箱。',sandbox_not_running:'沙箱当前未运行，请先恢复环境。',sandbox_port_not_listening:'该端口当前没有监听服务。',sandbox_port_not_previewable:'该端口属于系统保留端口，不能预览。'};const error=new Error(labels[detail]|| (typeof detail==='string'?detail:'请求参数不符合要求'));error.code=detail;error.status=response.status;error.requestId=response.headers.get('x-request-id');error.traceId=response.headers.get('x-trace-id');if(error.requestId)error.message+=`（排查编号：${error.requestId}）`;throw error;}
+  if(!response.ok){const raw=await response.text();let detail=raw;try{detail=JSON.parse(raw).detail||raw}catch{}const labels={authentication_required:'请先登录。',invalid_credentials:'账号或密码不正确。',login_rate_limited:'尝试次数过多，请稍后再试。',username_taken:'该用户名已被使用。',active_work_prevents_registration:'当前仍有任务执行，请等待结束后注册。',already_authenticated:'当前已经登录。',registration_not_available:'FRPC 入口不开放注册。',account_action_not_available:'FRPC 入口不允许修改用户名。',input_delivery_failed:'追加消息未能确认送达，请查看消息状态后再继续。',interaction_delivery_failed:'回答暂未确认送达，请稍后重试。',interaction_response_in_progress:'回答正在处理中，请稍后重试。',interaction_response_conflict:'上一次回答尚未确认，请先重试原回答，不能更改为不同决定。',interaction_expired:'该确认已失效，请按当前任务状态继续。',turn_not_accepting_input:'本轮已进入收尾，请发送到下一轮。',sandbox_takeover_active:'请先保存并释放沙箱，再修改项目文件或继续执行。',managed_files_modified:'托管文件已发生变化，请重新选择释放时的处理方式。',managed_file_changed_during_release:'文件在保存过程中再次变化，请检查后重试。',active_turn_prevents_sandbox_takeover:'当前任务仍在执行，请使用“停止并接管”。',sandbox_takeover_waiting_for_turn_cleanup:'任务正在清理，请稍后再次接管。',sandbox_takeover_required:'请先接管沙箱。',sandbox_not_running:'沙箱当前未运行，请先恢复环境。',sandbox_port_not_listening:'该端口当前没有监听服务。',sandbox_port_not_previewable:'该端口属于系统保留端口，不能预览。'};const error=new Error(labels[detail]|| (typeof detail==='string'?detail:'请求参数不符合要求'));error.code=detail;error.status=response.status;error.requestId=response.headers.get('x-request-id');error.traceId=response.headers.get('x-trace-id');if(error.requestId)error.message+=`（排查编号：${error.requestId}）`;throw error;}
   return response.status===204?null:response.json();
 }
 
@@ -36,6 +36,9 @@ export const listProjectFiles=id=>api(`threads/${id}/project-files`);
 export const listInteractions=id=>api(`threads/${id}/interactions`);
 export const respondInteraction=(id,value)=>api(`interactions/${id}/respond`,{method:'POST',body:JSON.stringify(value)});
 export const projectFileHistory=(id,path)=>api(`threads/${id}/project-files/history?path=${encodeURIComponent(path)}`);
+export const restoreProjectFile=id=>api(`project-files/${id}/restore`,{method:'POST'});
+export const compareProjectFiles=(leftId,rightId)=>api(`project-file-versions/compare?left_id=${encodeURIComponent(leftId)}&right_id=${encodeURIComponent(rightId)}`);
+export const listTurnProjectFiles=turnId=>api(`turns/${turnId}/project-files`);
 export const renameProjectFile=(id,path)=>api(`project-files/${id}/rename`,{method:'POST',body:JSON.stringify({path})});
 export const deleteProjectFile=id=>api(`project-files/${id}`,{method:'DELETE'});
 export const uploadProjectFile=(threadId,file)=>api(`threads/${threadId}/project-files?path=${encodeURIComponent(`assets/${file.name}`)}&mime=${encodeURIComponent(file.type||'application/octet-stream')}`,{method:'POST',body:file,headers:{'Content-Type':file.type||'application/octet-stream'}});
@@ -54,8 +57,9 @@ export const listSandboxProcesses=id=>api(`threads/${id}/sandbox/processes`);
 export const stopSandboxProcess=(id,pid)=>api(`threads/${id}/sandbox/processes/${pid}/stop`,{method:'POST'});
 export const listSandboxPorts=id=>api(`threads/${id}/sandbox/ports`);
 export const listSandboxAudit=id=>api(`threads/${id}/sandbox/audit`);
+export const getSandboxManagedChanges=id=>api(`threads/${id}/sandbox/managed-changes`);
 export const takeoverSandbox=(id,interrupt=false)=>api(`threads/${id}/sandbox/takeover?interrupt=${interrupt}`,{method:'POST'});
-export const releaseSandbox=id=>api(`threads/${id}/sandbox/release`,{method:'POST'});
+export const releaseSandbox=(id,managedAction='')=>api(`threads/${id}/sandbox/release`,{method:'POST',body:JSON.stringify({managed_action:managedAction})});
 export const createTerminalTicket=id=>api(`threads/${id}/sandbox/terminal-ticket`,{method:'POST'});
 export const createPortGrant=(id,port)=>api(`threads/${id}/sandbox/ports/${port}/grant`,{method:'POST'});
 export function terminalSocketUrl(id,ticket,since=0){const url=new URL(apiUrl(`threads/${id}/sandbox/terminal`));url.protocol=url.protocol==='https:'?'wss:':'ws:';url.searchParams.set('ticket',ticket);url.searchParams.set('since',String(since));return url.toString()}

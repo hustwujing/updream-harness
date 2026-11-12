@@ -5,6 +5,7 @@ import hashlib
 import json
 import mimetypes
 import os
+import pwd
 from pathlib import Path, PurePosixPath
 import psutil
 import signal
@@ -78,6 +79,11 @@ class TurnRequest(BaseModel):
     execution_id: str = Field(default="legacy", min_length=1, max_length=160)
     input_id: str = Field(default="initial", min_length=1, max_length=160)
     after_sequence: int = Field(default=0, ge=0)
+
+
+class ManagedPreserveRequest(BaseModel):
+    paths: list[str] = Field(min_length=1, max_length=10_000)
+    destination: str = Field(pattern=r"^work(?:/[^/]+)*$")
 
 
 class BackgroundJobCreate(BaseModel):
@@ -566,15 +572,29 @@ def create_app() -> FastAPI:
 
     @app.get("/v1/inspect/overview")
     async def inspect_overview():
+        def workspace_bytes() -> int:
+            total = 0; seen = set()
+            for root, directories, files in os.walk(WORKSPACE, followlinks=False):
+                directories[:] = [name for name in directories if not (Path(root) / name).is_symlink()]
+                for name in files:
+                    try:
+                        path = Path(root) / name; info = path.stat(follow_symlinks=False)
+                        identity = (info.st_dev, info.st_ino)
+                        if stat.S_ISREG(info.st_mode) and identity not in seen:
+                            seen.add(identity); total += info.st_size
+                    except OSError:
+                        continue
+            return total
         memory = psutil.virtual_memory()
-        disk = psutil.disk_usage(str(WORKSPACE))
+        disk_used = await asyncio.to_thread(workspace_bytes)
         execution = app.state.execution
         return {"runtime": "running", "execution": (
             "running" if execution and execution.result is None else "idle"),
+            "username": pwd.getpwuid(os.getuid()).pw_name,
             "cpu_percent": round(psutil.cpu_percent(interval=None), 2),
             "cpu_count": psutil.cpu_count() or 1,
             "memory_used": int(memory.used), "memory_total": int(memory.total),
-            "disk_used": int(disk.used), "disk_total": int(disk.total),
+            "disk_used": disk_used, "disk_total": 0, "disk_limited": False,
             "process_count": len(psutil.pids()),
             "timestamp": datetime.now(timezone.utc).isoformat()}
 
@@ -584,23 +604,25 @@ def create_app() -> FastAPI:
         if not target.exists() or not target.is_dir():
             raise HTTPException(404, "Sandbox directory not found")
         depth = min(max(depth, 1), 4)
-        base_depth = len(target.parts)
         items = []
-        for candidate in sorted(target.rglob("*"), key=lambda item: item.as_posix()):
-            relative_depth = len(candidate.parts) - base_depth
-            if relative_depth > depth:
-                continue
+        for candidate in sorted(target.iterdir(), key=lambda item: (not item.is_dir(), item.name.casefold())):
             try:
                 info = candidate.lstat()
             except OSError:
                 continue
             kind = "symlink" if candidate.is_symlink() else "directory" if candidate.is_dir() else "file"
             relative = candidate.relative_to(INSPECT_ROOTS[root_name]).as_posix()
+            first = PurePosixPath(relative).parts[0] if relative != "." else ""
+            policy = ("managed_input" if root_name == "project" and first == "assets" else
+                "managed_artifact" if root_name == "project" and first == "artifacts" else
+                "checkpoint" if root_name == "project" else
+                "turn_input" if root_name == "inbox" else "turn_output")
             items.append({"path": root_name + ("/" + relative if relative != "." else ""),
                 "name": candidate.name, "type": kind,
                 "size": int(info.st_size) if kind == "file" else 0,
                 "mime": mimetypes.guess_type(candidate.name)[0] or "application/octet-stream",
-                "modified_at": datetime.fromtimestamp(info.st_mtime, timezone.utc).isoformat()})
+                "modified_at": datetime.fromtimestamp(info.st_mtime, timezone.utc).isoformat(),
+                "policy": policy, "writable": policy == "checkpoint"})
             if len(items) >= 10_000:
                 break
         return {"root": root_name, "path": path, "items": items, "truncated": len(items) >= 10_000}
@@ -806,6 +828,84 @@ def create_app() -> FastAPI:
         temporary.replace(target)
         return {"path": "/workspace/project/" + relative.as_posix(), "bytes": len(data)}
 
+    def managed_project_target(path: str) -> Path:
+        relative = safe_relative(path)
+        if relative.parts[0] not in {"assets", "artifacts"}:
+            raise ValueError("Invalid managed project path")
+        project = (WORKSPACE / "project").resolve()
+        target = project / relative
+        current = project
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink():
+                raise ValueError("Managed project path traverses a link")
+        if not target.resolve().is_relative_to(project):
+            raise ValueError("Invalid managed project path")
+        return target
+
+    @app.get("/v1/project-files/file")
+    async def get_project_file(path: str):
+        try:
+            target = managed_project_target(path)
+            info = target.stat()
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ValueError("Managed project file is not regular")
+        except (ValueError, OSError):
+            raise HTTPException(404, "Managed project file not found")
+        return FileResponse(target, media_type=mimetypes.guess_type(target.name)[0] or "application/octet-stream")
+
+    def build_project_file_manifest() -> dict:
+        project = (WORKSPACE / "project").resolve(); items = []
+        for root_name in ("assets", "artifacts"):
+            root = project / root_name
+            if not root.is_dir() or root.is_symlink():
+                continue
+            for candidate in sorted(root.rglob("*"), key=lambda value: value.as_posix()):
+                try:
+                    relative = candidate.relative_to(project).as_posix()
+                    target = managed_project_target(relative); info = target.stat()
+                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                        continue
+                    with target.open("rb") as stream:
+                        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+                    items.append({"path": relative, "size": info.st_size, "sha256": digest,
+                        "mime": mimetypes.guess_type(target.name)[0] or "application/octet-stream"})
+                except (ValueError, OSError):
+                    continue
+                if len(items) >= 50_000:
+                    return {"items": items, "truncated": True}
+        return {"items": items, "truncated": False}
+
+    @app.get("/v1/project-files/manifest")
+    async def project_file_manifest():
+        return await asyncio.to_thread(build_project_file_manifest)
+
+    @app.post("/v1/project-files/preserve")
+    async def preserve_project_files(value: ManagedPreserveRequest):
+        def copy_files() -> dict:
+            project = (WORKSPACE / "project").resolve()
+            destination = project / safe_relative(value.destination)
+            if not destination.resolve().is_relative_to((project / "work").resolve()):
+                raise ValueError("Managed edits must be preserved under project/work")
+            copied = []
+            for path in value.paths:
+                try:
+                    source = managed_project_target(path); info = source.stat()
+                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                        continue
+                    target = destination / safe_relative(path)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, target)
+                    copied.append({"source": path, "path": target.relative_to(project).as_posix(),
+                        "size": info.st_size})
+                except (ValueError, OSError):
+                    continue
+            return {"destination": value.destination, "items": copied}
+        try:
+            return await asyncio.to_thread(copy_files)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
     @app.post("/v1/project-files/reset")
     async def reset_project_files():
         project = (WORKSPACE / "project").resolve()
@@ -870,13 +970,14 @@ def create_app() -> FastAPI:
                 execution.process.stdin.close()
             return True
 
-    def reset_outputs() -> None:
+    def reset_outputs(batch_id: str) -> None:
         OUTPUTS.mkdir(parents=True, exist_ok=True)
         for path in OUTPUTS.iterdir():
             if path.is_symlink() or not path.is_dir():
                 path.unlink(missing_ok=True)
             else:
                 shutil.rmtree(path)
+        (OUTPUTS / ".sandbox-output-batch").write_text(batch_id)
 
     @app.post("/v1/turns")
     async def run_turn(value: TurnRequest):
@@ -886,7 +987,7 @@ def create_app() -> FastAPI:
                 raise HTTPException(409, "Another Harness execution is already running")
             created = execution is None or execution.id != value.execution_id
             if created:
-                reset_outputs()
+                reset_outputs(value.execution_id.split(":", 1)[0])
                 harness = os.environ.get("HARNESS_KIND", "claude")
                 model = os.environ.get("HARNESS_MODEL", "default")
                 os.environ["HARNESS_REASONING_EFFORT"] = value.reasoning_effort
@@ -1073,6 +1174,8 @@ def create_app() -> FastAPI:
     async def artifacts():
         items = []
         for path in OUTPUTS.rglob("*"):
+            if path == OUTPUTS / ".sandbox-output-batch":
+                continue
             try:
                 relative = path.relative_to(OUTPUTS).as_posix()
                 path = artifact_path(relative)
@@ -1083,7 +1186,8 @@ def create_app() -> FastAPI:
             items.append({"path": relative, "size": path.stat().st_size, "sha256": digest, "mime": mimetypes.guess_type(path.name)[0] or "application/octet-stream"})
             if len(items) >= 50_000:
                 break
-        return {"items": items}
+        marker = OUTPUTS / ".sandbox-output-batch"
+        return {"batch_id": marker.read_text().strip() if marker.is_file() else "", "items": items}
 
     @app.get("/v1/artifacts/file")
     async def artifact(path: str):

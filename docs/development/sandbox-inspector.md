@@ -27,14 +27,24 @@ managed ProjectFiles.
   absolute paths, `..` and symlink traversal.
 - Inline editing requires `user_controlled` state and excludes managed
   `project/assets` and `project/artifacts` paths.
+- Release compares managed files by path, size and SHA-256. Drift requires an
+  explicit discard, preserve-to-work or save-as-version decision. Expiry uses
+  preserve-to-work before restoring managed files.
 - Process results omit argv and environment. Telemetry and audit records never
   include terminal input/output or file content.
+- File listing returns direct children for lazy tree expansion. Workspace disk
+  usage is a content scan; `disk_total=0` with `disk_limited=false` means no
+  Sandbox disk resource limit is configured and must not be rendered as zero
+  capacity or a filesystem sentinel total.
 - Ports below 1024 and Runtime, Execd, Gateway and proxy ports are never
   previewable. A grant is owner-, Thread-, Sandbox- and expiry-bound.
 - A terminal ticket is HMAC-signed, short lived and bound to owner, Thread,
   Sandbox and PTY session. The browser connects only to the host WebSocket.
 - A user-controlled capability permits public proxy access according to account
   policy but has no model or Provider route.
+- The Runtime account name is configured by
+  `SANDBOX_HARNESS_SANDBOX_USERNAME` (default `updream`) while UID/GID stay at
+  `10001`. Terminal layout changes must retain the same PTY and replay cursor.
 
 ## Takeover lifecycle
 
@@ -64,3 +74,6 @@ terminal output is not duplicated into PostgreSQL or Redis.
 - Private port ownership, blocked ports, HTTP assets and WebSocket forwarding.
 - Desktop/mobile browser layout with no overflow or page errors.
 - Real OpenSandbox restore, PTY, process, metrics, port preview and API SIGKILL.
+- Managed-file modified/missing/untracked detection and every release decision.
+- ProjectFile replacement during an active Turn cannot change its frozen input
+  snapshot; an empty snapshot remains frozen after later uploads.

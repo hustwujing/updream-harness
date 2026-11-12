@@ -274,10 +274,14 @@ sys.stdin.read();print(json.dumps({'type':'assistant_delta','text':'done'}),flus
             "harness":"codex","model":"model","proxy_url":"http://172.31.0.1:28601"}).status_code == 200
         first = client.post("/v1/turns", json={"message":"first","execution_id":"legacy-first"})
         assert json.loads(first.text.splitlines()[-1])["result"]["status"] == "completed"
-        assert [item["path"] for item in client.get("/v1/artifacts").json()["items"]] == ["current-1.txt"]
+        first_outputs = client.get("/v1/artifacts").json()
+        assert first_outputs["batch_id"] == "legacy-first"
+        assert [item["path"] for item in first_outputs["items"]] == ["current-1.txt"]
         second = client.post("/v1/turns", json={"message":"second","execution_id":"legacy-second"})
         assert json.loads(second.text.splitlines()[-1])["result"]["status"] == "completed"
-        assert [item["path"] for item in client.get("/v1/artifacts").json()["items"]] == ["current-2.txt"]
+        second_outputs = client.get("/v1/artifacts").json()
+        assert second_outputs["batch_id"] == "legacy-second"
+        assert [item["path"] for item in second_outputs["items"]] == ["current-2.txt"]
 
 
 def test_runtime_materializes_only_managed_project_file_namespaces(tmp_path, monkeypatch):
@@ -291,6 +295,15 @@ def test_runtime_materializes_only_managed_project_file_namespaces(tmp_path, mon
             content=b"persistent")
         assert response.status_code == 200
         assert (tmp_path / "workspace/project/assets/reference.txt").read_bytes() == b"persistent"
+        manifest = client.get("/v1/project-files/manifest").json()
+        assert manifest["truncated"] is False
+        assert manifest["items"] == [{"path":"assets/reference.txt","size":10,
+            "sha256":__import__('hashlib').sha256(b"persistent").hexdigest(),"mime":"text/plain"}]
+        assert client.get("/v1/project-files/file",params={"path":"assets/reference.txt"}).content==b"persistent"
+        preserved=client.post("/v1/project-files/preserve",json={
+            "paths":["assets/reference.txt"],"destination":"work/recovered-managed/test"}).json()
+        assert preserved["items"][0]["path"]=="work/recovered-managed/test/assets/reference.txt"
+        assert (tmp_path/"workspace/project/work/recovered-managed/test/assets/reference.txt").read_bytes()==b"persistent"
         for path in ("../escape", "state/private", "artifacts/../../escape"):
             assert client.put("/v1/project-files/file", params={"path":path}, content=b"x").status_code == 400
         assert client.post("/v1/project-files/reset").status_code == 200

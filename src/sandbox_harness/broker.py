@@ -3,6 +3,7 @@ from __future__ import annotations
 from .observability import observed, event, enrich, carrier, add_link, telemetry, failure_origin
 
 import asyncio
+import hashlib
 import logging
 import mimetypes
 from collections import defaultdict
@@ -446,11 +447,13 @@ class Broker:
 
     async def _register_project_attachments(self, thread_id: str, turn_id: str, attachments) -> list:
         values = []
+        generation = self.leases.get(turn_id)
         for attachment in attachments:
             value, _ = await self.store.register_project_file(thread_id,
                 path="assets/" + attachment.name, source_type="upload", source_turn_id=turn_id,
                 sha256=attachment.sha256, size=attachment.size, mime=attachment.mime,
-                object_ref=attachment.object_ref)
+                object_ref=attachment.object_ref, lease_owner=self.instance_id,
+                recovery_generation=generation)
             values.append(value)
         return values
 
@@ -458,8 +461,8 @@ class Broker:
     async def _materialize_project_files(self, sandbox, files) -> None:
         for value in files:
             data = await asyncio.to_thread(self.objects.get, value.object_ref, maximum=self.settings.max_artifact_bytes)
-            if len(data) != value.size:
-                raise ValueError("Project file size does not match its immutable record")
+            if len(data) != value.size or hashlib.sha256(data).hexdigest() != value.sha256:
+                raise ValueError("Project file does not match its immutable record")
             await self.runtime.put_project_file(sandbox, value.path, data, value.mime)
 
     @observed("workspace.save")
@@ -474,25 +477,18 @@ class Broker:
             turn_id=turn_id, lease_owner=self.instance_id, recovery_generation=generation)
         event("workspace.checkpoint.persisted",bytes=len(archive),partial=partial)
         total = 0
-        for item in await self.runtime.artifacts(sandbox):
+        for item in await self.runtime.artifacts(sandbox, turn_id):
             path = item["path"]
             data = await self.runtime.artifact(sandbox, path)
             total += len(data)
             if total > self.settings.max_artifact_bytes:
                 raise ValueError("Artifacts exceed Turn byte limit")
             object_ref, digest = await asyncio.to_thread(self.objects.put, data)
-            artifact = await self.store.artifact_by_identity(turn_id, path, digest)
-            if artifact is None:
-                artifact = await self.store.add_artifact(turn_id, path=path, sha256=digest, size=len(data), mime=item.get("mime") or mimetypes.guess_type(path)[0] or "application/octet-stream", object_ref=object_ref,
-                    lease_owner=self.instance_id, recovery_generation=generation)
-                await self.store.append_item(thread_id, turn_id, ItemType.ARTIFACT, status="completed", summary=path,
-                    payload={"artifact_id": artifact.id, "mime": artifact.mime, "size": artifact.size, "partial": partial},
-                    lease_owner=self.instance_id, recovery_generation=generation)
+            artifact, _, _ = await self.store.publish_artifact(thread_id, turn_id, path=path,
+                sha256=digest, size=len(data), mime=item.get("mime") or
+                mimetypes.guess_type(path)[0] or "application/octet-stream", object_ref=object_ref,
+                partial=partial, lease_owner=self.instance_id, recovery_generation=generation)
             event("artifact.persisted",artifact_id=artifact.id,bytes=len(data),partial=partial)
-            await self.store.register_project_file(thread_id,
-                path="artifacts/" + path, source_type="artifact", source_turn_id=turn_id,
-                sha256=digest, size=len(data), mime=artifact.mime, object_ref=object_ref,
-                lease_owner=self.instance_id, recovery_generation=generation)
 
     async def _collect_runtime_logs(self, sandbox) -> None:
         target=telemetry()
@@ -647,9 +643,10 @@ class Broker:
                         except httpx.HTTPStatusError as exc:
                             raise CheckpointRestoreError("Runtime rejected the saved workspace checkpoint") from exc
                     await self._register_project_attachments(thread.id, turn.id, turn.attachments)
+                    project_files = await self.store.freeze_turn_project_files(turn.id, thread.id,
+                        lease_owner=self.instance_id, recovery_generation=generation)
                     await self.runtime.reset_project_files(sandbox)
-                    await self._materialize_project_files(sandbox,
-                        await self.store.current_project_files(thread.id))
+                    await self._materialize_project_files(sandbox, project_files)
                     await self._materialize_attachments(sandbox, turn.attachments)
                     await self._state(turn.id, TurnState.RUNNING, sandbox_id=sandbox.id)
                 enrich(sandbox_id=sandbox.id,image_digest=sandbox.image.rsplit("@",1)[-1])

@@ -10,7 +10,7 @@ write endpoints, SSE, project files, interactions or cancellation.
 `store.py` currently defines these tables:
 
 `threads`, `turns`, `events`, `turn_inputs`, `artifacts`, `items`, `uploads`,
-`project_files` and `interactions`.
+`project_files`, `turn_project_files` and `interactions`.
 
 There is no separate sandbox-attempt, checkpoint or capability-grant table.
 Sandbox identity, capability nonce, lease and Runtime cursor live on `turns`;
@@ -81,6 +81,14 @@ Uploads and artifacts are immutable object references verified by SHA-256 and
 byte limits. `project_files` versions logical `assets/...` and `artifacts/...`
 paths; deletion is a tombstone. Managed project files are materialized into the
 sandbox and excluded from checkpoint archives to avoid duplicate storage.
+Artifact, transcript Item and artifact ProjectFile publication commit in one
+lease-fenced transaction after the immutable object write.
+
+Before first materialization a leased worker freezes `turn_project_files` and
+sets `turns.project_files_frozen`, even for an empty manifest. Recovery and
+normal execution must use that snapshot rather than the Thread's later current
+versions. Runtime output carries the owning Turn batch ID; publishing a batch
+owned by another Turn is a program error.
 
 ## Required checks
 

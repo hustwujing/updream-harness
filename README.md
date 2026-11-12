@@ -88,15 +88,31 @@ runtime dependencies. See [Runtime Skill Bundle](docs/skills.md).
 /run/harness         ephemeral token and runtime configuration
 ```
 
+Runtime UID/GID remain fixed at `10001`; the passwd username is configurable at
+image build time with `SANDBOX_HARNESS_SANDBOX_USERNAME` and defaults to
+`updream`. Changing the display name does not change checkpoint ownership.
+
 Uploaded Turn attachments are versioned as managed project assets and exported outputs are versioned as managed project artifacts. Their immutable objects remain in object storage and are materialized under `/workspace/project/assets` and `/workspace/project/artifacts` after every checkpoint restore. They therefore survive a new Sandbox or a different OpenSandbox worker without retaining historical `inbox` or `outputs` directories.
 
-The Workspace panel also supports direct project uploads, rename, deletion and version history. Deletion creates an auditable tombstone; each Turn resets managed directories before materializing the current manifest, so stale files cannot survive in an attached Sandbox.
+Each Turn freezes an immutable ProjectFile snapshot before materialization. A
+replacement uploaded while that Turn runs is available to the next Turn but
+cannot change the current execution's inputs. Object size and SHA-256 are
+verified before every materialization. `/workspace/outputs` carries a hidden
+Turn batch identity; the Broker rejects stale output from another Turn.
+
+The Workspace panel supports direct project uploads, rename, deletion, version
+history, text-version comparison and restore-as-new-version. Deletion creates an
+auditable tombstone; each Turn resets managed directories before materializing
+its frozen snapshot, so stale files cannot survive in an attached Sandbox.
 
 The Sandbox workbench adds owner-scoped live overview, files, processes,
 metrics, Execd PTY terminal, private port preview and audit history. Inspection
 does not expose OpenSandbox credentials. Writable terminal and file editing use
 an exclusive takeover state; release checkpoints the workspace and revokes its
 short-lived network capability before Agent execution is re-enabled.
+If terminal work changed `project/assets` or `project/artifacts`, release
+requires an explicit choice: discard and rematerialize, preserve the changed
+files under `project/work`, or register them as new managed versions.
 
 The browser keeps the selected Thread in `?thread=<id>`, restores it after refresh and supports history navigation. Users may delete terminal Threads; deletion first removes any retained Session Sandbox, then removes the owner's conversation records. Images, videos and text files open in an ownership-checked inline preview, while every file retains an explicit download action.
 

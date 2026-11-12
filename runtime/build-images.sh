@@ -16,13 +16,16 @@ python3 "$root/runtime/vendor_probe.py"
 registry=127.0.0.1:25001/sandbox-harness
 tag=$(git -C "$root" rev-parse --short=12 HEAD)
 base="sandbox-harness-runtime-base:$tag"
+sandbox_username=${SANDBOX_HARNESS_SANDBOX_USERNAME:-updream}
+[[ "$sandbox_username" =~ ^[a-z_][a-z0-9_-]{1,31}$ ]]
 foundation_hash=$(sha256sum "$root/runtime/foundation.Dockerfile" | cut -c1-12)
 foundation="sandbox-harness-runtime-foundation:$foundation_hash"
 
 if ! "$docker" image inspect "$foundation" >/dev/null 2>&1; then
   "$docker" build --network host -f "$root/runtime/foundation.Dockerfile" -t "$foundation" "$root"
 fi
-"$docker" build --network host -f "$root/runtime/base.Dockerfile" --build-arg "FOUNDATION_IMAGE=$foundation" --build-arg "RELEASE=$tag" -t "$base" "$root"
+"$docker" build --network host -f "$root/runtime/base.Dockerfile" --build-arg "FOUNDATION_IMAGE=$foundation" \
+  --build-arg "RELEASE=$tag" --build-arg "SANDBOX_USERNAME=$sandbox_username" -t "$base" "$root"
 for harness in codex claude deepseek; do
   image="$registry/$harness:$tag"
   "$docker" build --network host -f "$root/runtime/$harness.Dockerfile" --build-arg "BASE_IMAGE=$base" -t "$image" "$root"

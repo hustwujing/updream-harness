@@ -285,6 +285,62 @@ async def test_project_files_keep_versions_and_return_only_the_current_content(t
         assert restored_created and restored.version == 3
         history = await store.project_file_history(thread.id, "assets/renamed.png", owner)
         assert [item.version for item in history] == [3, 2, 1]
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="use current file", idempotency_key="file-snapshot-turn"), profile, owner)
+        claimed = await store.claim_turn(turn.id, "snapshot-worker", 30)
+        snapshot = await store.freeze_turn_project_files(turn.id, thread.id,
+            lease_owner="snapshot-worker", recovery_generation=claimed.recovery_generation)
+        assert [(item.path, item.version, item.sha256) for item in snapshot] == [
+            ("assets/renamed.png", 3, "2" * 64)]
+        newer, _ = await store.register_project_file(thread.id, path="assets/renamed.png",
+            source_type="upload", source_turn_id="five", sha256="5" * 64, size=50,
+            mime="image/png", object_ref="sha256:fifth")
+        frozen_again = await store.freeze_turn_project_files(turn.id, thread.id,
+            lease_owner="snapshot-worker", recovery_generation=claimed.recovery_generation)
+        assert frozen_again[0].project_file_id == restored.id
+        assert (await store.current_project_files(thread.id, owner))[0].id == newer.id
+        restored_history, restored_created = await store.restore_project_file_version(restored.id, owner)
+        assert restored_created and restored_history.version == 5 and restored_history.sha256 == "2" * 64
+        same, same_created = await store.restore_project_file_version(restored.id, owner)
+        assert not same_created and same.id == restored_history.id
+        artifact,artifact_file,artifact_created=await store.publish_artifact(thread.id,turn.id,
+            path="result.txt",sha256="9"*64,size=6,mime="text/plain",object_ref="sha256:result",
+            partial=False,lease_owner="snapshot-worker",recovery_generation=claimed.recovery_generation)
+        replay,replay_file,replay_created=await store.publish_artifact(thread.id,turn.id,
+            path="result.txt",sha256="9"*64,size=6,mime="text/plain",object_ref="sha256:result",
+            partial=False,lease_owner="snapshot-worker",recovery_generation=claimed.recovery_generation)
+        assert artifact_created and not replay_created and replay.id==artifact.id
+        assert replay_file.id==artifact_file.id
+        artifact_items=[item for item in await store.items_after(thread.id) if item.type==ItemType.ARTIFACT]
+        assert len(artifact_items)==1 and artifact_items[0].payload["artifact_id"]==artifact.id
+        empty_thread=await store.create_thread(ThreadCreate(harness=Harness.CLAUDE,model=profile.model,
+            reasoning_level="standard",title="Empty snapshot"),profile,owner)
+        empty_turn,_,_=await store.create_turn(empty_thread.id,
+            TurnCreate(message="empty",idempotency_key="empty-snapshot-turn"),profile,owner)
+        empty_claim=await store.claim_turn(empty_turn.id,"empty-worker",30)
+        assert await store.freeze_turn_project_files(empty_turn.id,empty_thread.id,
+            lease_owner="empty-worker",recovery_generation=empty_claim.recovery_generation)==[]
+        await store.register_project_file(empty_thread.id,path="assets/later.txt",source_type="upload",
+            source_turn_id="",sha256="8"*64,size=1,mime="text/plain",object_ref="sha256:later")
+        assert await store.freeze_turn_project_files(empty_turn.id,empty_thread.id,
+            lease_owner="empty-worker",recovery_generation=empty_claim.recovery_generation)==[]
+        assert (await store.get_turn(empty_turn.id)).project_files_frozen is True
+        applied=await store.apply_managed_file_versions(empty_thread.id,owner,[
+            {"path":"assets/later.txt","kind":"missing","expected_version":1},
+            {"path":"artifacts/manual.txt","kind":"untracked","expected_version":None,
+             "source_type":"artifact","sha256":"7"*64,"size":7,"mime":"text/plain",
+             "object_ref":"sha256:manual"}])
+        assert len(applied)==2 and {item.deleted for item in applied}=={False,True}
+        assert [item.path for item in await store.current_project_files(empty_thread.id,owner)]==[
+            "artifacts/manual.txt"]
+        with pytest.raises(RuntimeError,match="version_conflict"):
+            await store.apply_managed_file_versions(empty_thread.id,owner,[
+                {"path":"assets/later.txt","kind":"missing","expected_version":1},
+                {"path":"artifacts/never.txt","kind":"untracked","expected_version":None,
+                 "source_type":"artifact","sha256":"6"*64,"size":1,"mime":"text/plain",
+                 "object_ref":"sha256:never"}])
+        assert "artifacts/never.txt" not in {item.path for item in await store.current_project_files(
+            empty_thread.id,owner)}
     finally:
         await store.close()
 

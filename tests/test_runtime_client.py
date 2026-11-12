@@ -1,10 +1,19 @@
 import json
 
 import httpx
+import pytest
 
 from sandbox_harness.domain import Harness
 from sandbox_harness.runtime import RuntimeClient
 from sandbox_harness.sandbox import Sandbox
+
+
+async def test_runtime_client_rejects_outputs_from_another_turn_batch():
+    runtime=RuntimeClient(transport=httpx.MockTransport(lambda request:httpx.Response(200,
+        json={"batch_id":"old-turn","items":[{"path":"stale.txt"}]})))
+    sandbox=Sandbox(id="sandbox",harness=Harness.CODEX,image="image",runtime_url="http://runtime",metadata={})
+    with pytest.raises(ValueError,match="does not belong"):
+        await runtime.artifacts(sandbox,"current-turn")
 
 
 async def test_runtime_configuration_retries_transient_proxy_startup_errors():

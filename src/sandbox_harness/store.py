@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .observability import observed
-from .domain import AccountView, RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, TERMINAL, identifier, now, MediaDraftView, MediaJobView, MediaJobOutputView, MediaReferenceUploadView
+from .domain import AccountView, RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, TurnProjectFileSnapshot, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, TERMINAL, identifier, now, MediaDraftView, MediaJobView, MediaJobOutputView, MediaReferenceUploadView
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
 
@@ -82,6 +82,7 @@ class TurnRow(Base):
     last_traceparent: Mapped[str] = mapped_column(String(128), default="", server_default="")
     cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     pending_final_state: Mapped[str] = mapped_column(String(24), default="", server_default="")
+    project_files_frozen: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -165,6 +166,23 @@ class ProjectFileRow(Base):
     mime: Mapped[str] = mapped_column(String(200))
     object_ref: Mapped[str] = mapped_column(Text)
     deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TurnProjectFileRow(Base):
+    __tablename__ = "turn_project_files"
+    __table_args__ = (UniqueConstraint("turn_id", "path"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    turn_id: Mapped[str] = mapped_column(String(32), index=True)
+    project_file_id: Mapped[str] = mapped_column(String(32))
+    path: Mapped[str] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(Integer)
+    source_type: Mapped[str] = mapped_column(String(20))
+    source_turn_id: Mapped[str] = mapped_column(String(32), default="")
+    sha256: Mapped[str] = mapped_column(String(64))
+    size: Mapped[int] = mapped_column(Integer)
+    mime: Mapped[str] = mapped_column(String(200))
+    object_ref: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -445,6 +463,7 @@ class Store:
                 "runtime_execution_id": "VARCHAR(160) NOT NULL DEFAULT ''",
                 "capability_nonce": "VARCHAR(64) NOT NULL DEFAULT ''",
                 "pending_final_state": "VARCHAR(24) NOT NULL DEFAULT ''",
+                "project_files_frozen": "BOOLEAN NOT NULL DEFAULT FALSE",
                 "cancel_requested": "BOOLEAN NOT NULL DEFAULT FALSE",
                 "submit_traceparent": "VARCHAR(128) NOT NULL DEFAULT ''",
                 "last_traceparent": "VARCHAR(128) NOT NULL DEFAULT ''",
@@ -803,6 +822,7 @@ class Store:
             await db.execute(delete(ProjectFileRow).where(ProjectFileRow.thread_id == thread_id))
             await db.execute(delete(ItemRow).where(ItemRow.thread_id == thread_id))
             if turn_ids:
+                await db.execute(delete(TurnProjectFileRow).where(TurnProjectFileRow.turn_id.in_(turn_ids)))
                 await db.execute(delete(EventRow).where(EventRow.turn_id.in_(turn_ids)))
                 await db.execute(delete(TurnInputRow).where(TurnInputRow.turn_id.in_(turn_ids)))
                 await db.execute(delete(ArtifactRow).where(ArtifactRow.turn_id.in_(turn_ids)))
@@ -1705,6 +1725,41 @@ class Store:
             db.add(ArtifactRow(**value.model_dump()))
         return value
 
+    @observed("db.artifact.publish")
+    async def publish_artifact(self, thread_id: str, turn_id: str, *, path: str, sha256: str,
+                               size: int, mime: str, object_ref: str, partial: bool,
+                               lease_owner: str, recovery_generation: int) -> tuple[Artifact, ProjectFile, bool]:
+        async with self.connections.begin() as db:
+            await self.require_lease(db, turn_id, lease_owner, recovery_generation)
+            turn = await db.get(TurnRow, turn_id, with_for_update=True)
+            if not turn or turn.thread_id != thread_id:
+                raise KeyError("turn_not_found")
+            artifact_row = (await db.execute(select(ArtifactRow).where(
+                ArtifactRow.turn_id == turn_id, ArtifactRow.path == path,
+                ArtifactRow.sha256 == sha256).limit(1).with_for_update())).scalar_one_or_none()
+            created = artifact_row is None
+            if artifact_row is None:
+                artifact_row = ArtifactRow(id=identifier(), turn_id=turn_id, path=path,
+                    sha256=sha256, size=size, mime=mime, object_ref=object_ref, created_at=now())
+                db.add(artifact_row)
+            project_row, _ = await self._register_project_file_locked(db, thread_id,
+                path="artifacts/" + path, source_type="artifact", source_turn_id=turn_id,
+                sha256=sha256, size=size, mime=artifact_row.mime, object_ref=object_ref)
+            artifact_items = (await db.execute(select(ItemRow).where(
+                ItemRow.turn_id == turn_id, ItemRow.type == ItemType.ARTIFACT.value
+            ).with_for_update())).scalars().all()
+            item = next((row for row in artifact_items
+                if json.loads(row.payload_json).get("artifact_id") == artifact_row.id), None)
+            if item is None:
+                timestamp = now(); sequence = await self.next_item_sequence(db, thread_id)
+                db.add(ItemRow(id=identifier(), thread_id=thread_id, turn_id=turn_id,
+                    sequence=sequence, type=ItemType.ARTIFACT.value, status="completed",
+                    summary=path, payload_json=json.dumps({"artifact_id":artifact_row.id,
+                        "mime":artifact_row.mime,"size":artifact_row.size,"partial":partial}),
+                    created_at=timestamp, updated_at=timestamp))
+        artifact = Artifact.model_validate({key:getattr(artifact_row,key) for key in Artifact.model_fields})
+        return artifact, self.project_file_view(project_row), created
+
     async def artifact_by_identity(self, turn_id: str, path: str, sha256: str) -> Artifact | None:
         async with self.connections() as db:
             row = (await db.execute(select(ArtifactRow).where(
@@ -1720,6 +1775,11 @@ class Store:
     @staticmethod
     def project_file_view(row: ProjectFileRow) -> ProjectFile:
         return ProjectFile.model_validate({key: getattr(row, key) for key in ProjectFile.model_fields})
+
+    @staticmethod
+    def turn_project_file_view(row: TurnProjectFileRow) -> TurnProjectFileSnapshot:
+        return TurnProjectFileSnapshot.model_validate({
+            key: getattr(row, key) for key in TurnProjectFileSnapshot.model_fields})
 
     @staticmethod
     async def _register_project_file_locked(db: AsyncSession, thread_id: str, *, path: str,
@@ -1765,6 +1825,48 @@ class Store:
         return [self.project_file_view(current[path]) for path in sorted(current)
             if not current[path].deleted and valid_project_file_path(current[path].path, current[path].source_type)]
 
+    async def freeze_turn_project_files(self, turn_id: str, thread_id: str, *,
+                                        lease_owner: str, recovery_generation: int) -> list[TurnProjectFileSnapshot]:
+        async with self.connections.begin() as db:
+            await self.require_lease(db, turn_id, lease_owner, recovery_generation)
+            turn = await db.get(TurnRow, turn_id, with_for_update=True)
+            if not turn or turn.thread_id != thread_id:
+                raise KeyError("turn_not_found")
+            existing = (await db.execute(select(TurnProjectFileRow).where(
+                TurnProjectFileRow.turn_id == turn_id).order_by(TurnProjectFileRow.path))).scalars().all()
+            if turn.project_files_frozen:
+                return [self.turn_project_file_view(row) for row in existing]
+            rows = (await db.execute(select(ProjectFileRow).where(
+                ProjectFileRow.thread_id == thread_id).order_by(
+                ProjectFileRow.path, ProjectFileRow.version.desc()).with_for_update())).scalars().all()
+            current: dict[str, ProjectFileRow] = {}
+            for row in rows:
+                current.setdefault(row.path, row)
+            timestamp = now()
+            snapshots = []
+            for path in sorted(current):
+                source = current[path]
+                if source.deleted or not valid_project_file_path(source.path, source.source_type):
+                    continue
+                snapshot = TurnProjectFileRow(id=identifier(), turn_id=turn_id,
+                    project_file_id=source.id, path=source.path, version=source.version,
+                    source_type=source.source_type, source_turn_id=source.source_turn_id,
+                    sha256=source.sha256, size=source.size, mime=source.mime,
+                    object_ref=source.object_ref, created_at=timestamp)
+                db.add(snapshot); snapshots.append(snapshot)
+            turn.project_files_frozen = True
+        return [self.turn_project_file_view(row) for row in snapshots]
+
+    async def turn_project_files(self, turn_id: str, owner_id: str | None = None) -> list[TurnProjectFileSnapshot]:
+        async with self.connections() as db:
+            query = select(TurnProjectFileRow).join(TurnRow,
+                TurnRow.id == TurnProjectFileRow.turn_id).join(ThreadRow,
+                ThreadRow.id == TurnRow.thread_id).where(TurnProjectFileRow.turn_id == turn_id)
+            if owner_id is not None:
+                query = query.where(ThreadRow.owner_id == owner_id)
+            rows = (await db.execute(query.order_by(TurnProjectFileRow.path))).scalars().all()
+        return [self.turn_project_file_view(row) for row in rows]
+
     async def project_file_history(self, thread_id: str, path: str, owner_id: str) -> list[ProjectFile]:
         async with self.connections() as db:
             rows = (await db.execute(select(ProjectFileRow).join(ThreadRow,
@@ -1773,6 +1875,67 @@ class Store:
                     ThreadRow.owner_id == owner_id,
                 ).order_by(ProjectFileRow.version.desc()))).scalars().all()
         return [self.project_file_view(row) for row in rows]
+
+    async def restore_project_file_version(self, file_id: str, owner_id: str) -> tuple[ProjectFile, bool]:
+        async with self.connections.begin() as db:
+            source = (await db.execute(select(ProjectFileRow).join(ThreadRow,
+                ThreadRow.id == ProjectFileRow.thread_id).where(
+                    ProjectFileRow.id == file_id, ThreadRow.owner_id == owner_id,
+                ).with_for_update())).scalar_one_or_none()
+            if not source:
+                raise KeyError("project_file_not_found")
+            latest = (await db.execute(select(ProjectFileRow).where(
+                ProjectFileRow.thread_id == source.thread_id,
+                ProjectFileRow.path == source.path,
+            ).order_by(ProjectFileRow.version.desc()).limit(1).with_for_update())).scalar_one()
+            if not latest.deleted and latest.sha256 == source.sha256:
+                return self.project_file_view(latest), False
+            row = ProjectFileRow(id=identifier(), thread_id=source.thread_id, path=source.path,
+                version=latest.version + 1, source_type=source.source_type,
+                source_turn_id=source.source_turn_id, sha256=source.sha256, size=source.size,
+                mime=source.mime, object_ref=source.object_ref, deleted=False, created_at=now())
+            db.add(row)
+        return self.project_file_view(row), True
+
+    async def apply_managed_file_versions(self, thread_id: str, owner_id: str,
+                                          changes: list[dict]) -> list[ProjectFile]:
+        async with self.connections.begin() as db:
+            thread = (await db.execute(select(ThreadRow).where(
+                ThreadRow.id == thread_id, ThreadRow.owner_id == owner_id).with_for_update()
+            )).scalar_one_or_none()
+            if not thread:
+                raise KeyError("thread_not_found")
+            latest_by_path = {}
+            for change in changes:
+                path = change["path"]
+                latest = (await db.execute(select(ProjectFileRow).where(
+                    ProjectFileRow.thread_id == thread_id, ProjectFileRow.path == path,
+                ).order_by(ProjectFileRow.version.desc()).limit(1).with_for_update())).scalar_one_or_none()
+                expected = change.get("expected_version")
+                if expected is None:
+                    if latest and not latest.deleted:
+                        raise RuntimeError("managed_project_version_conflict")
+                elif not latest or latest.deleted or latest.version != expected:
+                    raise RuntimeError("managed_project_version_conflict")
+                latest_by_path[path] = latest
+            result = []
+            for change in changes:
+                latest = latest_by_path[change["path"]]
+                if change["kind"] == "missing":
+                    if latest:
+                        row = ProjectFileRow(id=identifier(), thread_id=thread_id,
+                            path=latest.path, version=latest.version + 1,
+                            source_type=latest.source_type, source_turn_id=latest.source_turn_id,
+                            sha256=latest.sha256, size=latest.size, mime=latest.mime,
+                            object_ref=latest.object_ref, deleted=True, created_at=now())
+                        db.add(row); result.append(row)
+                    continue
+                row, _ = await self._register_project_file_locked(db, thread_id,
+                    path=change["path"], source_type=change["source_type"], source_turn_id="",
+                    sha256=change["sha256"], size=change["size"], mime=change["mime"],
+                    object_ref=change["object_ref"])
+                result.append(row)
+        return [self.project_file_view(row) for row in result]
 
     async def rename_project_file(self, file_id: str, owner_id: str, new_path: str) -> ProjectFile:
         async with self.connections.begin() as db:

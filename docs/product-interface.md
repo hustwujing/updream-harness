@@ -79,7 +79,10 @@ opens images, videos and text files in the same preview; unsupported types
 download directly. No surface exposes object-store URLs, Runtime credentials or
 private Harness state.
 
-The Workspace side sheet lists current project assets and artifacts, version history and active supervised background jobs. It supports direct asset upload, rename, deletion, download and background-job cancellation.
+The Workspace side sheet lists current project assets and artifacts, version
+history and active supervised background jobs. Managed input/output labels show
+the authoritative source and version. Users can compare text versions and
+restore an old immutable version as a new current version.
 
 The right inspector switches between Workspace and Sandbox. Sandbox provides
 overview, live files, terminal, processes, private port previews and audit
@@ -88,6 +91,14 @@ requires explicit takeover; “stop and take over” first lets the active Turn
 finish cancellation cleanup. Releasing saves a checkpoint before Agent input is
 enabled again. A stopped Sandbox continues to show persistent ProjectFiles and
 offers explicit restore.
+The file view is a lazy directory tree rather than a flattened recursive list.
+The terminal can expand into a viewport overlay without creating another PTY or
+losing scrollback. Workspace disk usage reports the bytes actually present; if
+OpenSandbox has no disk resource limit, the UI says `未设置容量上限` instead of
+showing the gVisor filesystem sentinel capacity.
+When terminal work changes a managed input or artifact, release shows the
+affected paths and requires discard, preserve under `project/work`, or save as
+new formal versions. It never silently accepts or overwrites those changes.
 
 The current Thread ID is stored in the page query string. Refresh and browser
 history restore only Threads owned by the signed browser identity. Terminal

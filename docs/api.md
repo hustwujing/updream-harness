@@ -108,8 +108,11 @@ GET    /api/artifacts/{artifact_id}?inline=
 GET    /api/threads/{thread_id}/project-files
 POST   /api/threads/{thread_id}/project-files?path=&mime=
 GET    /api/threads/{thread_id}/project-files/history?path=
+GET    /api/turns/{turn_id}/project-files
 GET    /api/project-files/{file_id}?inline=
 POST   /api/project-files/{file_id}/rename
+POST   /api/project-files/{file_id}/restore
+GET    /api/project-file-versions/compare?left_id=&right_id=
 DELETE /api/project-files/{file_id}
 ```
 
@@ -157,6 +160,7 @@ GET    /api/threads/{thread_id}/sandbox/processes
 POST   /api/threads/{thread_id}/sandbox/processes/{pid}/stop
 GET    /api/threads/{thread_id}/sandbox/ports
 GET    /api/threads/{thread_id}/sandbox/audit
+GET    /api/threads/{thread_id}/sandbox/managed-changes
 POST   /api/threads/{thread_id}/sandbox/takeover
 POST   /api/threads/{thread_id}/sandbox/release
 POST   /api/threads/{thread_id}/sandbox/terminal-ticket
@@ -164,6 +168,10 @@ WS     /api/threads/{thread_id}/sandbox/terminal
 POST   /api/threads/{thread_id}/sandbox/ports/{port}/grant
 ANY/WS /api/sandbox-preview/{grant_id}/{path}
 ```
+
+Release accepts `managed_action` as `discard`, `preserve_work` or
+`save_versions`. When managed files differ and no action is supplied, it returns
+`409 managed_files_modified` while retaining exclusive control.
 
 ## Runtime API
 

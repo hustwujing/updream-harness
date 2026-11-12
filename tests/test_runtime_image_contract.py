@@ -14,6 +14,14 @@ def test_foundation_installs_declared_browser_and_image_tools_from_domestic_mirr
     assert "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright" in source
 
 
+def test_runtime_user_is_named_and_keeps_stable_uid_contract():
+    source=(ROOT/"runtime/base.Dockerfile").read_text()
+    build=(ROOT/"runtime/build-images.sh").read_text()
+    assert "ARG SANDBOX_USERNAME=updream" in source
+    assert 'useradd --uid 10001 --gid 10001' in source
+    assert 'SANDBOX_HARNESS_SANDBOX_USERNAME:-updream' in build
+
+
 def test_runtime_installs_supported_public_browser_helper():
     source = (ROOT / "runtime/base.Dockerfile").read_text()
     helper = ROOT / "runtime/browser_screenshot.mjs"

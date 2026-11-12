@@ -80,6 +80,29 @@ class RuntimeClient:
             response = await client.post("/v1/project-files/reset")
             response.raise_for_status()
 
+    async def project_file_manifest(self, sandbox: Sandbox) -> dict:
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url,
+            headers={**sandbox.runtime_headers, **carrier()}, timeout=300,
+            trust_env=False, transport=self.transport) as client:
+            response = await client.get("/v1/project-files/manifest")
+            response.raise_for_status()
+            return response.json()
+
+    async def managed_project_file(self, sandbox: Sandbox, path: str) -> bytes:
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url,
+            headers={**sandbox.runtime_headers, **carrier()}, timeout=300, trust_env=False) as client:
+            response = await client.get("/v1/project-files/file", params={"path": path})
+            response.raise_for_status()
+            return response.content
+
+    async def preserve_project_files(self, sandbox: Sandbox, paths: list[str], destination: str) -> dict:
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url,
+            headers={**sandbox.runtime_headers, **carrier()}, timeout=300, trust_env=False) as client:
+            response = await client.post("/v1/project-files/preserve",
+                json={"paths": paths, "destination": destination})
+            response.raise_for_status()
+            return response.json()
+
     async def run(self, sandbox: Sandbox, *, message: str, attachments: list[Attachment], native_thread_id: str, reasoning_effort: str,
                   execution_id: str = "legacy", input_id: str = "initial", after_sequence: int = 0) -> AsyncIterator[RuntimeEvent | RuntimeResult]:
         body = {"message": message, "attachments": [item.model_dump(mode="json") for item in attachments],
@@ -246,11 +269,15 @@ class RuntimeClient:
             response.raise_for_status()
             return response.content
 
-    async def artifacts(self, sandbox: Sandbox) -> list[dict]:
-        async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()}, timeout=60, trust_env=False) as client:
+    async def artifacts(self, sandbox: Sandbox, expected_batch_id: str) -> list[dict]:
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()},
+            timeout=60, trust_env=False, transport=self.transport) as client:
             response = await client.get("/v1/artifacts")
             response.raise_for_status()
-            return response.json()["items"]
+            value = response.json()
+            if value.get("batch_id") != expected_batch_id:
+                raise ValueError("Runtime output batch does not belong to this Turn")
+            return value["items"]
 
     @observed("artifact.download")
     async def artifact(self, sandbox: Sandbox, path: str) -> bytes:

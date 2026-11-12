@@ -21,6 +21,8 @@ Turn until restored.
 selection, delivery mode, ingress-derived network access, state, sandbox ID, error, lease owner/expiry,
 recovery generation, Runtime execution/cursor, capability nonce, trace context,
 cancellation intent and pending final state.
+`project_files_frozen` distinguishes an intentionally empty ProjectFile
+snapshot from a Turn that has not frozen inputs yet.
 
 `network_access` is frozen as `public` for a Turn submitted with a valid account
 Session. Anonymous direct submissions are `restricted`. It is part
@@ -65,6 +67,14 @@ Streams only wake clients and retain a bounded replay aid.
 `artifacts` indexes immutable `/workspace/outputs` exports by Turn.
 `project_files` versions logical `assets/...` and `artifacts/...` paths per
 Thread. Deletion writes a tombstone version; older versions remain queryable.
+Artifact publication atomically creates the Artifact, its user-visible Item and
+the corresponding artifact ProjectFile under the owning Turn lease.
+
+`turn_project_files` is the immutable per-Turn input manifest. It stores the
+selected ProjectFile ID, path, version, source, SHA-256, size, MIME and object
+reference. The Broker creates it once after registering initial attachments and
+materializes only these rows. Later ProjectFile versions cannot change a running
+or recovering Turn, including when the frozen manifest is empty.
 
 Object bytes live in the configured content-addressed local or S3/BOSS store.
 References are `sha256:<digest>` and reads verify both size and digest.
@@ -112,6 +122,9 @@ port actions without commands, terminal output or file content.
 
 These rows do not make a Sandbox persistent. `threads.checkpoint_ref` and
 ProjectFiles remain the restore source after a Sandbox is deleted.
+Release compares the live managed-directory manifest with current ProjectFiles.
+The selected resolution is audited; preserved terminal edits enter checkpointed
+`project/work`, while saved versions create new immutable ProjectFile rows.
 
 ## Users and account Sessions
 

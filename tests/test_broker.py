@@ -15,17 +15,18 @@ from sandbox_harness.store import Store
 
 
 class Runtime:
+    def __init__(self): self.project_files=[]
     async def inject(self, sandbox, **kwargs): pass
     async def restore(self, sandbox, archive): pass
     async def put_attachment(self, sandbox, name, data, mime): pass
-    async def put_project_file(self, sandbox, path, data, mime): pass
+    async def put_project_file(self, sandbox, path, data, mime): self.project_files.append((path,data,mime))
     async def reset_project_files(self, sandbox): pass
     async def run(self, sandbox, **kwargs):
         yield RuntimeEvent(kind=EventKind.TEXT_DELTA, payload={"text": "done"})
         yield RuntimeEvent(kind=EventKind.TOOL_FINISHED, payload={"name": "write", "result": "ok"})
         yield RuntimeResult(status="completed", native_thread_id="native-1")
     async def checkpoint(self, sandbox): return b"checkpoint"
-    async def artifacts(self, sandbox): return [{"path": "result.txt", "mime": "text/plain"}]
+    async def artifacts(self, sandbox, expected_batch_id): return [{"path": "result.txt", "mime": "text/plain"}]
     async def artifact(self, sandbox, path): return b"result"
     async def cancel(self, sandbox): pass
 
@@ -133,7 +134,7 @@ async def test_terminal_turn_cannot_be_cancelled(tmp_path):
         backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9")
     store = Store(settings.database_url); await store.initialize(); objects = ObjectStore(tmp_path / "objects")
     backend = FakeSandboxBackend(); pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
-    catalog = HarnessCatalog(); broker = Broker(settings, store, objects, pool, Runtime(), catalog)
+    catalog = HarnessCatalog(); runtime=Runtime(); broker = Broker(settings, store, objects, pool, runtime, catalog)
     try:
         profile = catalog.resolve("codex", "gpt-5.6", "standard"); owner = "a" * 64
         thread = await store.create_thread(ThreadCreate(harness=Harness.CODEX, model=profile.model,
@@ -153,7 +154,7 @@ async def test_turn_heartbeat_renews_active_sandbox_expiration(tmp_path):
         turn_heartbeat_seconds=2, turn_lease_seconds=10)
     store = Store(settings.database_url); await store.initialize(); objects = ObjectStore(tmp_path / "objects")
     backend = FakeSandboxBackend(); pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
-    catalog = HarnessCatalog(); broker = Broker(settings, store, objects, pool, Runtime(), catalog)
+    catalog = HarnessCatalog(); runtime=Runtime(); broker = Broker(settings, store, objects, pool, runtime, catalog)
     try:
         profile = catalog.resolve("codex", "gpt-5.6", "standard"); owner = "a" * 64
         thread = await store.create_thread(ThreadCreate(harness=Harness.CODEX, model=profile.model,
@@ -181,11 +182,14 @@ async def test_broker_runs_harness_and_persists_transcript_checkpoint_and_artifa
     store = Store(settings.database_url); await store.initialize()
     objects = ObjectStore(tmp_path / "objects"); backend = FakeSandboxBackend()
     pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
-    catalog = HarnessCatalog(); broker = Broker(settings, store, objects, pool, Runtime(), catalog)
+    catalog = HarnessCatalog(); runtime=Runtime(); broker = Broker(settings, store, objects, pool, runtime, catalog)
     try:
         profile = catalog.resolve("claude", "claude-4.6-sonnet", "deep")
         thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
             reasoning_level="deep", title="Test"), profile, "a" * 64)
+        object_ref,digest=objects.put(b"input-v1")
+        source,_=await store.register_project_file(thread.id,path="assets/input.txt",source_type="upload",
+            source_turn_id="",sha256=digest,size=8,mime="text/plain",object_ref=object_ref)
         turn = await broker.submit(thread.id, TurnCreate(message="make a file", idempotency_key="turn-key-1"))
         for _ in range(100):
             current = await store.get_turn(turn.id)
@@ -197,7 +201,11 @@ async def test_broker_runs_harness_and_persists_transcript_checkpoint_and_artifa
         assert [item.type.value for item in await store.items_after(thread.id)] == ["user_message", "agent_message", "tool", "artifact"]
         assert (await store.artifacts(turn.id))[0].path == "result.txt"
         files = await store.current_project_files(thread.id)
-        assert [(item.path, item.source_type) for item in files] == [("artifacts/result.txt", "artifact")]
+        assert [(item.path, item.source_type) for item in files] == [
+            ("artifacts/result.txt", "artifact"),("assets/input.txt", "upload")]
+        snapshot=await store.turn_project_files(turn.id)
+        assert len(snapshot)==1 and snapshot[0].project_file_id==source.id and snapshot[0].version==1
+        assert runtime.project_files==[("assets/input.txt",b"input-v1","text/plain")]
         assert not backend.items
     finally:
         await pool.close(); await store.close()

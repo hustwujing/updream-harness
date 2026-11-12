@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import httpx
 import asyncio
+import difflib
 import hashlib
 import json
 import logging
@@ -27,7 +28,7 @@ from .auth import AUTH_COOKIE, AccountAuth, normalize_username
 from .catalog import HarnessCatalog
 from .config import Settings, load_settings, validate_service_settings
 from .observability import RequestLoggingMiddleware, telemetry, event
-from .domain import Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, RegisterRequest, UpdateAccountRequest, MediaDraftCreate, MediaDraftUpdate, MediaReferenceUploadCreate, ProjectFileRename, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, valid_attachment_name, now
+from .domain import Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, RegisterRequest, UpdateAccountRequest, MediaDraftCreate, MediaDraftUpdate, MediaReferenceUploadCreate, ProjectFileRename, SandboxReleaseRequest, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, valid_attachment_name, now
 from .document_preview import is_presentation, presentation_pdf
 from .model_discovery import ModelDiscovery
 from .media_catalog import MediaCatalog
@@ -712,10 +713,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "Thread not found")
         return await store.current_project_files(thread_id, request.state.owner_id)
 
+    async def ensure_project_files_mutable(thread_id: str, owner_id: str) -> None:
+        if await store.get_sandbox_control(thread_id, owner_id):
+            raise HTTPException(409, "sandbox_takeover_active")
+
     @app.post("/api/threads/{thread_id}/project-files")
     async def upload_project_file(thread_id: str, request: Request, path: str, mime: str = "application/octet-stream"):
         if not await store.get_thread(thread_id, request.state.owner_id):
             raise HTTPException(404, "Thread not found")
+        await ensure_project_files_mutable(thread_id, request.state.owner_id)
         try:
             path = managed_project_path(path, upload=True)
         except ValueError as exc:
@@ -759,6 +765,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not value:
             raise HTTPException(404, "Turn not found")
         return {**value.model_dump(mode="json"), "artifacts": [item.model_dump(mode="json") for item in await store.artifacts(turn_id)]}
+
+    @app.get("/api/turns/{turn_id}/project-files")
+    async def turn_project_files(turn_id: str, request: Request):
+        if not await store.get_turn_for_owner(turn_id, request.state.owner_id):
+            raise HTTPException(404, "Turn not found")
+        return await store.turn_project_files(turn_id, request.state.owner_id)
 
     @app.post("/api/turns/{turn_id}/cancel")
     async def cancel_turn(turn_id: str, request: Request):
@@ -914,6 +926,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "Thread not found")
         return {"items": await store.list_sandbox_audit(thread_id, request.state.owner_id)}
 
+    @app.get("/api/threads/{thread_id}/sandbox/managed-changes")
+    async def sandbox_managed_changes(thread_id: str, request: Request):
+        return await sandbox_api(inspector.managed_changes(thread_id, request.state.owner_id))
+
     @app.post("/api/threads/{thread_id}/sandbox/takeover")
     async def sandbox_takeover(thread_id: str, request: Request, interrupt: bool = False):
         network_access = "public" if request.state.account else "restricted"
@@ -921,8 +937,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             network_access=network_access, interrupt=interrupt))
 
     @app.post("/api/threads/{thread_id}/sandbox/release")
-    async def sandbox_release(thread_id: str, request: Request):
-        return await sandbox_api(inspector.release(thread_id, request.state.owner_id))
+    async def sandbox_release(thread_id: str, request: Request,
+                              value: SandboxReleaseRequest = SandboxReleaseRequest()):
+        return await sandbox_api(inspector.release(thread_id, request.state.owner_id,
+            managed_action=value.managed_action))
 
     @app.post("/api/threads/{thread_id}/sandbox/terminal-ticket")
     async def sandbox_terminal_ticket(thread_id: str, request: Request):
@@ -1177,6 +1195,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         current = await store.get_project_file_for_owner(file_id, request.state.owner_id)
         if not current:
             raise HTTPException(404, "Project file not found")
+        await ensure_project_files_mutable(current.thread_id, request.state.owner_id)
         try:
             path = managed_project_path(value.path)
         except ValueError as exc:
@@ -1190,9 +1209,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except RuntimeError as exc:
             raise HTTPException(409, str(exc))
 
+    @app.post("/api/project-files/{file_id}/restore")
+    async def restore_project_file(file_id: str, request: Request):
+        try:
+            current = await store.get_project_file_for_owner(file_id, request.state.owner_id)
+            if not current:
+                raise KeyError("project_file_not_found")
+            await ensure_project_files_mutable(current.thread_id, request.state.owner_id)
+            value, created = await store.restore_project_file_version(file_id, request.state.owner_id)
+            return {"file": value, "created": created}
+        except KeyError:
+            raise HTTPException(404, "Project file not found")
+
+    @app.get("/api/project-file-versions/compare")
+    async def compare_project_files(left_id: str, right_id: str, request: Request):
+        left = await store.get_project_file_for_owner(left_id, request.state.owner_id)
+        right = await store.get_project_file_for_owner(right_id, request.state.owner_id)
+        if not left or not right:
+            raise HTTPException(404, "Project file not found")
+        if left.thread_id != right.thread_id or left.path != right.path:
+            raise HTTPException(422, "Project file versions must belong to the same path")
+        result = {"left": left, "right": right, "diff": "", "diff_available": False,
+            "reason": "binary_or_large"}
+        textual = (left.mime.startswith("text/") or left.mime in {"application/json", "application/xml"})
+        if textual and max(left.size, right.size) <= 1024 * 1024:
+            left_data = await asyncio.to_thread(objects.get, left.object_ref, maximum=1024 * 1024)
+            right_data = await asyncio.to_thread(objects.get, right.object_ref, maximum=1024 * 1024)
+            if (hashlib.sha256(left_data).hexdigest() != left.sha256
+                    or hashlib.sha256(right_data).hexdigest() != right.sha256):
+                raise HTTPException(409, "Project file object identity mismatch")
+            diff = "".join(difflib.unified_diff(left_data.decode(errors="replace").splitlines(True),
+                right_data.decode(errors="replace").splitlines(True),
+                fromfile=f"v{left.version}", tofile=f"v{right.version}"))
+            result.update({"diff": diff[:200_000], "diff_available": True, "reason": ""})
+        return result
+
     @app.delete("/api/project-files/{file_id}")
     async def delete_project_file(file_id: str, request: Request):
         try:
+            current = await store.get_project_file_for_owner(file_id, request.state.owner_id)
+            if not current:
+                raise KeyError("project_file_not_found")
+            await ensure_project_files_mutable(current.thread_id, request.state.owner_id)
             return await store.delete_project_file(file_id, request.state.owner_id)
         except KeyError:
             raise HTTPException(404, "Project file not found")

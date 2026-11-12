@@ -243,6 +243,7 @@ class TurnView(BaseModel):
     last_traceparent: str = ""
     cancel_requested: bool = False
     pending_final_state: str = ""
+    project_files_frozen: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -282,8 +283,27 @@ class ProjectFile(BaseModel):
     created_at: datetime
 
 
+class TurnProjectFileSnapshot(BaseModel):
+    id: str
+    turn_id: str
+    project_file_id: str
+    path: str
+    version: int = Field(ge=1)
+    source_type: Literal["upload", "artifact"]
+    source_turn_id: str = ""
+    sha256: str
+    size: int = Field(ge=0)
+    mime: str
+    object_ref: str = Field(exclude=True)
+    created_at: datetime
+
+
 class ProjectFileRename(BaseModel):
     path: str = Field(min_length=1, max_length=1000)
+
+
+class SandboxReleaseRequest(BaseModel):
+    managed_action: Literal["", "discard", "preserve_work", "save_versions"] = ""
 
 
 class Interaction(BaseModel):

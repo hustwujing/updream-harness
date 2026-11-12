@@ -80,13 +80,21 @@ def test_project_file_mutations_are_owner_scoped_versioned_and_path_checked(tmp_
         assert "object_ref" not in first
         preview = client.get(f"/api/project-files/{first['id']}?inline=true")
         assert preview.content == b"one" and preview.headers["content-disposition"].startswith("inline;")
+        second = client.post(f"/api/threads/{thread['id']}/project-files",
+            params={"path":"assets/reference.txt", "mime":"text/plain"}, content=b"two").json()
+        comparison = client.get("/api/project-file-versions/compare",
+            params={"left_id":first["id"],"right_id":second["id"]}).json()
+        assert comparison["diff_available"] and "-one" in comparison["diff"] and "+two" in comparison["diff"]
+        restored = client.post(f"/api/project-files/{first['id']}/restore").json()
+        assert restored["created"] and restored["file"]["version"] == 3
+        assert client.get(f"/api/project-files/{restored['file']['id']}").content == b"one"
         assert client.post(f"/api/threads/{thread['id']}/project-files",
             params={"path":"../escape"}, content=b"x").status_code == 422
         client.cookies.set(COOKIE, token_b)
         assert client.get(f"/api/threads/{thread['id']}/project-files").status_code == 404
         assert client.delete(f"/api/project-files/{first['id']}").status_code == 404
         client.cookies.set(COOKIE, token_a)
-        renamed = client.post(f"/api/project-files/{first['id']}/rename",
+        renamed = client.post(f"/api/project-files/{restored['file']['id']}/rename",
             json={"path":"assets/renamed.txt"})
         assert renamed.status_code == 200
         history = client.get(f"/api/threads/{thread['id']}/project-files/history",

@@ -15,7 +15,7 @@ import httpx
 from websockets.asyncio.client import connect as websocket_connect
 
 from .capability import CapabilityCodec
-from .domain import TERMINAL, now
+from .domain import TERMINAL, identifier, now
 from .observability import event
 from .sandbox import Sandbox, SandboxNotFound
 
@@ -143,18 +143,21 @@ class SandboxInspector:
         controlled, _ = await self._controlled_sandbox(thread_id, owner_id)
         return controlled
 
+    async def _materialize_managed(self, thread, sandbox: Sandbox) -> None:
+        await self.runtime.reset_project_files(sandbox)
+        for value in await self.store.current_project_files(thread.id, thread.owner_id):
+            data = await asyncio.to_thread(self.objects.get, value.object_ref,
+                maximum=self.settings.max_artifact_bytes)
+            if len(data) != value.size or hashlib.sha256(data).hexdigest() != value.sha256:
+                raise ValueError("Project file does not match its immutable record")
+            await self.runtime.put_project_file(sandbox, value.path, data, value.mime)
+
     async def _restore_new(self, thread, sandbox: Sandbox) -> None:
         if thread.checkpoint_ref and not sandbox.reused:
             archive = await asyncio.to_thread(self.objects.get, thread.checkpoint_ref,
                 maximum=self.settings.max_checkpoint_bytes)
             await self.runtime.restore(sandbox, archive)
-        await self.runtime.reset_project_files(sandbox)
-        for value in await self.store.current_project_files(thread.id, thread.owner_id):
-            data = await asyncio.to_thread(self.objects.get, value.object_ref,
-                maximum=self.settings.max_artifact_bytes)
-            if len(data) != value.size:
-                raise ValueError("Project file size does not match its immutable record")
-            await self.runtime.put_project_file(sandbox, value.path, data, value.mime)
+        await self._materialize_managed(thread, sandbox)
 
     async def restore(self, thread_id: str, owner_id: str) -> Sandbox:
         async with self._lock(thread_id):
@@ -259,6 +262,73 @@ class SandboxInspector:
             return {"items": []}
         return await self.runtime.inspect_ports(sandbox)
 
+    async def managed_changes(self, thread_id: str, owner_id: str) -> dict:
+        thread = await self._thread(thread_id, owner_id)
+        sandbox = await self.live_sandbox(thread_id, owner_id)
+        if not sandbox:
+            return {"dirty": False, "items": [], "sandbox_id": ""}
+        value = await self.runtime.project_file_manifest(sandbox)
+        if value.get("truncated"):
+            raise RuntimeError("managed_file_manifest_truncated")
+        expected = {item.path: item for item in await self.store.current_project_files(
+            thread.id, owner_id)}
+        actual = {str(item["path"]): item for item in value.get("items", [])}
+        changes = []
+        for path in sorted(set(expected) | set(actual)):
+            project_file = expected.get(path); observed = actual.get(path)
+            if project_file is None:
+                changes.append({"path": path, "kind": "untracked",
+                    "source_type": "upload" if path.startswith("assets/") else "artifact",
+                    "expected_version": None, "expected_sha256": "",
+                    "actual_sha256": observed["sha256"], "size": observed["size"],
+                    "mime": observed.get("mime") or "application/octet-stream"})
+            elif observed is None:
+                changes.append({"path": path, "kind": "missing",
+                    "source_type": project_file.source_type,
+                    "expected_version": project_file.version,
+                    "expected_sha256": project_file.sha256, "actual_sha256": "",
+                    "size": project_file.size, "mime": project_file.mime})
+            elif observed["sha256"] != project_file.sha256 or observed["size"] != project_file.size:
+                changes.append({"path": path, "kind": "modified",
+                    "source_type": project_file.source_type,
+                    "expected_version": project_file.version,
+                    "expected_sha256": project_file.sha256,
+                    "actual_sha256": observed["sha256"], "size": observed["size"],
+                    "mime": observed.get("mime") or project_file.mime})
+        return {"dirty": bool(changes), "items": changes, "sandbox_id": sandbox.id}
+
+    async def _resolve_managed_changes(self, thread, sandbox: Sandbox, owner_id: str,
+                                       changes: dict, action: str, generation: int) -> dict:
+        if not changes["dirty"]:
+            return {"action": "none", "count": 0, "destination": ""}
+        if not action:
+            raise RuntimeError("managed_files_modified")
+        destination = ""
+        existing_paths = [item["path"] for item in changes["items"] if item["kind"] != "missing"]
+        if action == "preserve_work":
+            destination = f"work/recovered-managed/control-{generation}-{identifier()[:8]}"
+            if existing_paths:
+                await self.runtime.preserve_project_files(sandbox, existing_paths, destination)
+        elif action == "save_versions":
+            updates = []
+            for item in changes["items"]:
+                if item["kind"] == "missing":
+                    updates.append(item)
+                    continue
+                data = await self.runtime.managed_project_file(sandbox, item["path"])
+                digest = hashlib.sha256(data).hexdigest()
+                if digest != item["actual_sha256"] or len(data) != item["size"]:
+                    raise RuntimeError("managed_file_changed_during_release")
+                object_ref, stored_digest = await asyncio.to_thread(self.objects.put, data)
+                if stored_digest != digest:
+                    raise RuntimeError("managed_file_object_identity_mismatch")
+                updates.append({**item,"sha256":digest,"size":len(data),"object_ref":object_ref})
+            await self.store.apply_managed_file_versions(thread.id, owner_id, updates)
+        elif action != "discard":
+            raise ValueError("invalid_managed_file_action")
+        await self._materialize_managed(thread, sandbox)
+        return {"action": action, "count": len(changes["items"]), "destination": destination}
+
     async def takeover(self, thread_id: str, owner_id: str, *, network_access: str,
                        interrupt: bool = False) -> dict:
         async with self._lock(thread_id):
@@ -284,6 +354,8 @@ class SandboxInspector:
             try:
                 if not sandbox.reused:
                     await self._restore_new(thread, sandbox)
+                else:
+                    await self._materialize_managed(thread, sandbox)
                 token, claims = self.capabilities.issue(thread_id=thread_id,
                     turn_id=thread_id, sandbox_id=sandbox.id, harness=thread.harness,
                     model=thread.model, routes=["/v1/telemetry"], network_access=network_access,
@@ -315,16 +387,17 @@ class SandboxInspector:
                     "X-Updream-Sandbox-ID": sandbox_id})
             response.raise_for_status()
 
-    async def release(self, thread_id: str, owner_id: str, *, expired: bool = False) -> dict:
+    async def release(self, thread_id: str, owner_id: str, *, expired: bool = False,
+                      managed_action: str = "") -> dict:
         async with self._lock(thread_id):
             raw = await self.store.get_sandbox_control(thread_id, owner_id)
             if not raw:
                 return {"released": True, "checkpointed": False}
-            control = await self.store.mark_sandbox_control_releasing(thread_id, owner_id)
+            thread = await self._thread(thread_id, owner_id)
             sandbox = await self.pool.get_attached(thread_id)
-            if not sandbox or sandbox.id != control["sandbox_id"]:
+            if not sandbox or sandbox.id != raw["sandbox_id"]:
                 try:
-                    candidate = await self.pool.backend.get(control["sandbox_id"])
+                    candidate = await self.pool.backend.get(raw["sandbox_id"])
                     candidate.thread_id = thread_id; candidate.turn_id = "inspect-" + thread_id
                     sandbox = await self.pool.adopt(candidate, thread_id=thread_id,
                         turn_id="inspect-" + thread_id)
@@ -332,18 +405,31 @@ class SandboxInspector:
                     sandbox = None
                     try:
                         for candidate in await self.pool.backend.list_namespace():
-                            if candidate.id == control["sandbox_id"]:
+                            if candidate.id == raw["sandbox_id"]:
                                 await self.pool.backend.delete(candidate)
                                 break
                     except Exception as exc:
                         event("sandbox.control.broken_delete_failed", level=40,
-                            thread_id=thread_id, sandbox_id=control["sandbox_id"],
+                            thread_id=thread_id, sandbox_id=raw["sandbox_id"],
                             exception_type=type(exc).__name__)
                         raise RuntimeError("sandbox_release_cleanup_pending") from exc
+            change_result = {"action": "none", "count": 0, "destination": ""}
+            control = raw; terminal_closed = False
+            if sandbox and (managed_action or expired):
+                control = await self.store.mark_sandbox_control_releasing(thread_id, owner_id)
+                if control.get("pty_session_id"):
+                    await self.delete_terminal(sandbox, control["pty_session_id"])
+                    terminal_closed = True
+            if sandbox:
+                changes = await self.managed_changes(thread_id, owner_id)
+                change_result = await self._resolve_managed_changes(thread, sandbox, owner_id,
+                    changes, managed_action or ("preserve_work" if expired else ""), raw["generation"])
+            if control["state"] != "releasing":
+                control = await self.store.mark_sandbox_control_releasing(thread_id, owner_id)
             checkpointed = False
             if sandbox:
                 try:
-                    if control.get("pty_session_id"):
+                    if control.get("pty_session_id") and not terminal_closed:
                         await self.delete_terminal(sandbox, control["pty_session_id"])
                     archive = await self.runtime.checkpoint(sandbox)
                     if len(archive) > self.settings.max_checkpoint_bytes:
@@ -369,11 +455,13 @@ class SandboxInspector:
                 nonce = await self.store.sandbox_control_nonce(thread_id, owner_id)
             await self._revoke(nonce, thread_id, control["sandbox_id"])
             await self.store.add_sandbox_audit(thread_id, owner_id, control["sandbox_id"],
-                "control.expired" if expired else "control.released", {"checkpointed": checkpointed})
+                "control.expired" if expired else "control.released", {"checkpointed": checkpointed,
+                    "managed_action": change_result["action"], "managed_change_count": change_result["count"]})
             await self.store.finish_sandbox_control(thread_id, owner_id)
             event("sandbox.control.released", thread_id=thread_id,
                 sandbox_id=control["sandbox_id"], checkpointed=checkpointed, expired=expired)
-            return {"released": True, "checkpointed": checkpointed}
+            return {"released": True, "checkpointed": checkpointed,
+                "managed_changes": change_result}
 
     async def terminal_ticket(self, thread_id: str, owner_id: str) -> dict:
         sandbox, control = await self._controlled_sandbox(thread_id, owner_id)

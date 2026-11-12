@@ -74,7 +74,11 @@ SANDBOX_HARNESS_SANDBOX_CONTROL_TTL_SECONDS=3600
 SANDBOX_HARNESS_SANDBOX_PORT_GRANT_TTL_SECONDS=3600
 SANDBOX_HARNESS_SANDBOX_TERMINAL_TICKET_SECONDS=60
 SANDBOX_HARNESS_SANDBOX_INSPECT_MAX_FILE_BYTES=2097152
+SANDBOX_HARNESS_SANDBOX_USERNAME=updream
 ```
+
+The username is a Runtime image build argument. Rebuild all Harness images after
+changing it. UID/GID remain `10001`; do not use this setting to change ownership.
 
 Terminal and port preview require OpenSandbox/Execd 1.2 PTY and server-proxy
 WebSocket support. Nginx must preserve WebSocket upgrade headers for `/api/`;

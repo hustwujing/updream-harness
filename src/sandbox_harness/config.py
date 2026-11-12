@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     sandbox_terminal_ticket_seconds: int = Field(default=60, ge=10, le=300)
     sandbox_inspect_max_file_bytes: int = Field(default=2 * 1024 * 1024, ge=1024, le=16 * 1024 * 1024)
     sandbox_timeout_seconds: int = Field(default=3600, ge=60, le=86400)
+    sandbox_username: str = Field(default="updream", pattern=r"^[a-z_][a-z0-9_-]{1,31}$")
     turn_lease_seconds: int = Field(default=30, ge=10, le=300)
     turn_heartbeat_seconds: int = Field(default=10, ge=2, le=60)
     recovery_scan_seconds: int = Field(default=15, ge=5, le=300)

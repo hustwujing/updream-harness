@@ -65,10 +65,12 @@ class FakeObjects:
 
 
 class FakeRuntime:
-    def __init__(self): self.files = {"project/readme.txt": "hello"}; self.injected = 0; self.fail_checkpoint=False
+    def __init__(self):
+        self.files = {"project/readme.txt": "hello"}; self.injected = 0; self.fail_checkpoint=False
+        self.manifest={"items":[],"truncated":False};self.preserved=[];self.materialized=[]
     async def restore(self, sandbox, archive): self.restored = archive
-    async def reset_project_files(self, sandbox): return None
-    async def put_project_file(self, sandbox, path, data, mime): return None
+    async def reset_project_files(self, sandbox): self.materialized=[]
+    async def put_project_file(self, sandbox, path, data, mime): self.materialized.append((path,data,mime))
     async def inject(self, sandbox, **kwargs): self.injected += 1
     async def inspect_overview(self, sandbox): return {"execution":"idle","cpu_percent":1,
         "cpu_count":4,"memory_used":10,"memory_total":100,"disk_used":20,"disk_total":200,"process_count":3}
@@ -78,6 +80,10 @@ class FakeRuntime:
     async def inspect_processes(self, sandbox): return {"items":[{"pid":42,"name":"server"}]}
     async def stop_inspect_process(self, sandbox, pid): return {"pid":pid,"stopped":True}
     async def inspect_ports(self, sandbox): return {"items":[{"port":3000,"pid":42,"process":"server"}]}
+    async def project_file_manifest(self,sandbox):return self.manifest
+    async def managed_project_file(self,sandbox,path):return self.files["project/"+path].encode()
+    async def preserve_project_files(self,sandbox,paths,destination):
+        self.preserved.append((paths,destination));return {"items":paths,"destination":destination}
     async def checkpoint(self, sandbox):
         if self.fail_checkpoint: raise httpx.ConnectError("runtime lost")
         return b"checkpoint"
@@ -127,15 +133,61 @@ async def test_inspector_restore_takeover_terminal_port_and_release(tmp_path, mo
         ticket=await inspector.terminal_ticket(thread.id,owner)
         assert inspector.tickets.verify(ticket["ticket"])["pty_session_id"]=="pty-one"
         result=await inspector.release(thread.id,owner)
-        assert result=={"released":True,"checkpointed":True}
+        assert result["released"] and result["checkpointed"] and result["managed_changes"]["count"]==0
         assert (await store.get_thread(thread.id,owner)).checkpoint_ref in objects.values
         assert await store.get_sandbox_control(thread.id,owner) is None
         await inspector.takeover(thread.id,owner,network_access="restricted")
         runtime.fail_checkpoint=True
-        assert await inspector.release(thread.id,owner)=={"released":True,"checkpointed":False}
+        broken=await inspector.release(thread.id,owner)
+        assert broken["released"] and not broken["checkpointed"]
         assert await store.get_sandbox_control(thread.id,owner) is None
     finally:
         await pool.close(); await store.close()
+
+
+@pytest.mark.asyncio
+async def test_inspector_requires_managed_change_decision_and_can_preserve_work(tmp_path,monkeypatch):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"managed.db"));await store.initialize()
+    backend=FakeSandboxBackend();pool=SandboxPool(backend,{h:"test@sha256:"+"1"*64 for h in Harness},
+        {h:0 for h in Harness},max_sandboxes=2);runtime=FakeRuntime();objects=FakeObjects();broker=FakeBroker()
+    settings=SimpleNamespace(max_checkpoint_bytes=1024*1024,max_artifact_bytes=1024*1024,
+        session_keepalive_seconds=60,sandbox_control_ttl_seconds=3600,sandbox_terminal_ticket_seconds=60,
+        sandbox_port_grant_ttl_seconds=3600,sandbox_inspect_max_file_bytes=1024*1024,
+        gateway_signing_key="g"*32,session_signing_key="s"*32,gateway_url="http://gateway.test",
+        public_proxy_url="http://proxy.test",capability_public_request_limit=100,gateway_control_key="c"*32)
+    inspector=SandboxInspector(settings,store,objects,pool,runtime,broker)
+    monkeypatch.setattr(inspector,"_revoke",lambda *args,**kwargs: __import__('asyncio').sleep(0))
+    try:
+        owner="a"*64;profile=HarnessCatalog().resolve("codex","gpt-5.6","standard")
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level="standard",title="Managed"),profile,owner)
+        object_ref,digest=objects.put(b"original")
+        await store.register_project_file(thread.id,path="assets/input.txt",source_type="upload",
+            source_turn_id="",sha256=digest,size=8,mime="text/plain",object_ref=object_ref)
+        await inspector.takeover(thread.id,owner,network_access="restricted")
+        runtime.files["project/assets/input.txt"]="changed"
+        runtime.manifest={"items":[{"path":"assets/input.txt","sha256":__import__('hashlib').sha256(
+            b"changed").hexdigest(),"size":7,"mime":"text/plain"}],"truncated":False}
+        changes=await inspector.managed_changes(thread.id,owner)
+        assert changes["dirty"] and changes["items"][0]["kind"]=="modified"
+        with pytest.raises(RuntimeError,match="managed_files_modified"):
+            await inspector.release(thread.id,owner)
+        assert (await store.get_sandbox_control(thread.id,owner))["state"]=="user_controlled"
+        result=await inspector.release(thread.id,owner,managed_action="preserve_work")
+        assert result["managed_changes"]["action"]=="preserve_work"
+        assert runtime.preserved[0][0]==["assets/input.txt"]
+        assert runtime.materialized[0][1]==b"original"
+        await inspector.takeover(thread.id,owner,network_access="restricted")
+        runtime.files["project/assets/input.txt"]="official-v2"
+        runtime.manifest={"items":[{"path":"assets/input.txt","sha256":__import__('hashlib').sha256(
+            b"official-v2").hexdigest(),"size":11,"mime":"text/plain"}],"truncated":False}
+        versioned=await inspector.release(thread.id,owner,managed_action="save_versions")
+        assert versioned["managed_changes"]["action"]=="save_versions"
+        current=(await store.current_project_files(thread.id,owner))[0]
+        assert current.version==2 and current.sha256==__import__('hashlib').sha256(b"official-v2").hexdigest()
+        assert objects.get(current.object_ref,maximum=100)==b"official-v2"
+    finally:
+        await pool.close();await store.close()
 
 
 def test_terminal_ticket_rejects_tamper_and_expiry(monkeypatch):
@@ -173,13 +225,18 @@ def test_runtime_inspector_file_boundaries(tmp_path, monkeypatch):
     workspace=tmp_path/"workspace";project=workspace/"project";inbox=workspace/"inbox";outputs=workspace/"outputs";run=tmp_path/"run"
     for value in (project,inbox,outputs,workspace/"state",workspace/"tmp",run):value.mkdir(parents=True,exist_ok=True)
     (project/"readme.txt").write_text("hello")
+    (project/"nested").mkdir();(project/"nested/child.txt").write_text("child")
     monkeypatch.setattr(runtime_app,"WORKSPACE",workspace);monkeypatch.setattr(runtime_app,"OUTPUTS",outputs);monkeypatch.setattr(runtime_app,"RUN",run)
     monkeypatch.setattr(runtime_app,"INSPECT_ROOTS",{"project":project,"inbox":inbox,"outputs":outputs})
     app=runtime_app.create_app()
     with TestClient(app) as client:
         overview=client.get("/v1/inspect/overview");assert overview.status_code==200
+        assert overview.json()["disk_total"]==0 and overview.json()["disk_limited"] is False
+        assert overview.json()["disk_used"]>=5
         files=client.get("/v1/inspect/files",params={"path":"project","depth":2}).json()
-        assert files["items"][0]["path"]=="project/readme.txt"
+        assert {item["path"] for item in files["items"]}=={"project/nested","project/readme.txt"}
+        assert [item["path"] for item in client.get("/v1/inspect/files",
+            params={"path":"project/nested","depth":1}).json()["items"]]==["project/nested/child.txt"]
         assert client.get("/v1/inspect/file",params={"path":"project/readme.txt"}).text=="hello"
         assert client.put("/v1/inspect/file",params={"path":"project/readme.txt"},content=b"changed").status_code==200
         assert (project/"readme.txt").read_text()=="changed"
@@ -197,4 +254,6 @@ def test_sandbox_api_status_is_thread_owner_scoped(tmp_path):
             "reasoning_level":"standard","title":"Inspector owner"}).json()
         value=first.get(f"/api/threads/{thread['id']}/sandbox")
         assert value.status_code==200 and value.json()["state"]=="stopped"
+        released=first.post(f"/api/threads/{thread['id']}/sandbox/release")
+        assert released.status_code==200 and released.json()=={"released":True,"checkpointed":False}
         assert second.get(f"/api/threads/{thread['id']}/sandbox").status_code==404
