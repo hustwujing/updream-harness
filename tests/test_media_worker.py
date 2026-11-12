@@ -265,6 +265,46 @@ async def test_tripo_recovery_only_polls_persisted_task(monkeypatch):
     assert result.status == "success" and not client.posts and len(client.gets) == 1
 
 
+@pytest.mark.asyncio
+async def test_tripo_quad_generation_expects_provider_forced_fbx(monkeypatch):
+    value = worker()
+    client = Client([Response({"code": 0, "data": {"status": "success",
+        "output": {"model_url": "https://result.test/model.fbx",
+            "rendered_image_url": "https://result.test/preview.webp"}}})])
+    async def client_factory(): return client
+    async def no_sleep(_): return None
+    monkeypatch.setattr(value, "_client", client_factory)
+    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    result = await value._tripo({"id": "job", "model": "v3.1-20260211",
+        "provider_job_id": "persisted-task", "generation_mode": "text_to_model",
+        "parameters": {"prompt": "phone", "quad": True}})
+    assert result.status == "success"
+    assert result.outputs == [
+        {"role": "primary", "filename": "model-job.fbx", "url": "https://result.test/model.fbx",
+            "kind": "model3d:fbx"},
+        {"role": "preview", "filename": "preview-job.webp", "url": "https://result.test/preview.webp",
+            "kind": "image"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_deterministic_provider_result_validation_error_is_explicit_failure(monkeypatch):
+    store = Store(); value = worker(store)
+    async def execute(_):
+        return __import__('sandbox_harness.media_worker', fromlist=['ProviderResult']).ProviderResult(
+            "success", outputs=[{"role": "primary", "filename": "bad.glb",
+                "url": "https://result.test/bad.glb", "kind": "model3d"}])
+    async def invalid_download(*_args, **_kwargs):
+        raise ValueError("provider_result_mime_mismatch")
+    monkeypatch.setattr(value, "_execute", execute)
+    monkeypatch.setattr(value, "_download", invalid_download)
+    await value.process({"id": "job", "kind": "model3d", "model": "v3.1-20260211",
+        "provider": "tripo", "adapter": "tripo_v3", "status": "running",
+        "phase": "provider_polling", "provider_job_id": "task", "references": []})
+    assert store.updates[-1][2]["status"] == "failed"
+    assert store.updates[-1][2]["error_code"] == "provider_result_invalid"
+
+
 def test_tripo_glb_signature_is_required():
     assert MediaWorker._validated_mime(b"glTF" + b"\0" * 16,
         "application/octet-stream", "model3d") == "model/gltf-binary"

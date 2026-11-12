@@ -143,6 +143,11 @@ class MediaWorker:
             await self.store.update_media_job(job["id"], self.owner, status="failed", phase="terminal",
                 error_code="media_reference_unavailable", error_detail=str(exc)[:200])
             event("media.reference.failed", level=30, job_id=job["id"], error_code=str(exc)[:80])
+        except ValueError as exc:
+            await self.store.update_media_job(job["id"], self.owner, status="failed", phase="terminal",
+                error_code="provider_result_invalid", error_detail=f"{stage}:{str(exc)[:160]}")
+            event("media.job.invalid_result", level=40, job_id=job["id"], provider=job["provider"],
+                model=job["model"], failure_stage=stage, error_code=str(exc)[:80])
         except Exception as exc:
             await self.store.update_media_job(job["id"], self.owner, status="unknown", phase="recovery_required",
                 error_code="worker_error", error_detail=f"{stage}:{type(exc).__name__}")
@@ -444,14 +449,19 @@ class MediaWorker:
                 if not model_url:
                     return ProviderResult("failed", provider_job_id=task_id,
                         error="tripo_result_model_missing")
-                target = str(job.get("parameters", {}).get("target_format") or "GLB").upper()
+                parameters = job.get("parameters", {})
+                target = (str(parameters.get("target_format") or "GLB").upper()
+                    if job.get("generation_mode") == "convert_model"
+                    else "FBX" if parameters.get("quad") else "GLB")
                 extension = {"GLB": "glb", "GLTF": "gltf", "FBX": "fbx", "USDZ": "usdz",
                     "OBJ": "obj", "STL": "stl", "3MF": "3mf"}.get(target, "glb")
                 expected = "model3d" if target == "GLB" else "model3d:" + target.lower()
                 outputs = [{"role": "primary", "filename": f"model-{job['id'][:8]}.{extension}",
                     "url": self._validated_tripo_output_url(model_url), "kind": expected}]
                 if preview_url:
-                    outputs.append({"role": "preview", "filename": f"preview-{job['id'][:8]}.png",
+                    suffix = urlsplit(preview_url).path.rsplit(".", 1)[-1].lower()
+                    preview_extension = suffix if suffix in {"png", "jpg", "jpeg", "webp"} else "png"
+                    outputs.append({"role": "preview", "filename": f"preview-{job['id'][:8]}.{preview_extension}",
                         "url": self._validated_tripo_output_url(preview_url), "kind": "image"})
                 credits = data.get("credits_consumed")
                 return ProviderResult("success", provider_job_id=task_id, outputs=outputs,
