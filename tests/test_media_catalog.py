@@ -32,6 +32,11 @@ def test_default_catalog_contains_only_real_probe_models():
     assert schemas["audio"]["limits"]["max_estimated_duration_seconds"] == 180
     assert set(schemas["model3d"]["generation_modes"]) == {"text_to_model", "image_to_model",
         "multiview_to_model", "texture_model", "decimate_model", "convert_model"}
+    text_mode = schemas["model3d"]["generation_modes"]["text_to_model"]
+    assert "image_seed" in text_mode["allowed_parameters"]
+    assert "target_format" not in text_mode["allowed_parameters"]
+    assert text_mode["effects"]["quad=true"] == "output is FBX"
+    assert schemas["model3d"]["limits"]["face_limit"]["smart_low_poly_triangle"] == 20_000
 
 
 def test_tripo_contract_rejects_invalid_reference_and_topology_combinations():
@@ -54,6 +59,49 @@ def test_tripo_contract_rejects_invalid_reference_and_topology_combinations():
     with pytest.raises(ValueError, match="Unsupported parameter.*image_to_model"):
         catalog.validate_parameters("model3d", "v3.1-20260211", {"prompt": "must not drift"},
             generation_mode="image_to_model", references=[image])
+
+
+def test_tripo_contract_enforces_provider_parameter_dependencies():
+    catalog = MediaCatalog(); job_id = "a" * 32
+    catalog.validate_parameters("model3d", "v3.1-20260211", {"prompt": "cube",
+        "texture": False, "image_seed": 7, "export_uv": False, "export_orientation": "+x"},
+        generation_mode="text_to_model")
+    with pytest.raises(ValueError, match="pbr=true conflicts"):
+        catalog.validate_parameters("model3d", "v3.1-20260211",
+            {"prompt": "cube", "texture": False, "pbr": True}, generation_mode="text_to_model")
+    with pytest.raises(ValueError, match="texture=false does not accept"):
+        catalog.validate_parameters("model3d", "v3.1-20260211",
+            {"prompt": "cube", "texture": False, "texture_quality": "detailed"},
+            generation_mode="text_to_model")
+    with pytest.raises(ValueError, match="smart_uv requires"):
+        catalog.validate_parameters("model3d", "v3.1-20260211",
+            {"input_job_id": job_id, "face_limit": 5000, "topology_model": "v2.0", "smart_uv": True},
+            generation_mode="decimate_model")
+    with pytest.raises(ValueError, match="bake is unsupported"):
+        catalog.validate_parameters("model3d", "v3.1-20260211",
+            {"input_job_id": job_id, "face_limit": 5000, "topology_model": "v1.0", "bake": True},
+            generation_mode="decimate_model")
+
+
+@pytest.mark.parametrize("mime", ["image/gif", "image/tiff", "image/heic"])
+def test_tripo_references_reject_provider_unsupported_image_formats(mime):
+    reference = {"role": "reference_image", "usage": "subject", "size": 1024,
+        "mime": mime, "width": 512, "height": 512}
+    with pytest.raises(ValueError, match="PNG, JPEG or WebP"):
+        MediaCatalog().validate_parameters("model3d", "v3.1-20260211", {},
+            generation_mode="image_to_model", references=[reference])
+
+
+@pytest.mark.parametrize("parameters", [
+    {"prompt": "cube", "export_orientation": "forward"},
+    {"prompt": "cube", "export_uv": "false"},
+    {"input_job_id": "a" * 32, "texture_alignment": "closest"},
+])
+def test_tripo_contract_rejects_invalid_enum_and_boolean_values(parameters):
+    mode = "texture_model" if "input_job_id" in parameters else "text_to_model"
+    with pytest.raises(ValueError):
+        MediaCatalog().validate_parameters("model3d", "v3.1-20260211", parameters,
+            generation_mode=mode)
 
 
 def test_catalog_rejects_sync_cancellation():

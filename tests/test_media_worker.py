@@ -7,10 +7,11 @@ from sandbox_harness.media_reference_publisher import MediaReferencePreparationE
 
 
 class Response:
-    def __init__(self, body, status_code=200):
+    def __init__(self, body, status_code=200, headers=None):
         self.body = body
         self.status_code = status_code
         self.is_success = 200 <= status_code < 300
+        self.headers = headers or {}
 
     def json(self):
         return self.body
@@ -40,6 +41,7 @@ class Client:
 class Store:
     def __init__(self):
         self.updates = []
+        self.releases = []
 
     async def update_media_job(self, job_id, owner, **values):
         self.updates.append((job_id, owner, values))
@@ -48,6 +50,10 @@ class Store:
     async def resolve_tripo_input_job(self, job_id, input_job_id):
         assert job_id == "job" and input_job_id == "a" * 32
         return "provider-source-task"
+
+    async def release_media_job_lease(self, job_id, owner, **values):
+        self.releases.append((job_id, owner, values))
+        return True
 
 
 class Objects:
@@ -64,7 +70,8 @@ def worker(store=None, objects=None):
         ark_asset_group_id="", ark_asset_group_type="AIGC",
         tripo_base_url="https://tripo.test/v3", tripo_api_key="test-key",
         tripo_poll_seconds=1, tripo_task_timeout_seconds=3,
-        tripo_worker_concurrency=2, tripo_max_output_bytes=1024 * 1024)
+        tripo_worker_concurrency=2, tripo_submit_max_retries=5,
+        tripo_max_output_bytes=1024 * 1024)
     return MediaWorker(settings, store or Store(), objects or Objects(), None)
 
 
@@ -266,7 +273,7 @@ async def test_tripo_recovery_only_polls_persisted_task(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_tripo_quad_generation_expects_provider_forced_fbx(monkeypatch):
+async def test_tripo_model_url_suffix_overrides_default_glb_expectation(monkeypatch):
     value = worker()
     client = Client([Response({"code": 0, "data": {"status": "success",
         "output": {"model_url": "https://result.test/model.fbx",
@@ -277,7 +284,7 @@ async def test_tripo_quad_generation_expects_provider_forced_fbx(monkeypatch):
     monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
     result = await value._tripo({"id": "job", "model": "v3.1-20260211",
         "provider_job_id": "persisted-task", "generation_mode": "text_to_model",
-        "parameters": {"prompt": "phone", "quad": True}})
+        "parameters": {"prompt": "phone"}})
     assert result.status == "success"
     assert result.outputs == [
         {"role": "primary", "filename": "model-job.fbx", "url": "https://result.test/model.fbx",
@@ -316,6 +323,7 @@ def test_tripo_glb_signature_is_required():
 @pytest.mark.parametrize(("payload", "kind", "mime"), [
     (b"Kaydara FBX Binary  \x00" + b"\0" * 32, "model3d:fbx", "application/vnd.autodesk.fbx"),
     (b"# mesh\nv 0 0 0\nv 1 0 0\nf 1 2 1\n", "model3d:obj", "model/obj"),
+    (b"PK\x03\x04" + b"\0" * 32, "model3d:obj", "model/obj+zip"),
     (b"solid mesh\nendsolid mesh\n", "model3d:stl", "model/stl"),
     (b"PK\x03\x04" + b"\0" * 32, "model3d:usdz", "model/vnd.usdz+zip"),
 ])
@@ -341,6 +349,7 @@ def test_tripo_output_url_accepts_public_cdn():
 def test_provider_filename_uses_validated_content_mime_not_url_suffix():
     assert MediaWorker._filename_for_mime("preview-job.webp", "image/png") == "preview-job.png"
     assert MediaWorker._filename_for_mime("model-job.bin", "application/vnd.autodesk.fbx") == "model-job.fbx"
+    assert MediaWorker._filename_for_mime("model-job.obj", "model/obj+zip") == "model-job.zip"
 
 
 @pytest.mark.asyncio
@@ -372,3 +381,69 @@ async def test_tripo_postprocess_resolves_owned_platform_job_to_provider_task():
             "target_format": "FBX", "export_orientation": "+x"}, "references": []})
     assert endpoint == "models/convert"
     assert payload == {"input": "provider-source-task", "format": "FBX", "export_orientation": "+x"}
+
+
+@pytest.mark.asyncio
+async def test_tripo_text_payload_derives_no_pbr_and_preserves_reproducibility_fields():
+    value = worker()
+    endpoint, payload = await value._tripo_payload({"id": "job", "model": "v3.1-20260211",
+        "generation_mode": "text_to_model", "parameters": {"prompt": "cube", "texture": False,
+            "model_seed": 3, "image_seed": 4, "export_uv": False, "export_orientation": "+x"},
+        "references": []})
+    assert endpoint == "generation/text-to-model"
+    assert payload == {"prompt": "cube", "texture": False, "pbr": False, "model_seed": 3,
+        "image_seed": 4, "export_uv": False, "export_orientation": "+x", "model": "v3.1-20260211"}
+
+
+@pytest.mark.asyncio
+async def test_tripo_submit_429_honors_retry_after_without_losing_request(monkeypatch):
+    value = worker()
+    client = Client([Response({"code": 1007}, 429, {"Retry-After": "7"}),
+        Response({"code": 0, "data": {"task_id": "tripo-task"}}),
+        Response({"code": 0, "data": {"status": "success",
+            "output": {"model_url": "https://result.test/model.glb"}}})])
+    sleeps = []
+    async def client_factory(): return client
+    async def no_sleep(seconds): sleeps.append(seconds)
+    monkeypatch.setattr(value, "_client", client_factory)
+    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    result = await value._tripo({"id": "job", "model": "v3.1-20260211",
+        "provider_job_id": "", "generation_mode": "text_to_model",
+        "parameters": {"prompt": "cube"}})
+    assert result.status == "success" and len(client.posts) == 2
+    assert sleeps[:2] == [7.0, 1.0]
+    assert any(update[2].get("phase") == "provider_rate_limited" for update in value.store.updates)
+
+
+@pytest.mark.asyncio
+async def test_tripo_success_without_task_id_is_unknown_not_rejected(monkeypatch):
+    value = worker(); client = Client([Response({"code": 0, "data": {}})])
+    async def client_factory(): return client
+    monkeypatch.setattr(value, "_client", client_factory)
+    result = await value._tripo({"id": "job", "model": "v3.1-20260211",
+        "provider_job_id": "", "generation_mode": "text_to_model",
+        "parameters": {"prompt": "cube"}})
+    assert result.status == "unknown" and result.error == "tripo_submit_failed:0"
+    assert len(client.posts) == 1
+
+
+@pytest.mark.asyncio
+async def test_provider_output_http_failure_schedules_safe_download_retry(monkeypatch):
+    store = Store(); value = worker(store)
+    async def execute(_):
+        return __import__('sandbox_harness.media_worker', fromlist=['ProviderResult']).ProviderResult(
+            "success", provider_job_id="provider-task", outputs=[{"role": "primary",
+                "filename": "model.glb", "url": "https://result.test/model.glb", "kind": "model3d"}])
+    async def failed_download(*_args, **_kwargs):
+        request = __import__('httpx').Request("GET", "https://result.test/model.glb")
+        response = __import__('httpx').Response(503, request=request)
+        raise __import__('httpx').HTTPStatusError("temporary", request=request, response=response)
+    monkeypatch.setattr(value, "_execute", execute)
+    monkeypatch.setattr(value, "_download", failed_download)
+    await value.process({"id": "job", "kind": "model3d", "model": "v3.1-20260211",
+        "provider": "tripo", "adapter": "tripo_v3", "status": "running",
+        "phase": "provider_polling", "provider_job_id": "provider-task", "references": []})
+    assert store.releases[-1][2] == {"phase": "provider_output_retry",
+        "error_code": "provider_output_unavailable", "error_detail": "download_primary:HTTPStatusError",
+        "retry_after_seconds": 15}
+    assert not any(update[2].get("status") == "unknown" for update in store.updates)

@@ -15,6 +15,17 @@ SEEDREAM_LITE_SIZE_TIERS = ("2K", "3K", "4K")
 IMAGE_REFERENCE_ROLES = {"reference_image", "first_frame", "last_frame"}
 VIDEO_REFERENCE_ROLES = {"reference_video"}
 AUDIO_REFERENCE_ROLES = {"reference_audio"}
+MODEL3D_GENERATION_COMMON = {"face_limit", "texture", "pbr", "texture_quality", "geometry_quality",
+    "auto_size", "quad", "smart_low_poly", "model_seed", "texture_seed", "export_orientation", "export_uv"}
+MODEL3D_MODE_PARAMETERS = {
+    "text_to_model": MODEL3D_GENERATION_COMMON | {"prompt", "negative_prompt", "image_seed"},
+    "image_to_model": MODEL3D_GENERATION_COMMON | {"enable_image_autofix", "texture_alignment", "orientation"},
+    "multiview_to_model": MODEL3D_GENERATION_COMMON | {"texture_alignment", "orientation"},
+    "texture_model": {"input_job_id", "texture_prompt", "pbr", "texture_seed",
+        "texture_alignment", "texture_quality", "bake"},
+    "decimate_model": {"input_job_id", "face_limit", "topology_model", "smart_uv", "quad", "bake"},
+    "convert_model": {"input_job_id", "target_format", "bake", "export_orientation"},
+}
 
 
 def estimate_audio_duration_seconds(text: str, speed: float = 1) -> float:
@@ -95,21 +106,38 @@ class MediaModelSpec:
                 "texture_quality": ["standard", "detailed", "extreme"],
                 "geometry_quality": ["standard", "detailed"], "auto_size": "boolean",
                 "quad": "boolean", "smart_low_poly": "boolean", "model_seed": "integer",
-                "texture_seed": "integer", "enable_image_autofix": "boolean",
+                "image_seed": "integer", "texture_seed": "integer", "enable_image_autofix": "boolean",
                 "texture_alignment": ["original_image", "geometry"],
                 "orientation": ["default", "align_image"], "input_job_id": "platform Job ID",
                 "texture_prompt": "string <=1024", "target_format": ["GLTF", "FBX", "USDZ", "OBJ", "STL", "3MF"],
                 "topology_model": ["v1.0", "v2.0", "v3.0"], "smart_uv": "boolean",
-                "bake": "boolean", "export_orientation": ["+x", "-x", "+y", "-y"]},
+                "bake": "boolean", "export_orientation": ["+x", "-x", "+y", "-y"],
+                "export_uv": "boolean"},
+                "mode_parameter_policy": "Use only allowed_parameters for the selected generation mode",
                 "generation_modes": {
-                    "text_to_model": {"references": 0, "required_parameters": ["prompt"]},
-                    "image_to_model": {"roles": ["reference_image"], "references": 1},
+                    "text_to_model": {"references": 0, "required_parameters": ["prompt"],
+                        "allowed_parameters": sorted(MODEL3D_MODE_PARAMETERS["text_to_model"]),
+                        "effects": {"quad=true": "output is FBX", "texture=false": "pbr is forced false"}},
+                    "image_to_model": {"roles": ["reference_image"], "references": 1,
+                        "allowed_parameters": sorted(MODEL3D_MODE_PARAMETERS["image_to_model"]),
+                        "effects": {"quad=true": "output is FBX", "texture=false": "pbr is forced false"}},
                     "multiview_to_model": {"roles": ["front_view", "left_view", "back_view", "right_view"],
-                        "min_references": 2, "max_references": 4, "required_roles": ["front_view"]},
-                    "texture_model": {"references": 0, "required_parameters": ["input_job_id"]},
-                    "decimate_model": {"references": 0, "required_parameters": ["input_job_id", "face_limit"]},
-                    "convert_model": {"references": 0, "required_parameters": ["input_job_id", "target_format"]}},
-                "limits": {"max_image_bytes": 20 * 1024 * 1024, "max_model_bytes": 150 * 1024 * 1024}},
+                        "min_references": 2, "max_references": 4, "required_roles": ["front_view"],
+                        "allowed_parameters": sorted(MODEL3D_MODE_PARAMETERS["multiview_to_model"]),
+                        "effects": {"quad=true": "output is FBX", "texture=false": "pbr is forced false"}},
+                    "texture_model": {"references": 0, "required_parameters": ["input_job_id"],
+                        "allowed_parameters": sorted(MODEL3D_MODE_PARAMETERS["texture_model"])},
+                    "decimate_model": {"references": 0, "required_parameters": ["input_job_id", "face_limit"],
+                        "allowed_parameters": sorted(MODEL3D_MODE_PARAMETERS["decimate_model"]),
+                        "defaults": {"topology_model": "v3.0"},
+                        "effects": {"quad=true": "output is FBX"}},
+                    "convert_model": {"references": 0, "required_parameters": ["input_job_id", "target_format"],
+                        "allowed_parameters": sorted(MODEL3D_MODE_PARAMETERS["convert_model"])}},
+                "limits": {"max_image_bytes": 20 * 1024 * 1024, "max_model_bytes": 150 * 1024 * 1024,
+                    "reference_image_mimes": ["image/png", "image/jpeg", "image/webp"],
+                    "face_limit": {"standard_triangle": 1_500_000, "detailed_triangle": 2_000_000,
+                        "quad": 150_000, "smart_low_poly_triangle": 20_000,
+                        "smart_low_poly_quad": 10_000}}},
         }[self.kind]
         return value
 
@@ -175,9 +203,9 @@ class MediaCatalog:
             "audio": {"text", "voice_id", "speed", "audio_format"},
             "model3d": {"prompt", "negative_prompt", "face_limit", "texture", "pbr",
                 "texture_quality", "geometry_quality", "auto_size", "quad", "smart_low_poly",
-                "model_seed", "texture_seed", "enable_image_autofix", "texture_alignment",
+                "model_seed", "image_seed", "texture_seed", "enable_image_autofix", "texture_alignment",
                 "orientation", "input_job_id", "texture_prompt", "target_format", "topology_model",
-                "smart_uv", "bake", "export_orientation"},
+                "smart_uv", "bake", "export_orientation", "export_uv"},
         }
         if kind not in allowed_by_kind:
             raise ValueError("Invalid media kind")
@@ -197,19 +225,16 @@ class MediaCatalog:
                     or not 500 <= face_limit <= 2_000_000):
                 raise ValueError("3D face_limit must be an integer from 500 to 2000000")
             for key in ("texture", "pbr", "auto_size", "quad", "smart_low_poly",
-                    "enable_image_autofix", "smart_uv", "bake"):
+                    "enable_image_autofix", "smart_uv", "bake", "export_uv"):
                 if key in parameters and not isinstance(parameters[key], bool):
                     raise ValueError(f"{key} must be boolean")
             if parameters.get("texture_quality", "standard") not in {"standard", "detailed", "extreme"}:
                 raise ValueError("Invalid 3D texture quality")
             if parameters.get("geometry_quality", "standard") not in {"standard", "detailed"}:
                 raise ValueError("Invalid 3D geometry quality")
-            if face_limit is not None:
-                maximum = (10_000 if parameters.get("quad") else 20_000) if parameters.get(
-                    "smart_low_poly") else 150_000 if parameters.get("quad") else (
-                    2_000_000 if parameters.get("geometry_quality") == "detailed" else 1_500_000)
-                if face_limit > maximum:
-                    raise ValueError(f"3D face_limit exceeds the selected topology limit of {maximum}")
+            for key in ("model_seed", "image_seed", "texture_seed"):
+                if key in parameters and (isinstance(parameters[key], bool) or not isinstance(parameters[key], int)):
+                    raise ValueError(f"{key} must be integer")
             texture_prompt = parameters.get("texture_prompt")
             if texture_prompt is not None and (not isinstance(texture_prompt, str)
                     or not texture_prompt.strip() or len(texture_prompt) > 1024):
@@ -219,6 +244,14 @@ class MediaCatalog:
             if "target_format" in parameters and parameters["target_format"] not in {
                     "GLTF", "FBX", "USDZ", "OBJ", "STL", "3MF"}:
                 raise ValueError("Invalid 3D target format")
+            if "texture_alignment" in parameters and parameters["texture_alignment"] not in {
+                    "original_image", "geometry"}:
+                raise ValueError("Invalid 3D texture alignment")
+            if "orientation" in parameters and parameters["orientation"] not in {"default", "align_image"}:
+                raise ValueError("Invalid 3D orientation")
+            if "export_orientation" in parameters and parameters["export_orientation"] not in {
+                    "+x", "-x", "+y", "-y"}:
+                raise ValueError("Invalid 3D export orientation")
             job_id = parameters.get("input_job_id")
             if job_id is not None and (not isinstance(job_id, str) or not re.fullmatch(r"[0-9a-f]{32}", job_id)):
                 raise ValueError("input_job_id must be a platform Job ID")
@@ -293,24 +326,18 @@ class MediaCatalog:
             self._validate_model3d_mode(generation_mode, parameters, references)
 
     @staticmethod
-    def _validate_model3d_mode(mode: str, parameters: dict[str, Any], references: list[dict[str, Any]]) -> None:
-        roles = [item.get("role") for item in references]
-        generation_common = {"face_limit", "texture", "pbr", "texture_quality", "geometry_quality",
-            "auto_size", "quad", "smart_low_poly", "model_seed", "texture_seed"}
-        allowed = {
-            "text_to_model": generation_common | {"prompt", "negative_prompt"},
-            "image_to_model": generation_common | {"enable_image_autofix", "texture_alignment", "orientation"},
-            "multiview_to_model": generation_common | {"texture_alignment", "orientation"},
-            "texture_model": {"input_job_id", "texture_prompt", "pbr", "texture_seed",
-                "texture_alignment", "texture_quality", "bake"},
-            "decimate_model": {"input_job_id", "face_limit", "topology_model", "smart_uv", "quad", "bake"},
-            "convert_model": {"input_job_id", "target_format", "bake", "export_orientation"},
-        }
-        if mode not in allowed:
+    def validate_model3d_parameter_names(mode: str, parameters: dict[str, Any]) -> None:
+        allowed = MODEL3D_MODE_PARAMETERS.get(mode)
+        if allowed is None:
             raise ValueError("Invalid 3D generation mode")
-        irrelevant = sorted(set(parameters) - allowed[mode])
+        irrelevant = sorted(set(parameters) - allowed)
         if irrelevant:
             raise ValueError(f"Unsupported parameter(s) for {mode}: {', '.join(irrelevant)}")
+
+    @staticmethod
+    def _validate_model3d_mode(mode: str, parameters: dict[str, Any], references: list[dict[str, Any]]) -> None:
+        roles = [item.get("role") for item in references]
+        MediaCatalog.validate_model3d_parameter_names(mode, parameters)
         if mode == "text_to_model":
             if references or not parameters.get("prompt"):
                 raise ValueError("Text-to-3D requires prompt and no references")
@@ -330,9 +357,31 @@ class MediaCatalog:
             if mode == "convert_model" and parameters.get("target_format") not in {
                     "GLTF", "FBX", "USDZ", "OBJ", "STL", "3MF"}:
                 raise ValueError("convert_model requires a supported target_format")
+        if mode in {"text_to_model", "image_to_model", "multiview_to_model"}:
+            face_limit = parameters.get("face_limit")
+            if face_limit is not None:
+                maximum = (10_000 if parameters.get("quad") else 20_000) if parameters.get(
+                    "smart_low_poly") else 150_000 if parameters.get("quad") else (
+                    2_000_000 if parameters.get("geometry_quality") == "detailed" else 1_500_000)
+                if face_limit > maximum:
+                    raise ValueError(f"3D face_limit exceeds the selected topology limit of {maximum}")
+            if parameters.get("texture") is False:
+                if parameters.get("pbr") is True:
+                    raise ValueError("pbr=true conflicts with texture=false")
+                irrelevant_texture = sorted(set(parameters) & {"texture_quality", "texture_seed",
+                    "texture_alignment", "orientation"})
+                if irrelevant_texture:
+                    raise ValueError("texture=false does not accept: " + ", ".join(irrelevant_texture))
+        if mode == "decimate_model":
+            topology = parameters.get("topology_model", "v3.0")
+            if parameters.get("smart_uv") and topology != "v3.0":
+                raise ValueError("smart_uv requires topology_model=v3.0")
+            if "bake" in parameters and topology == "v1.0":
+                raise ValueError("bake is unsupported with topology_model=v1.0")
         for item in references:
-            if item.get("size", 0) > 20 * 1024 * 1024 or not str(item.get("mime", "")).startswith("image/"):
-                raise ValueError("Tripo reference images must be valid images at most 20 MB")
+            if (item.get("size", 0) > 20 * 1024 * 1024
+                    or item.get("mime") not in {"image/png", "image/jpeg", "image/webp"}):
+                raise ValueError("Tripo reference images must be PNG, JPEG or WebP at most 20 MB")
 
     @staticmethod
     def _validate_image_references(references: list[dict[str, Any]], *, seedream: bool = False) -> None:

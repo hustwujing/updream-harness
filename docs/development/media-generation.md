@@ -39,6 +39,17 @@ only an `input_job_id` for a successful Tripo Job owned by the same user and
 Thread; the host resolves it to the Provider task ID. Harness code cannot pass
 a Provider task ID, URL or local path through this field.
 
+The public catalog gives every 3D mode its own `allowed_parameters`; the
+top-level `optional` map is only a cross-mode type dictionary. CLI and server
+validate the same mode whitelist. Current generation support intentionally
+keeps the verified H3.1 subset: `image_seed`, `model_seed`, `texture_seed`, UV
+export and export orientation are supported, while segmented parts, meshopt
+compression and alternate texture-model versions remain unavailable until
+their output and browser compatibility are tested. `quad=true` declares FBX
+output. `texture=false` deterministically sets `pbr=false` and rejects texture
+quality/alignment/seed fields instead of letting the Provider silently change
+the request. Tripo references accept only PNG, JPEG and WebP up to 20 MB.
+
 ## Reference publication
 
 The internal content store remains on `http://shjd-boss.bilibili.co` and is
@@ -120,6 +131,10 @@ Unknown Provider states are polled for a bounded interval and then release the
 lease for later reconciliation. Tripo has separate concurrency through
 `SANDBOX_HARNESS_TRIPO_WORKER_CONCURRENCY` and advertises cancellation as
 unsupported because its public API has no cancellation endpoint.
+HTTP 429 creation responses are safe to retry because no task ID was issued;
+the Worker honors `Retry-After`/`X-RateLimit-Reset` with bounded backoff. A
+transport timeout or 5xx without a task ID remains `UNKNOWN` because the
+Provider may have accepted the request.
 
 API and Media Worker are separate processes. Every Worker instance has a
 unique lease owner and persists an async Provider ID before polling. After a
@@ -227,6 +242,7 @@ SANDBOX_HARNESS_TRIPO_BASE_URL=https://openapi.tripo3d.com/v3
 SANDBOX_HARNESS_TRIPO_API_KEY=<secret>
 SANDBOX_HARNESS_TRIPO_WORKER_CONCURRENCY=2
 SANDBOX_HARNESS_TRIPO_POLL_SECONDS=2
+SANDBOX_HARNESS_TRIPO_SUBMIT_MAX_RETRIES=5
 SANDBOX_HARNESS_TRIPO_TASK_TIMEOUT_SECONDS=1800
 ```
 

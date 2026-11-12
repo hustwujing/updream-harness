@@ -83,6 +83,18 @@ def test_media_cli_prepares_tripo_draft_without_provider_fields(tmp_path, monkey
     assert set(calls[-1]["parameters"]) == {"prompt", "texture", "pbr"}
 
 
+def test_media_cli_rejects_cross_mode_tripo_parameters_before_http(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(media_cli.httpx, "post", lambda *args, **kwargs: calls.append((args, kwargs)))
+    with __import__('pytest').raises(SystemExit):
+        media_cli.main(["prepare", "model3d", "--model", "v3.1-20260211",
+            "--generation-mode", "text_to_model", "--parameters",
+            '{"prompt":"phone","target_format":"GLTF","smart_uv":true}'])
+    error = capsys.readouterr().err
+    assert "Unsupported parameter(s) for text_to_model" in error
+    assert not calls
+
+
 def test_public_media_catalog_exposes_tripo_availability(tmp_path):
     settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///"+str(tmp_path/"catalog.db"),
         redis_url="", backend="fake", object_backend="local", model_catalog_discovery=False,

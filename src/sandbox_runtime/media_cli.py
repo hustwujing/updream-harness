@@ -76,6 +76,9 @@ def main(argv: list[str] | None = None) -> int:
         try:
             MediaDraftCreate.model_validate(payload)
             MediaCatalog.validate_parameter_shape(args.kind, parameters)
+            if args.kind == "model3d":
+                MediaCatalog.validate_model3d_parameter_names(
+                    args.generation_mode or "text_to_model", parameters)
         except ValidationError as exc:
             parser.error("invalid media draft: " + validation_message(exc))
         except ValueError as exc:

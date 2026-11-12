@@ -2319,7 +2319,8 @@ class Store:
         return result
 
     async def release_media_job_lease(self, job_id: str, owner: str, *, phase: str,
-                                      error_code: str = "", error_detail: str = "") -> bool:
+                                      error_code: str = "", error_detail: str = "",
+                                      retry_after_seconds: int = 0) -> bool:
         async with self.connections.begin() as db:
             row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
                 MediaJobRow.lease_owner == owner).with_for_update())).scalar_one_or_none()
@@ -2327,7 +2328,8 @@ class Store:
                 return False
             row.status = "running"; row.phase = phase; row.error_code = error_code
             row.error_detail = error_detail[:2000]; row.lease_owner = ""
-            row.lease_expires_at = None; row.updated_at = now()
+            row.lease_expires_at = (now() + timedelta(seconds=retry_after_seconds)
+                if retry_after_seconds > 0 else None); row.updated_at = now()
             return True
 
     async def resolve_tripo_input_job(self, job_id: str, input_job_id: str) -> str:

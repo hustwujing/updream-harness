@@ -148,7 +148,7 @@ function BackgroundJobs({jobs,onCancel}){return <section><h2>后台任务</h2>{j
 
 const mediaLabels={image:'图片',video:'视频',audio:'音频',model3d:'3D 模型'};
 const mediaStatuses={created:'等待执行',running:'生成中',submitted:'排队中',succeeded:'已完成',failed:'失败',unknown:'结果待确认',cancel_requested:'正在取消',cancelled:'已取消'};
-const mediaPhases={prepared:'已确认',requesting:'正在提交',provider_polling:'生成服务处理中',downloading:'正在下载',committed:'成果已保存',terminal:'已结束',recovery_required:'等待恢复'};
+const mediaPhases={prepared:'已确认',requesting:'正在提交',provider_polling:'生成服务处理中',provider_rate_limited:'生成服务限流，正在退避',provider_output_retry:'成果下载暂时不可用，正在重试',downloading:'正在下载',committed:'成果已保存',terminal:'已结束',recovery_required:'等待恢复'};
 const activeMediaStatuses=new Set(['submitted','running','cancel_requested']);
 const terminalMediaStatuses=new Set(['succeeded','failed','unknown','cancelled']);
 function estimatedAudioSeconds(text='',speed=1){const intervals=[...text.matchAll(/<#([0-9]+(?:\.[0-9]{1,2})?)#>/g)].reduce((total,item)=>total+Number(item[1]),0),spoken=text.replace(/<#[0-9]+(?:\.[0-9]{1,2})?#>/g,''),cjk=(spoken.match(/[\u3400-\u9fff]/g)||[]).length,words=(spoken.match(/[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*/g)||[]).length,punctuation=(spoken.match(/[，。！？；：,.!?;:]/g)||[]).length;return Math.max(1,Math.round((cjk/4.5+words/2.5+punctuation*.08)/speed+intervals))}

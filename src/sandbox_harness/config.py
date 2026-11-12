@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     tripo_api_key: str = ""
     tripo_worker_concurrency: int = Field(default=2, ge=1, le=5)
     tripo_poll_seconds: float = Field(default=2, ge=1, le=30)
+    tripo_submit_max_retries: int = Field(default=5, ge=0, le=10)
     tripo_task_timeout_seconds: int = Field(default=1800, ge=60, le=7200)
     tripo_max_output_bytes: int = Field(default=512 * 1024 * 1024, ge=1024 * 1024)
     media_catalog_json: str = ""

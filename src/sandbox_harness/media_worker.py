@@ -6,6 +6,7 @@ import ipaddress
 import os
 import re
 import tarfile
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -144,6 +145,19 @@ class MediaWorker:
             await self.store.update_media_job(job["id"], self.owner, status="failed", phase="terminal",
                 error_code="media_reference_unavailable", error_detail=str(exc)[:200])
             event("media.reference.failed", level=30, job_id=job["id"], error_code=str(exc)[:80])
+        except httpx.HTTPError as exc:
+            if stage.startswith("download"):
+                await self.store.release_media_job_lease(job["id"], self.owner,
+                    phase="provider_output_retry", error_code="provider_output_unavailable",
+                    error_detail=f"{stage}:{type(exc).__name__}", retry_after_seconds=15)
+                event("media.output.retry_scheduled", level=30, job_id=job["id"], provider=job["provider"],
+                    model=job["model"], failure_stage=stage, exception_type=type(exc).__name__)
+            else:
+                await self.store.update_media_job(job["id"], self.owner, status="unknown",
+                    phase="recovery_required", error_code="worker_error",
+                    error_detail=f"{stage}:{type(exc).__name__}")
+                event("media.job.unknown", level=40, job_id=job["id"], provider=job["provider"],
+                    model=job["model"], failure_stage=stage, exception_type=type(exc).__name__)
         except ValueError as exc:
             await self.store.update_media_job(job["id"], self.owner, status="failed", phase="terminal",
                 error_code="provider_result_invalid", error_detail=f"{stage}:{str(exc)[:160]}")
@@ -333,7 +347,8 @@ class MediaWorker:
         extension = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp",
             "model/gltf-binary": "glb", "application/vnd.autodesk.fbx": "fbx",
             "model/obj": "obj", "model/stl": "stl", "model/vnd.usdz+zip": "usdz",
-            "model/3mf": "3mf", "model/gltf+zip": "gltf", "model/gltf+json": "gltf"}.get(mime)
+            "model/3mf": "3mf", "model/gltf+zip": "zip", "model/gltf+json": "gltf",
+            "model/obj+zip": "zip"}.get(mime)
         if not extension:
             return filename
         stem = filename.rsplit(".", 1)[0] if "." in filename else filename
@@ -358,9 +373,29 @@ class MediaWorker:
     def _tripo_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
         allowed = {"prompt", "negative_prompt", "face_limit", "texture", "pbr",
             "texture_quality", "geometry_quality", "auto_size", "quad", "smart_low_poly",
-            "model_seed", "texture_seed", "enable_image_autofix", "texture_alignment",
-            "orientation", "smart_uv", "bake", "export_orientation"}
-        return {key: value for key, value in parameters.items() if key in allowed}
+            "model_seed", "image_seed", "texture_seed", "enable_image_autofix", "texture_alignment",
+            "orientation", "smart_uv", "bake", "export_orientation", "export_uv"}
+        result = {key: value for key, value in parameters.items() if key in allowed}
+        if result.get("texture") is False:
+            result["pbr"] = False
+        return result
+
+    @staticmethod
+    def _tripo_retry_delay(response: Any, attempt: int) -> float:
+        headers = getattr(response, "headers", {}) or {}
+        retry_after = headers.get("Retry-After") or headers.get("retry-after")
+        if retry_after:
+            try:
+                return min(32.0, max(1.0, float(retry_after)))
+            except ValueError:
+                pass
+        reset = headers.get("X-RateLimit-Reset") or headers.get("x-ratelimit-reset")
+        if reset:
+            try:
+                return min(32.0, max(1.0, float(reset) - time.time()))
+            except ValueError:
+                pass
+        return min(32.0, float(2 ** attempt))
 
     async def _tripo_payload(self, job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         mode = job.get("generation_mode") or "text_to_model"
@@ -417,21 +452,33 @@ class MediaWorker:
             if not await self.store.update_media_job(job["id"], self.owner, status="running",
                     phase="requesting"):
                 return ProviderResult("failed", error="media_job_lease_lost")
-            try:
-                async with await self._client() as client:
-                    response = await client.post(urljoin(base, endpoint), headers=headers, json=payload)
-            except (httpx.TimeoutException, httpx.TransportError):
-                return ProviderResult("unknown", error="tripo_submit_transport_error")
+            maximum_retries = int(getattr(self.settings, "tripo_submit_max_retries", 5))
+            for attempt in range(maximum_retries + 1):
+                try:
+                    async with await self._client() as client:
+                        response = await client.post(urljoin(base, endpoint), headers=headers, json=payload)
+                except (httpx.TimeoutException, httpx.TransportError):
+                    return ProviderResult("unknown", error="tripo_submit_transport_error")
+                if response.status_code != 429:
+                    break
+                if attempt >= maximum_retries:
+                    return ProviderResult("failed", error="tripo_submit_rate_limited")
+                delay = self._tripo_retry_delay(response, attempt)
+                await self.store.update_media_job(job["id"], self.owner, status="running",
+                    phase="provider_rate_limited")
+                event("media.provider.rate_limited", level=30, job_id=job["id"], provider="tripo",
+                    retry_seconds=delay, retry_attempt=attempt + 1)
+                await asyncio.sleep(delay)
             try:
                 raw = response.json()
             except ValueError:
-                return ProviderResult("unknown" if response.status_code >= 500 else "failed",
+                return ProviderResult("unknown" if response.is_success or response.status_code >= 500 else "failed",
                     error="tripo_submit_invalid_response")
             task_id = str((raw.get("data") or {}).get("task_id") or "") if isinstance(raw, dict) else ""
             if not task_id:
                 code = raw.get("code") if isinstance(raw, dict) else None
                 suffix = re.sub(r"[^A-Za-z0-9_.-]", "_", str(code))[:80] if code is not None else "missing"
-                return ProviderResult("unknown" if response.status_code >= 500 else "failed",
+                return ProviderResult("unknown" if response.is_success or response.status_code >= 500 else "failed",
                     error="tripo_submit_failed:" + suffix)
             if not await self.store.update_media_job(job["id"], self.owner, status="running",
                     phase="provider_polling", provider_job_id=task_id):
@@ -446,6 +493,12 @@ class MediaWorker:
             try:
                 async with await self._client() as client:
                     response = await client.get(urljoin(base, "tasks/" + task_id), headers=headers)
+                if response.status_code == 429:
+                    delay = self._tripo_retry_delay(response, 0)
+                    await self.store.update_media_job(job["id"], self.owner, status="running",
+                        phase="provider_rate_limited", provider_job_id=task_id)
+                    await asyncio.sleep(delay)
+                    continue
                 body = response.json()
             except (httpx.TimeoutException, httpx.TransportError, ValueError):
                 continue
@@ -457,7 +510,7 @@ class MediaWorker:
             if status == "success":
                 output = data.get("output") or {}
                 model_url = str(output.get("model_url") or "")
-                preview_url = str(output.get("rendered_image_url") or "")
+                preview_url = str(output.get("rendered_image_url") or output.get("generated_image_url") or "")
                 if not model_url:
                     return ProviderResult("failed", provider_job_id=task_id,
                         error="tripo_result_model_missing")
@@ -465,6 +518,9 @@ class MediaWorker:
                 target = (str(parameters.get("target_format") or "GLB").upper()
                     if job.get("generation_mode") == "convert_model"
                     else "FBX" if parameters.get("quad") else "GLB")
+                suffix = urlsplit(model_url).path.rsplit(".", 1)[-1].lower()
+                target = {"glb": "GLB", "gltf": "GLTF", "fbx": "FBX", "obj": "OBJ",
+                    "stl": "STL", "usdz": "USDZ", "3mf": "3MF"}.get(suffix, target)
                 extension = {"GLB": "glb", "GLTF": "gltf", "FBX": "fbx", "USDZ": "usdz",
                     "OBJ": "obj", "STL": "stl", "3MF": "3mf"}.get(target, "glb")
                 expected = "model3d" if target == "GLB" else "model3d:" + target.lower()
@@ -547,8 +603,10 @@ class MediaWorker:
             detected = "model/gltf-binary"
         elif expected_kind.startswith("model3d"):
             stripped = data.lstrip()
-            if model_format == "FBX" and (data.startswith(b"Kaydara FBX Binary") or stripped.startswith(b"; FBX")):
+            if data.startswith(b"Kaydara FBX Binary") or stripped.startswith(b"; FBX"):
                 detected = "application/vnd.autodesk.fbx"
+            elif model_format == "OBJ" and data.startswith(b"PK\x03\x04"):
+                detected = "model/obj+zip"
             elif model_format == "OBJ" and re.search(rb"(?m)^(?:v|vn|vt|f)\s+", data[:65536]):
                 detected = "model/obj"
             elif model_format == "STL" and (stripped.startswith(b"solid ") or len(data) >= 84):
