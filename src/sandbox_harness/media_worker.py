@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import ipaddress
 import os
 import re
 import tarfile
@@ -27,6 +28,8 @@ class ProviderResult:
     provider_job_id: str = ""
     progress: int | None = None
     error: str = ""
+    outputs: list[dict[str, str]] | None = None
+    credits_consumed: float | None = None
 
 
 class MediaWorker:
@@ -41,20 +44,31 @@ class MediaWorker:
         self.reference_publisher = MediaReferencePublisher(settings, store, objects, self.owner)
         self.stop_event = asyncio.Event()
         self.concurrency = getattr(settings, "media_worker_concurrency", 6)
+        self.tripo_concurrency = getattr(settings, "tripo_worker_concurrency", 2)
 
     async def run(self) -> None:
         active: set[asyncio.Task] = set()
+        tripo_active: set[asyncio.Task] = set()
         try:
             while not self.stop_event.is_set():
                 finished = {task for task in active if task.done()}
                 active.difference_update(finished)
+                tripo_active.difference_update(finished)
                 for task in finished:
                     if not task.cancelled() and task.exception():
                         event("media.worker.task_failed", level=40,
                             exception_type=type(task.exception()).__name__)
+                tripo_available = self.tripo_concurrency - len(tripo_active)
+                if tripo_available > 0:
+                    jobs = await self.store.claim_media_jobs(self.owner, limit=tripo_available,
+                        adapter="tripo_v3")
+                    for job in jobs:
+                        task = asyncio.create_task(self.process(job), name="media-job-" + job["id"])
+                        active.add(task); tripo_active.add(task)
                 available = self.concurrency - len(active)
                 if available > 0:
-                    jobs = await self.store.claim_media_jobs(self.owner, limit=available)
+                    jobs = await self.store.claim_media_jobs(self.owner, limit=available,
+                        exclude_adapter="tripo_v3")
                     for job in jobs:
                         active.add(asyncio.create_task(self.process(job), name="media-job-" + job["id"]))
                 try:
@@ -85,19 +99,46 @@ class MediaWorker:
                 phase="provider_polling" if job.get("provider_job_id") else (
                     "preparing_references" if job.get("references") else "requesting"))
             result = await self._execute(job)
+            if result.status == "unknown":
+                await self.store.update_media_job(job["id"], self.owner, status="unknown",
+                    phase="recovery_required", provider_job_id=result.provider_job_id,
+                    error_code="provider_submission_outcome_unknown", error_detail=result.error[:2000])
+                return
+            if result.status == "pending":
+                await self.store.release_media_job_lease(job["id"], self.owner,
+                    phase="provider_polling", error_code="provider_poll_deferred",
+                    error_detail=result.error[:2000])
+                return
             if result.status != "success":
                 await self.store.update_media_job(job["id"], self.owner, status="failed", phase="terminal",
                     provider_job_id=result.provider_job_id, error_code="provider_failed", error_detail=result.error[:2000])
                 return
-            stage = "download"
-            data, mime = await self._download(result.url, expected_kind=job["kind"])
-            stage = "object_store"
-            object_ref, _ = await asyncio.to_thread(self.objects.put, data)
-            stage = "commit"
-            await self.store.update_media_job(job["id"], self.owner, status="succeeded", phase="committed",
-                provider_job_id=result.provider_job_id, output_object_ref=object_ref,
-                output_mime=mime, output_size=len(data), progress=100)
-            event("media.job.succeeded", job_id=job["id"], provider=job["provider"], model=job["model"], bytes=len(data))
+            if result.outputs:
+                completed = []
+                for output in result.outputs:
+                    stage = "download_" + output["role"]
+                    data, mime = await self._download(output["url"], expected_kind=output["kind"])
+                    stage = "object_store_" + output["role"]
+                    object_ref, _ = await asyncio.to_thread(self.objects.put, data)
+                    completed.append({"role": output["role"], "filename": output["filename"],
+                        "object_ref": object_ref, "mime": mime, "size": len(data)})
+                stage = "commit"
+                await self.store.complete_media_job(job["id"], self.owner,
+                    provider_job_id=result.provider_job_id, outputs=completed,
+                    credits_consumed=result.credits_consumed)
+                total_bytes = sum(output["size"] for output in completed)
+            else:
+                stage = "download"
+                data, mime = await self._download(result.url, expected_kind=job["kind"])
+                stage = "object_store"
+                object_ref, _ = await asyncio.to_thread(self.objects.put, data)
+                stage = "commit"
+                await self.store.update_media_job(job["id"], self.owner, status="succeeded", phase="committed",
+                    provider_job_id=result.provider_job_id, output_object_ref=object_ref,
+                    output_mime=mime, output_size=len(data), progress=100)
+                total_bytes = len(data)
+            event("media.job.succeeded", job_id=job["id"], provider=job["provider"], model=job["model"],
+                bytes=total_bytes)
         except MediaReferencePreparationError as exc:
             await self.store.update_media_job(job["id"], self.owner, status="failed", phase="terminal",
                 error_code="media_reference_unavailable", error_detail=str(exc)[:200])
@@ -109,7 +150,7 @@ class MediaWorker:
                 failure_stage=stage, exception_type=type(exc).__name__)
 
     async def _execute(self, job: dict[str, Any]) -> ProviderResult:
-        if job.get("references"):
+        if job.get("references") and job["adapter"] != "tripo_v3":
             job = {**job, "references": await self.reference_publisher.prepare(job,
                 require_ark=job["adapter"] == "ark_video_v2")}
         if job["adapter"] == "ark_image":
@@ -118,6 +159,8 @@ class MediaWorker:
             return await self._ark_video(job)
         if job["adapter"] == "minimax_t2a":
             return await self._minimax_audio(job)
+        if job["adapter"] == "tripo_v3":
+            return await self._tripo(job)
         return ProviderResult("failed", error="media_adapter_not_configured")
 
     async def _client(self):
@@ -280,6 +323,152 @@ class MediaWorker:
         return ProviderResult("failed", provider_job_id=task_id, error="audio_timeout")
 
     @staticmethod
+    def _validated_tripo_output_url(value: str) -> str:
+        parsed = urlsplit(value)
+        host = (parsed.hostname or "").lower()
+        if (parsed.scheme != "https" or not host or parsed.username or parsed.password
+                or host == "localhost" or host.endswith((".local", ".internal", ".bilibili.co"))):
+            raise ValueError("tripo_result_url_not_public")
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            address = None
+        if address is not None and not address.is_global:
+            raise ValueError("tripo_result_url_not_public")
+        return value
+
+    @staticmethod
+    def _tripo_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"prompt", "negative_prompt", "face_limit", "texture", "pbr",
+            "texture_quality", "geometry_quality", "auto_size", "quad", "smart_low_poly",
+            "model_seed", "texture_seed", "enable_image_autofix", "texture_alignment",
+            "orientation", "smart_uv", "bake", "export_orientation"}
+        return {key: value for key, value in parameters.items() if key in allowed}
+
+    async def _tripo_payload(self, job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        mode = job.get("generation_mode") or "text_to_model"
+        parameters = job["parameters"]
+        payload = self._tripo_parameters(parameters)
+        if mode in {"text_to_model", "image_to_model", "multiview_to_model"}:
+            payload["model"] = job["model"]
+        endpoints = {
+            "text_to_model": "generation/text-to-model",
+            "image_to_model": "generation/image-to-model",
+            "multiview_to_model": "generation/multiview-to-model",
+            "texture_model": "models/texture",
+            "decimate_model": "mesh/decimate",
+            "convert_model": "models/convert",
+        }
+        if mode not in endpoints:
+            raise ValueError("tripo_generation_mode_invalid")
+        references = job.get("references") or []
+        if mode in {"image_to_model", "multiview_to_model"}:
+            prepared = await self.reference_publisher.prepare(job, require_ark=False)
+            values = []
+            role_to_view = {"front_view": "front", "left_view": "left",
+                "back_view": "back", "right_view": "right"}
+            for reference in prepared:
+                url = await self._reference_url(reference)
+                if mode == "image_to_model":
+                    payload["input"] = url
+                else:
+                    values.append({role_to_view[reference["role"]]: url})
+            if mode == "multiview_to_model":
+                payload["inputs"] = values
+        elif mode in {"texture_model", "decimate_model", "convert_model"}:
+            payload["input"] = await self.store.resolve_tripo_input_job(job["id"], parameters["input_job_id"])
+            if mode == "texture_model":
+                payload["model"] = "v3.0-20250812"
+                if parameters.get("texture_prompt"):
+                    payload["texture_prompt"] = {"text": parameters["texture_prompt"]}
+            elif mode == "decimate_model":
+                payload["model"] = parameters.get("topology_model", "v3.0")
+            else:
+                payload["format"] = parameters["target_format"]
+        return endpoints[mode], payload
+
+    async def _tripo(self, job: dict[str, Any]) -> ProviderResult:
+        base = self.settings.tripo_base_url.rstrip("/") + "/"
+        headers = {"Authorization": "Bearer " + self.settings.tripo_api_key,
+            "Content-Type": "application/json"}
+        task_id = str(job.get("provider_job_id") or "")
+        if task_id:
+            event("media.provider.resumed", job_id=job["id"], provider="tripo",
+                provider_job_id=task_id)
+        if not task_id:
+            endpoint, payload = await self._tripo_payload(job)
+            if not await self.store.update_media_job(job["id"], self.owner, status="running",
+                    phase="requesting"):
+                return ProviderResult("failed", error="media_job_lease_lost")
+            try:
+                async with await self._client() as client:
+                    response = await client.post(urljoin(base, endpoint), headers=headers, json=payload)
+            except (httpx.TimeoutException, httpx.TransportError):
+                return ProviderResult("unknown", error="tripo_submit_transport_error")
+            try:
+                raw = response.json()
+            except ValueError:
+                return ProviderResult("unknown" if response.status_code >= 500 else "failed",
+                    error="tripo_submit_invalid_response")
+            task_id = str((raw.get("data") or {}).get("task_id") or "") if isinstance(raw, dict) else ""
+            if not task_id:
+                code = raw.get("code") if isinstance(raw, dict) else None
+                suffix = re.sub(r"[^A-Za-z0-9_.-]", "_", str(code))[:80] if code is not None else "missing"
+                return ProviderResult("unknown" if response.status_code >= 500 else "failed",
+                    error="tripo_submit_failed:" + suffix)
+            if not await self.store.update_media_job(job["id"], self.owner, status="running",
+                    phase="provider_polling", provider_job_id=task_id):
+                return ProviderResult("failed", provider_job_id=task_id, error="media_job_lease_lost")
+            event("media.provider.submitted", job_id=job["id"], provider="tripo",
+                provider_job_id=task_id)
+        poll_seconds = float(self.settings.tripo_poll_seconds)
+        attempts = max(1, int(self.settings.tripo_task_timeout_seconds / poll_seconds))
+        unknown_count = 0
+        for _ in range(attempts):
+            await asyncio.sleep(poll_seconds)
+            try:
+                async with await self._client() as client:
+                    response = await client.get(urljoin(base, "tasks/" + task_id), headers=headers)
+                body = response.json()
+            except (httpx.TimeoutException, httpx.TransportError, ValueError):
+                continue
+            data = body.get("data") if isinstance(body, dict) else None
+            if not response.is_success or not isinstance(data, dict):
+                continue
+            status = str(data.get("status") or "").lower()
+            progress = data.get("progress")
+            if status == "success":
+                output = data.get("output") or {}
+                model_url = str(output.get("model_url") or "")
+                preview_url = str(output.get("rendered_image_url") or "")
+                if not model_url:
+                    return ProviderResult("failed", provider_job_id=task_id,
+                        error="tripo_result_model_missing")
+                target = str(job.get("parameters", {}).get("target_format") or "GLB").upper()
+                extension = {"GLB": "glb", "GLTF": "gltf", "FBX": "fbx", "USDZ": "usdz",
+                    "OBJ": "obj", "STL": "stl", "3MF": "3mf"}.get(target, "glb")
+                expected = "model3d" if target == "GLB" else "model3d:" + target.lower()
+                outputs = [{"role": "primary", "filename": f"model-{job['id'][:8]}.{extension}",
+                    "url": self._validated_tripo_output_url(model_url), "kind": expected}]
+                if preview_url:
+                    outputs.append({"role": "preview", "filename": f"preview-{job['id'][:8]}.png",
+                        "url": self._validated_tripo_output_url(preview_url), "kind": "image"})
+                credits = data.get("credits_consumed")
+                return ProviderResult("success", provider_job_id=task_id, outputs=outputs,
+                    credits_consumed=float(credits) if isinstance(credits, (int, float)) else None)
+            if status in {"failed", "cancelled", "canceled", "banned", "expired"}:
+                code = re.sub(r"[^A-Za-z0-9_.-]", "_", str(data.get("error_code") or "unknown"))[:80]
+                return ProviderResult("failed", provider_job_id=task_id,
+                    error="tripo_provider_failed:" + code)
+            if status == "unknown" or not status:
+                unknown_count += 1
+            await self.store.update_media_job(job["id"], self.owner, status="running",
+                phase="provider_polling", provider_job_id=task_id,
+                progress=progress if isinstance(progress, int) else None)
+        return ProviderResult("pending", provider_job_id=task_id,
+            error="tripo_poll_timeout" if not unknown_count else "tripo_status_unresolved")
+
+    @staticmethod
     def _unwrap_provider_media(data: bytes, reported: str, expected_kind: str,
                                maximum: int) -> tuple[bytes, str]:
         normalized = reported.split(";", 1)[0].strip().lower()
@@ -312,6 +501,7 @@ class MediaWorker:
 
     @staticmethod
     def _validated_mime(data: bytes, reported: str, expected_kind: str) -> str:
+        model_format = expected_kind.split(":", 1)[1].upper() if expected_kind.startswith("model3d:") else "GLB"
         detected = ""
         if data.startswith(b"\xff\xd8\xff"):
             detected = "image/jpeg"
@@ -331,12 +521,31 @@ class MediaWorker:
             detected = "audio/mp4" if expected_kind == "audio" else "video/mp4"
         elif data.startswith(b"\x1a\x45\xdf\xa3"):
             detected = "audio/webm" if expected_kind == "audio" else "video/webm"
-        prefix = expected_kind + "/"
+        elif data.startswith(b"glTF"):
+            detected = "model/gltf-binary"
+        elif expected_kind.startswith("model3d"):
+            stripped = data.lstrip()
+            if model_format == "FBX" and (data.startswith(b"Kaydara FBX Binary") or stripped.startswith(b"; FBX")):
+                detected = "application/vnd.autodesk.fbx"
+            elif model_format == "OBJ" and re.search(rb"(?m)^(?:v|vn|vt|f)\s+", data[:65536]):
+                detected = "model/obj"
+            elif model_format == "STL" and (stripped.startswith(b"solid ") or len(data) >= 84):
+                detected = "model/stl"
+            elif model_format in {"USDZ", "3MF", "GLTF"} and data.startswith(b"PK\x03\x04"):
+                detected = {"USDZ": "model/vnd.usdz+zip", "3MF": "model/3mf",
+                    "GLTF": "model/gltf+zip"}[model_format]
+            elif model_format == "GLTF" and stripped.startswith(b"{") and b'"asset"' in data[:4096]:
+                detected = "model/gltf+json"
+        prefix = "model/" if expected_kind.startswith("model3d") else expected_kind + "/"
+        if expected_kind.startswith("model3d") and detected:
+            return detected
         if detected.startswith(prefix):
             return detected
         normalized = reported.split(";", 1)[0].strip().lower()
         if normalized.startswith(prefix):
             return normalized
+        if expected_kind.startswith("model3d"):
+            raise ValueError("provider_result_mime_mismatch")
         try:
             with av.open(io.BytesIO(data)) as container:
                 stream_types = {stream.type for stream in container.streams}
@@ -361,7 +570,8 @@ class MediaWorker:
             response = await client.get(url)
         response.raise_for_status()
         data = response.content
-        maximum = getattr(self.settings, "max_artifact_bytes", 2 * 1024 * 1024 * 1024)
+        maximum = (getattr(self.settings, "tripo_max_output_bytes", 512 * 1024 * 1024)
+            if expected_kind.startswith("model3d") else getattr(self.settings, "max_artifact_bytes", 2 * 1024 * 1024 * 1024))
         if len(data) > maximum:
             raise ValueError("provider_result_too_large")
         data, reported = self._unwrap_provider_media(data,

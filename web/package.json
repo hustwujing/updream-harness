@@ -16,6 +16,7 @@
     "react-markdown": "^10.1.0",
     "react-pdf": "10.2.0",
     "remark-gfm": "^4.0.1",
+    "three": "^0.181.2",
     "xlsx": "0.18.5"
   },
   "devDependencies": {

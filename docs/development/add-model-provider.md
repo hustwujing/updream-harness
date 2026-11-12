@@ -19,7 +19,7 @@ Credentials live in the named host environment variable. They must not appear
 in route JSON, database rows, API responses, logs or sandbox environment.
 
 Gateway currently exposes model namespaces for Codex, Claude and DeepSeek and
-Provider namespaces for image, video and audio. Route scope comes from the
+Provider namespaces for image, video, audio and 3D. Route scope comes from the
 Turn's capability; adding an upstream URL without scope and budget enforcement
 is incomplete.
 

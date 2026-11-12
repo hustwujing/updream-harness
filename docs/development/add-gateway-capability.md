@@ -15,7 +15,7 @@ Gateway removes caller credentials/hop headers, injects the host credential,
 uses `trust_env=False`, streams the upstream response and closes active responses
 on revocation.
 
-Configured non-model prefixes currently include image, video and audio Provider
+Configured non-model prefixes currently include image, video, audio and 3D Provider
 routes under `/v1/providers/...`. Adding a Settings URL alone does not make a
 new capability complete.
 

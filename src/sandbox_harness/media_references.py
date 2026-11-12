@@ -12,6 +12,7 @@ from .domain import MediaReferenceInput
 
 
 MAX_REFERENCE_BYTES = 200 * 1024 * 1024
+IMAGE_ROLES = {"reference_image", "first_frame", "last_frame", "front_view", "left_view", "back_view", "right_view"}
 
 
 def normalize_project_path(value: str) -> str:
@@ -38,7 +39,7 @@ def _duration(container: av.container.InputContainer, stream: Any) -> float | No
 def inspect_reference(data: bytes, role: str, path: str) -> dict[str, Any]:
     if not data:
         raise ValueError("Reference file is empty")
-    if role in {"reference_image", "first_frame", "last_frame"}:
+    if role in IMAGE_ROLES:
         try:
             with Image.open(io.BytesIO(data)) as image:
                 image.verify()
@@ -113,6 +114,7 @@ async def resolve_media_references(store, objects, thread_id: str, owner_id: str
                 inspect_reference, data, reference.role, project_file.path)
         metadata = inspected[project_file.object_ref]
         expected = {"reference_image": "image/", "first_frame": "image/", "last_frame": "image/",
+            "front_view": "image/", "left_view": "image/", "back_view": "image/", "right_view": "image/",
             "reference_video": "video/", "reference_audio": "audio/"}[reference.role]
         if not metadata["mime"].startswith(expected):
             raise ValueError("Reference role does not match file media type")

@@ -7,14 +7,15 @@ RUNTIME_INSTRUCTIONS = """Runtime media rules:
 - A Provider video clip must be 4-15 seconds. For a longer final video, split the storyboard into semantic clips and assemble them locally. Keep resolution, aspect ratio, and frame rate consistent. Provider references are immutable snapshots and do not replace local inspection with `ffprobe` or `view_image`.
 - Keep one audio draft within the catalog's estimated-duration limit. Split longer narration at sentence boundaries, generate each part separately, normalize sample rate/channels, then concatenate with intentional pauses or short crossfades.
 - Use `candidate` for optional variants, `workspace` when later steps need the file, and `delivery` for a final user-facing result.
-- After preparing the complete image/video/audio set for this stage, run `sandbox-media commit` exactly once, tell the user what needs confirmation, and end the response. Do not poll the drafts or wait inside the Turn.
+- For 3D work, use `model3d` and the catalog modes. Text/image/multiview generation creates a new model; texture/decimate/convert takes an `input_job_id` from a successful 3D Job in this same Thread. Never pass local model paths or Provider task IDs as `input_job_id`.
+- After preparing the complete image/video/audio/3D set for this stage, run `sandbox-media commit` exactly once, tell the user what needs confirmation, and end the response. Do not poll the drafts or wait inside the Turn.
 - Media generation is authorized only through the platform's media confirmation cards. Never use `sandbox-interact approval` as a replacement. If the user says the cards are missing, do not create a second approval and do not claim the tasks were released; no Provider Job exists until the cards are confirmed.
 - `prepare` creates a user-confirmation draft. It does not call the Provider. Do not claim generation completed until the platform resumes you with the terminal media result.
 - Do not claim a media task was submitted, released, or started unless the platform continuation includes its non-empty Job ID.
 - Do not poll a prepared draft. Use `status` only with a Job ID returned for the current Thread; never reuse a Job ID from another Thread or infer one from a filename. After platform continuation, trust the supplied result status/path or inspect command.
 - For a completed `candidate`, use `sandbox-media fetch --job-id ID --output PATH` to inspect or process it. Keep it persistently only after deciding it is useful, with `sandbox-media promote --job-id ID --output-role workspace|delivery`.
 - Use `sandbox-media status --job-id ID` for status and `sandbox-media cancel --job-id ID` for a supported cancellation.
-- Never call image/video/audio Provider SDKs or endpoints directly. Do not use `sandbox-image` or `sandbox-video`; they do not exist.
+- Never call image/video/audio/3D Provider SDKs or endpoints directly. Do not use `sandbox-image` or `sandbox-video`; they do not exist.
 - Host services such as sandbox-harness-api, sandbox-harness-gateway, and sandbox-harness-media-worker are outside this Sandbox and are not tools.
 Local code-based editing, rendering, and file processing remain allowed.
 - Keep the user informed during long work: before each substantial tool phase, emit one short public progress sentence describing the next action. Do not expose hidden reasoning or chain-of-thought.

@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .observability import observed
-from .domain import AccountView, RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, TERMINAL, identifier, now, MediaDraftView, MediaJobView, MediaReferenceUploadView
+from .domain import AccountView, RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, TERMINAL, identifier, now, MediaDraftView, MediaJobView, MediaJobOutputView, MediaReferenceUploadView
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
 
@@ -289,12 +289,29 @@ class MediaJobRow(Base):
     output_object_ref: Mapped[str] = mapped_column(Text, default="", server_default="")
     output_mime: Mapped[str] = mapped_column(String(200), default="", server_default="")
     output_size: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    credits_consumed: Mapped[str] = mapped_column(String(40), default="", server_default="")
     output_role: Mapped[str] = mapped_column(String(20), default="candidate", server_default="candidate")
     lease_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MediaJobOutputRow(Base):
+    __tablename__ = "media_job_outputs"
+    __table_args__ = (UniqueConstraint("job_id", "role"), UniqueConstraint("job_id", "filename"))
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(32), index=True)
+    role: Mapped[str] = mapped_column(String(20))
+    filename: Mapped[str] = mapped_column(String(255))
+    object_ref: Mapped[str] = mapped_column(Text)
+    sha256: Mapped[str] = mapped_column(String(64))
+    size: Mapped[int] = mapped_column(Integer)
+    mime: Mapped[str] = mapped_column(String(200))
+    artifact_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    project_file_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class MediaOutboxRow(Base):
@@ -440,6 +457,9 @@ class Store:
                     await connection.execute(text(
                         "UPDATE media_jobs SET finished_at = updated_at "
                         "WHERE status IN ('succeeded', 'failed', 'cancelled', 'unknown')"))
+                if table == "media_jobs" and "credits_consumed" not in media_columns:
+                    await connection.execute(text(
+                        "ALTER TABLE media_jobs ADD COLUMN credits_consumed VARCHAR(40) NOT NULL DEFAULT ''"))
             user_columns = await connection.run_sync(
                 lambda value: {column["name"] for column in inspect(value).get_columns("users")})
             user_additions = {
@@ -726,7 +746,19 @@ class Store:
             turns = (await db.execute(select(TurnRow).where(TurnRow.thread_id == thread_id))).scalars().all()
             if any(turn.state not in terminal for turn in turns):
                 raise RuntimeError("active_thread_cannot_be_deleted")
+            media_jobs = (await db.execute(select(MediaJobRow).where(
+                MediaJobRow.thread_id == thread_id))).scalars().all()
+            if any(job.status not in {"succeeded", "failed", "cancelled", "unknown"} for job in media_jobs):
+                raise RuntimeError("active_thread_cannot_be_deleted")
             turn_ids = [turn.id for turn in turns]
+            media_job_ids = [job.id for job in media_jobs]
+            if media_job_ids:
+                await db.execute(delete(MediaOutboxRow).where(MediaOutboxRow.job_id.in_(media_job_ids)))
+                await db.execute(delete(MediaJobOutputRow).where(MediaJobOutputRow.job_id.in_(media_job_ids)))
+                await db.execute(delete(MediaJobRow).where(MediaJobRow.id.in_(media_job_ids)))
+            await db.execute(delete(MediaDraftRow).where(MediaDraftRow.thread_id == thread_id))
+            await db.execute(delete(MediaBatchRow).where(MediaBatchRow.thread_id == thread_id))
+            await db.execute(delete(MediaReferenceUploadRow).where(MediaReferenceUploadRow.thread_id == thread_id))
             await db.execute(delete(InteractionRow).where(InteractionRow.thread_id == thread_id))
             await db.execute(delete(ProjectFileRow).where(ProjectFileRow.thread_id == thread_id))
             await db.execute(delete(ItemRow).where(ItemRow.thread_id == thread_id))
@@ -1876,19 +1908,26 @@ class Store:
     def _media_draft_view(row: MediaDraftRow) -> MediaDraftView:
         status = "expired" if row.status == "awaiting_confirmation" and utc_datetime(row.expires_at) <= now() else row.status
         return MediaDraftView(id=row.id, thread_id=row.thread_id, kind=row.kind, model=row.model,
-            generation_mode=row.generation_mode or {"image":"text_to_image","video":"text_to_video","audio":"text_to_audio"}[row.kind],
+            generation_mode=row.generation_mode or {"image":"text_to_image","video":"text_to_video",
+                "audio":"text_to_audio", "model3d":"text_to_model"}[row.kind],
             parameters=json.loads(row.parameters_json or "{}"), references=json.loads(row.references_json or "[]"), status=status,
             expires_at=utc_datetime(row.expires_at), job_id=row.job_id or "", output_role=row.output_role)
 
     @staticmethod
-    def _media_job_view(row: MediaJobRow, artifact_ids: list[str] | None = None) -> MediaJobView:
+    def _media_job_view(row: MediaJobRow, artifact_ids: list[str] | None = None,
+                        outputs: list[MediaJobOutputView] | None = None) -> MediaJobView:
         reason = "" if row.cancellation_mode == "supported" and row.execution_mode == "async" else "provider_not_cancelable"
+        try:
+            credits = float(row.credits_consumed) if row.credits_consumed else None
+        except ValueError:
+            credits = None
         return MediaJobView(id=row.id, thread_id=row.thread_id, turn_id=row.turn_id or "", kind=row.kind,
             model=row.model, generation_mode=row.generation_mode or "", references=json.loads(row.references_json or "[]"),
             provider=row.provider, adapter=row.adapter, execution_mode=row.execution_mode,
             cancellation_mode=row.cancellation_mode, status=row.status, phase=row.phase or "",
             progress=row.progress, cancelable=row.execution_mode == "async" and row.cancellation_mode == "supported",
-            cancel_reason=reason, artifact_ids=artifact_ids or [], output_role=row.output_role,
+            cancel_reason=reason, artifact_ids=artifact_ids or [], outputs=outputs or [],
+            credits_consumed=credits, output_role=row.output_role,
             created_at=row.created_at, finished_at=row.finished_at)
 
     @staticmethod
@@ -1896,11 +1935,24 @@ class Store:
         extension = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp",
             "video/mp4": "mp4", "video/webm": "webm", "audio/mpeg": "mp3",
             "audio/wav": "wav", "audio/flac": "flac", "audio/mp4": "m4a",
-            "audio/webm": "webm"}.get(mime, "bin")
+            "audio/webm": "webm", "model/gltf-binary": "glb"}.get(mime, "bin")
         return f"artifacts/media/{job_id}.{extension}"
 
     @staticmethod
+    async def _media_job_outputs(db: AsyncSession, job_id: str) -> list[MediaJobOutputView]:
+        rows = (await db.execute(select(MediaJobOutputRow).where(
+            MediaJobOutputRow.job_id == job_id,
+        ).order_by(MediaJobOutputRow.created_at, MediaJobOutputRow.id))).scalars().all()
+        return [MediaJobOutputView(id=row.id, role=row.role, filename=row.filename, mime=row.mime,
+            size=row.size, artifact_id=row.artifact_id, project_file_id=row.project_file_id) for row in rows]
+
+    @staticmethod
     async def _media_artifact_ids(db: AsyncSession, row: MediaJobRow) -> list[str]:
+        output_ids = list((await db.execute(select(MediaJobOutputRow.artifact_id).where(
+            MediaJobOutputRow.job_id == row.id, MediaJobOutputRow.artifact_id != "",
+        ).order_by(MediaJobOutputRow.created_at))).scalars().all())
+        if output_ids:
+            return output_ids
         if not row.turn_id:
             return []
         return list((await db.execute(select(ArtifactRow.id).where(
@@ -1979,7 +2031,8 @@ class Store:
         if not row:
             return None
         return {"kind": row.kind, "model": row.model,
-            "generation_mode": row.generation_mode or {"image":"text_to_image","video":"text_to_video","audio":"text_to_audio"}[row.kind],
+            "generation_mode": row.generation_mode or {"image":"text_to_image","video":"text_to_video",
+                "audio":"text_to_audio", "model3d":"text_to_model"}[row.kind],
             "parameters": json.loads(row.parameters_json or "{}"),
             "references": json.loads(row.references_json or "[]")}
 
@@ -2054,14 +2107,16 @@ class Store:
             row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
                 MediaJobRow.owner_id == owner_id))).scalar_one_or_none()
             artifact_ids = await self._media_artifact_ids(db, row) if row else []
-        return self._media_job_view(row, artifact_ids) if row else None
+            outputs = await self._media_job_outputs(db, row.id) if row else []
+        return self._media_job_view(row, artifact_ids, outputs) if row else None
 
     async def get_media_job_for_thread(self, job_id: str, thread_id: str) -> MediaJobView | None:
         async with self.connections() as db:
             row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
                 MediaJobRow.thread_id == thread_id))).scalar_one_or_none()
             artifact_ids = await self._media_artifact_ids(db, row) if row else []
-        return self._media_job_view(row, artifact_ids) if row else None
+            outputs = await self._media_job_outputs(db, row.id) if row else []
+        return self._media_job_view(row, artifact_ids, outputs) if row else None
 
     async def media_job_output_for_thread(self, job_id: str, thread_id: str) -> dict | None:
         async with self.connections() as db:
@@ -2082,16 +2137,32 @@ class Store:
                 raise KeyError("media_job_not_found")
             if row.status != "succeeded" or not row.output_object_ref:
                 raise RuntimeError("media_job_output_unavailable")
-            digest = row.output_object_ref.removeprefix("sha256:")
-            if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
-                raise RuntimeError("media_job_output_invalid")
-            path = self._media_project_path(row.id, row.output_mime)
-            value, _ = await self._register_project_file_locked(db, row.thread_id, path=path,
-                source_type="artifact", source_turn_id=row.turn_id, sha256=digest,
-                size=row.output_size, mime=row.output_mime or "application/octet-stream",
-                object_ref=row.output_object_ref)
+            outputs = (await db.execute(select(MediaJobOutputRow).where(
+                MediaJobOutputRow.job_id == row.id).order_by(MediaJobOutputRow.created_at))).scalars().all()
+            if outputs:
+                primary_path = ""
+                for output in outputs:
+                    path = f"artifacts/3d/{row.id}/{output.filename}"
+                    value, _ = await self._register_project_file_locked(db, row.thread_id, path=path,
+                        source_type="artifact", source_turn_id=row.turn_id, sha256=output.sha256,
+                        size=output.size, mime=output.mime, object_ref=output.object_ref)
+                    output.project_file_id = value.id
+                    if output.role == "primary":
+                        primary_path = value.path
+                if not primary_path:
+                    raise RuntimeError("media_job_output_invalid")
+            else:
+                digest = row.output_object_ref.removeprefix("sha256:")
+                if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+                    raise RuntimeError("media_job_output_invalid")
+                path = self._media_project_path(row.id, row.output_mime)
+                value, _ = await self._register_project_file_locked(db, row.thread_id, path=path,
+                    source_type="artifact", source_turn_id=row.turn_id, sha256=digest,
+                    size=row.output_size, mime=row.output_mime or "application/octet-stream",
+                    object_ref=row.output_object_ref)
+                primary_path = value.path
             row.output_role = role; row.updated_at = now()
-            return {"job_id": row.id, "output_role": role, "project_path": value.path}
+            return {"job_id": row.id, "output_role": role, "project_path": primary_path}
 
     async def list_media_jobs(self, thread_id: str, owner_id: str) -> list[MediaJobView]:
         async with self.connections() as db:
@@ -2105,7 +2176,17 @@ class Store:
                 ).order_by(ArtifactRow.created_at))).all()
                 for artifact_id, path in artifacts:
                     artifact_ids[paths[path]].append(artifact_id)
-        return [self._media_job_view(row, artifact_ids[row.id]) for row in rows]
+            output_rows = (await db.execute(select(MediaJobOutputRow).where(
+                MediaJobOutputRow.job_id.in_([row.id for row in rows]),
+            ).order_by(MediaJobOutputRow.created_at, MediaJobOutputRow.id))).scalars().all() if rows else []
+            outputs: dict[str, list[MediaJobOutputView]] = {row.id: [] for row in rows}
+            for output in output_rows:
+                outputs[output.job_id].append(MediaJobOutputView(id=output.id, role=output.role,
+                    filename=output.filename, mime=output.mime, size=output.size,
+                    artifact_id=output.artifact_id, project_file_id=output.project_file_id))
+                if output.artifact_id:
+                    artifact_ids[output.job_id].append(output.artifact_id)
+        return [self._media_job_view(row, artifact_ids[row.id], outputs[row.id]) for row in rows]
 
     async def media_continuation_group(self, turn_id: str) -> tuple[bool, list[dict]]:
         terminal = {"succeeded", "failed", "cancelled", "unknown"}
@@ -2122,6 +2203,14 @@ class Store:
             rows = (await db.execute(select(MediaJobRow).where(
                 MediaJobRow.turn_id == turn_id,
             ).order_by(MediaJobRow.created_at, MediaJobRow.id))).scalars().all()
+            job_ids = [row.id for row in rows]
+            primary_paths = {}
+            if job_ids:
+                values = (await db.execute(select(MediaJobOutputRow.job_id, ProjectFileRow.path)
+                    .join(ProjectFileRow, ProjectFileRow.id == MediaJobOutputRow.project_file_id)
+                    .where(MediaJobOutputRow.job_id.in_(job_ids),
+                        MediaJobOutputRow.role == "primary"))).all()
+                primary_paths = dict(values)
         origin_finished = origin_state in {state.value for state in TERMINAL}
         jobs = {row.draft_id: row for row in rows}
         states = [("expired" if draft.status == "awaiting_confirmation"
@@ -2144,7 +2233,7 @@ class Store:
                 "output_size": row.output_size if row else 0,
                 "error_code": row.error_code if row else "",
                 "output_role": draft.output_role,
-                "project_path": self._media_project_path(row.id, row.output_mime)
+                "project_path": (primary_paths.get(row.id) or self._media_project_path(row.id, row.output_mime))
                     if row and row.output_object_ref and row.output_role in {"workspace", "delivery"} else "",
             })
         return ready, group
@@ -2204,12 +2293,19 @@ class Store:
             row.status = "cancel_requested"; row.updated_at = now()
         return self._media_job_view(row)
 
-    async def claim_media_jobs(self, owner: str, limit: int = 4) -> list[dict]:
+    async def claim_media_jobs(self, owner: str, limit: int = 4, *, adapter: str | None = None,
+                               exclude_adapter: str | None = None) -> list[dict]:
         async with self.connections.begin() as db:
-            rows = (await db.execute(select(MediaJobRow).where(
+            query = select(MediaJobRow).where(
                 MediaJobRow.status.in_(["created", "submitted", "running", "cancel_requested"]),
                 or_(MediaJobRow.lease_expires_at.is_(None), MediaJobRow.lease_expires_at < now())
-            ).order_by(MediaJobRow.created_at.asc()).limit(limit).with_for_update())).scalars().all()
+            )
+            if adapter is not None:
+                query = query.where(MediaJobRow.adapter == adapter)
+            if exclude_adapter is not None:
+                query = query.where(MediaJobRow.adapter != exclude_adapter)
+            rows = (await db.execute(query.order_by(MediaJobRow.created_at.asc()).limit(limit)
+                .with_for_update())).scalars().all()
             expiry = now() + timedelta(seconds=60)
             result = []
             for row in rows:
@@ -2217,8 +2313,33 @@ class Store:
                 result.append({"id": row.id, "kind": row.kind, "model": row.model, "provider": row.provider,
                     "adapter": row.adapter, "status": row.status, "phase": row.phase,
                     "generation_mode": row.generation_mode or "", "parameters": json.loads(row.parameters_json or "{}"),
-                    "references": json.loads(row.references_json or "[]"), "provider_job_id": row.provider_job_id})
+                    "references": json.loads(row.references_json or "[]"), "provider_job_id": row.provider_job_id,
+                    "thread_id": row.thread_id, "owner_id": row.owner_id, "turn_id": row.turn_id,
+                    "output_role": row.output_role})
         return result
+
+    async def release_media_job_lease(self, job_id: str, owner: str, *, phase: str,
+                                      error_code: str = "", error_detail: str = "") -> bool:
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
+                MediaJobRow.lease_owner == owner).with_for_update())).scalar_one_or_none()
+            if not row:
+                return False
+            row.status = "running"; row.phase = phase; row.error_code = error_code
+            row.error_detail = error_detail[:2000]; row.lease_owner = ""
+            row.lease_expires_at = None; row.updated_at = now()
+            return True
+
+    async def resolve_tripo_input_job(self, job_id: str, input_job_id: str) -> str:
+        async with self.connections() as db:
+            current = await db.get(MediaJobRow, job_id)
+            source = await db.get(MediaJobRow, input_job_id)
+            if (not current or not source or source.owner_id != current.owner_id
+                    or source.thread_id != current.thread_id or source.adapter != "tripo_v3"
+                    or source.kind != "model3d" or source.status != "succeeded"
+                    or not source.provider_job_id):
+                raise ValueError("tripo_input_job_unavailable")
+            return source.provider_job_id
 
     async def release_media_job_leases(self, owner: str) -> int:
         async with self.connections.begin() as db:
@@ -2271,6 +2392,79 @@ class Store:
                         status="pending", created_at=now(), updated_at=now()))
             else:
                 row.lease_expires_at = now() + timedelta(seconds=60)
+            return True
+
+    async def complete_media_job(self, job_id: str, owner: str, *, provider_job_id: str,
+                                 outputs: list[dict], credits_consumed: float | None = None) -> bool:
+        if not outputs or sum(output.get("role") == "primary" for output in outputs) != 1:
+            raise ValueError("media_outputs_require_one_primary")
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
+                MediaJobRow.lease_owner == owner).with_for_update())).scalar_one_or_none()
+            if not row:
+                return False
+            existing = (await db.execute(select(MediaJobOutputRow).where(
+                MediaJobOutputRow.job_id == row.id))).scalars().all()
+            if existing:
+                raise RuntimeError("media_outputs_already_committed")
+            timestamp = now()
+            primary = next(output for output in outputs if output["role"] == "primary")
+            artifact_ids: list[str] = []
+            seen_roles: set[str] = set()
+            seen_names: set[str] = set()
+            for output in outputs:
+                role = str(output.get("role") or "")
+                filename = PurePosixPath(str(output.get("filename") or "")).name
+                object_ref = str(output.get("object_ref") or "")
+                digest = object_ref.removeprefix("sha256:")
+                mime = str(output.get("mime") or "application/octet-stream")
+                size = int(output.get("size") or 0)
+                if (role not in {"primary", "preview", "auxiliary"} or role in seen_roles
+                        or not filename or filename in seen_names or size <= 0 or len(digest) != 64
+                        or any(character not in "0123456789abcdef" for character in digest)):
+                    raise ValueError("invalid_media_output")
+                seen_roles.add(role); seen_names.add(filename)
+                artifact_id = identifier() if row.turn_id else ""
+                artifact_path = f"artifacts/{row.id}/{filename}"
+                if row.turn_id:
+                    db.add(ArtifactRow(id=artifact_id, turn_id=row.turn_id, path=artifact_path,
+                        sha256=digest, size=size, mime=mime, object_ref=object_ref, created_at=timestamp))
+                    artifact_ids.append(artifact_id)
+                project_file_id = ""
+                if row.output_role in {"workspace", "delivery"}:
+                    project, _ = await self._register_project_file_locked(db, row.thread_id,
+                        path=f"artifacts/3d/{row.id}/{filename}", source_type="artifact",
+                        source_turn_id=row.turn_id, sha256=digest, size=size, mime=mime,
+                        object_ref=object_ref)
+                    project_file_id = project.id
+                if row.turn_id:
+                    sequence = await self.next_item_sequence(db, row.thread_id)
+                    db.add(ItemRow(id=identifier(), thread_id=row.thread_id, turn_id=row.turn_id,
+                        sequence=sequence, type=ItemType.ARTIFACT.value, status="completed",
+                        summary=filename, payload_json=json.dumps({"artifact_id": artifact_id,
+                            "mime": mime, "size": size}, ensure_ascii=False),
+                        created_at=timestamp, updated_at=timestamp))
+                db.add(MediaJobOutputRow(id=identifier(), job_id=row.id, role=role,
+                    filename=filename, object_ref=object_ref, sha256=digest, size=size, mime=mime,
+                    artifact_id=artifact_id, project_file_id=project_file_id, created_at=timestamp))
+            row.provider_job_id = provider_job_id or row.provider_job_id
+            row.output_object_ref = primary["object_ref"]
+            row.output_mime = primary["mime"]
+            row.output_size = int(primary["size"])
+            row.credits_consumed = "" if credits_consumed is None else str(credits_consumed)
+            row.status = "succeeded"; row.phase = "committed"; row.progress = 100
+            row.error_code = ""; row.error_detail = ""; row.updated_at = timestamp
+            row.finished_at = row.finished_at or timestamp
+            row.lease_owner = ""; row.lease_expires_at = None
+            if row.turn_id:
+                await db.execute(update(MediaBatchRow).where(MediaBatchRow.turn_id == row.turn_id,
+                    MediaBatchRow.status == "sealed").values(lease_expires_at=None, updated_at=timestamp))
+            outbox = (await db.execute(select(MediaOutboxRow).where(MediaOutboxRow.job_id == row.id,
+                MediaOutboxRow.event_type == "media.job.terminal"))).scalar_one_or_none()
+            if not outbox:
+                db.add(MediaOutboxRow(id=identifier(), job_id=row.id,
+                    event_type="media.job.terminal", status="pending",
+                    created_at=timestamp, updated_at=timestamp))
             return True
 
     async def claim_media_outbox(self, owner: str, limit: int = 20) -> list[dict]:

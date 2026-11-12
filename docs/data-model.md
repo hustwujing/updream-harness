@@ -88,6 +88,13 @@ stores the stable `aniforge/...` BOSS key/public URL, BOSS publication status,
 Ark Asset ID/status/error and a renewable preparation lease. The table prevents
 concurrent Workers from uploading or registering the same content twice.
 
+`media_job_outputs` records every immutable result of a Job. Most image, video
+and audio Jobs have one primary output; a Tripo Job can atomically register a
+primary model and rendered preview. Each row points to its Artifact and, for
+`workspace`/`delivery`, its ProjectFile. `media_jobs` retains the primary output
+columns for the Runtime fetch contract and stores the external task ID plus
+reported credit consumption.
+
 ## Interactions
 
 `interactions` stores execution-bound approvals/questions, request/response,

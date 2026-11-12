@@ -34,6 +34,12 @@ Assets and submitted only after they become `Active`. Project files, BOSS
 publication and Ark Asset IDs are cached by content digest and survive Worker
 restart without duplicate external submissions.
 
+Tripo v3 supports confirmed text-to-3D, image-to-3D, multiview-to-3D, texture,
+decimation and conversion Jobs. The Worker persists the Tripo task ID before
+polling, resumes that task after restart and atomically publishes the model and
+preview. GLB files open in an interactive Three.js preview; every output remains
+available for download and later Harness work.
+
 Direct browser access keeps the existing signed anonymous identity. The FRPC
 entry is identified through PROXY Protocol/nginx and requires an account; an
 account Cookie resolves to the same stable owner from either entry. Users can

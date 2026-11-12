@@ -130,7 +130,8 @@ def components(settings: Settings):
     catalog = HarnessCatalog(settings.harness_catalog_json or None)
     media_catalog = MediaCatalog(settings.media_catalog_json,
         ark_assets_configured=bool(settings.ark_access_key and settings.ark_secret_key
-            and settings.ark_asset_group_id and settings.ark_project_name))
+            and settings.ark_asset_group_id and settings.ark_project_name),
+        tripo_configured=bool(settings.tripo_api_key))
     discovery = ModelDiscovery(settings, catalog)
     if settings.model_catalog_discovery:
         discovery.load_snapshot()
@@ -310,7 +311,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/catalog/media")
     async def media_catalog_route(kind: str | None = None):
-        if kind is not None and kind not in {"image", "video", "audio"}:
+        if kind is not None and kind not in {"image", "video", "audio", "model3d"}:
             raise HTTPException(422, "Invalid media kind")
         return {"models": media_catalog.public(kind)}
 

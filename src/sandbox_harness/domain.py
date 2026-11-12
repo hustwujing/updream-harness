@@ -350,10 +350,12 @@ class CapabilityClaims(BaseModel):
 
 class MediaDraftCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: Literal["image", "video", "audio"]
+    kind: Literal["image", "video", "audio", "model3d"]
     model: str = Field(min_length=1, max_length=160)
     generation_mode: Literal["text_to_image", "reference_image", "text_to_video", "first_frame",
-        "first_last_frame", "multimodal_reference", "edit_video", "extend_video", "text_to_audio"] | None = None
+        "first_last_frame", "multimodal_reference", "edit_video", "extend_video", "text_to_audio",
+        "text_to_model", "image_to_model", "multiview_to_model", "texture_model", "decimate_model",
+        "convert_model"] | None = None
     parameters: dict[str, Any] = Field(default_factory=dict)
     references: list["MediaReferenceInput"] = Field(default_factory=list, max_length=15)
     idempotency_key: str = Field(min_length=8, max_length=160)
@@ -362,13 +364,16 @@ class MediaDraftCreate(BaseModel):
 
     @model_validator(mode="after")
     def default_and_match_mode(self):
-        defaults = {"image": "text_to_image", "video": "text_to_video", "audio": "text_to_audio"}
+        defaults = {"image": "text_to_image", "video": "text_to_video", "audio": "text_to_audio",
+            "model3d": "text_to_model"}
         if self.generation_mode is None:
             self.generation_mode = defaults[self.kind]
         if not self.generation_mode.startswith({"image": ("text_to_image", "reference_image"),
                 "video": ("text_to_video", "first_frame", "first_last_frame", "multimodal_reference",
                     "edit_video", "extend_video"),
-                "audio": ("text_to_audio",)}[self.kind]):
+                "audio": ("text_to_audio",),
+                "model3d": ("text_to_model", "image_to_model", "multiview_to_model", "texture_model",
+                    "decimate_model", "convert_model")}[self.kind]):
             raise ValueError("Generation mode does not match media kind")
         return self
 
@@ -377,7 +382,8 @@ class MediaReferenceInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     project_file_id: str = Field(default="", pattern=r"^$|^[0-9a-f]{32}$")
     project_path: str = Field(default="", max_length=1000)
-    role: Literal["reference_image", "reference_video", "reference_audio", "first_frame", "last_frame"]
+    role: Literal["reference_image", "reference_video", "reference_audio", "first_frame", "last_frame",
+        "front_view", "left_view", "back_view", "right_view"]
     usage: Literal["subject", "style", "composition", "action", "camera", "audio",
         "edit_source", "extend_source"] = "subject"
 
@@ -395,7 +401,8 @@ class MediaReferenceView(BaseModel):
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     size: int = Field(ge=1)
     mime: str
-    role: Literal["reference_image", "reference_video", "reference_audio", "first_frame", "last_frame"]
+    role: Literal["reference_image", "reference_video", "reference_audio", "first_frame", "last_frame",
+        "front_view", "left_view", "back_view", "right_view"]
     usage: Literal["subject", "style", "composition", "action", "camera", "audio",
         "edit_source", "extend_source"]
     width: int | None = None
@@ -443,7 +450,9 @@ class MediaDraftUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: str | None = Field(default=None, min_length=1, max_length=160)
     generation_mode: Literal["text_to_image", "reference_image", "text_to_video", "first_frame",
-        "first_last_frame", "multimodal_reference", "edit_video", "extend_video", "text_to_audio"] | None = None
+        "first_last_frame", "multimodal_reference", "edit_video", "extend_video", "text_to_audio",
+        "text_to_model", "image_to_model", "multiview_to_model", "texture_model", "decimate_model",
+        "convert_model"] | None = None
     parameters: dict[str, Any] | None = None
     references: list[MediaReferenceInput] | None = Field(default=None, max_length=15)
 
@@ -451,7 +460,7 @@ class MediaDraftUpdate(BaseModel):
 class MediaDraftView(BaseModel):
     id: str
     thread_id: str
-    kind: Literal["image", "video", "audio"]
+    kind: Literal["image", "video", "audio", "model3d"]
     model: str
     generation_mode: str
     parameters: dict[str, Any]
@@ -462,11 +471,21 @@ class MediaDraftView(BaseModel):
     output_role: Literal["candidate", "workspace", "delivery"] = "candidate"
 
 
+class MediaJobOutputView(BaseModel):
+    id: str
+    role: Literal["primary", "preview", "auxiliary"]
+    filename: str
+    mime: str
+    size: int
+    artifact_id: str = ""
+    project_file_id: str = ""
+
+
 class MediaJobView(BaseModel):
     id: str
     thread_id: str
     turn_id: str = ""
-    kind: Literal["image", "video", "audio"]
+    kind: Literal["image", "video", "audio", "model3d"]
     model: str
     generation_mode: str = ""
     references: list[MediaReferenceView] = Field(default_factory=list)
@@ -480,6 +499,8 @@ class MediaJobView(BaseModel):
     cancelable: bool = False
     cancel_reason: str = ""
     artifact_ids: list[str] = Field(default_factory=list)
+    outputs: list[MediaJobOutputView] = Field(default_factory=list)
+    credits_consumed: float | None = None
     output_role: Literal["candidate", "workspace", "delivery"] = "candidate"
     created_at: datetime
     finished_at: datetime | None = None

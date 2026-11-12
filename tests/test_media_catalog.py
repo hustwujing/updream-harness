@@ -11,6 +11,7 @@ def test_default_catalog_contains_only_real_probe_models():
         ("image", "seedream-5.0"),
         ("video", "sed2"),
         ("audio", "speech-2.8-turbo"),
+        ("model3d", "v3.1-20260211"),
     }
     schemas = {item["kind"]: item["parameter_schema"] for item in catalog.public()}
     assert "aspect_ratio" in schemas["video"]["optional"] and "ratio" not in schemas["video"]["optional"]
@@ -29,6 +30,30 @@ def test_default_catalog_contains_only_real_probe_models():
     assert schemas["image"]["limits"]["min_total_pixels"] == 2560 * 1440
     assert "voice_id" in schemas["audio"]["optional"] and "voice_setting" not in schemas["audio"]["optional"]
     assert schemas["audio"]["limits"]["max_estimated_duration_seconds"] == 180
+    assert set(schemas["model3d"]["generation_modes"]) == {"text_to_model", "image_to_model",
+        "multiview_to_model", "texture_model", "decimate_model", "convert_model"}
+
+
+def test_tripo_contract_rejects_invalid_reference_and_topology_combinations():
+    catalog = MediaCatalog()
+    catalog.validate_parameters("model3d", "v3.1-20260211", {"prompt": "a small cube",
+        "face_limit": 20_000, "smart_low_poly": True}, generation_mode="text_to_model")
+    image = {"role": "reference_image", "usage": "subject", "size": 1024,
+        "mime": "image/png", "width": 512, "height": 512}
+    catalog.validate_parameters("model3d", "v3.1-20260211", {},
+        generation_mode="image_to_model", references=[image])
+    with pytest.raises(ValueError, match="topology limit"):
+        catalog.validate_parameters("model3d", "v3.1-20260211", {"prompt": "cube",
+            "face_limit": 20_001, "smart_low_poly": True}, generation_mode="text_to_model")
+    with pytest.raises(ValueError, match="2..4 unique views"):
+        catalog.validate_parameters("model3d", "v3.1-20260211", {},
+            generation_mode="multiview_to_model", references=[image])
+    with pytest.raises(ValueError, match="input_job_id"):
+        catalog.validate_parameters("model3d", "v3.1-20260211", {},
+            generation_mode="texture_model")
+    with pytest.raises(ValueError, match="Unsupported parameter.*image_to_model"):
+        catalog.validate_parameters("model3d", "v3.1-20260211", {"prompt": "must not drift"},
+            generation_mode="image_to_model", references=[image])
 
 
 def test_catalog_rejects_sync_cancellation():

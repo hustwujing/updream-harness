@@ -9,7 +9,7 @@ from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.domain import Harness, MediaDraftCreate, ThreadCreate, TurnCreate, TurnState, now
 from sandbox_harness.media_worker import MediaWorker
 from sandbox_harness.app import media_group_has_executed_job, media_group_needs_agent_continuation
-from sandbox_harness.store import ArtifactRow, MediaOutboxRow, Store
+from sandbox_harness.store import ArtifactRow, ItemRow, MediaJobOutputRow, MediaOutboxRow, Store
 
 
 @pytest.mark.asyncio
@@ -211,6 +211,57 @@ def test_media_worker_extracts_single_audio_member_from_provider_tar():
     assert MediaWorker._validated_mime(payload, mime, "audio") == "audio/mpeg"
 
 
+@pytest.mark.asyncio
+async def test_tripo_multi_output_commit_is_atomic_and_recoverable(tmp_path):
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "tripo-output.db"))
+    await store.initialize()
+    try:
+        owner = "a" * 64
+        profile = HarnessCatalog().resolve("claude", "claude-4.6-sonnet", "standard")
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
+            reasoning_level="standard", title="3D"), profile, owner)
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="make a model", idempotency_key="tripo-turn"), profile, owner)
+        spec = SimpleNamespace(provider="tripo", adapter="tripo_v3", execution="async",
+            cancellation="unsupported")
+        draft, _ = await store.create_media_draft(owner, thread.id,
+            MediaDraftCreate(kind="model3d", model="v3.1-20260211", turn_id=turn.id,
+                generation_mode="text_to_model", parameters={"prompt": "cube"},
+                idempotency_key="tripo-draft", output_role="workspace"),
+            expires_at=now() + timedelta(minutes=10), provider_spec=spec)
+        job = await store.confirm_media_draft(draft.id, owner, provider_spec=spec)
+        claimed = (await store.claim_media_jobs("tripo-worker", adapter="tripo_v3"))[0]
+        assert claimed["thread_id"] == thread.id and claimed["output_role"] == "workspace"
+        await store.set_turn_state(turn.id, TurnState.COMPLETED)
+        with pytest.raises(RuntimeError, match="active_thread"):
+            await store.delete_thread(thread.id, owner)
+        outputs = [{"role": "primary", "filename": "model.glb",
+            "object_ref": "sha256:" + "1" * 64, "mime": "model/gltf-binary", "size": 400},
+            {"role": "preview", "filename": "preview.png",
+                "object_ref": "sha256:" + "2" * 64, "mime": "image/png", "size": 200}]
+        assert await store.complete_media_job(job.id, "tripo-worker",
+            provider_job_id="provider-task", outputs=outputs, credits_consumed=10)
+        completed = await store.get_media_job(job.id, owner)
+        assert completed and completed.status == "succeeded" and completed.credits_consumed == 10
+        assert len(completed.outputs) == len(completed.artifact_ids) == 2
+        assert await store.resolve_tripo_input_job(job.id, job.id) == "provider-task"
+        files = await store.current_project_files(thread.id, owner)
+        assert {item.path for item in files} == {
+            f"artifacts/3d/{job.id}/model.glb", f"artifacts/3d/{job.id}/preview.png"}
+        _, group = await store.media_continuation_group(turn.id)
+        assert group[0]["project_path"] == f"artifacts/3d/{job.id}/model.glb"
+        promoted = await store.promote_media_job_for_thread(job.id, thread.id, "delivery")
+        assert promoted["project_path"] == f"artifacts/3d/{job.id}/model.glb"
+        async with store.connections() as db:
+            assert len((await db.execute(__import__('sqlalchemy').select(MediaJobOutputRow))).scalars().all()) == 2
+            items = (await db.execute(__import__('sqlalchemy').select(ItemRow).where(
+                ItemRow.type == "artifact"))).scalars().all()
+        assert {item.summary for item in items} == {"model.glb", "preview.png"}
+        assert await store.delete_thread(thread.id, owner) == [turn.id]
+        async with store.connections() as db:
+            assert not (await db.execute(__import__('sqlalchemy').select(MediaJobOutputRow))).scalars().all()
+    finally:
+        await store.close()
 def test_media_worker_rejects_ambiguous_provider_audio_tar():
     archive = io.BytesIO()
     with tarfile.open(fileobj=archive, mode="w") as value:

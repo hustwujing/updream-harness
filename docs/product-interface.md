@@ -72,6 +72,8 @@ Images and videos are grouped into a responsive thumbnail gallery in the
 transcript: four columns on desktop and two on narrow screens. Video thumbnails
 show a non-playing early frame with a play marker. Selecting a tile opens the
 full-screen ownership-checked image/player preview; each tile keeps a separate
+download action. GLB artifacts use an interactive Three.js viewer with orbit,
+zoom and pan controls. Non-previewable converted 3D formats retain a direct
 download action. Non-media artifacts remain compact file rows. The Workspace
 opens images, videos and text files in the same preview; unsupported types
 download directly. No surface exposes object-store URLs, Runtime credentials or

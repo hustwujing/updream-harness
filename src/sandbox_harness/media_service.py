@@ -17,7 +17,8 @@ async def serve() -> None:
     store = Store(settings.database_url, settings.redis_url, settings.redis_prefix)
     worker = MediaWorker(settings, store, object_store(settings), MediaCatalog(settings.media_catalog_json,
         ark_assets_configured=bool(settings.ark_access_key and settings.ark_secret_key
-            and settings.ark_asset_group_id and settings.ark_project_name)))
+            and settings.ark_asset_group_id and settings.ark_project_name),
+        tripo_configured=bool(settings.tripo_api_key)))
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, worker.stop_event.set)

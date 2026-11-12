@@ -57,7 +57,10 @@ def worker(store=None, objects=None):
     settings = SimpleNamespace(upstream_image="http://image.test", upstream_video="http://video.test",
         upstream_audio="http://audio.test", ark_control_endpoint="https://ark.test",
         ark_access_key="", ark_secret_key="", ark_project_name="default",
-        ark_asset_group_id="", ark_asset_group_type="AIGC")
+        ark_asset_group_id="", ark_asset_group_type="AIGC",
+        tripo_base_url="https://tripo.test/v3", tripo_api_key="test-key",
+        tripo_poll_seconds=1, tripo_task_timeout_seconds=3,
+        tripo_worker_concurrency=2, tripo_max_output_bytes=1024 * 1024)
     return MediaWorker(settings, store or Store(), objects or Objects(), None)
 
 
@@ -204,7 +207,9 @@ async def test_media_worker_refills_free_slot_without_waiting_for_long_batch(mon
     class QueueStore(Store):
         def __init__(self):
             super().__init__(); self.jobs = [{"id": value} for value in ("long", "quick", "next")]
-        async def claim_media_jobs(self, owner, limit):
+        async def claim_media_jobs(self, owner, limit, **filters):
+            if filters.get("adapter"):
+                return []
             claimed, self.jobs = self.jobs[:limit], self.jobs[limit:]
             return claimed
     store = QueueStore(); value = worker(store); value.concurrency = 2
@@ -216,3 +221,74 @@ async def test_media_worker_refills_free_slot_without_waiting_for_long_batch(mon
     monkeypatch.setattr(value, "process", process)
     await __import__('asyncio').wait_for(value.run(), 2)
     assert started[:2] == ["long", "quick"] and "next" in started
+
+
+@pytest.mark.asyncio
+async def test_tripo_submission_persists_task_and_returns_model_and_preview(monkeypatch):
+    value = worker()
+    client = Client([Response({"code": 0, "data": {"task_id": "tripo-task"}}),
+        Response({"code": 0, "data": {"status": "success", "progress": 100,
+            "output": {"model_url": "https://result.test/model.glb",
+                "rendered_image_url": "https://result.test/preview.png"},
+            "credits_consumed": 10}})])
+    async def client_factory(): return client
+    async def no_sleep(_): return None
+    monkeypatch.setattr(value, "_client", client_factory)
+    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    result = await value._tripo({"id": "job", "model": "v3.1-20260211",
+        "provider_job_id": "", "generation_mode": "text_to_model",
+        "parameters": {"prompt": "a small cube", "texture": False, "pbr": False}})
+    assert result.status == "success" and result.provider_job_id == "tripo-task"
+    assert [item["role"] for item in result.outputs] == ["primary", "preview"]
+    assert result.credits_consumed == 10
+    assert value.store.updates[-1][2]["provider_job_id"] == "tripo-task"
+    assert client.posts[0][1]["json"] == {"prompt": "a small cube", "texture": False,
+        "pbr": False, "model": "v3.1-20260211"}
+
+
+@pytest.mark.asyncio
+async def test_tripo_recovery_only_polls_persisted_task(monkeypatch):
+    value = worker()
+    client = Client([Response({"code": 0, "data": {"status": "success",
+        "output": {"model_url": "https://result.test/model.glb"}}})])
+    async def client_factory(): return client
+    async def no_sleep(_): return None
+    monkeypatch.setattr(value, "_client", client_factory)
+    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    result = await value._tripo({"id": "job", "model": "v3.1-20260211",
+        "provider_job_id": "persisted-task", "generation_mode": "text_to_model",
+        "parameters": {"prompt": "ignored"}})
+    assert result.status == "success" and not client.posts and len(client.gets) == 1
+
+
+def test_tripo_glb_signature_is_required():
+    assert MediaWorker._validated_mime(b"glTF" + b"\0" * 16,
+        "application/octet-stream", "model3d") == "model/gltf-binary"
+    with pytest.raises(ValueError, match="mime_mismatch"):
+        MediaWorker._validated_mime(b"<html>not a model</html>",
+            "application/octet-stream", "model3d")
+
+
+@pytest.mark.parametrize(("payload", "kind", "mime"), [
+    (b"Kaydara FBX Binary  \x00" + b"\0" * 32, "model3d:fbx", "application/vnd.autodesk.fbx"),
+    (b"# mesh\nv 0 0 0\nv 1 0 0\nf 1 2 1\n", "model3d:obj", "model/obj"),
+    (b"solid mesh\nendsolid mesh\n", "model3d:stl", "model/stl"),
+    (b"PK\x03\x04" + b"\0" * 32, "model3d:usdz", "model/vnd.usdz+zip"),
+])
+def test_tripo_converted_model_signatures(payload, kind, mime):
+    assert MediaWorker._validated_mime(payload, "application/octet-stream", kind) == mime
+
+
+@pytest.mark.parametrize("url", [
+    "http://cdn.tripo3d.ai/model.glb",
+    "https://127.0.0.1/model.glb",
+    "https://shjd-boss.bilibili.co/model.glb",
+    "https://user:secret@cdn.tripo3d.ai/model.glb",
+])
+def test_tripo_output_url_must_be_public_https(url):
+    with pytest.raises(ValueError, match="not_public"):
+        MediaWorker._validated_tripo_output_url(url)
+
+
+def test_tripo_output_url_accepts_public_cdn():
+    assert MediaWorker._validated_tripo_output_url("https://cdn.tripo3d.ai/model.glb?token=short-lived")

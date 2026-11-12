@@ -84,6 +84,12 @@ class Settings(BaseSettings):
     upstream_image: str = ""
     upstream_video: str = ""
     upstream_audio: str = ""
+    tripo_base_url: str = "https://openapi.tripo3d.com/v3"
+    tripo_api_key: str = ""
+    tripo_worker_concurrency: int = Field(default=2, ge=1, le=5)
+    tripo_poll_seconds: float = Field(default=2, ge=1, le=30)
+    tripo_task_timeout_seconds: int = Field(default=1800, ge=60, le=7200)
+    tripo_max_output_bytes: int = Field(default=512 * 1024 * 1024, ge=1024 * 1024)
     media_catalog_json: str = ""
     media_draft_ttl_seconds: int = Field(default=24 * 3600, ge=600, le=7 * 86400)
     media_worker_concurrency: int = Field(default=6, ge=1, le=32)

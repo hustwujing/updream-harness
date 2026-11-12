@@ -9,6 +9,7 @@ export function previewKind(value){
  if(mime.startsWith('image/'))return 'image';
  if(mime.startsWith('video/'))return 'video';
  if(mime.startsWith('audio/'))return 'audio';
+ if(mime==='model/gltf-binary'||ext==='glb')return 'model3d';
  if(mime.startsWith('text/'))return 'text';
  return '';
 }

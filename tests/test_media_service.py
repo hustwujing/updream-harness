@@ -68,6 +68,33 @@ def test_media_cli_prepare_creates_confirmation_draft_only(tmp_path, monkeypatch
     assert '{"ok":true}' in capsys.readouterr().out
 
 
+def test_media_cli_prepares_tripo_draft_without_provider_fields(tmp_path, monkeypatch):
+    token = tmp_path / "token"; token.write_text("x" * 32)
+    monkeypatch.setenv("HARNESS_GATEWAY_URL", "http://gateway.test")
+    monkeypatch.setenv("HARNESS_CAPABILITY_TOKEN_FILE", str(token))
+    calls = []
+    monkeypatch.setattr(media_cli.httpx, "post", lambda url, **kwargs:
+        calls.append(kwargs["json"]) or Response())
+    assert media_cli.main(["prepare", "model3d", "--model", "v3.1-20260211",
+        "--generation-mode", "text_to_model", "--parameters",
+        '{"prompt":"a museum-ready bronze dolphin","texture":true,"pbr":true}',
+        "--output-role", "workspace"]) == 0
+    assert calls[-1]["kind"] == "model3d" and calls[-1]["generation_mode"] == "text_to_model"
+    assert set(calls[-1]["parameters"]) == {"prompt", "texture", "pbr"}
+
+
+def test_public_media_catalog_exposes_tripo_availability(tmp_path):
+    settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///"+str(tmp_path/"catalog.db"),
+        redis_url="", backend="fake", object_backend="local", model_catalog_discovery=False,
+        session_signing_key="media-catalog-secret", tripo_api_key="configured")
+    with TestClient(create_app(settings)) as client:
+        response = client.get("/api/catalog/media", params={"kind": "model3d"})
+        assert response.status_code == 200
+        model = response.json()["models"][0]
+        assert model["model"] == "v3.1-20260211" and model["available"] is True
+        assert "credential_env" not in model
+
+
 def test_media_cli_normalizes_durable_reference_path(tmp_path, monkeypatch):
     token = tmp_path / "token"; token.write_text("x" * 32)
     monkeypatch.setenv("HARNESS_GATEWAY_URL", "http://gateway.test")

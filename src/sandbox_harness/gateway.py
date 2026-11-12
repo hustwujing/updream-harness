@@ -98,7 +98,8 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     objects = object_store(settings)
     media_catalog = MediaCatalog(settings.media_catalog_json,
         ark_assets_configured=bool(settings.ark_access_key and settings.ark_secret_key
-            and settings.ark_asset_group_id and settings.ark_project_name))
+            and settings.ark_asset_group_id and settings.ark_project_name),
+        tripo_configured=bool(settings.tripo_api_key))
     upstreams = {
         "/v1/models/codex": (settings.upstream_codex, os.environ.get("SANDBOX_HARNESS_UPSTREAM_CODEX_KEY", "")),
         "/v1/models/claude": (settings.upstream_claude, os.environ.get("SANDBOX_HARNESS_UPSTREAM_CLAUDE_KEY", "")),
@@ -245,7 +246,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     @app.get("/v1/media/catalog")
     async def runtime_media_catalog(request: Request, kind: str | None = None):
         await authorize_runtime_request(request, "/v1/media/catalog")
-        if kind is not None and kind not in {"image", "video", "audio"}:
+        if kind is not None and kind not in {"image", "video", "audio", "model3d"}:
             raise HTTPException(422, "Invalid media kind")
         return {"models": media_catalog.public(kind)}
 
