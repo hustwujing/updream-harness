@@ -743,6 +743,24 @@ class Broker:
             error_code = type(exc).__name__
             error_detail = str(exc)
             event("turn.execution.failed",level=logging.ERROR,exc=exc,turn_id=turn.id,execution_id=turn.runtime_execution_id)
+            if sandbox and not lost_lease:
+                try:
+                    await self._state(turn.id, TurnState.CHECKPOINTING, sandbox_id=sandbox.id)
+                    await self._save_workspace(sandbox, thread.id, turn.id,
+                        thread.native_thread_id, partial=True)
+                except Exception as save_error:
+                    event("workspace.partial_save.failed",level=logging.WARNING,exc=save_error,
+                        turn_id=turn.id,sandbox_id=sandbox.id)
+                    try:
+                        await self.store.append_event(turn.id, EventKind.WARNING,
+                            {"code": "partial_workspace_save_failed",
+                             "detail": "本轮中间文件未能完整保存。"},
+                            lease_owner=self.instance_id, recovery_generation=generation)
+                    except RuntimeError as fence_error:
+                        if str(fence_error) == "stale_turn_lease":
+                            lost_lease = True
+                        else:
+                            raise
             try:
                 await self.store.append_event(turn.id, EventKind.ERROR,
                     {"code": error_code, "detail": error_detail[:1000]},
@@ -807,6 +825,18 @@ class Broker:
                 except Exception as exc:
                     if isinstance(exc, RuntimeError) and str(exc) == "stale_turn_lease":
                         lost_lease = True
+                    elif final_state == TurnState.FAILED and error_code not in {"", "turn_failed"}:
+                        event("turn.cleanup.secondary_failed",level=logging.WARNING,exc=exc,
+                            turn_id=turn.id,reason=error_code)
+                        try:
+                            await self.store.append_event(turn.id, EventKind.WARNING, {
+                                "code": "cleanup_secondary_failed",
+                                "detail": "执行失败后的环境清理仍在后台重试。",
+                            }, lease_owner=self.instance_id, recovery_generation=generation)
+                        except RuntimeError as fence_error:
+                            if str(fence_error) != "stale_turn_lease":
+                                raise
+                            lost_lease = True
                     else:
                         final_state = TurnState.FAILED
                         error_code = "cleanup_failed"

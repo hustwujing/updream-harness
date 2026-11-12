@@ -21,8 +21,12 @@ class RuntimeStreamInterrupted(RuntimeError):
 
 
 class RuntimeClient:
-    def __init__(self, *, timeout_seconds: int = 3600, transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(self, *, timeout_seconds: int = 3600, reattach_attempts: int = 8,
+                 reattach_max_delay_seconds: float = 4,
+                 transport: httpx.AsyncBaseTransport | None = None):
         self.timeout = httpx.Timeout(timeout_seconds, connect=20)
+        self.reattach_attempts = reattach_attempts
+        self.reattach_max_delay_seconds = reattach_max_delay_seconds
         self.transport = transport
 
     @observed("runtime.configure")
@@ -89,7 +93,7 @@ class RuntimeClient:
         cursor = after_sequence
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()},
             timeout=self.timeout, trust_env=False, transport=self.transport) as client:
-            for attempt in range(4):
+            for attempt in range(self.reattach_attempts):
                 try:
                     # A lost POST reply is an unknown submission. Every retry only reads
                     # the same execution; it must never start another Harness invocation.
@@ -128,11 +132,11 @@ class RuntimeClient:
                         attempt=attempt,runtime_sequence=cursor,http_status_code=status_code,exc=exc)
                     logger.warning("Runtime transport interrupted execution=%s cursor=%s attempt=%s error=%s",
                         execution_id, cursor, attempt + 1, type(exc).__name__)
-                if attempt < 3:
+                if attempt < self.reattach_attempts - 1:
                     event("runtime.stream.reattach",level=logging.WARNING,execution_id=execution_id,attempt=attempt,runtime_sequence=cursor)
                     logger.warning("Reattaching runtime stream execution=%s cursor=%s attempt=%s",
                         execution_id, cursor, attempt + 1)
-                    await asyncio.sleep(0.2 * (attempt + 1))
+                    await asyncio.sleep(min(0.5 * (2 ** attempt), self.reattach_max_delay_seconds))
         raise RuntimeStreamInterrupted("Runtime connection ended without a result; reattachment exhausted")
 
     @observed("runtime.input")

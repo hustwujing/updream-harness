@@ -58,7 +58,8 @@ async def test_runtime_stream_recovery_is_bounded_and_never_replays_post(monkeyp
     import pytest
     from sandbox_harness.runtime import RuntimeStreamInterrupted
     calls = []
-    async def no_wait(seconds): pass
+    waits = []
+    async def no_wait(seconds): waits.append(seconds)
     monkeypatch.setattr('sandbox_harness.runtime.asyncio.sleep', no_wait)
     def respond(request):
         calls.append(request.method)
@@ -68,4 +69,5 @@ async def test_runtime_stream_recovery_is_bounded_and_never_replays_post(monkeyp
     with pytest.raises(RuntimeStreamInterrupted):
         _ = [row async for row in runtime.run(sandbox, message='once', attachments=[],
             native_thread_id='', reasoning_effort='high', execution_id='missing')]
-    assert calls.count('POST') == 1 and calls.count('GET') == 4
+    assert calls.count('POST') == 1 and calls.count('GET') == 8
+    assert waits == [.5, 1, 2, 4, 4, 4, 4]

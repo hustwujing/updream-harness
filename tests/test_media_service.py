@@ -41,6 +41,7 @@ def test_media_worker_is_a_separate_service():
     assert "Never use `sandbox-interact approval` as a replacement" in instructions
     assert "non-empty Job ID" in instructions
     assert "one short public progress sentence" in instructions
+    assert "current files are authoritative" in instructions
     assert "current-Turn publication" in instructions and "verify every input path exists" in instructions
     assert "setsar=1" in instructions
     assert "--append-system-prompt" in adapters

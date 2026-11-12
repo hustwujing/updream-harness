@@ -48,8 +48,9 @@ Graceful API shutdown preserves only currently executing sandboxes. On startup, 
 
 The Runtime result and its journal entry are published under the same condition lock.
 A Broker that sees EOF or a transient transport error reconnects to the existing
-execution's GET event endpoint (up to three reconnections), starting after its last
-consumed sequence. It does not replay the POST or create another Harness process.
+execution's GET event endpoint with bounded exponential backoff (eight total
+attempts by default, spanning about 20 seconds), starting after its last consumed
+sequence. It does not replay the POST or create another Harness process.
 Exhaustion is reported as a transport interruption, not a model-quality failure.
 
 A terminal Harness failure still triggers a bounded checkpoint/artifact save before
@@ -58,6 +59,12 @@ Turn remains FAILED. Saving partial work is best effort; it cannot recover files
 from a sandbox that disappeared before they were exported. Original upstream errors
 remain in the Turn audit record; public errors distinguish overload, timeouts and
 transport interruption. Protocol completion events preserve failure status.
+Diagnostic collection, capability revocation and sandbox deletion occur after
+the primary result is frozen. A failure in those cleanup steps is recorded as a
+secondary warning and retried by reconciliation; it cannot replace an existing
+model/Runtime failure with `cleanup_failed`. A retry/continue request first
+inspects the current managed artifacts and durable work because Harness memory
+may predate asynchronously committed media outputs.
 
 The UI retains one EventSource per active Turn, honours terminal closure and reads
 all Item pages. SSE reconnects honour Last-Event-ID. A delivery conflict only creates

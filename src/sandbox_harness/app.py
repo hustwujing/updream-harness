@@ -124,7 +124,9 @@ def components(settings: Settings):
     if sum(targets.values()) >= settings.max_sandboxes:
         raise ValueError("max_sandboxes must exceed the total warm pool target")
     pool = SandboxPool(backend, images, targets, max_sandboxes=settings.max_sandboxes)
-    runtime = RuntimeClient(timeout_seconds=settings.sandbox_timeout_seconds)
+    runtime = RuntimeClient(timeout_seconds=settings.sandbox_timeout_seconds,
+        reattach_attempts=settings.runtime_stream_reattach_attempts,
+        reattach_max_delay_seconds=settings.runtime_stream_reattach_max_delay_seconds)
     catalog = HarnessCatalog(settings.harness_catalog_json or None)
     media_catalog = MediaCatalog(settings.media_catalog_json,
         ark_assets_configured=bool(settings.ark_access_key and settings.ark_secret_key

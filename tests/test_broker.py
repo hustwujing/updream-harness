@@ -7,6 +7,7 @@ from sandbox_harness.config import Settings
 from sandbox_harness.domain import EventKind, Harness, InteractionResponse, RuntimeEvent, RuntimeResult, ThreadCreate, TurnCreate, TurnInputCreate, TurnState
 from sandbox_harness.objects import ObjectStore
 from sandbox_harness.pool import SandboxPool
+from sandbox_harness.runtime import RuntimeStreamInterrupted
 from sandbox_harness.sandbox import FakeSandboxBackend
 from sandbox_harness.store import Store
 
@@ -30,6 +31,12 @@ class Runtime:
 class FailingRuntime(Runtime):
     async def run(self, sandbox, **kwargs):
         yield RuntimeResult(status="failed", error_code="harness_exit", error_detail="native process exited")
+
+
+class InterruptedRuntime(Runtime):
+    async def run(self, sandbox, **kwargs):
+        yield RuntimeEvent(kind=EventKind.TEXT_DELTA, payload={"text": "partial"})
+        raise RuntimeStreamInterrupted("runtime endpoint temporarily unavailable")
 
 
 class AppendedInputRuntime(Runtime):
@@ -323,6 +330,46 @@ async def test_broker_reattaches_expired_running_turn_and_replays_runtime_journa
             for event in await store.events_after(turn.id, 0))
         assert sandbox.id not in backend.items
     finally:
+        await broker.close(); await pool.close(); await store.close()
+
+
+async def test_primary_execution_failure_survives_cleanup_failure_and_saves_partial_workspace(tmp_path, monkeypatch):
+    settings = Settings(data_root=tmp_path,
+        database_url="sqlite+aiosqlite:///" + str(tmp_path / "primary-failure.db"),
+        backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9",
+        session_keepalive_seconds=0)
+    store = Store(settings.database_url); await store.initialize()
+    objects = ObjectStore(tmp_path / "objects"); backend = FakeSandboxBackend()
+    pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
+    catalog = HarnessCatalog(); broker = Broker(settings, store, objects, pool, InterruptedRuntime(), catalog)
+    original_delete = backend.delete
+
+    async def fail_delete(sandbox):
+        raise ConnectionError("sandbox control plane unavailable")
+
+    monkeypatch.setattr(backend, "delete", fail_delete)
+    try:
+        profile = catalog.resolve("codex", "gpt-5.6", "standard")
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CODEX, model=profile.model,
+            reasoning_level="standard", title="Preserve primary failure"), profile, "a" * 64)
+        turn = await broker.submit(thread.id,
+            TurnCreate(message="run", idempotency_key="primary-failure-turn"))
+        for _ in range(200):
+            current = await store.get_turn(turn.id)
+            if current.state == TurnState.FAILED and turn.id not in broker.tasks:
+                break
+            await asyncio.sleep(.02)
+        events = await store.events_after(turn.id, 0)
+        errors = [item for item in await store.items_after(thread.id) if item.type.value == "error"]
+        assert current.error_code == "RuntimeStreamInterrupted"
+        assert len(errors) == 1 and "连接中断" in errors[0].summary
+        assert any(event.payload.get("code") == "cleanup_secondary_failed" for event in events)
+        assert not any(event.payload.get("code") == "cleanup_failed" for event in events)
+        assert (await store.get_thread(thread.id)).checkpoint_ref
+        assert (await store.artifacts(turn.id))[0].path == "result.txt"
+    finally:
+        monkeypatch.setattr(backend, "delete", original_delete)
+        await pool.retry_deletions()
         await broker.close(); await pool.close(); await store.close()
 
 
