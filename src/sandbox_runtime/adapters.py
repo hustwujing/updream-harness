@@ -171,6 +171,26 @@ def normalize(harness: str, line: str, state: dict | None = None) -> dict:
         message = data.get("message") or {}
         source = message.get("source") or {}
         tool_use_id = data.get("callId") or message.get("toolCallId") or source.get("callId") or ""
+        if event_type == "assistant/message":
+            content_owner = message if isinstance(message, dict) else data
+            content = content_owner.get("content") or []
+            text = "".join(
+                str(block.get("text") or "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+            if not text:
+                return None
+            identity = str(message.get("id") or data.get("id") or "")
+            if state is not None and identity:
+                messages = state.setdefault("deepseek_messages", {})
+                previous = messages.get(identity, "")
+                if text == previous:
+                    return None
+                messages[identity] = text
+                if previous and text.startswith(previous):
+                    text = text[len(previous):]
+            return {"kind": "text_delta", "payload": {"text": text}}
         if event_type in {"tool/start", "tool/call", "tool_use"}:
             return {"kind": "tool_started", "payload": {"name": data.get("name", "tool"), "tool_use_id": tool_use_id, "detail": data}}
         if event_type in {"tool/end", "tool/result", "tool_result"}:
@@ -230,7 +250,10 @@ def normalize(harness: str, line: str, state: dict | None = None) -> dict:
         return {"kind": "step_finished", "payload": {"name": "Claude response", "usage": value.get("usage") or {}, "thread_id": value.get("session_id", ""),
             "is_error": bool(value.get("is_error")) or str(value.get("subtype", "")).startswith("error")}}
     if kind in {"text_delta", "response.output_text.delta", "assistant_delta"}:
-        return {"kind": "text_delta", "payload": {"text": value.get("delta") or value.get("text") or ""}}
+        payload = {"text": value.get("delta") or value.get("text") or ""}
+        if value.get("snapshot"):
+            payload["snapshot"] = True
+        return {"kind": "text_delta", "payload": payload}
     if kind in {"tool_started", "tool_use", "item.started"}:
         return {"kind": "tool_started", "payload": {"name": value.get("name") or value.get("tool") or "tool", "detail": value.get("input") or {}}}
     if kind in {"tool_finished", "tool_result", "item.completed"}:

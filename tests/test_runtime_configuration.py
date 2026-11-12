@@ -129,6 +129,44 @@ for index,line in enumerate(sys.stdin,1):
     assert rows[-1]["type"] == "result" and rows[-1]["result"]["native_thread_id"] == "native-live"
 
 
+def test_stream_snapshot_deduplication_resets_for_each_appended_input(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
+    monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")
+    monkeypatch.setattr(runtime_app, "OUTPUTS", tmp_path / "workspace" / "outputs")
+    monkeypatch.setattr(runtime_app, "PERSISTENT", ("project", "state"))
+    runner = tmp_path / "snapshots.py"
+    runner.write_text("""import json,sys,time
+print(json.dumps({'type':'thread.started','thread_id':'native-live'}),flush=True)
+for index,line in enumerate(sys.stdin,1):
+    time.sleep(.2)
+    command=json.loads(line)
+    if index == 1:
+        print(json.dumps({'type':'assistant_delta','text':'streamed-1'}),flush=True)
+        print(json.dumps({'type':'assistant_delta','text':'streamed-1','snapshot':True}),flush=True)
+    else:
+        print(json.dumps({'type':'assistant_delta','text':'fallback-2','snapshot':True}),flush=True)
+    print(json.dumps({'type':'result','session_id':'native-live','usage':{}}),flush=True)
+""")
+    monkeypatch.setenv("HARNESS_COMMAND_JSON", json.dumps({name: [sys.executable, str(runner)]
+        for name in ("codex", "claude", "deepseek")}))
+    app = runtime_app.create_app()
+    with TestClient(app) as client:
+        assert client.post("/v1/configure", json={"capability_token":"x"*32,"gateway_url":"http://gateway:28600",
+            "harness":"claude","model":"model","proxy_url":"http://172.31.0.1:28601"}).status_code == 200
+        result = {}
+        worker = threading.Thread(target=lambda: result.setdefault("response", client.post("/v1/turns",
+            json={"message":"first","reasoning_effort":"high"})))
+        worker.start(); time.sleep(.08)
+        appended = client.post("/v1/inputs", json={"message":"second","reasoning_effort":"high",
+            "execution_id":"legacy", "input_id":"append-two"})
+        worker.join(timeout=5)
+    assert appended.status_code == 200
+    rows = [json.loads(line) for line in result["response"].text.splitlines()]
+    assert [row["payload"]["text"] for row in rows if row.get("kind") == "text_delta"] == [
+        "streamed-1", "fallback-2",
+    ]
+
+
 async def test_runtime_finishes_and_replays_events_without_an_http_subscriber(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
     monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")

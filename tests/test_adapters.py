@@ -70,6 +70,32 @@ def test_codex_and_deepseek_tool_ids_are_stable():
     assert deepseek["payload"]["tool_use_id"] == "call-1"
 
 
+def test_deepseek_assistant_messages_stream_and_repeated_snapshots_are_deduplicated():
+    state = {}
+    frame = {"type": "deepseek.notification", "event": {
+        "method": "session.event", "payload": {"event": {
+            "type": "assistant/message", "data": {"message": {
+                "id": "message-1", "content": [{"type": "text", "text": "正在分析"}],
+            }},
+        }},
+    }}
+
+    assert normalize("deepseek", json.dumps(frame), state) == {
+        "kind": "text_delta", "payload": {"text": "正在分析"},
+    }
+    assert normalize("deepseek", json.dumps(frame), state) is None
+    frame["event"]["payload"]["event"]["data"]["message"]["content"][0]["text"] = "正在分析，继续处理"
+    assert normalize("deepseek", json.dumps(frame), state) == {
+        "kind": "text_delta", "payload": {"text": "，继续处理"},
+    }
+
+
+def test_deepseek_final_response_is_a_snapshot_fallback():
+    assert normalize("deepseek", json.dumps({
+        "type": "assistant_delta", "text": "最终回答", "snapshot": True,
+    })) == {"kind": "text_delta", "payload": {"text": "最终回答", "snapshot": True}}
+
+
 def test_codex_app_server_events_and_control_inputs_are_normalized():
     control = json.loads(control_user_message("追加要求"))
     assert control["type"] == "input" and control["message"] == "追加要求" and len(control["id"]) == 32

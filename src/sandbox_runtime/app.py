@@ -388,6 +388,7 @@ def create_app() -> FastAPI:
                         done = not execution.pending_input_ids
                         if done:
                             execution.accepting_inputs = False
+                    execution.saw_text_delta = False
                     if done:
                         await stop_process(execution)
                         background = await wait_background(execution)

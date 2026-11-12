@@ -62,7 +62,7 @@ def main() -> None:
             message = RUNTIME_INSTRUCTIONS + "\nUser request:\n" + command.get("message", "")
             result = session.run(message,
                 on_notification=lambda value: emit({"type": "deepseek.notification", "event": public_notification(value)}))
-            emit({"type": "assistant_delta", "text": result.final_response})
+            emit({"type": "assistant_delta", "text": result.final_response, "snapshot": True})
             if result.finish_reason != "completed":
                 raise RuntimeError("DeepSeek Harness finished with " + str(result.finish_reason))
             emit({"type": "harness.input.completed", "input_ids": [command.get("id", "")], "thread_id": session_id})
