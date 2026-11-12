@@ -233,6 +233,10 @@ class SandboxInspector:
                          data: bytes, mime: str) -> dict:
         if len(data) > self.settings.sandbox_inspect_max_file_bytes:
             raise ValueError("sandbox_file_too_large")
+        normalized = path.strip().replace("\\", "/").strip("/")
+        if normalized in {"project/assets", "project/artifacts"} or normalized.startswith(
+                ("project/assets/", "project/artifacts/")):
+            raise RuntimeError("managed_project_file_read_only")
         sandbox, control = await self._controlled_sandbox(thread_id, owner_id)
         if not sandbox or not control or control["state"] != "user_controlled":
             raise RuntimeError("sandbox_takeover_required")

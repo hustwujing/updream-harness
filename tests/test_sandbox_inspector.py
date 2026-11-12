@@ -124,6 +124,8 @@ async def test_inspector_restore_takeover_terminal_port_and_release(tmp_path, mo
         assert control["state"]=="user_controlled" and runtime.injected==1
         await inspector.write_file(thread.id,owner,"project/readme.txt",b"changed","text/plain")
         assert (await inspector.file(thread.id,owner,"project/readme.txt"))[0]==b"changed"
+        with pytest.raises(RuntimeError,match="managed_project_file_read_only"):
+            await inspector.write_file(thread.id,owner,"project/assets/input.txt",b"x","text/plain")
         assert (await inspector.processes(thread.id,owner))["items"][0]["pid"]==42
         assert (await inspector.stop_process(thread.id,owner,42))["stopped"]
         grant=await inspector.create_port_grant(thread.id,owner,3000)
