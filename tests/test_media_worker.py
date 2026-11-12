@@ -338,6 +338,11 @@ def test_tripo_output_url_accepts_public_cdn():
     assert MediaWorker._validated_tripo_output_url("https://cdn.tripo3d.ai/model.glb?token=short-lived")
 
 
+def test_provider_filename_uses_validated_content_mime_not_url_suffix():
+    assert MediaWorker._filename_for_mime("preview-job.webp", "image/png") == "preview-job.png"
+    assert MediaWorker._filename_for_mime("model-job.bin", "application/vnd.autodesk.fbx") == "model-job.fbx"
+
+
 @pytest.mark.asyncio
 async def test_tripo_image_and_multiview_payloads_use_stable_public_references(monkeypatch):
     value = worker()

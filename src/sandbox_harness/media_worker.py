@@ -120,7 +120,8 @@ class MediaWorker:
                     data, mime = await self._download(output["url"], expected_kind=output["kind"])
                     stage = "object_store_" + output["role"]
                     object_ref, _ = await asyncio.to_thread(self.objects.put, data)
-                    completed.append({"role": output["role"], "filename": output["filename"],
+                    completed.append({"role": output["role"],
+                        "filename": self._filename_for_mime(output["filename"], mime),
                         "object_ref": object_ref, "mime": mime, "size": len(data)})
                 stage = "commit"
                 await self.store.complete_media_job(job["id"], self.owner,
@@ -326,6 +327,17 @@ class MediaWorker:
             await self.store.update_media_job(job["id"], self.owner, status="running",
                 phase="provider_polling", provider_job_id=task_id)
         return ProviderResult("failed", provider_job_id=task_id, error="audio_timeout")
+
+    @staticmethod
+    def _filename_for_mime(filename: str, mime: str) -> str:
+        extension = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp",
+            "model/gltf-binary": "glb", "application/vnd.autodesk.fbx": "fbx",
+            "model/obj": "obj", "model/stl": "stl", "model/vnd.usdz+zip": "usdz",
+            "model/3mf": "3mf", "model/gltf+zip": "gltf", "model/gltf+json": "gltf"}.get(mime)
+        if not extension:
+            return filename
+        stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+        return f"{stem}.{extension}"
 
     @staticmethod
     def _validated_tripo_output_url(value: str) -> str:
