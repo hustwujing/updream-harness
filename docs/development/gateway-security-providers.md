@@ -47,7 +47,7 @@ Runtime injects the Turn token into `HTTP_PROXY` and `HTTPS_PROXY`. The public
 proxy accepts only ports 80/443, resolves destinations itself, rejects every
 non-public answer, then applies domain/IP/CIDR allow and deny rules. Deny rules
 take precedence. Restricted Turns use the configured allowlist. Public Turns
-are issued only for authenticated FRPC submissions and skip the allowlist while
+are issued only for authenticated-account submissions and skip the allowlist while
 retaining deny rules, public-address validation, port limits, budgets and revocation.
 
 The same path is used by curl, Requests, the Chromium wrapper, arbitrary

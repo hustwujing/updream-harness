@@ -59,6 +59,10 @@ def media_group_has_executed_job(items: list[dict]) -> bool:
     return any(item.get("job_id") for item in items)
 
 
+def media_group_needs_agent_continuation(items: list[dict]) -> bool:
+    return media_group_has_executed_job(items) or any(item.get("status") == "expired" for item in items)
+
+
 def valid_filename(value: str) -> bool:
     return valid_attachment_name(value)
 
@@ -152,7 +156,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ready, jobs = await store.media_continuation_group(turn_id)
             if not ready:
                 raise RuntimeError("media_group_pending")
-            if not media_group_has_executed_job(jobs):
+            if not media_group_needs_agent_continuation(jobs):
                 event("media.batch.ended_without_jobs", turn_id=turn_id,
                     cancelled=sum(item["status"] == "cancelled" for item in jobs),
                     expired=sum(item["status"] == "expired" for item in jobs))
@@ -168,11 +172,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "inspect_command": f"sandbox-media fetch --job-id {item['job_id']} --output /workspace/outputs/{item['job_id']}"
                         if candidate else "",
                     "error": item["error_code"] or ""})
-            message = ("[media_group_completed] Continue the original user task. Use only results with status=succeeded and a non-empty path or inspect_command; never invent a path for a failed result. Verify input files exist before composition. Media results: "
-                + json.dumps(results, ensure_ascii=False, sort_keys=True))
+            expired_only = bool(results) and all(item["status"] == "expired" for item in results)
+            if expired_only:
+                message = ("[media_group_expired] The media drafts expired before confirmation. "
+                    "Recreate the same validated drafts, commit the batch once, and tell the user to use the media confirmation cards. "
+                    "Do not use sandbox-interact approval as a substitute or claim that a Provider Job was submitted. Expired drafts: "
+                    + json.dumps(results, ensure_ascii=False, sort_keys=True))
+            else:
+                message = ("[media_group_completed] Continue the original user task. Use only results with status=succeeded and a non-empty path or inspect_command; never invent a path for a failed result. Verify input files exist before composition. Media results: "
+                    + json.dumps(results, ensure_ascii=False, sort_keys=True))
+            origin = await store.get_turn(turn_id)
             await broker.submit(batch["thread_id"], TurnCreate(message=message,
                 idempotency_key=f"media-continuation-{turn_id}", delivery_mode="queue"),
-                network_access="restricted", internal=True)
+                network_access=origin.network_access if origin else "restricted", internal=True)
         async def dispatch_media_outbox():
             while not media_outbox_stop.is_set():
                 for batch in await store.claim_media_batches(media_outbox_owner):
@@ -372,7 +384,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, str(exc))
         try:
             result, _ = await store.create_media_draft(request.state.owner_id, thread_id, value,
-                expires_at=now() + timedelta(minutes=10), provider_spec=spec,
+                expires_at=now() + timedelta(seconds=settings.media_draft_ttl_seconds), provider_spec=spec,
                 reference_snapshots=references)
             return result
         except KeyError:
@@ -656,7 +668,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not await store.attachments_owned(request.state.owner_id, value.attachments):
             raise HTTPException(404, "Attachment not found")
         try:
-            network_access = "public" if request.state.ingress == "frpc" else "restricted"
+            network_access = "public" if request.state.account else "restricted"
             result = await broker.submit(thread_id, value, network_access=network_access)
             request.state.log_context.update({"thread_id":thread_id,"turn_id":result.id})
             return result

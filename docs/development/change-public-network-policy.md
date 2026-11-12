@@ -49,8 +49,8 @@ SANDBOX_HARNESS_PUBLIC_PROXY_DENYLIST='["blocked.example.com","203.0.113.0/24"]'
 
 Validate configuration before restart, confirm no active model/public streams
 will be interrupted, restart Gateway only, inspect `/health` policy counts and
-test an FRPC public destination plus a direct restricted rejection with
-short-lived capabilities.
+test an authenticated-account public destination plus an anonymous restricted
+rejection with short-lived capabilities.
 
 Run `test_public_proxy.py`, `test_gateway.py`, `test_config.py`, capability tests
 and the Runtime/browser proxy contract tests.

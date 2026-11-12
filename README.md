@@ -134,8 +134,8 @@ SANDBOX_HARNESS_PUBLIC_PROXY_DENYLIST='[]'
 ```
 
 Rules may be exact domains, wildcard subdomains, individual IPs or CIDRs. The
-allowlist restricts direct and other non-FRPC Turns. Authenticated FRPC Turn
-submissions may reach every otherwise-valid public HTTP/S destination; the
+allowlist restricts anonymous Turns. Turn submissions from any authenticated
+account may reach every otherwise-valid public HTTP/S destination; the
 denylist, private-address rejection, 80/443 port limit, request budget and
 capability revocation still apply. curl, Requests, Chromium and Playwright use
 the same authenticated proxy. See [gateway.md](docs/gateway.md) for the complete

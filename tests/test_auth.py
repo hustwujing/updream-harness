@@ -68,9 +68,9 @@ def test_frpc_requires_account_while_direct_ingress_remains_anonymous(tmp_path):
         assert [row['id'] for row in client.get('/api/threads',headers={'X-Updream-Ingress':'direct'}).json()]==[thread['id']]
         direct_thread=client.post('/api/threads',headers={'X-Updream-Ingress':'direct'},json={
             'harness':'codex','model':'gpt-5.6','reasoning_level':'standard','title':'Direct thread'}).json()
-        restricted_turn=client.post(f"/api/threads/{direct_thread['id']}/turns",headers={'X-Updream-Ingress':'direct'},json={
-            'message':'restricted network','idempotency_key':'direct-restricted-network'}).json()
-        assert restricted_turn['network_access']=='restricted'
+        direct_public_turn=client.post(f"/api/threads/{direct_thread['id']}/turns",headers={'X-Updream-Ingress':'direct'},json={
+            'message':'account public network','idempotency_key':'direct-account-public-network'}).json()
+        assert direct_public_turn['network_access']=='public'
         changed=client.post('/api/auth/change-username',headers={'X-Updream-Ingress':'frpc'},json={
             'username':'renamed.user','current_password':'initial account password'})
         assert changed.status_code==403 and changed.json()['detail']=='account_action_not_available'
@@ -81,6 +81,11 @@ def test_frpc_requires_account_while_direct_ingress_remains_anonymous(tmp_path):
         assert avatar.status_code==403 and avatar.json()['detail']=='account_action_not_available'
         logout=client.post('/api/auth/logout',headers={'X-Updream-Ingress':'frpc'});assert logout.status_code==200
         assert client.get('/api/threads',headers={'X-Updream-Ingress':'frpc'}).status_code==401
+        anonymous_thread=client.post('/api/threads',headers={'X-Updream-Ingress':'direct'},json={
+            'harness':'codex','model':'gpt-5.6','reasoning_level':'standard','title':'Anonymous direct'}).json()
+        anonymous_turn=client.post(f"/api/threads/{anonymous_thread['id']}/turns",headers={'X-Updream-Ingress':'direct'},json={
+            'message':'anonymous restricted network','idempotency_key':'direct-anonymous-restricted'}).json()
+        assert anonymous_turn['network_access']=='restricted'
         relogin=client.post('/api/auth/login',headers={'X-Updream-Ingress':'frpc'},json={
             'username':'frpc.user','password':'newpass8'})
         assert relogin.status_code==200

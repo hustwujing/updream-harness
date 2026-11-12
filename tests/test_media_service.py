@@ -38,6 +38,9 @@ def test_media_worker_is_a_separate_service():
     assert "sandbox-media prepare" in instructions and "sandbox-image" in instructions
     assert "Never copy a role name into usage" in instructions and "usage=composition" in instructions
     assert "never reuse a Job ID from another Thread" in instructions
+    assert "Never use `sandbox-interact approval` as a replacement" in instructions
+    assert "non-empty Job ID" in instructions
+    assert "one short public progress sentence" in instructions
     assert "current-Turn publication" in instructions and "verify every input path exists" in instructions
     assert "setsar=1" in instructions
     assert "--append-system-prompt" in adapters
@@ -113,6 +116,8 @@ def test_media_reference_api_freezes_owned_project_file_snapshot(tmp_path):
         draft=client.post(f"/api/threads/{first['id']}/media/drafts",json=payload)
         assert draft.status_code==200
         value=draft.json();assert value["generation_mode"]=="first_frame"
+        expires=__import__('datetime').datetime.fromisoformat(value["expires_at"])
+        assert 23*3600 < (expires-__import__('datetime').datetime.now(__import__('datetime').timezone.utc)).total_seconds() <= 24*3600
         assert value["references"][0]["project_file_id"]==project["id"]
         assert value["references"][0]["width"]==640 and "object_ref" not in value["references"][0]
         assert client.delete(f"/api/project-files/{project['id']}").status_code==200

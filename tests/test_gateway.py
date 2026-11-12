@@ -93,12 +93,14 @@ async def test_gateway_media_prepare_creates_turn_bound_draft(tmp_path, monkeypa
     from sandbox_harness.config import Settings
     from sandbox_harness.domain import Harness
     calls = []
+    expirations = []
     class Redis:
         async def eval(self, *args): return 1
     class Store:
         def __init__(self, *args, **kwargs): pass
         async def owner_id_for_thread(self, thread_id): return "owner-1"
         async def create_media_draft(self, owner_id, thread_id, value, **kwargs):
+            expirations.append(kwargs["expires_at"])
             calls.append((owner_id, thread_id, value.turn_id, value.kind, value.model, value.parameters))
             return SimpleNamespace(model_dump=lambda **_: {"id": "draft-1", "status": "awaiting_confirmation"}), True
         async def seal_media_batch(self, turn_id, thread_id, owner_id):
@@ -126,6 +128,7 @@ async def test_gateway_media_prepare_creates_turn_bound_draft(tmp_path, monkeypa
     result = await endpoint(request)
     assert result["id"] == "draft-1" and result["requires_confirmation"] is True
     assert calls == [("owner-1", "thread-1", turn_id, "image", "seedream-5.0", {"prompt": "test"})]
+    assert 23 * 3600 < (expirations[0] - __import__('sandbox_harness.domain',fromlist=['now']).now()).total_seconds() <= 24 * 3600
     commit_endpoint = next(route.endpoint for route in app.routes
         if getattr(route, "path", None) == "/v1/media/batch/commit")
     committed = await commit_endpoint(Request({"type": "http", "method": "POST",

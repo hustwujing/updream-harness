@@ -31,7 +31,7 @@ Project dependencies, caches, database files, logs, temporary files and build ou
 - The read-only Runtime Skill bundle is digest-verified at build time and materialized into native Harness roots after fresh configuration or checkpoint restore.
 - PostgreSQL connects only to the dedicated cluster as the `sandbox_harness` role and database.
 - Every Redis key starts with the configured prefix. Lua scripts and scans must include that prefix.
-- Only authenticated FRPC Turn submissions freeze `network_access=public`; direct and other submissions remain restricted. Both modes still reject private destinations and raw egress.
+- Any authenticated-account Turn submission freezes `network_access=public`; anonymous submissions remain restricted. Both modes still reject private destinations and raw egress.
 - Every checkpoint, attachment and artifact key starts with the configured BOSS/S3 prefix. Sandboxes never receive object-store credentials.
 - Model reference media uses the stable HTTPS BOSS URL only. The internal BOSS endpoint and presigned PUT URL must never enter a Provider request. Seedance receives only an Active Ark `asset://` URI.
 - API and Gateway secrets live in `.data/config/platform.env` with restricted permissions.

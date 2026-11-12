@@ -8,7 +8,7 @@ import pytest
 from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.domain import Harness, MediaDraftCreate, ThreadCreate, TurnCreate, TurnState, now
 from sandbox_harness.media_worker import MediaWorker
-from sandbox_harness.app import media_group_has_executed_job
+from sandbox_harness.app import media_group_has_executed_job, media_group_needs_agent_continuation
 from sandbox_harness.store import ArtifactRow, MediaOutboxRow, Store
 
 
@@ -172,12 +172,19 @@ async def test_cancelled_media_only_batch_still_becomes_ready(tmp_path):
         ready, group = await store.media_continuation_group(turn.id)
         assert ready is True and group[0]["status"] == "cancelled" and not group[0]["job_id"]
         assert not media_group_has_executed_job(group)
+        assert not media_group_needs_agent_continuation(group)
         claimed = await store.claim_media_batches("dispatcher")
         assert claimed == [{"turn_id": turn.id, "thread_id": thread.id, "owner_id": owner}]
         await store.finish_media_batch(turn.id, "dispatcher", delivered=True)
         assert await store.claim_media_batches("dispatcher") == []
     finally:
         await store.close()
+
+
+def test_expired_media_group_requires_agent_continuation_without_a_job():
+    group = [{"draft_id": "draft", "job_id": "", "status": "expired"}]
+    assert not media_group_has_executed_job(group)
+    assert media_group_needs_agent_continuation(group)
 
 
 def test_media_worker_corrects_bad_provider_mime_from_file_signature():

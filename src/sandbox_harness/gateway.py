@@ -275,7 +275,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, str(exc))
         try:
             draft, _ = await activity_store.create_media_draft(owner_id, claims.thread_id, value,
-                expires_at=now() + timedelta(minutes=10), provider_spec=spec,
+                expires_at=now() + timedelta(seconds=settings.media_draft_ttl_seconds), provider_spec=spec,
                 reference_snapshots=references)
         except KeyError:
             raise HTTPException(404, "Media Turn not found")
