@@ -102,6 +102,17 @@ idempotency key, responding owner and response lease expiry. The unique native
 identity is `(turn_id, runtime_interaction_id)`. Only the matching active Runtime
 execution can receive a response.
 
+## Sandbox inspection
+
+`sandbox_controls` is the durable exclusive user-control record for one Thread.
+It binds owner, live Sandbox, generation, short-lived capability nonce, Execd
+PTY session and expiry. `sandbox_port_grants` records private, revocable port
+preview access. `sandbox_audit_events` records structural control/file/process/
+port actions without commands, terminal output or file content.
+
+These rows do not make a Sandbox persistent. `threads.checkpoint_ref` and
+ProjectFiles remain the restore source after a Sandbox is deleted.
+
 ## Users and account Sessions
 
 `users` stores stable account ID/owner ID, normalized unique username, Argon2id

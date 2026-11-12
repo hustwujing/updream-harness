@@ -60,8 +60,12 @@ class SandboxPool:
     async def managed_sandbox_ids(self) -> set[str]:
         async with self._lock:
             return set(self._retiring) | {sandbox.id for sandbox in self._attached.values()} | {
-                sandbox.id for rows in self._warm.values() for sandbox in rows
+            sandbox.id for rows in self._warm.values() for sandbox in rows
             }
+
+    async def get_attached(self, thread_id: str) -> Sandbox | None:
+        async with self._lock:
+            return self._attached.get(thread_id)
 
     @observed("sandbox.delete_tracked")
     async def _delete_tracked(self, sandbox: Sandbox, *, user_slot: bool = True) -> None:

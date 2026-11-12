@@ -145,6 +145,26 @@ Draft `generation_mode` and `references` are validated before confirmation.
 References identify a managed ProjectFile by ID or path and provide only a
 role/usage. Callers cannot provide Provider URLs or Ark Asset IDs.
 
+## Sandbox inspector
+
+```text
+GET    /api/threads/{thread_id}/sandbox
+POST   /api/threads/{thread_id}/sandbox/restore
+GET    /api/threads/{thread_id}/sandbox/files
+GET    /api/threads/{thread_id}/sandbox/file
+PUT    /api/threads/{thread_id}/sandbox/file
+GET    /api/threads/{thread_id}/sandbox/processes
+POST   /api/threads/{thread_id}/sandbox/processes/{pid}/stop
+GET    /api/threads/{thread_id}/sandbox/ports
+GET    /api/threads/{thread_id}/sandbox/audit
+POST   /api/threads/{thread_id}/sandbox/takeover
+POST   /api/threads/{thread_id}/sandbox/release
+POST   /api/threads/{thread_id}/sandbox/terminal-ticket
+WS     /api/threads/{thread_id}/sandbox/terminal
+POST   /api/threads/{thread_id}/sandbox/ports/{port}/grant
+ANY/WS /api/sandbox-preview/{grant_id}/{path}
+```
+
 ## Runtime API
 
 The in-sandbox Runtime API is private to `RuntimeClient`; it includes configure,

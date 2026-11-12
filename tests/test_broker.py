@@ -1,10 +1,12 @@
 import asyncio
+from datetime import timedelta
+import httpx
 import pytest
 
 from sandbox_harness.broker import Broker
 from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.config import Settings
-from sandbox_harness.domain import EventKind, Harness, InteractionResponse, RuntimeEvent, RuntimeResult, ThreadCreate, TurnCreate, TurnInputCreate, TurnState
+from sandbox_harness.domain import EventKind, Harness, InteractionResponse, RuntimeEvent, RuntimeResult, ThreadCreate, TurnCreate, TurnInputCreate, TurnState, now
 from sandbox_harness.objects import ObjectStore
 from sandbox_harness.pool import SandboxPool
 from sandbox_harness.runtime import RuntimeStreamInterrupted
@@ -102,6 +104,28 @@ class InteractionRuntime(Runtime):
 class FailingInteractionRuntime(InteractionRuntime):
     async def respond_interaction(self, sandbox, interaction_id, response):
         raise httpx.ConnectError("runtime connection reset")
+
+
+async def test_user_sandbox_control_blocks_turn_archive_and_delete(tmp_path):
+    settings=Settings(data_root=tmp_path,database_url="sqlite+aiosqlite:///"+str(tmp_path/"control-block.db"),
+        backend="fake",gateway_signing_key="k"*32,gateway_url="http://127.0.0.1:9")
+    store=Store(settings.database_url);await store.initialize();objects=ObjectStore(tmp_path/"objects")
+    backend=FakeSandboxBackend();pool=SandboxPool(backend,{h:"" for h in Harness},{h:0 for h in Harness})
+    catalog=HarnessCatalog();broker=Broker(settings,store,objects,pool,Runtime(),catalog)
+    try:
+        owner="a"*64;profile=catalog.resolve("codex","gpt-5.6","standard")
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level="standard",title="Controlled"),profile,owner)
+        await store.begin_sandbox_control(thread.id,owner,"sandbox-control","nonce",
+            now()+timedelta(hours=1))
+        with pytest.raises(RuntimeError,match="sandbox_takeover_active"):
+            await broker.submit(thread.id,TurnCreate(message="new",idempotency_key="blocked-turn"))
+        with pytest.raises(RuntimeError,match="sandbox_takeover_active"):
+            await broker.set_thread_archived(thread.id,owner,archived=True)
+        with pytest.raises(RuntimeError,match="sandbox_takeover_active"):
+            await broker.delete_thread(thread.id,owner)
+    finally:
+        await broker.close();await pool.close();await store.close()
 
 
 async def test_terminal_turn_cannot_be_cancelled(tmp_path):

@@ -43,6 +43,8 @@ class SandboxBackend(Protocol):
     async def delete(self, sandbox: Sandbox) -> None: ...
     async def find_by_turn(self, turn_id: str) -> list[Sandbox]: ...
     async def list_namespace(self) -> list[Sandbox]: ...
+    async def get(self, sandbox_id: str) -> Sandbox: ...
+    async def endpoint(self, sandbox: Sandbox, port: int) -> tuple[str, dict[str, str]]: ...
 
 
 class OpenSandboxBackend:
@@ -160,6 +162,30 @@ class OpenSandboxBackend:
                 continue
         return result
 
+    async def get(self, sandbox_id: str) -> Sandbox:
+        response = await self.client.get(f"/v1/sandboxes/{sandbox_id}")
+        if response.status_code == 404:
+            raise SandboxNotFound("OpenSandbox no longer has sandbox " + sandbox_id)
+        response.raise_for_status()
+        row = response.json(); metadata = row.get("metadata") or {}
+        if metadata.get("sandbox-harness.io/namespace") != self.namespace:
+            raise SandboxNotFound("Sandbox is outside this product namespace")
+        harness = Harness(metadata.get("sandbox-harness.io/harness", "codex"))
+        return await self._ready(self._sandbox(row, harness, (row.get("image") or {}).get("uri", ""), metadata))
+
+    async def endpoint(self, sandbox: Sandbox, port: int) -> tuple[str, dict[str, str]]:
+        if not 1 <= port <= 65535:
+            raise ValueError("Invalid sandbox port")
+        response = await self.client.get(f"/v1/sandboxes/{sandbox.id}/endpoints/{port}",
+            params={"use_server_proxy": "true"})
+        if response.status_code == 404:
+            raise SandboxNotFound("OpenSandbox endpoint is unavailable")
+        response.raise_for_status()
+        value = response.json().get("endpoint")
+        if not isinstance(value, str) or not value:
+            raise RuntimeError("OpenSandbox returned no endpoint")
+        return (value if "://" in value else "http://" + value), dict(self.client.headers)
+
     @observed("sandbox.bind")
     async def bind(self, sandbox: Sandbox, thread_id: str, turn_id: str) -> None:
         patch = {
@@ -230,6 +256,17 @@ class FakeSandboxBackend:
     async def list_namespace(self) -> list[Sandbox]:
         return [item for item in self.items.values()
             if item.metadata.get("sandbox-harness.io/namespace") == self.namespace]
+
+    async def get(self, sandbox_id: str) -> Sandbox:
+        value = self.items.get(sandbox_id)
+        if not value:
+            raise SandboxNotFound("Fake backend no longer has sandbox " + sandbox_id)
+        return value
+
+    async def endpoint(self, sandbox: Sandbox, port: int) -> tuple[str, dict[str, str]]:
+        if sandbox.id not in self.items:
+            raise SandboxNotFound("Fake backend no longer has sandbox " + sandbox.id)
+        return self.runtime_url.rstrip("/") + f"/ports/{port}", {}
 
     @observed("sandbox.bind")
     async def bind(self, sandbox: Sandbox, thread_id: str, turn_id: str) -> None:

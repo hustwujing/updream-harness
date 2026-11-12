@@ -92,6 +92,12 @@ Uploaded Turn attachments are versioned as managed project assets and exported o
 
 The Workspace panel also supports direct project uploads, rename, deletion and version history. Deletion creates an auditable tombstone; each Turn resets managed directories before materializing the current manifest, so stale files cannot survive in an attached Sandbox.
 
+The Sandbox workbench adds owner-scoped live overview, files, processes,
+metrics, Execd PTY terminal, private port preview and audit history. Inspection
+does not expose OpenSandbox credentials. Writable terminal and file editing use
+an exclusive takeover state; release checkpoints the workspace and revokes its
+short-lived network capability before Agent execution is re-enabled.
+
 The browser keeps the selected Thread in `?thread=<id>`, restores it after refresh and supports history navigation. Users may delete terminal Threads; deletion first removes any retained Session Sandbox, then removes the owner's conversation records. Images, videos and text files open in an ownership-checked inline preview, while every file retains an explicit download action.
 
 ## Development

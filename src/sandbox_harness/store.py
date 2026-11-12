@@ -329,6 +329,43 @@ class MediaOutboxRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class SandboxControlRow(Base):
+    __tablename__ = "sandbox_controls"
+    thread_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    sandbox_id: Mapped[str] = mapped_column(String(200), index=True)
+    state: Mapped[str] = mapped_column(String(24), index=True)
+    generation: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    capability_nonce: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    pty_session_id: Mapped[str] = mapped_column(String(160), default="", server_default="")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SandboxPortGrantRow(Base):
+    __tablename__ = "sandbox_port_grants"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    sandbox_id: Mapped[str] = mapped_column(String(200), index=True)
+    port: Mapped[int] = mapped_column(Integer)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SandboxAuditRow(Base):
+    __tablename__ = "sandbox_audit_events"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    sandbox_id: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    action: Mapped[str] = mapped_column(String(80), index=True)
+    detail_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class UserRow(Base):
     __tablename__ = "users"
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -751,6 +788,9 @@ class Store:
             if any(job.status not in {"succeeded", "failed", "cancelled", "unknown"} for job in media_jobs):
                 raise RuntimeError("active_thread_cannot_be_deleted")
             turn_ids = [turn.id for turn in turns]
+            await db.execute(delete(SandboxAuditRow).where(SandboxAuditRow.thread_id == thread_id))
+            await db.execute(delete(SandboxPortGrantRow).where(SandboxPortGrantRow.thread_id == thread_id))
+            await db.execute(delete(SandboxControlRow).where(SandboxControlRow.thread_id == thread_id))
             media_job_ids = [job.id for job in media_jobs]
             if media_job_ids:
                 await db.execute(delete(MediaOutboxRow).where(MediaOutboxRow.job_id.in_(media_job_ids)))
@@ -771,6 +811,174 @@ class Store:
         if self.events:
             await self.events.delete(turn_ids)
         return turn_ids
+
+    @staticmethod
+    def sandbox_control_view(row: SandboxControlRow) -> dict:
+        return {"thread_id": row.thread_id, "sandbox_id": row.sandbox_id, "state": row.state,
+            "generation": row.generation, "pty_session_id": row.pty_session_id,
+            "expires_at": utc_datetime(row.expires_at), "created_at": row.created_at,
+            "updated_at": row.updated_at}
+
+    async def get_sandbox_control(self, thread_id: str, owner_id: str | None = None) -> dict | None:
+        async with self.connections() as db:
+            query = select(SandboxControlRow).where(SandboxControlRow.thread_id == thread_id)
+            if owner_id is not None:
+                query = query.where(SandboxControlRow.owner_id == owner_id)
+            row = (await db.execute(query)).scalar_one_or_none()
+        return self.sandbox_control_view(row) if row else None
+
+    async def sandbox_control_nonce(self, thread_id: str, owner_id: str) -> str:
+        async with self.connections() as db:
+            return (await db.execute(select(SandboxControlRow.capability_nonce).where(
+                SandboxControlRow.thread_id == thread_id,
+                SandboxControlRow.owner_id == owner_id))).scalar_one_or_none() or ""
+
+    async def begin_sandbox_control(self, thread_id: str, owner_id: str, sandbox_id: str,
+                                    capability_nonce: str, expires_at: datetime) -> dict:
+        async with self.connections.begin() as db:
+            thread = (await db.execute(select(ThreadRow).where(ThreadRow.id == thread_id,
+                ThreadRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
+            if not thread:
+                raise KeyError("thread_not_found")
+            active = (await db.execute(select(TurnRow.id).where(TurnRow.thread_id == thread_id,
+                TurnRow.state.not_in([state.value for state in TERMINAL])).limit(1))).scalar_one_or_none()
+            if active:
+                raise RuntimeError("active_turn_prevents_sandbox_takeover")
+            row = await db.get(SandboxControlRow, thread_id, with_for_update=True)
+            timestamp = now()
+            if row and row.state == "user_controlled" and utc_datetime(row.expires_at) > timestamp:
+                if row.sandbox_id != sandbox_id:
+                    raise RuntimeError("sandbox_control_conflict")
+                row.expires_at = expires_at; row.updated_at = timestamp
+            elif row:
+                row.owner_id = owner_id; row.sandbox_id = sandbox_id; row.state = "user_controlled"
+                row.generation += 1; row.capability_nonce = capability_nonce; row.pty_session_id = ""
+                row.expires_at = expires_at; row.created_at = timestamp; row.updated_at = timestamp
+            else:
+                row = SandboxControlRow(thread_id=thread_id, owner_id=owner_id,
+                    sandbox_id=sandbox_id, state="user_controlled", generation=1,
+                    capability_nonce=capability_nonce, expires_at=expires_at,
+                    created_at=timestamp, updated_at=timestamp)
+                db.add(row)
+        return self.sandbox_control_view(row)
+
+    async def touch_sandbox_control(self, thread_id: str, owner_id: str, expires_at: datetime) -> dict:
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(SandboxControlRow).where(
+                SandboxControlRow.thread_id == thread_id,
+                SandboxControlRow.owner_id == owner_id,
+                SandboxControlRow.state == "user_controlled").with_for_update())).scalar_one_or_none()
+            if not row or utc_datetime(row.expires_at) <= now():
+                raise RuntimeError("sandbox_control_not_active")
+            row.expires_at = expires_at; row.updated_at = now()
+        return self.sandbox_control_view(row)
+
+    async def set_sandbox_terminal(self, thread_id: str, owner_id: str,
+                                   sandbox_id: str, pty_session_id: str) -> dict:
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(SandboxControlRow).where(
+                SandboxControlRow.thread_id == thread_id,
+                SandboxControlRow.owner_id == owner_id,
+                SandboxControlRow.sandbox_id == sandbox_id,
+                SandboxControlRow.state == "user_controlled").with_for_update())).scalar_one_or_none()
+            if not row or utc_datetime(row.expires_at) <= now():
+                raise RuntimeError("sandbox_control_not_active")
+            row.pty_session_id = pty_session_id; row.updated_at = now()
+        return self.sandbox_control_view(row)
+
+    async def mark_sandbox_control_releasing(self, thread_id: str, owner_id: str) -> dict:
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(SandboxControlRow).where(
+                SandboxControlRow.thread_id == thread_id,
+                SandboxControlRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
+            if not row:
+                raise RuntimeError("sandbox_control_not_active")
+            row.state = "releasing"; row.updated_at = now()
+        return self.sandbox_control_view(row)
+
+    async def finish_sandbox_control(self, thread_id: str, owner_id: str) -> None:
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(SandboxControlRow).where(
+                SandboxControlRow.thread_id == thread_id,
+                SandboxControlRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
+            if row:
+                await db.delete(row)
+            await db.execute(update(SandboxPortGrantRow).where(
+                SandboxPortGrantRow.thread_id == thread_id).values(revoked=True))
+
+    async def active_sandbox_control_ids(self) -> set[str]:
+        async with self.connections() as db:
+            rows = (await db.execute(select(SandboxControlRow.sandbox_id).where(
+                SandboxControlRow.state.in_(["user_controlled", "releasing"])))).scalars().all()
+        return set(rows)
+
+    async def expired_sandbox_controls(self, limit: int = 20) -> list[dict]:
+        async with self.connections() as db:
+            rows = (await db.execute(select(SandboxControlRow).where(
+                SandboxControlRow.expires_at <= now()).order_by(SandboxControlRow.expires_at)
+                .limit(limit))).scalars().all()
+        return [self.sandbox_control_view(row) | {"owner_id": row.owner_id,
+            "capability_nonce": row.capability_nonce} for row in rows]
+
+    async def update_thread_checkpoint_idle(self, thread_id: str, owner_id: str,
+                                            checkpoint_ref: str) -> None:
+        async with self.connections.begin() as db:
+            thread = (await db.execute(select(ThreadRow).where(ThreadRow.id == thread_id,
+                ThreadRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
+            if not thread:
+                raise KeyError("thread_not_found")
+            active = (await db.execute(select(TurnRow.id).where(TurnRow.thread_id == thread_id,
+                TurnRow.state.not_in([state.value for state in TERMINAL])).limit(1))).scalar_one_or_none()
+            if active:
+                raise RuntimeError("active_turn_prevents_checkpoint")
+            thread.checkpoint_ref = checkpoint_ref; thread.updated_at = now()
+
+    async def add_sandbox_audit(self, thread_id: str, owner_id: str, sandbox_id: str,
+                                action: str, detail: dict | None = None) -> None:
+        safe_detail = detail or {}
+        async with self.connections.begin() as db:
+            db.add(SandboxAuditRow(id=identifier(), thread_id=thread_id, owner_id=owner_id,
+                sandbox_id=sandbox_id, action=action[:80],
+                detail_json=json.dumps(safe_detail, ensure_ascii=True, sort_keys=True), created_at=now()))
+
+    async def list_sandbox_audit(self, thread_id: str, owner_id: str, limit: int = 100) -> list[dict]:
+        async with self.connections() as db:
+            rows = (await db.execute(select(SandboxAuditRow).where(
+                SandboxAuditRow.thread_id == thread_id, SandboxAuditRow.owner_id == owner_id)
+                .order_by(SandboxAuditRow.created_at.desc()).limit(min(max(limit, 1), 500)))).scalars().all()
+        return [{"id": row.id, "action": row.action, "detail": json.loads(row.detail_json or "{}"),
+            "created_at": row.created_at} for row in rows]
+
+    async def create_sandbox_port_grant(self, thread_id: str, owner_id: str,
+                                        sandbox_id: str, port: int,
+                                        expires_at: datetime) -> dict:
+        row = SandboxPortGrantRow(id=identifier(), thread_id=thread_id, owner_id=owner_id,
+            sandbox_id=sandbox_id, port=port, expires_at=expires_at,
+            revoked=False, created_at=now())
+        async with self.connections.begin() as db:
+            thread = (await db.execute(select(ThreadRow.id).where(ThreadRow.id == thread_id,
+                ThreadRow.owner_id == owner_id))).scalar_one_or_none()
+            if not thread:
+                raise KeyError("thread_not_found")
+            db.add(row)
+        return {"id": row.id, "thread_id": thread_id, "sandbox_id": sandbox_id,
+            "port": port, "expires_at": expires_at}
+
+    async def get_sandbox_port_grant(self, grant_id: str, owner_id: str) -> dict | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(SandboxPortGrantRow).where(
+                SandboxPortGrantRow.id == grant_id, SandboxPortGrantRow.owner_id == owner_id,
+                SandboxPortGrantRow.revoked == False,
+                SandboxPortGrantRow.expires_at > now()))).scalar_one_or_none()
+        return ({"id": row.id, "thread_id": row.thread_id, "sandbox_id": row.sandbox_id,
+            "port": row.port, "expires_at": row.expires_at} if row else None)
+
+    async def revoke_sandbox_port_grant(self, grant_id: str, owner_id: str) -> bool:
+        async with self.connections.begin() as db:
+            result = await db.execute(update(SandboxPortGrantRow).where(
+                SandboxPortGrantRow.id == grant_id, SandboxPortGrantRow.owner_id == owner_id)
+                .values(revoked=True))
+        return bool(result.rowcount)
 
     @observed("db.turn.create")
     async def create_turn(self, thread_id: str, value: TurnCreate, resolved: ResolvedProfile, owner_id: str, *,

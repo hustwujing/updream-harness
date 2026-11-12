@@ -16,10 +16,11 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from websockets.asyncio.client import connect as websocket_connect
 
 from .broker import Broker
 from .auth import AUTH_COOKIE, AccountAuth, normalize_username
@@ -35,6 +36,7 @@ from .objects import object_store
 from .pool import SandboxPool
 from .runtime import RuntimeClient
 from .sandbox import FakeSandboxBackend, OpenSandboxBackend
+from .sandbox_inspector import SandboxInspector
 from .sessions import COOKIE, Sessions
 from .store import Store
 
@@ -144,12 +146,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     store, objects, pool, catalog, discovery, media_catalog, broker = components(settings)
     sessions = Sessions(settings.session_signing_key)
     account_auth = AccountAuth(store, settings.auth_session_ttl_seconds)
+    inspector = SandboxInspector(settings, store, objects, pool, broker.runtime, broker)
     login_failures: dict[str, deque[float]] = defaultdict(deque)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await store.initialize()
         await broker.start()
+        await inspector.start()
         media_outbox_stop = asyncio.Event()
         media_outbox_owner = "media-outbox-" + uuid.uuid4().hex
         async def continue_media(batch: dict):
@@ -240,8 +244,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await pool_task
         media_outbox_stop.set()
         await media_outbox_task
+        await inspector.close()
         await broker.close()
-        await pool.close(preserve_sandbox_ids={sandbox.id for sandbox in broker.active_sandboxes.values()})
+        await pool.close(preserve_sandbox_ids=({sandbox.id for sandbox in broker.active_sandboxes.values()}
+            | await store.active_sandbox_control_ids()))
         await store.close()
 
     app = FastAPI(title="Sandbox Harness Platform", lifespan=lifespan)
@@ -252,6 +258,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.pool = pool
     app.state.broker = broker
     app.state.account_auth = account_auth
+    app.state.inspector = inspector
 
     def cookie_path(request: Request) -> str:
         prefix = request.headers.get("x-forwarded-prefix", "").rstrip("/")
@@ -841,6 +848,251 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not await store.get_turn_for_owner(turn_id, request.state.owner_id):
             raise HTTPException(404, "Turn not found")
         return await store.events_after(turn_id, after, min(max(limit, 1), 1000))
+
+    async def sandbox_api(call):
+        try:
+            return await call
+        except KeyError:
+            raise HTTPException(404, "Sandbox or Thread not found")
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            raise HTTPException(404 if status == 404 else 502, "Sandbox runtime is unavailable")
+        except httpx.HTTPError:
+            raise HTTPException(502, "Sandbox runtime is unavailable")
+
+    @app.get("/api/threads/{thread_id}/sandbox")
+    async def sandbox_status(thread_id: str, request: Request):
+        return await sandbox_api(inspector.status(thread_id, request.state.owner_id))
+
+    @app.post("/api/threads/{thread_id}/sandbox/restore")
+    async def sandbox_restore(thread_id: str, request: Request):
+        await sandbox_api(inspector.restore(thread_id, request.state.owner_id))
+        return await sandbox_api(inspector.status(thread_id, request.state.owner_id))
+
+    @app.get("/api/threads/{thread_id}/sandbox/files")
+    async def sandbox_files(thread_id: str, request: Request, path: str = "project", depth: int = 2):
+        return await sandbox_api(inspector.files(thread_id, request.state.owner_id, path, depth))
+
+    @app.get("/api/threads/{thread_id}/sandbox/file")
+    async def sandbox_file(thread_id: str, request: Request, path: str):
+        data, mime = await sandbox_api(inspector.file(thread_id, request.state.owner_id, path))
+        safe_inline = mime.startswith("text/") or mime in {"application/json", "application/xml"}
+        return Response(data, media_type=mime if safe_inline else "application/octet-stream",
+            headers={"Content-Disposition": content_disposition(Path(path).name, inline=safe_inline),
+                "Content-Security-Policy": "sandbox; default-src 'none'"})
+
+    @app.put("/api/threads/{thread_id}/sandbox/file")
+    async def sandbox_write_file(thread_id: str, request: Request, path: str):
+        data = await limited_body(request, settings.sandbox_inspect_max_file_bytes)
+        return await sandbox_api(inspector.write_file(thread_id, request.state.owner_id,
+            path, data, request.headers.get("content-type", "text/plain").split(";", 1)[0]))
+
+    @app.get("/api/threads/{thread_id}/sandbox/processes")
+    async def sandbox_processes(thread_id: str, request: Request):
+        return await sandbox_api(inspector.processes(thread_id, request.state.owner_id))
+
+    @app.post("/api/threads/{thread_id}/sandbox/processes/{pid}/stop")
+    async def sandbox_stop_process(thread_id: str, pid: int, request: Request):
+        return await sandbox_api(inspector.stop_process(thread_id, request.state.owner_id, pid))
+
+    @app.get("/api/threads/{thread_id}/sandbox/ports")
+    async def sandbox_ports(thread_id: str, request: Request):
+        return await sandbox_api(inspector.ports(thread_id, request.state.owner_id))
+
+    @app.get("/api/threads/{thread_id}/sandbox/audit")
+    async def sandbox_audit(thread_id: str, request: Request):
+        if not await store.get_thread(thread_id, request.state.owner_id):
+            raise HTTPException(404, "Thread not found")
+        return {"items": await store.list_sandbox_audit(thread_id, request.state.owner_id)}
+
+    @app.post("/api/threads/{thread_id}/sandbox/takeover")
+    async def sandbox_takeover(thread_id: str, request: Request, interrupt: bool = False):
+        network_access = "public" if request.state.account else "restricted"
+        return await sandbox_api(inspector.takeover(thread_id, request.state.owner_id,
+            network_access=network_access, interrupt=interrupt))
+
+    @app.post("/api/threads/{thread_id}/sandbox/release")
+    async def sandbox_release(thread_id: str, request: Request):
+        return await sandbox_api(inspector.release(thread_id, request.state.owner_id))
+
+    @app.post("/api/threads/{thread_id}/sandbox/terminal-ticket")
+    async def sandbox_terminal_ticket(thread_id: str, request: Request):
+        return await sandbox_api(inspector.terminal_ticket(thread_id, request.state.owner_id))
+
+    @app.post("/api/threads/{thread_id}/sandbox/ports/{port}/grant")
+    async def sandbox_port_grant(thread_id: str, port: int, request: Request):
+        value = await sandbox_api(inspector.create_port_grant(thread_id,
+            request.state.owner_id, port))
+        return {**value, "preview_url": f"/api/sandbox-preview/{value['id']}/"}
+
+    @app.delete("/api/sandbox-preview/{grant_id}")
+    async def revoke_sandbox_port_grant(grant_id: str, request: Request):
+        if not await store.revoke_sandbox_port_grant(grant_id, request.state.owner_id):
+            raise HTTPException(404, "Sandbox port grant not found")
+        return {"revoked": True}
+
+    def filtered_proxy_headers(headers, *, request_headers: bool) -> dict[str, str]:
+        blocked = {"connection", "proxy-connection", "keep-alive", "transfer-encoding", "upgrade",
+            "host", "cookie", "authorization", "proxy-authorization"}
+        if not request_headers:
+            blocked |= {"content-length", "content-encoding", "set-cookie", "x-frame-options"}
+        return {key: value for key, value in headers.items() if key.lower() not in blocked}
+
+    @app.api_route("/api/sandbox-preview/{grant_id}/{path:path}",
+        methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+    async def sandbox_port_preview(grant_id: str, path: str, request: Request):
+        try:
+            grant, endpoint, endpoint_headers = await inspector.port_endpoint(
+                grant_id, request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404, "Sandbox port preview not found")
+        except (httpx.HTTPError, RuntimeError):
+            raise HTTPException(502, "Sandbox port is unavailable")
+        target = urljoin(endpoint.rstrip("/") + "/", path or "")
+        if request.url.query:
+            target += "?" + request.url.query
+        body = await limited_body(request, 16 * 1024 * 1024)
+        client = httpx.AsyncClient(headers=endpoint_headers, timeout=60,
+            follow_redirects=False, trust_env=False)
+        try:
+            upstream = await client.send(client.build_request(request.method, target,
+                headers=filtered_proxy_headers(request.headers, request_headers=True),
+                content=body), stream=True)
+        except Exception:
+            await client.aclose()
+            raise HTTPException(502, "Sandbox port is unavailable")
+        content_type = upstream.headers.get("content-type", "application/octet-stream")
+        prefix = f"/api/sandbox-preview/{grant_id}/"
+        if request.method != "HEAD" and content_type.startswith(("text/html", "text/css")):
+            data = await upstream.aread(); await upstream.aclose(); await client.aclose()
+            if len(data) > 8 * 1024 * 1024:
+                raise HTTPException(413, "Sandbox preview document is too large")
+            text = data.decode(errors="replace")
+            if content_type.startswith("text/html"):
+                base = f'<base href="{prefix}">'
+                text = text.replace("<head>", "<head>" + base, 1) if "<head>" in text else base + text
+                for attribute in ("src", "href", "action"):
+                    text = text.replace(f'{attribute}="/', f'{attribute}="{prefix}')
+                    text = text.replace(f"{attribute}='/", f"{attribute}='{prefix}")
+            else:
+                text = text.replace("url(/", f"url({prefix}")
+            headers = filtered_proxy_headers(upstream.headers, request_headers=False)
+            headers["Content-Security-Policy"] = ("default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' "
+                "'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; frame-ancestors 'self'")
+            return Response(text, status_code=upstream.status_code,
+                media_type=content_type.split(";", 1)[0], headers=headers)
+
+        async def stream_upstream():
+            try:
+                async for chunk in upstream.aiter_bytes():
+                    yield chunk
+            finally:
+                await upstream.aclose(); await client.aclose()
+        headers = filtered_proxy_headers(upstream.headers, request_headers=False)
+        location = upstream.headers.get("location")
+        if location:
+            parsed_location = urlsplit(location)
+            redirected = parsed_location.path.lstrip("/")
+            if parsed_location.query:
+                redirected += "?" + parsed_location.query
+            headers["Location"] = prefix + redirected
+        return StreamingResponse(stream_upstream(), status_code=upstream.status_code,
+            media_type=content_type.split(";", 1)[0], headers=headers)
+
+    async def websocket_owner(websocket: WebSocket) -> str:
+        origin = websocket.headers.get("origin")
+        if origin and urlsplit(origin).netloc != websocket.headers.get("host"):
+            raise ValueError("cross_site_websocket_rejected")
+        ingress = websocket.headers.get("x-updream-ingress", "direct").strip().lower()
+        account, _ = await account_auth.resolve(websocket.cookies.get(AUTH_COOKIE))
+        if account:
+            return account.owner_id
+        if ingress == "frpc":
+            raise ValueError("authentication_required")
+        owner_id, _, new_session = sessions.resolve(websocket.cookies.get(COOKIE))
+        if new_session:
+            raise ValueError("browser_session_required")
+        return owner_id
+
+    async def relay_websockets(browser: WebSocket, upstream) -> None:
+        async def to_browser():
+            async for message in upstream:
+                if isinstance(message, bytes):
+                    await browser.send_bytes(message)
+                else:
+                    await browser.send_text(message)
+
+        async def to_upstream():
+            while True:
+                message = await browser.receive()
+                if message["type"] == "websocket.disconnect":
+                    return
+                if message.get("bytes") is not None:
+                    await upstream.send(message["bytes"])
+                elif message.get("text") is not None:
+                    await upstream.send(message["text"])
+
+        first = asyncio.create_task(to_browser())
+        second = asyncio.create_task(to_upstream())
+        done, pending = await asyncio.wait({first, second}, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        for task in done:
+            exception = task.exception() if not task.cancelled() else None
+            if exception and not isinstance(exception, WebSocketDisconnect):
+                raise exception
+
+    @app.websocket("/api/threads/{thread_id}/sandbox/terminal")
+    async def sandbox_terminal(websocket: WebSocket, thread_id: str, ticket: str, since: int = 0):
+        try:
+            owner_id = await websocket_owner(websocket)
+            ticket_value = inspector.tickets.verify(ticket)
+            if ticket_value.get("thread_id") != thread_id or ticket_value.get("owner_id") != owner_id:
+                raise ValueError("terminal_ticket_mismatch")
+            connection = await inspector.terminal_connection(ticket, owner_id, since)
+            async with connection as upstream:
+                await websocket.accept()
+                await relay_websockets(websocket, upstream)
+        except (ValueError, KeyError):
+            await websocket.close(code=4403)
+        except WebSocketDisconnect:
+            return
+        except Exception as exc:
+            event("sandbox.terminal.relay_failed", level=logging.WARNING,
+                thread_id=thread_id, exception_type=type(exc).__name__)
+            with suppress(Exception):
+                await websocket.close(code=1011)
+
+    @app.websocket("/api/sandbox-preview/{grant_id}/{path:path}")
+    async def sandbox_port_preview_websocket(websocket: WebSocket, grant_id: str, path: str):
+        try:
+            owner_id = await websocket_owner(websocket)
+            _, endpoint, endpoint_headers = await inspector.port_endpoint(grant_id, owner_id)
+            target = ("wss://" if endpoint.startswith("https://") else "ws://") + endpoint.split("://", 1)[1]
+            target = urljoin(target.rstrip("/") + "/", path or "")
+            if websocket.url.query:
+                target += "?" + websocket.url.query
+            requested = [value.strip() for value in websocket.headers.get(
+                "sec-websocket-protocol", "").split(",") if value.strip()]
+            async with websocket_connect(target, additional_headers=endpoint_headers,
+                    subprotocols=requested or None, max_size=64 * 1024 * 1024,
+                    open_timeout=20, ping_interval=20, ping_timeout=20) as upstream:
+                await websocket.accept(subprotocol=upstream.subprotocol)
+                await relay_websockets(websocket, upstream)
+        except (ValueError, KeyError):
+            await websocket.close(code=4403)
+        except WebSocketDisconnect:
+            return
+        except Exception as exc:
+            event("sandbox.port_websocket.relay_failed", level=logging.WARNING,
+                exception_type=type(exc).__name__)
+            with suppress(Exception):
+                await websocket.close(code=1011)
 
     @app.post("/api/uploads")
     async def upload(request: Request, name: str, mime: str = "application/octet-stream"):

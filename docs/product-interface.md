@@ -81,6 +81,14 @@ private Harness state.
 
 The Workspace side sheet lists current project assets and artifacts, version history and active supervised background jobs. It supports direct asset upload, rename, deletion, download and background-job cancellation.
 
+The right inspector switches between Workspace and Sandbox. Sandbox provides
+overview, live files, terminal, processes, private port previews and audit
+history. Observation remains available while an Agent runs. A write terminal
+requires explicit takeover; “stop and take over” first lets the active Turn
+finish cancellation cleanup. Releasing saves a checkpoint before Agent input is
+enabled again. A stopped Sandbox continues to show persistent ProjectFiles and
+offers explicit restore.
+
 The current Thread ID is stored in the page query string. Refresh and browser
 history restore only Threads owned by the signed browser identity. Terminal
 Threads can be archived or deleted from the sidebar; active Threads must first

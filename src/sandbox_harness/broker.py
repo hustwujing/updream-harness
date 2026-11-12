@@ -12,7 +12,7 @@ import httpx
 from .capability import CapabilityCodec
 from .catalog import HarnessCatalog
 from .config import Settings
-from .domain import EventKind, Harness, ItemType, RuntimeResult, TurnCreate, TurnState, TurnView
+from .domain import EventKind, Harness, ItemType, RuntimeResult, TurnCreate, TurnState, TurnView, now
 from .objects import ObjectStore
 from .errors import public_failure
 from .pool import SandboxPool
@@ -116,7 +116,8 @@ class Broker:
     async def cleanup_startup_orphans(self, *, delete_stale_warm: bool = False) -> None:
         await self.pool.retry_deletions()
         live_turns = await self.store.nonterminal_turn_ids()
-        active_ids = {sandbox.id for sandbox in self.active_sandboxes.values()} | await self.pool.managed_sandbox_ids()
+        active_ids = ({sandbox.id for sandbox in self.active_sandboxes.values()}
+            | await self.pool.managed_sandbox_ids() | await self.store.active_sandbox_control_ids())
         for sandbox in await self.pool.backend.list_namespace():
             turn_id = sandbox.metadata.get("sandbox-harness.io/turn", "")
             if turn_id.startswith("warm-") and not delete_stale_warm:
@@ -331,6 +332,9 @@ class Broker:
         thread = await self.store.get_thread(thread_id)
         if not thread:
             raise KeyError("thread_not_found")
+        control = await self.store.get_sandbox_control(thread_id, thread.owner_id)
+        if control and control["state"] in {"user_controlled", "releasing"} and control["expires_at"] > now():
+            raise RuntimeError("sandbox_takeover_active")
         if value.harness is not None and value.harness != thread.harness:
             raise ValueError("Harness is fixed for this conversation; create a new conversation to switch Harness")
         resolved = self.catalog.resolve(thread.harness, value.model or thread.model,
@@ -347,6 +351,8 @@ class Broker:
             thread = await self.store.get_thread(thread_id, owner_id)
             if not thread:
                 raise KeyError("thread_not_found")
+            if await self.store.get_sandbox_control(thread_id, owner_id):
+                raise RuntimeError("sandbox_takeover_active")
             turns = await self.store.list_turns(thread_id, owner_id)
             if any(turn.id in self.tasks or turn.id in self.active_sandboxes for turn in turns):
                 raise RuntimeError("active_thread_cannot_be_deleted")
@@ -355,6 +361,8 @@ class Broker:
 
     async def set_thread_archived(self, thread_id: str, owner_id: str, *, archived: bool):
         async with self.thread_lock(thread_id):
+            if archived and await self.store.get_sandbox_control(thread_id, owner_id):
+                raise RuntimeError("sandbox_takeover_active")
             thread = await self.store.set_thread_archived(thread_id, owner_id, archived=archived)
             if archived:
                 try:

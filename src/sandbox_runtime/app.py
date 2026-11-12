@@ -6,6 +6,7 @@ import json
 import mimetypes
 import os
 from pathlib import Path, PurePosixPath
+import psutil
 import signal
 import shutil
 import stat
@@ -18,7 +19,7 @@ import uuid
 from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from sandbox_harness.observability import RequestLoggingMiddleware, observed, event, enrich, telemetry, ToolObservations
@@ -30,6 +31,13 @@ from .skills import materialize_skills
 WORKSPACE = Path("/workspace")
 PERSISTENT = ("project", "state")
 OUTPUTS = WORKSPACE / "outputs"
+INSPECT_ROOTS = {
+    "project": WORKSPACE / "project",
+    "inbox": WORKSPACE / "inbox",
+    "outputs": OUTPUTS,
+}
+INSPECT_TEXT_LIMIT = 2 * 1024 * 1024
+INSPECT_INTERNAL_PORTS = {8080, 18080, 28600, 28601, 44772}
 RUN = Path("/run/harness")
 HARNESS_JSONL_LIMIT = 16 * 1024 * 1024
 RUNTIME_EVENT_JOURNAL_LIMIT = 256 * 1024 * 1024
@@ -533,6 +541,152 @@ def create_app() -> FastAPI:
                 yield json.dumps(row, ensure_ascii=False) + "\n"
                 if row.get("type") == "result":
                     return
+
+    def inspect_target(value: str, *, require_file: bool = False) -> tuple[str, Path]:
+        path = PurePosixPath((value or "project").strip().replace("\\", "/"))
+        if path.is_absolute() or not path.parts or path.parts[0] not in INSPECT_ROOTS or any(
+                part in {"", ".", ".."} for part in path.parts):
+            raise HTTPException(400, "Invalid sandbox workspace path")
+        root_name = path.parts[0]
+        root = INSPECT_ROOTS[root_name]
+        target = root.joinpath(*path.parts[1:])
+        current = root
+        for part in path.parts[1:]:
+            current = current / part
+            if current.is_symlink():
+                raise HTTPException(400, "Sandbox workspace links are not inspectable")
+        try:
+            if not target.resolve().is_relative_to(root.resolve()):
+                raise HTTPException(400, "Invalid sandbox workspace path")
+            if require_file and (not target.is_file() or target.is_symlink()):
+                raise HTTPException(404, "Sandbox file not found")
+        except OSError:
+            raise HTTPException(404, "Sandbox path not found")
+        return root_name, target
+
+    @app.get("/v1/inspect/overview")
+    async def inspect_overview():
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage(str(WORKSPACE))
+        execution = app.state.execution
+        return {"runtime": "running", "execution": (
+            "running" if execution and execution.result is None else "idle"),
+            "cpu_percent": round(psutil.cpu_percent(interval=None), 2),
+            "cpu_count": psutil.cpu_count() or 1,
+            "memory_used": int(memory.used), "memory_total": int(memory.total),
+            "disk_used": int(disk.used), "disk_total": int(disk.total),
+            "process_count": len(psutil.pids()),
+            "timestamp": datetime.now(timezone.utc).isoformat()}
+
+    @app.get("/v1/inspect/files")
+    async def inspect_files(path: str = "project", depth: int = 1):
+        root_name, target = inspect_target(path)
+        if not target.exists() or not target.is_dir():
+            raise HTTPException(404, "Sandbox directory not found")
+        depth = min(max(depth, 1), 4)
+        base_depth = len(target.parts)
+        items = []
+        for candidate in sorted(target.rglob("*"), key=lambda item: item.as_posix()):
+            relative_depth = len(candidate.parts) - base_depth
+            if relative_depth > depth:
+                continue
+            try:
+                info = candidate.lstat()
+            except OSError:
+                continue
+            kind = "symlink" if candidate.is_symlink() else "directory" if candidate.is_dir() else "file"
+            relative = candidate.relative_to(INSPECT_ROOTS[root_name]).as_posix()
+            items.append({"path": root_name + ("/" + relative if relative != "." else ""),
+                "name": candidate.name, "type": kind,
+                "size": int(info.st_size) if kind == "file" else 0,
+                "mime": mimetypes.guess_type(candidate.name)[0] or "application/octet-stream",
+                "modified_at": datetime.fromtimestamp(info.st_mtime, timezone.utc).isoformat()})
+            if len(items) >= 10_000:
+                break
+        return {"root": root_name, "path": path, "items": items, "truncated": len(items) >= 10_000}
+
+    @app.get("/v1/inspect/file")
+    async def inspect_file(path: str):
+        _, target = inspect_target(path, require_file=True)
+        info = target.stat()
+        if info.st_size > INSPECT_TEXT_LIMIT:
+            raise HTTPException(413, "Sandbox file is too large for inline inspection")
+        data = target.read_bytes()
+        mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        return Response(data, media_type=mime,
+            headers={"X-Sandbox-File-Size": str(info.st_size), "Cache-Control": "no-store"})
+
+    @app.put("/v1/inspect/file")
+    async def write_inspect_file(path: str, request: Request):
+        root_name, target = inspect_target(path)
+        relative = PurePosixPath(path).parts[1:]
+        if root_name != "project" or relative and relative[0] in {"assets", "artifacts"}:
+            raise HTTPException(403, "Only unmanaged project files may be edited")
+        data = await request.body()
+        if len(data) > INSPECT_TEXT_LIMIT:
+            raise HTTPException(413, "Sandbox file is too large for inline editing")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name("." + target.name + ".inspector.tmp")
+        temporary.write_bytes(data); os.chmod(temporary, 0o600); temporary.replace(target)
+        return {"path": path, "size": len(data), "updated": True}
+
+    @app.get("/v1/inspect/processes")
+    async def inspect_processes():
+        values = []
+        for process in psutil.process_iter(["pid", "ppid", "name", "status", "create_time",
+                "memory_info", "cpu_percent", "username"]):
+            try:
+                info = process.info
+                values.append({"pid": info["pid"], "ppid": info["ppid"],
+                    "name": (info.get("name") or "")[:160], "status": info.get("status") or "unknown",
+                    "cpu_percent": round(float(info.get("cpu_percent") or 0), 2),
+                    "memory_bytes": int(info["memory_info"].rss if info.get("memory_info") else 0),
+                    "started_at": datetime.fromtimestamp(info.get("create_time") or 0,
+                        timezone.utc).isoformat() if info.get("create_time") else ""})
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        return {"items": sorted(values, key=lambda value: value["pid"])[:5000]}
+
+    @app.post("/v1/inspect/processes/{pid}/stop")
+    async def stop_inspect_process(pid: int):
+        protected = {1, os.getpid(), os.getppid()}
+        if pid in protected or pid <= 1:
+            raise HTTPException(403, "Protected sandbox process cannot be stopped")
+        try:
+            process = psutil.Process(pid)
+            if process.uids().real != os.getuid():
+                raise HTTPException(403, "Sandbox process is owned by another identity")
+            process.terminate()
+            try:
+                await asyncio.to_thread(process.wait, 3)
+            except psutil.TimeoutExpired:
+                process.kill()
+            return {"pid": pid, "stopped": True}
+        except psutil.NoSuchProcess:
+            raise HTTPException(404, "Sandbox process not found")
+        except psutil.AccessDenied:
+            raise HTTPException(403, "Sandbox process cannot be stopped")
+
+    @app.get("/v1/inspect/ports")
+    async def inspect_ports():
+        values = {}
+        try:
+            connections = psutil.net_connections(kind="inet")
+        except psutil.AccessDenied:
+            connections = []
+        for connection in connections:
+            if connection.status != psutil.CONN_LISTEN or not connection.laddr:
+                continue
+            port = int(connection.laddr.port)
+            if port in INSPECT_INTERNAL_PORTS or port < 1024:
+                continue
+            name = ""
+            if connection.pid:
+                try: name = psutil.Process(connection.pid).name()[:160]
+                except (psutil.NoSuchProcess, psutil.AccessDenied): pass
+            values[port] = {"port": port, "address": connection.laddr.ip,
+                "pid": connection.pid or 0, "process": name, "protocol": "http"}
+        return {"items": [values[port] for port in sorted(values)]}
 
     @app.get("/v1/diagnostics")
     async def diagnostics(after: int = 0, limit: int = 500):

@@ -67,6 +67,19 @@ SANDBOX_HARNESS_ARK_ASSET_GROUP_ID=<AIGC asset group>
 Keep secrets only in `.data/config/platform.env`. The Ark Bearer API key,
 BOSS AK/SK and Ark control-plane AK/SK are distinct credential roles.
 
+Sandbox Inspector limits are host configuration, not Sandbox credentials:
+
+```dotenv
+SANDBOX_HARNESS_SANDBOX_CONTROL_TTL_SECONDS=3600
+SANDBOX_HARNESS_SANDBOX_PORT_GRANT_TTL_SECONDS=3600
+SANDBOX_HARNESS_SANDBOX_TERMINAL_TICKET_SECONDS=60
+SANDBOX_HARNESS_SANDBOX_INSPECT_MAX_FILE_BYTES=2097152
+```
+
+Terminal and port preview require OpenSandbox/Execd 1.2 PTY and server-proxy
+WebSocket support. Nginx must preserve WebSocket upgrade headers for `/api/`;
+the application remains the owner/authentication boundary.
+
 The foundation image tag includes the SHA-256 prefix of `runtime/foundation.Dockerfile`. `runtime/toolchain.lock.json` is verified while building the common runtime base, and the three final Harness images must expose the same locked toolchain before their immutable registry digests are deployed.
 
 Before restarting API/Gateway after adding source files or building the frontend,

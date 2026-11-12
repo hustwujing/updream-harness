@@ -192,6 +192,49 @@ class RuntimeClient:
             response.raise_for_status()
             return response.json()
 
+    async def inspect_overview(self, sandbox: Sandbox) -> dict:
+        return await self._inspect_json(sandbox, "/v1/inspect/overview")
+
+    async def inspect_files(self, sandbox: Sandbox, path: str, depth: int = 1) -> dict:
+        return await self._inspect_json(sandbox, "/v1/inspect/files",
+            params={"path": path, "depth": depth})
+
+    async def inspect_processes(self, sandbox: Sandbox) -> dict:
+        return await self._inspect_json(sandbox, "/v1/inspect/processes")
+
+    async def stop_inspect_process(self, sandbox: Sandbox, pid: int) -> dict:
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url,
+            headers={**sandbox.runtime_headers, **carrier()}, timeout=20, trust_env=False) as client:
+            response = await client.post(f"/v1/inspect/processes/{pid}/stop")
+            response.raise_for_status()
+            return response.json()
+
+    async def inspect_ports(self, sandbox: Sandbox) -> dict:
+        return await self._inspect_json(sandbox, "/v1/inspect/ports")
+
+    async def inspect_file(self, sandbox: Sandbox, path: str) -> tuple[bytes, str]:
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url,
+            headers={**sandbox.runtime_headers, **carrier()}, timeout=30, trust_env=False) as client:
+            response = await client.get("/v1/inspect/file", params={"path": path})
+            response.raise_for_status()
+            return response.content, response.headers.get("content-type", "application/octet-stream")
+
+    async def write_inspect_file(self, sandbox: Sandbox, path: str, data: bytes,
+                                 mime: str = "text/plain") -> dict:
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url,
+            headers={**sandbox.runtime_headers, **carrier()}, timeout=30, trust_env=False) as client:
+            response = await client.put("/v1/inspect/file", params={"path": path}, content=data,
+                headers={"Content-Type": mime})
+            response.raise_for_status()
+            return response.json()
+
+    async def _inspect_json(self, sandbox: Sandbox, path: str, *, params: dict | None = None) -> dict:
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url,
+            headers={**sandbox.runtime_headers, **carrier()}, timeout=20, trust_env=False) as client:
+            response = await client.get(path, params=params)
+            response.raise_for_status()
+            return response.json()
+
     async def resume(self, sandbox: Sandbox, execution_id: str, after_sequence: int) -> AsyncIterator[RuntimeEvent | RuntimeResult]:
         async for value in self._execution_stream(sandbox, execution_id, after_sequence):
             yield value

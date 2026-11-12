@@ -1,0 +1,447 @@
+from __future__ import annotations
+
+import asyncio
+import base64
+from datetime import timedelta
+import hashlib
+import hmac
+import json
+import mimetypes
+import time
+from typing import Any
+from urllib.parse import urljoin
+
+import httpx
+from websockets.asyncio.client import connect as websocket_connect
+
+from .capability import CapabilityCodec
+from .domain import TERMINAL, now
+from .observability import event
+from .sandbox import Sandbox, SandboxNotFound
+
+
+EXECD_PORT = 44772
+BLOCKED_PREVIEW_PORTS = {22, 8080, 18080, 28600, 28601, EXECD_PORT}
+
+
+def _encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
+
+
+def _decode(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+class TerminalTicketCodec:
+    def __init__(self, key: str):
+        self.key = hashlib.sha256(("terminal:" + key).encode()).digest()
+
+    def issue(self, *, owner_id: str, thread_id: str, sandbox_id: str,
+              pty_session_id: str, ttl_seconds: int) -> str:
+        payload = json.dumps({"owner_id": owner_id, "thread_id": thread_id,
+            "sandbox_id": sandbox_id, "pty_session_id": pty_session_id,
+            "expires_at": int(time.time()) + ttl_seconds},
+            separators=(",", ":"), sort_keys=True).encode()
+        return _encode(payload) + "." + _encode(hmac.new(self.key, payload, hashlib.sha256).digest())
+
+    def verify(self, token: str) -> dict:
+        try:
+            payload_text, signature_text = token.split(".", 1)
+            payload = _decode(payload_text); signature = _decode(signature_text)
+            value = json.loads(payload)
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("invalid_terminal_ticket") from exc
+        if not hmac.compare_digest(signature, hmac.new(self.key, payload, hashlib.sha256).digest()):
+            raise ValueError("invalid_terminal_ticket")
+        if int(value.get("expires_at") or 0) <= int(time.time()):
+            raise ValueError("terminal_ticket_expired")
+        return value
+
+
+class SandboxInspector:
+    def __init__(self, settings, store, objects, pool, runtime, broker):
+        self.settings = settings
+        self.store = store
+        self.objects = objects
+        self.pool = pool
+        self.runtime = runtime
+        self.broker = broker
+        self.capabilities = CapabilityCodec(settings.gateway_signing_key)
+        self.tickets = TerminalTicketCodec(settings.session_signing_key)
+        self.locks: dict[str, asyncio.Lock] = {}
+        self.cleanup_task: asyncio.Task | None = None
+        self.stop_event = asyncio.Event()
+
+    def _lock(self, thread_id: str) -> asyncio.Lock:
+        return self.locks.setdefault(thread_id, asyncio.Lock())
+
+    async def start(self) -> None:
+        self.cleanup_task = asyncio.create_task(self._cleanup_loop(), name="sandbox-inspector-cleanup")
+
+    async def close(self) -> None:
+        self.stop_event.set()
+        if self.cleanup_task:
+            self.cleanup_task.cancel()
+            await asyncio.gather(self.cleanup_task, return_exceptions=True)
+
+    async def _cleanup_loop(self) -> None:
+        while not self.stop_event.is_set():
+            for control in await self.store.expired_sandbox_controls():
+                try:
+                    await self.release(control["thread_id"], control["owner_id"], expired=True)
+                except Exception as exc:
+                    event("sandbox.control.expiry_failed", level=40,
+                        thread_id=control["thread_id"], sandbox_id=control["sandbox_id"],
+                        exception_type=type(exc).__name__)
+            try:
+                await asyncio.wait_for(self.stop_event.wait(), timeout=30)
+            except asyncio.TimeoutError:
+                pass
+
+    async def _thread(self, thread_id: str, owner_id: str):
+        value = await self.store.get_thread(thread_id, owner_id)
+        if not value:
+            raise KeyError("thread_not_found")
+        return value
+
+    async def _active_sandbox(self, thread_id: str) -> Sandbox | None:
+        for sandbox in self.broker.active_sandboxes.values():
+            if sandbox.thread_id == thread_id or sandbox.metadata.get("sandbox-harness.io/thread") == thread_id:
+                return sandbox
+        return await self.pool.get_attached(thread_id)
+
+    async def _controlled_sandbox(self, thread_id: str, owner_id: str) -> tuple[Sandbox | None, dict | None]:
+        control = await self.store.get_sandbox_control(thread_id, owner_id)
+        if not control or control["state"] not in {"user_controlled", "releasing"}:
+            return None, control
+        try:
+            sandbox = await self.pool.get_attached(thread_id)
+            if sandbox and sandbox.id == control["sandbox_id"]:
+                return sandbox, control
+            sandbox = await self.pool.backend.get(control["sandbox_id"])
+            sandbox.thread_id = thread_id; sandbox.turn_id = "inspect-" + thread_id
+            return sandbox, control
+        except (SandboxNotFound, RuntimeError, httpx.HTTPError):
+            return None, control
+
+    async def live_sandbox(self, thread_id: str, owner_id: str) -> Sandbox | None:
+        await self._thread(thread_id, owner_id)
+        active = await self._active_sandbox(thread_id)
+        if active:
+            return active
+        controlled, _ = await self._controlled_sandbox(thread_id, owner_id)
+        return controlled
+
+    async def _restore_new(self, thread, sandbox: Sandbox) -> None:
+        if thread.checkpoint_ref and not sandbox.reused:
+            archive = await asyncio.to_thread(self.objects.get, thread.checkpoint_ref,
+                maximum=self.settings.max_checkpoint_bytes)
+            await self.runtime.restore(sandbox, archive)
+        await self.runtime.reset_project_files(sandbox)
+        for value in await self.store.current_project_files(thread.id, thread.owner_id):
+            data = await asyncio.to_thread(self.objects.get, value.object_ref,
+                maximum=self.settings.max_artifact_bytes)
+            if len(data) != value.size:
+                raise ValueError("Project file size does not match its immutable record")
+            await self.runtime.put_project_file(sandbox, value.path, data, value.mime)
+
+    async def restore(self, thread_id: str, owner_id: str) -> Sandbox:
+        async with self._lock(thread_id):
+            thread = await self._thread(thread_id, owner_id)
+            turns = await self.store.list_turns(thread_id, owner_id)
+            if any(turn.state not in TERMINAL for turn in turns):
+                active = await self._active_sandbox(thread_id)
+                if active:
+                    return active
+                raise RuntimeError("active_sandbox_not_ready")
+            existing = await self.live_sandbox(thread_id, owner_id)
+            if existing:
+                return existing
+            sandbox = await self.pool.acquire(thread_id=thread_id,
+                turn_id="inspect-" + thread_id, harness=thread.harness, environment={})
+            try:
+                await self._restore_new(thread, sandbox)
+            except Exception:
+                await self.pool.release(sandbox, keep_attached=False)
+                raise
+            await self.pool.release(sandbox, keep_attached=True,
+                keepalive_seconds=self.settings.session_keepalive_seconds)
+            await self.store.add_sandbox_audit(thread_id, owner_id, sandbox.id, "sandbox.restored",
+                {"checkpoint": bool(thread.checkpoint_ref)})
+            event("sandbox.inspector.restored", thread_id=thread_id, sandbox_id=sandbox.id)
+            return sandbox
+
+    async def status(self, thread_id: str, owner_id: str) -> dict:
+        thread = await self._thread(thread_id, owner_id)
+        sandbox = await self.live_sandbox(thread_id, owner_id)
+        control = await self.store.get_sandbox_control(thread_id, owner_id)
+        turns = await self.store.list_turns(thread_id, owner_id)
+        active = next((turn for turn in reversed(turns) if turn.state not in TERMINAL), None)
+        overview = None
+        if sandbox:
+            try:
+                overview = await self.runtime.inspect_overview(sandbox)
+            except (httpx.HTTPError, ValueError):
+                overview = None
+        files = await self.store.current_project_files(thread_id, owner_id)
+        return {"state": "live" if overview else "unavailable" if sandbox or control else "stopped",
+            "sandbox_id": sandbox.id if sandbox else "", "harness": thread.harness.value,
+            "image": sandbox.image.rsplit("@", 1)[-1] if sandbox else "",
+            "turn_state": active.state.value if active else "idle",
+            "control_state": control["state"] if control else "observer",
+            "control_expires_at": control["expires_at"] if control else None,
+            "checkpoint_available": bool(thread.checkpoint_ref),
+            "persistent_file_count": len(files), "overview": overview,
+            "capabilities": {"files": bool(overview), "processes": bool(overview),
+                "metrics": bool(overview), "ports": bool(overview),
+                "terminal": bool(control and control["state"] == "user_controlled")}}
+
+    async def files(self, thread_id: str, owner_id: str, path: str, depth: int) -> dict:
+        sandbox = await self.live_sandbox(thread_id, owner_id)
+        if sandbox:
+            return await self.runtime.inspect_files(sandbox, path, depth)
+        if path != "project":
+            return {"root": path.split("/", 1)[0], "path": path, "items": [],
+                "truncated": False, "persistent": True}
+        values = await self.store.current_project_files(thread_id, owner_id)
+        return {"root": "project", "path": path, "persistent": True, "truncated": False,
+            "items": [{"path": "project/" + value.path, "name": value.path.rsplit("/", 1)[-1],
+                "type": "file", "size": value.size, "mime": value.mime,
+                "modified_at": value.created_at} for value in values]}
+
+    async def file(self, thread_id: str, owner_id: str, path: str) -> tuple[bytes, str]:
+        sandbox = await self.live_sandbox(thread_id, owner_id)
+        if not sandbox:
+            raise RuntimeError("sandbox_not_running")
+        return await self.runtime.inspect_file(sandbox, path)
+
+    async def write_file(self, thread_id: str, owner_id: str, path: str,
+                         data: bytes, mime: str) -> dict:
+        if len(data) > self.settings.sandbox_inspect_max_file_bytes:
+            raise ValueError("sandbox_file_too_large")
+        sandbox, control = await self._controlled_sandbox(thread_id, owner_id)
+        if not sandbox or not control or control["state"] != "user_controlled":
+            raise RuntimeError("sandbox_takeover_required")
+        value = await self.runtime.write_inspect_file(sandbox, path, data, mime)
+        await self.store.add_sandbox_audit(thread_id, owner_id, sandbox.id, "file.updated",
+            {"path_hash": hashlib.sha256(path.encode()).hexdigest()[:16], "bytes": len(data)})
+        return value
+
+    async def processes(self, thread_id: str, owner_id: str) -> dict:
+        sandbox = await self.live_sandbox(thread_id, owner_id)
+        if not sandbox:
+            return {"items": []}
+        return await self.runtime.inspect_processes(sandbox)
+
+    async def stop_process(self, thread_id: str, owner_id: str, pid: int) -> dict:
+        sandbox, control = await self._controlled_sandbox(thread_id, owner_id)
+        if not sandbox or not control or control["state"] != "user_controlled":
+            raise RuntimeError("sandbox_takeover_required")
+        value = await self.runtime.stop_inspect_process(sandbox, pid)
+        await self.store.add_sandbox_audit(thread_id, owner_id, sandbox.id,
+            "process.stopped", {"pid": pid})
+        return value
+
+    async def ports(self, thread_id: str, owner_id: str) -> dict:
+        sandbox = await self.live_sandbox(thread_id, owner_id)
+        if not sandbox:
+            return {"items": []}
+        return await self.runtime.inspect_ports(sandbox)
+
+    async def takeover(self, thread_id: str, owner_id: str, *, network_access: str,
+                       interrupt: bool = False) -> dict:
+        async with self._lock(thread_id):
+            thread = await self._thread(thread_id, owner_id)
+            turns = await self.store.list_turns(thread_id, owner_id)
+            active = next((turn for turn in reversed(turns) if turn.state not in TERMINAL), None)
+            if active and not interrupt:
+                raise RuntimeError("active_turn_prevents_sandbox_takeover")
+            if active:
+                await self.broker.cancel(active.id)
+                for _ in range(120):
+                    current = await self.store.get_turn(active.id)
+                    if current and current.state in TERMINAL:
+                        break
+                    await asyncio.sleep(0.5)
+                else:
+                    raise RuntimeError("sandbox_takeover_waiting_for_turn_cleanup")
+            control = await self.store.get_sandbox_control(thread_id, owner_id)
+            if control and control["state"] == "user_controlled" and control["expires_at"] > now():
+                return control
+            sandbox = await self.pool.acquire(thread_id=thread_id,
+                turn_id="inspect-" + thread_id, harness=thread.harness, environment={})
+            try:
+                if not sandbox.reused:
+                    await self._restore_new(thread, sandbox)
+                token, claims = self.capabilities.issue(thread_id=thread_id,
+                    turn_id=thread_id, sandbox_id=sandbox.id, harness=thread.harness,
+                    model=thread.model, routes=["/v1/telemetry"], network_access=network_access,
+                    ttl_seconds=self.settings.sandbox_control_ttl_seconds,
+                    max_requests=1, max_public_requests=self.settings.capability_public_request_limit,
+                    token_budget=1)
+                await self.runtime.inject(sandbox, capability_token=token,
+                    gateway_url=self.settings.gateway_url, proxy_url=self.settings.public_proxy_url,
+                    harness=thread.harness.value, model=thread.model,
+                    defer_skill_install=bool(thread.checkpoint_ref and not sandbox.reused))
+                control = await self.store.begin_sandbox_control(thread_id, owner_id, sandbox.id,
+                    claims.nonce, now() + timedelta(seconds=self.settings.sandbox_control_ttl_seconds))
+            except Exception:
+                await self.pool.release(sandbox, keep_attached=False)
+                raise
+            await self.store.add_sandbox_audit(thread_id, owner_id, sandbox.id,
+                "control.started", {"network_access": network_access,
+                    "interrupted_turn": bool(active)})
+            event("sandbox.control.started", thread_id=thread_id, sandbox_id=sandbox.id)
+            return control
+
+    async def _revoke(self, nonce: str, thread_id: str, sandbox_id: str) -> None:
+        if not nonce:
+            return
+        async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+            response = await client.post(self.settings.gateway_url.rstrip("/") + "/internal/revoke/" + nonce,
+                headers={"X-Sandbox-Harness-Control": self.settings.gateway_control_key,
+                    "X-Updream-Turn-ID": thread_id, "X-Updream-Thread-ID": thread_id,
+                    "X-Updream-Sandbox-ID": sandbox_id})
+            response.raise_for_status()
+
+    async def release(self, thread_id: str, owner_id: str, *, expired: bool = False) -> dict:
+        async with self._lock(thread_id):
+            raw = await self.store.get_sandbox_control(thread_id, owner_id)
+            if not raw:
+                return {"released": True, "checkpointed": False}
+            control = await self.store.mark_sandbox_control_releasing(thread_id, owner_id)
+            sandbox = await self.pool.get_attached(thread_id)
+            if not sandbox or sandbox.id != control["sandbox_id"]:
+                try:
+                    candidate = await self.pool.backend.get(control["sandbox_id"])
+                    candidate.thread_id = thread_id; candidate.turn_id = "inspect-" + thread_id
+                    sandbox = await self.pool.adopt(candidate, thread_id=thread_id,
+                        turn_id="inspect-" + thread_id)
+                except (SandboxNotFound, RuntimeError, httpx.HTTPError):
+                    sandbox = None
+                    try:
+                        for candidate in await self.pool.backend.list_namespace():
+                            if candidate.id == control["sandbox_id"]:
+                                await self.pool.backend.delete(candidate)
+                                break
+                    except Exception as exc:
+                        event("sandbox.control.broken_delete_failed", level=40,
+                            thread_id=thread_id, sandbox_id=control["sandbox_id"],
+                            exception_type=type(exc).__name__)
+                        raise RuntimeError("sandbox_release_cleanup_pending") from exc
+            checkpointed = False
+            if sandbox:
+                try:
+                    if control.get("pty_session_id"):
+                        await self.delete_terminal(sandbox, control["pty_session_id"])
+                    archive = await self.runtime.checkpoint(sandbox)
+                    if len(archive) > self.settings.max_checkpoint_bytes:
+                        raise ValueError("Checkpoint exceeds byte limit")
+                    checkpoint_ref, _ = await asyncio.to_thread(self.objects.put, archive)
+                    await self.store.update_thread_checkpoint_idle(thread_id, owner_id, checkpoint_ref)
+                    checkpointed = True
+                    await self.pool.release(sandbox, keep_attached=True,
+                        keepalive_seconds=self.settings.session_keepalive_seconds)
+                except (httpx.HTTPError, SandboxNotFound):
+                    try:
+                        await self.pool.release(sandbox, keep_attached=False)
+                    except Exception as exc:
+                        event("sandbox.control.broken_delete_failed", level=40,
+                            thread_id=thread_id, sandbox_id=control["sandbox_id"],
+                            exception_type=type(exc).__name__)
+                        raise RuntimeError("sandbox_release_cleanup_pending") from exc
+            current = await self.store.get_sandbox_control(thread_id, owner_id)
+            nonce = ""
+            if current:
+                # The public control view omits the nonce; read it from the expiry query only
+                # when expiring, otherwise resolve it through the row-specific helper below.
+                nonce = await self.store.sandbox_control_nonce(thread_id, owner_id)
+            await self._revoke(nonce, thread_id, control["sandbox_id"])
+            await self.store.add_sandbox_audit(thread_id, owner_id, control["sandbox_id"],
+                "control.expired" if expired else "control.released", {"checkpointed": checkpointed})
+            await self.store.finish_sandbox_control(thread_id, owner_id)
+            event("sandbox.control.released", thread_id=thread_id,
+                sandbox_id=control["sandbox_id"], checkpointed=checkpointed, expired=expired)
+            return {"released": True, "checkpointed": checkpointed}
+
+    async def terminal_ticket(self, thread_id: str, owner_id: str) -> dict:
+        sandbox, control = await self._controlled_sandbox(thread_id, owner_id)
+        if not sandbox or not control or control["state"] != "user_controlled":
+            raise RuntimeError("sandbox_takeover_required")
+        endpoint, headers = await self.pool.backend.endpoint(sandbox, EXECD_PORT)
+        session_id = control.get("pty_session_id") or ""
+        if session_id:
+            status = await self._execd_request(endpoint, headers, "GET", f"/pty/{session_id}")
+            if status.status_code == 404:
+                session_id = ""
+            else:
+                status.raise_for_status()
+        if not session_id:
+            response = await self._execd_request(endpoint, headers, "POST", "/pty",
+                json={"cwd": "/workspace/project", "command": "/bin/bash"})
+            response.raise_for_status(); session_id = str(response.json().get("session_id") or "")
+            if not session_id:
+                raise RuntimeError("terminal_session_missing")
+            await self.store.set_sandbox_terminal(thread_id, owner_id, sandbox.id, session_id)
+            await self.store.add_sandbox_audit(thread_id, owner_id, sandbox.id, "terminal.created")
+        await self.store.touch_sandbox_control(thread_id, owner_id,
+            now() + timedelta(seconds=self.settings.sandbox_control_ttl_seconds))
+        ticket = self.tickets.issue(owner_id=owner_id, thread_id=thread_id,
+            sandbox_id=sandbox.id, pty_session_id=session_id,
+            ttl_seconds=self.settings.sandbox_terminal_ticket_seconds)
+        return {"ticket": ticket, "session_id": session_id,
+            "expires_in": self.settings.sandbox_terminal_ticket_seconds}
+
+    async def _execd_request(self, endpoint: str, headers: dict[str, str], method: str,
+                             path: str, **kwargs) -> httpx.Response:
+        async with httpx.AsyncClient(base_url=endpoint, headers=headers,
+            timeout=20, trust_env=False) as client:
+            return await client.request(method, path, **kwargs)
+
+    async def delete_terminal(self, sandbox: Sandbox, session_id: str) -> None:
+        endpoint, headers = await self.pool.backend.endpoint(sandbox, EXECD_PORT)
+        response = await self._execd_request(endpoint, headers, "DELETE", f"/pty/{session_id}")
+        if response.status_code not in {200, 404}:
+            response.raise_for_status()
+
+    async def terminal_connection(self, ticket: str, owner_id: str, since: int):
+        value = self.tickets.verify(ticket)
+        if value.get("owner_id") != owner_id:
+            raise ValueError("terminal_ticket_owner_mismatch")
+        control = await self.store.get_sandbox_control(value["thread_id"], owner_id)
+        if (not control or control["state"] != "user_controlled"
+                or control["sandbox_id"] != value["sandbox_id"]
+                or control["pty_session_id"] != value["pty_session_id"]):
+            raise ValueError("terminal_session_not_active")
+        sandbox = await self.pool.backend.get(value["sandbox_id"])
+        endpoint, headers = await self.pool.backend.endpoint(sandbox, EXECD_PORT)
+        ws_url = ("wss://" if endpoint.startswith("https://") else "ws://") + endpoint.split("://", 1)[1]
+        ws_url = urljoin(ws_url.rstrip("/") + "/", f"pty/{value['pty_session_id']}/ws")
+        ws_url += "?takeover=1&since=" + str(max(0, since))
+        await self.store.touch_sandbox_control(value["thread_id"], owner_id,
+            now() + timedelta(seconds=self.settings.sandbox_control_ttl_seconds))
+        return websocket_connect(ws_url, additional_headers=headers, max_size=64 * 1024 * 1024,
+            open_timeout=20, ping_interval=20, ping_timeout=20)
+
+    async def create_port_grant(self, thread_id: str, owner_id: str, port: int) -> dict:
+        if port in BLOCKED_PREVIEW_PORTS or not 1024 <= port <= 65535:
+            raise ValueError("sandbox_port_not_previewable")
+        sandbox = await self.live_sandbox(thread_id, owner_id)
+        if not sandbox:
+            raise RuntimeError("sandbox_not_running")
+        detected = await self.runtime.inspect_ports(sandbox)
+        if port not in {int(item["port"]) for item in detected.get("items", [])}:
+            raise ValueError("sandbox_port_not_listening")
+        value = await self.store.create_sandbox_port_grant(thread_id, owner_id,
+            sandbox.id, port, now() + timedelta(seconds=self.settings.sandbox_port_grant_ttl_seconds))
+        await self.store.add_sandbox_audit(thread_id, owner_id, sandbox.id,
+            "port.preview_created", {"port": port})
+        return value
+
+    async def port_endpoint(self, grant_id: str, owner_id: str) -> tuple[dict, str, dict[str, str]]:
+        grant = await self.store.get_sandbox_port_grant(grant_id, owner_id)
+        if not grant:
+            raise KeyError("sandbox_port_grant_not_found")
+        sandbox = await self.pool.backend.get(grant["sandbox_id"])
+        endpoint, headers = await self.pool.backend.endpoint(sandbox, grant["port"])
+        return grant, endpoint, headers
