@@ -9,7 +9,7 @@ export function workspaceFile(href,artifacts,files){
  let path;try{path=decodeURIComponent(href||'')}catch{return null}
  if(!path.startsWith('/workspace/'))return null;
  if(path.split('/').some(part=>part==='..'))return null;
- const output=path.replace(/^\/workspace\/outputs\//,'');
+ const output=path.replace(/^\/workspace\/(?:project\/)?outputs\//,'');
  if(output!==path){
   const artifact=artifacts.find(item=>item.summary===output&&item.payload?.artifact_id);
   if(artifact)return {id:artifact.payload.artifact_id,source:'artifact',name:output,mime:artifact.payload.mime||'application/octet-stream',download:apiUrl(`artifacts/${artifact.payload.artifact_id}`),previewUrl:apiUrl(`previews/artifact/${artifact.payload.artifact_id}`)};

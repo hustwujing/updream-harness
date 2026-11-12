@@ -250,6 +250,36 @@ sys.stdin.read();print(json.dumps({'type':'result','result':'done'}),flush=True)
         assert [item["path"] for item in client.get("/v1/artifacts").json()["items"]] == ["artifact-2.txt"]
 
 
+def test_runtime_promotes_only_current_execution_project_outputs(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
+    monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")
+    monkeypatch.setattr(runtime_app, "OUTPUTS", tmp_path / "workspace" / "outputs")
+    monkeypatch.setattr(runtime_app, "PERSISTENT", ("project", "state"))
+    legacy = tmp_path / "workspace/project/outputs"
+    legacy.mkdir(parents=True); (legacy / "older.txt").write_text("older")
+    runner = tmp_path / "legacy-output.py"
+    runner.write_text("""import json,pathlib,sys
+state=pathlib.Path('""" + str(tmp_path / "workspace/state/legacy-count") + """')
+number=int(state.read_text())+1 if state.exists() else 1
+state.parent.mkdir(parents=True,exist_ok=True);state.write_text(str(number))
+root=pathlib.Path('""" + str(legacy) + """');root.mkdir(parents=True,exist_ok=True)
+(root/f'current-{number}.txt').write_text(str(number))
+sys.stdin.read();print(json.dumps({'type':'assistant_delta','text':'done'}),flush=True)
+""")
+    monkeypatch.setenv("HARNESS_COMMAND_JSON", json.dumps({name: [sys.executable, str(runner)]
+        for name in ("codex", "claude", "deepseek")}))
+    app = runtime_app.create_app()
+    with TestClient(app) as client:
+        assert client.post("/v1/configure", json={"capability_token":"x"*32,"gateway_url":"http://gateway:28600",
+            "harness":"codex","model":"model","proxy_url":"http://172.31.0.1:28601"}).status_code == 200
+        first = client.post("/v1/turns", json={"message":"first","execution_id":"legacy-first"})
+        assert json.loads(first.text.splitlines()[-1])["result"]["status"] == "completed"
+        assert [item["path"] for item in client.get("/v1/artifacts").json()["items"]] == ["current-1.txt"]
+        second = client.post("/v1/turns", json={"message":"second","execution_id":"legacy-second"})
+        assert json.loads(second.text.splitlines()[-1])["result"]["status"] == "completed"
+        assert [item["path"] for item in client.get("/v1/artifacts").json()["items"]] == ["current-2.txt"]
+
+
 def test_runtime_materializes_only_managed_project_file_namespaces(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
     monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")
@@ -286,13 +316,15 @@ def test_checkpoint_excludes_object_backed_managed_project_files(tmp_path, monke
     (project / "src").mkdir(parents=True); (project / "src/app.py").write_text("print('kept')")
     (project / "assets").mkdir(); (project / "assets/large.bin").write_bytes(b"asset")
     (project / "artifacts").mkdir(); (project / "artifacts/result.bin").write_bytes(b"artifact")
+    (project / "outputs").mkdir(); (project / "outputs/final.mp4").write_bytes(b"video")
     with TestClient(app) as client:
         response = client.get("/v1/checkpoint")
     assert response.status_code == 200
     with tarfile.open(fileobj=io.BytesIO(response.content), mode="r:") as archive:
         names = set(archive.getnames())
     assert "project/src/app.py" in names
-    assert not any(name.startswith("project/assets") or name.startswith("project/artifacts") for name in names)
+    assert not any(name.startswith("project/assets") or name.startswith("project/artifacts")
+        or name.startswith("project/outputs") for name in names)
 
 
 def test_checkpoint_excludes_runtime_links_and_restore_ignores_existing_links(tmp_path, monkeypatch):

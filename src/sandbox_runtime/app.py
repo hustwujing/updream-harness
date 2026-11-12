@@ -149,6 +149,7 @@ class Execution:
     tools: ToolObservations = field(default_factory=ToolObservations)
     journal_bytes: int = 0
     protocol_state: dict[str, Any] = field(default_factory=dict)
+    project_output_snapshot: dict[str, tuple[int, int]] = field(default_factory=dict)
 
 
 def safe_relative(value: str) -> Path:
@@ -156,6 +157,55 @@ def safe_relative(value: str) -> Path:
     if pure.is_absolute() or not pure.parts or any(part in ("", ".", "..") for part in pure.parts):
         raise ValueError("Unsafe artifact path")
     return Path(*pure.parts)
+
+
+def project_output_snapshot() -> dict[str, tuple[int, int]]:
+    root = WORKSPACE / "project" / "outputs"
+    if not root.is_dir() or root.is_symlink():
+        return {}
+    result = {}
+    for path in root.rglob("*"):
+        try:
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                continue
+            relative = path.relative_to(root).as_posix()
+            safe_relative(relative)
+            if not path.resolve().is_relative_to(root.resolve()):
+                continue
+            result[relative] = (info.st_size, info.st_mtime_ns)
+        except (OSError, ValueError):
+            continue
+        if len(result) >= 50_000:
+            break
+    return result
+
+
+def promote_project_outputs(baseline: dict[str, tuple[int, int]]) -> tuple[int, int]:
+    root = WORKSPACE / "project" / "outputs"
+    current = project_output_snapshot()
+    OUTPUTS.mkdir(parents=True, exist_ok=True)
+    count = total = 0
+    for relative, identity in current.items():
+        if baseline.get(relative) == identity:
+            continue
+        source = root / safe_relative(relative)
+        target = OUTPUTS / safe_relative(relative)
+        if target.exists() or target.is_symlink():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.parent.resolve().is_relative_to(OUTPUTS.resolve()):
+            continue
+        temporary = target.with_name("." + target.name + ".publish.tmp")
+        try:
+            shutil.copyfile(source, temporary)
+            os.chmod(temporary, 0o600)
+            temporary.replace(target)
+            count += 1
+            total += identity[0]
+        finally:
+            temporary.unlink(missing_ok=True)
+    return count, total
 
 
 def create_app() -> FastAPI:
@@ -265,6 +315,19 @@ def create_app() -> FastAPI:
             append_event_locked(execution, value)
 
     async def finish_execution(execution: Execution, result: dict) -> None:
+        async with execution.condition:
+            if execution.result is not None:
+                return
+        if result.get("status") != "cancelled":
+            try:
+                count, size = await asyncio.to_thread(
+                    promote_project_outputs, execution.project_output_snapshot)
+                if count:
+                    event("runtime.project_outputs.promoted",execution_id=execution.id,
+                        count=count,bytes=size)
+            except Exception as exc:
+                event("runtime.project_outputs.promotion_failed",level=logging.WARNING,
+                    execution_id=execution.id,exc=exc)
         async with execution.condition:
             if execution.result is not None:
                 return
@@ -608,7 +671,7 @@ def create_app() -> FastAPI:
             if member.issym() or member.islnk() or member.isdev():
                 return None
             parts = PurePosixPath(member.name).parts
-            if len(parts) >= 2 and parts[0] == "project" and parts[1] in {"assets", "artifacts"}:
+            if len(parts) >= 2 and parts[0] == "project" and parts[1] in {"assets", "artifacts", "outputs"}:
                 return None
             return member
         with tarfile.open(target, "w") as archive:
@@ -680,7 +743,8 @@ def create_app() -> FastAPI:
                     stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
                     start_new_session=True, limit=HARNESS_JSONL_LIMIT)
                 execution = Execution(id=value.execution_id, process=process, selected=selected,
-                    native_thread_id=value.native_thread_id)
+                    native_thread_id=value.native_thread_id,
+                    project_output_snapshot=project_output_snapshot())
                 app.state.execution = execution
                 app.state.process = process
                 app.state.process_command = selected
