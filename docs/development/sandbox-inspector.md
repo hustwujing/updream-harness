@@ -30,6 +30,10 @@ managed ProjectFiles.
 - Release compares managed files by path, size and SHA-256. Drift requires an
   explicit discard, preserve-to-work or save-as-version decision. Expiry uses
   preserve-to-work before restoring managed files.
+- A Sandbox created from a pre-manifest Runtime may return 404 for the manifest
+  endpoint during a rolling deployment. Release records
+  `managed_manifest_unavailable` and retains the legacy checkpoint behavior so
+  an existing user-controlled Sandbox cannot become stranded.
 - Process results omit argv and environment. Telemetry and audit records never
   include terminal input/output or file content.
 - File listing returns direct children for lazy tree expansion. Workspace disk

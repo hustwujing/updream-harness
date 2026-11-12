@@ -67,7 +67,7 @@ class FakeObjects:
 class FakeRuntime:
     def __init__(self):
         self.files = {"project/readme.txt": "hello"}; self.injected = 0; self.fail_checkpoint=False
-        self.manifest={"items":[],"truncated":False};self.preserved=[];self.materialized=[]
+        self.manifest={"items":[],"truncated":False};self.preserved=[];self.materialized=[];self.legacy_manifest=False
     async def restore(self, sandbox, archive): self.restored = archive
     async def reset_project_files(self, sandbox): self.materialized=[]
     async def put_project_file(self, sandbox, path, data, mime): self.materialized.append((path,data,mime))
@@ -80,7 +80,12 @@ class FakeRuntime:
     async def inspect_processes(self, sandbox): return {"items":[{"pid":42,"name":"server"}]}
     async def stop_inspect_process(self, sandbox, pid): return {"pid":pid,"stopped":True}
     async def inspect_ports(self, sandbox): return {"items":[{"port":3000,"pid":42,"process":"server"}]}
-    async def project_file_manifest(self,sandbox):return self.manifest
+    async def project_file_manifest(self,sandbox):
+        if self.legacy_manifest:
+            request=httpx.Request("GET","http://runtime/v1/project-files/manifest")
+            response=httpx.Response(404,request=request)
+            raise httpx.HTTPStatusError("legacy",request=request,response=response)
+        return self.manifest
     async def managed_project_file(self,sandbox,path):return self.files["project/"+path].encode()
     async def preserve_project_files(self,sandbox,paths,destination):
         self.preserved.append((paths,destination));return {"items":paths,"destination":destination}
@@ -137,9 +142,10 @@ async def test_inspector_restore_takeover_terminal_port_and_release(tmp_path, mo
         assert (await store.get_thread(thread.id,owner)).checkpoint_ref in objects.values
         assert await store.get_sandbox_control(thread.id,owner) is None
         await inspector.takeover(thread.id,owner,network_access="restricted")
-        runtime.fail_checkpoint=True
+        runtime.fail_checkpoint=True;runtime.legacy_manifest=True
         broken=await inspector.release(thread.id,owner)
         assert broken["released"] and not broken["checkpointed"]
+        assert broken["managed_changes"]["action"]=="managed_manifest_unavailable"
         assert await store.get_sandbox_control(thread.id,owner) is None
     finally:
         await pool.close(); await store.close()

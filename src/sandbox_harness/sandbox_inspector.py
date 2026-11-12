@@ -267,7 +267,15 @@ class SandboxInspector:
         sandbox = await self.live_sandbox(thread_id, owner_id)
         if not sandbox:
             return {"dirty": False, "items": [], "sandbox_id": ""}
-        value = await self.runtime.project_file_manifest(sandbox)
+        try:
+            value = await self.runtime.project_file_manifest(sandbox)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                raise
+            event("sandbox.managed_manifest.unavailable", level=30,
+                thread_id=thread_id, sandbox_id=sandbox.id, reason="legacy_runtime")
+            return {"dirty": False, "items": [], "sandbox_id": sandbox.id,
+                "supported": False}
         if value.get("truncated"):
             raise RuntimeError("managed_file_manifest_truncated")
         expected = {item.path: item for item in await self.store.current_project_files(
@@ -295,10 +303,13 @@ class SandboxInspector:
                     "expected_sha256": project_file.sha256,
                     "actual_sha256": observed["sha256"], "size": observed["size"],
                     "mime": observed.get("mime") or project_file.mime})
-        return {"dirty": bool(changes), "items": changes, "sandbox_id": sandbox.id}
+        return {"dirty": bool(changes), "items": changes, "sandbox_id": sandbox.id,
+            "supported": True}
 
     async def _resolve_managed_changes(self, thread, sandbox: Sandbox, owner_id: str,
                                        changes: dict, action: str, generation: int) -> dict:
+        if not changes.get("supported", True):
+            return {"action": "managed_manifest_unavailable", "count": 0, "destination": ""}
         if not changes["dirty"]:
             return {"action": "none", "count": 0, "destination": ""}
         if not action:
