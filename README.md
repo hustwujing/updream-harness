@@ -118,6 +118,10 @@ The 25-Skill image matrix, real image/video/audio generation and API, Worker,
 Sandbox and reconnect recovery evidence are recorded in
 [media-generation-and-skill-report.md](docs/test-evidence/media-generation-and-skill-report.md).
 
+Tripo 3D generation, multi-output publication, Three.js preview and non-graceful
+Media Worker recovery evidence are recorded in
+[tripo-3d-report.md](docs/test-evidence/tripo-3d-report.md).
+
 Non-graceful API restart, Runtime event replay, Turn lease fencing and cleanup recovery evidence is recorded in [broker-recovery-report.md](docs/test-evidence/broker-recovery-report.md).
 
 Versioned uploads and outputs restored into a different Sandbox, plus desktop/mobile Workspace UI evidence, are recorded in [project-files-report.md](docs/test-evidence/project-files-report.md).

@@ -45,6 +45,10 @@ class Store:
         self.updates.append((job_id, owner, values))
         return True
 
+    async def resolve_tripo_input_job(self, job_id, input_job_id):
+        assert job_id == "job" and input_job_id == "a" * 32
+        return "provider-source-task"
+
 
 class Objects:
     def signed_get_url(self, reference, *, expires_seconds):
@@ -292,3 +296,34 @@ def test_tripo_output_url_must_be_public_https(url):
 
 def test_tripo_output_url_accepts_public_cdn():
     assert MediaWorker._validated_tripo_output_url("https://cdn.tripo3d.ai/model.glb?token=short-lived")
+
+
+@pytest.mark.asyncio
+async def test_tripo_image_and_multiview_payloads_use_stable_public_references(monkeypatch):
+    value = worker()
+    async def prepare(job, require_ark):
+        assert require_ark is False
+        return [{**item, "public_url": f"https://boss-shjd.biliapi.net/updream/aniforge/image/{item['role']}.png"}
+            for item in job["references"]]
+    monkeypatch.setattr(value.reference_publisher, "prepare", prepare)
+    endpoint, payload = await value._tripo_payload({"id": "job", "model": "v3.1-20260211",
+        "generation_mode": "image_to_model", "parameters": {"texture": False},
+        "references": [{"kind": "image", "role": "reference_image"}]})
+    assert endpoint == "generation/image-to-model"
+    assert payload["input"].endswith("/reference_image.png") and payload["model"] == "v3.1-20260211"
+    endpoint, payload = await value._tripo_payload({"id": "job", "model": "v3.1-20260211",
+        "generation_mode": "multiview_to_model", "parameters": {}, "references": [
+            {"kind": "image", "role": "front_view"}, {"kind": "image", "role": "right_view"}]})
+    assert endpoint == "generation/multiview-to-model"
+    assert payload["inputs"] == [{"front": "https://boss-shjd.biliapi.net/updream/aniforge/image/front_view.png"},
+        {"right": "https://boss-shjd.biliapi.net/updream/aniforge/image/right_view.png"}]
+
+
+@pytest.mark.asyncio
+async def test_tripo_postprocess_resolves_owned_platform_job_to_provider_task():
+    value = worker()
+    endpoint, payload = await value._tripo_payload({"id": "job", "model": "v3.1-20260211",
+        "generation_mode": "convert_model", "parameters": {"input_job_id": "a" * 32,
+            "target_format": "FBX", "export_orientation": "+x"}, "references": []})
+    assert endpoint == "models/convert"
+    assert payload == {"input": "provider-source-task", "format": "FBX", "export_orientation": "+x"}
