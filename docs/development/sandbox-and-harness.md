@@ -39,12 +39,21 @@ members must not become artifacts or checkpoint entries.
 - Claude uses CLI stream-json input/output and resumes with its native session
   identifier.
 - DeepSeek uses `deepseek_runner.py` and a persistent SDK Session, accepting
-  appended input at its controlled boundary.
+  appended input at its controlled boundary. SDK `assistant/message` events are
+  normalized as public text while the Run is active; the SDK
+  `final_response` is a fallback snapshot for a Run that emitted no public
+  assistant event.
 
 `adapters.command` constructs commands and per-Harness environment. `normalize`
 maps native output to the shared Runtime event contract. Unknown plain output is
 public text/tool output; protocol changes must be tested with representative
 native frames.
+
+Text snapshot deduplication is per input rather than per Runtime process. This
+matters for native appended input: text observed for one input must not suppress
+the fallback response for a later input. Keep native message IDs in
+`Execution.protocol_state` when a Harness can repeat or extend the same
+snapshot.
 
 ## Process and input rules
 
@@ -79,4 +88,6 @@ Skill copied into one checkpoint is not an image-level capability.
   `test_runtime_configuration.py`, `test_runtime_client.py`.
 - Images and paths: `test_runtime_image_contract.py`, `test_runtime_paths.py`.
 - Namespace/reconciliation: `test_sandbox_namespace.py`.
-- A real OpenSandbox case for image, process, checkpoint or networking changes.
+- A real OpenSandbox case for image, process, checkpoint, networking or native
+  event-normalization changes. For assistant streaming, assert a durable
+  `text_delta` in Turn history rather than relying only on the final UI text.

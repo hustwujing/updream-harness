@@ -41,6 +41,17 @@ the set in multiple places:
 ## Protocol requirements
 
 - Public output must stream as shared `text_delta` events.
+- Identify the native public assistant event separately from reasoning, tool
+  output and protocol control frames. Codex currently uses
+  `item/agentMessage/delta`, Claude uses stream-json
+  `content_block_delta/text_delta`, and DeepSeek uses SDK
+  `session.event` notifications whose event type is `assistant/message`.
+- If a native protocol emits cumulative message snapshots, retain message
+  identity and publish only the unseen suffix. Exact repeated snapshots must
+  not create duplicate transcript text.
+- A terminal full response may be a fallback snapshot, but it must not repeat
+  already streamed text. Snapshot suppression is scoped to one acknowledged
+  input and must reset before the next appended input.
 - Tool/command IDs must remain stable across start/progress/finish frames.
 - An appended input must produce explicit completion evidence.
 - Resume must use checkpointed native state and the stored native identifier.
@@ -51,4 +62,6 @@ the set in multiple places:
 
 Unit fixtures cover representative native frames and malformed frames; Runtime
 boundary tests pass; the image is pinned by digest; and real OpenSandbox cases
-prove initial execution, resume, steer/input, cancel, checkpoint and cleanup.
+prove initial execution, at least one durable public `text_delta`, resume,
+steer/input, cancel, checkpoint and cleanup. A test that observes only tool or
+step events does not establish assistant-output streaming.

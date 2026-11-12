@@ -57,6 +57,13 @@ expiry, the sandbox is deleted and its capacity is released.
 
 Turn ownership is a renewable PostgreSQL lease. The Sandbox Runtime consumes Harness stdout in a background task and keeps a sequenced replay journal independently of the Broker HTTP connection. A replacement Broker can reattach the same namespaced Sandbox, replay only missing Runtime events, checkpoint the result and finish cleanup. If the Runtime or Sandbox itself is lost after Harness execution began, the broker reports an interrupted Turn instead of replaying potentially non-idempotent public side effects.
 
+All three native Harnesses publish public assistant output through the same
+durable `text_delta` event contract. Codex maps app-server agent-message deltas,
+Claude maps stream-json text deltas, and DeepSeek maps committed SDK
+`assistant/message` notifications. A terminal full response is retained only as
+a fallback snapshot and is suppressed when that input already streamed text;
+the deduplication boundary resets for every appended input.
+
 Harnesses can request user decisions with `sandbox-interact`; Codex native user-input and approval requests map to the same durable Interaction protocol. Long commands can be delegated to `sandbox-background`, whose process group, bounded log, cancellation and exit status are supervised by the Runtime and remain part of the Turn result.
 
 Every Runtime image carries one pinned 25-Skill bundle shared by Codex, Claude
