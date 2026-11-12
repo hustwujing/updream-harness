@@ -95,6 +95,27 @@ def test_media_cli_rejects_invalid_usage_and_provider_native_parameters_locally(
     assert "voice_setting" in error and "voice_id" in error
 
 
+def test_media_cli_canonicalizes_edit_and_extend_provider_constraints(tmp_path, monkeypatch):
+    token = tmp_path / "token"; token.write_text("x" * 32)
+    monkeypatch.setenv("HARNESS_GATEWAY_URL", "http://gateway.test")
+    monkeypatch.setenv("HARNESS_CAPABILITY_TOKEN_FILE", str(token))
+    calls = []
+    monkeypatch.setattr(media_cli.httpx, "post", lambda url, **kwargs:
+        calls.append(kwargs["json"]) or Response())
+    common = ["prepare", "video", "--model", "sed2", "--output-role", "workspace",
+        "--reference", '{"project_path":"artifacts/source.mp4","role":"reference_video","usage":"edit_source"}']
+    assert media_cli.main([*common, "--generation-mode", "edit_video", "--parameters",
+        '{"prompt":"fix motion","duration":10,"aspect_ratio":"16:9"}']) == 0
+    assert calls[-1]["parameters"]["duration"] == -1
+    assert calls[-1]["parameters"]["aspect_ratio"] == "adaptive"
+    extend = ["prepare", "video", "--model", "sed2", "--output-role", "workspace",
+        "--generation-mode", "extend_video",
+        "--reference", '{"project_path":"artifacts/source.mp4","role":"reference_video","usage":"extend_source"}',
+        "--parameters", '{"prompt":"continue","duration":4,"aspect_ratio":"16:9","extend_direction":"forward"}']
+    assert media_cli.main(extend) == 0
+    assert calls[-1]["parameters"]["aspect_ratio"] == "adaptive"
+
+
 def test_media_reference_api_freezes_owned_project_file_snapshot(tmp_path):
     settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///"+str(tmp_path/"api.db"),
         redis_url="", backend="fake", object_backend="local", model_catalog_discovery=False,

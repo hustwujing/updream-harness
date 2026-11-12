@@ -15,7 +15,16 @@ from sandbox_harness.media_catalog import MediaCatalog
 def validation_message(error: ValidationError) -> str:
     return "; ".join((".".join(str(item) for item in value.get("loc", ())) + ": "
         + value.get("msg", "Invalid value")) for value in error.errors(
-            include_url=False, include_context=False, include_input=False)[:12])
+        include_url=False, include_context=False, include_input=False)[:12])
+
+
+def canonical_parameters(kind: str, generation_mode: str, parameters: dict) -> dict:
+    value = dict(parameters)
+    if kind == "video" and generation_mode == "edit_video":
+        value.update({"aspect_ratio": "adaptive", "duration": -1})
+    elif kind == "video" and generation_mode == "extend_video":
+        value["aspect_ratio"] = "adaptive"
+    return value
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "prepare":
         try:
-            parameters = json.loads(args.parameters)
+            parameters = canonical_parameters(args.kind, args.generation_mode, json.loads(args.parameters))
             references = [json.loads(value) for value in args.reference]
             if not all(isinstance(value, dict) for value in references):
                 raise ValueError("references must be JSON objects")

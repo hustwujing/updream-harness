@@ -17,6 +17,11 @@ def test_default_catalog_contains_only_real_probe_models():
     assert schemas["video"]["optional"]["duration"] == "integer 4..15 or -1"
     assert set(schemas["video"]["generation_modes"]) == {"text_to_video", "first_frame",
         "first_last_frame", "multimodal_reference", "edit_video", "extend_video"}
+    assert schemas["video"]["generation_modes"]["edit_video"]["fixed_parameters"] == {
+        "aspect_ratio": "adaptive", "duration": -1}
+    assert schemas["video"]["generation_modes"]["extend_video"]["fixed_parameters"] == {
+        "aspect_ratio": "adaptive"}
+    assert schemas["video"]["generation_modes"]["extend_video"]["required_parameters"] == ["extend_direction"]
     assert schemas["image"]["generation_modes"]["reference_image"]["max_references"] == 14
     video=next(item for item in catalog.public("video") if item["model"]=="sed2")
     assert video["reference_schema"]["recommended_usage"]["first_frame"]=="composition"
