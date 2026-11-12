@@ -13,7 +13,7 @@ from collections import defaultdict, deque
 from contextlib import suppress
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -36,7 +36,7 @@ from .objects import object_store
 from .pool import SandboxPool
 from .runtime import RuntimeClient
 from .sandbox import FakeSandboxBackend, OpenSandboxBackend
-from .sandbox_inspector import SandboxInspector
+from .sandbox_inspector import SandboxInspector, websocket_endpoint_headers
 from .sessions import COOKIE, Sessions
 from .store import Store
 
@@ -74,6 +74,11 @@ def content_disposition(filename: str, *, inline: bool) -> str:
         else "_" for character in filename).strip("._") or "download"
     kind = "inline" if inline else "attachment"
     return f"{kind}; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"
+
+
+def sandbox_preview_target(endpoint: str, path: str, query: str = "") -> str:
+    target = urljoin(endpoint.rstrip("/") + "/", path.lstrip("/"))
+    return target + ("?" + query if query else "")
 
 
 async def limited_body(request: Request, maximum: int) -> bytes:
@@ -952,9 +957,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "Sandbox port preview not found")
         except (httpx.HTTPError, RuntimeError):
             raise HTTPException(502, "Sandbox port is unavailable")
-        target = urljoin(endpoint.rstrip("/") + "/", path or "")
-        if request.url.query:
-            target += "?" + request.url.query
+        target = sandbox_preview_target(endpoint, path, request.url.query)
         body = await limited_body(request, 16 * 1024 * 1024)
         client = httpx.AsyncClient(headers=endpoint_headers, timeout=60,
             follow_redirects=False, trust_env=False)
@@ -990,6 +993,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             try:
                 async for chunk in upstream.aiter_bytes():
                     yield chunk
+            except Exception as exc:
+                event("sandbox.port_stream.failed", level=logging.WARNING, exc=exc,
+                    reason=type(exc).__name__)
+                logger.exception("Sandbox port response stream failed", extra={"grant_id": grant_id})
+                raise
             finally:
                 await upstream.aclose(); await client.aclose()
         headers = filtered_proxy_headers(upstream.headers, request_headers=False)
@@ -1058,7 +1066,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             async with connection as upstream:
                 await websocket.accept()
                 await relay_websockets(websocket, upstream)
-        except (ValueError, KeyError):
+        except (ValueError, KeyError) as exc:
+            event("sandbox.terminal.rejected", level=logging.WARNING,
+                thread_id=thread_id, reason=str(exc))
             await websocket.close(code=4403)
         except WebSocketDisconnect:
             return
@@ -1079,12 +1089,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 target += "?" + websocket.url.query
             requested = [value.strip() for value in websocket.headers.get(
                 "sec-websocket-protocol", "").split(",") if value.strip()]
-            async with websocket_connect(target, additional_headers=endpoint_headers,
+            async with websocket_connect(target,
+                    additional_headers=websocket_endpoint_headers(endpoint_headers),
                     subprotocols=requested or None, max_size=64 * 1024 * 1024,
                     open_timeout=20, ping_interval=20, ping_timeout=20) as upstream:
                 await websocket.accept(subprotocol=upstream.subprotocol)
                 await relay_websockets(websocket, upstream)
-        except (ValueError, KeyError):
+        except (ValueError, KeyError) as exc:
+            event("sandbox.port_websocket.rejected", level=logging.WARNING,
+                reason=str(exc))
             await websocket.close(code=4403)
         except WebSocketDisconnect:
             return

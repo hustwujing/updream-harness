@@ -6,12 +6,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.app import create_app
+from sandbox_harness.app import create_app, sandbox_preview_target
 from sandbox_harness.config import Settings
 from sandbox_harness.domain import Harness, ThreadCreate, TurnCreate, TurnState, now
 from sandbox_harness.pool import SandboxPool
 from sandbox_harness.sandbox import FakeSandboxBackend
-from sandbox_harness.sandbox_inspector import SandboxInspector, TerminalTicketCodec
+from sandbox_harness.sandbox_inspector import SandboxInspector, TerminalTicketCodec, websocket_endpoint_headers
 from sandbox_harness.store import Store
 from sandbox_runtime import app as runtime_app
 
@@ -147,6 +147,17 @@ def test_terminal_ticket_rejects_tamper_and_expiry(monkeypatch):
     monkeypatch.setattr("sandbox_harness.sandbox_inspector.time.time",lambda:10_000)
     with pytest.raises(ValueError,match="expired"):codec.verify(codec.issue(owner_id="a"*64,
         thread_id="b"*32,sandbox_id="sandbox",pty_session_id="pty",ttl_seconds=-1))
+
+
+def test_websocket_endpoint_headers_preserve_auth_without_handshake_conflicts():
+    value=websocket_endpoint_headers({"OPEN-SANDBOX-API-KEY":"secret","Accept":"*/*",
+        "Connection":"keep-alive","Upgrade":"websocket","Host":"proxy","Sec-WebSocket-Key":"bad"})
+    assert value=={"OPEN-SANDBOX-API-KEY":"secret","Accept":"*/*"}
+
+
+def test_sandbox_preview_target_keeps_server_proxy_prefix_and_query():
+    assert sandbox_preview_target("http://proxy/sandboxes/s1/ports/3000", "/assets/app.js", "v=1")==(
+        "http://proxy/sandboxes/s1/ports/3000/assets/app.js?v=1")
 
 
 def test_nginx_preserves_websocket_upgrade_headers():

@@ -22,6 +22,17 @@ from .sandbox import Sandbox, SandboxNotFound
 
 EXECD_PORT = 44772
 BLOCKED_PREVIEW_PORTS = {22, 8080, 18080, 28600, 28601, EXECD_PORT}
+WEBSOCKET_HOP_HEADERS = {
+    "connection", "host", "upgrade", "proxy-connection", "keep-alive",
+    "transfer-encoding", "sec-websocket-key", "sec-websocket-version",
+    "sec-websocket-extensions", "sec-websocket-protocol",
+}
+
+
+def websocket_endpoint_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Keep endpoint authentication without conflicting with the WS handshake."""
+    return {key: value for key, value in headers.items()
+        if key.lower() not in WEBSOCKET_HOP_HEADERS}
 
 
 def _encode(value: bytes) -> str:
@@ -420,7 +431,8 @@ class SandboxInspector:
         ws_url += "?takeover=1&since=" + str(max(0, since))
         await self.store.touch_sandbox_control(value["thread_id"], owner_id,
             now() + timedelta(seconds=self.settings.sandbox_control_ttl_seconds))
-        return websocket_connect(ws_url, additional_headers=headers, max_size=64 * 1024 * 1024,
+        return websocket_connect(ws_url, additional_headers=websocket_endpoint_headers(headers),
+            max_size=64 * 1024 * 1024,
             open_timeout=20, ping_interval=20, ping_timeout=20)
 
     async def create_port_grant(self, thread_id: str, owner_id: str, port: int) -> dict:
