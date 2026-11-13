@@ -109,6 +109,43 @@ async def test_audio_recovery_polls_persisted_provider_job_without_resubmit(monk
 
 
 @pytest.mark.asyncio
+async def test_audio_reference_uses_host_derived_cloned_voice(monkeypatch):
+    value=worker();submitted=Client([Response({"task_id":"provider-audio"})])
+    polling=Client([Response({"status":"success","file_id":"file"})])
+    retrieved=Client([Response({"file":{"download_url":"https://result.test/audio.mp3"}})])
+    clients=[submitted,polling,retrieved]
+    async def client_factory():return clients.pop(0)
+    async def no_sleep(_):return None
+    class Voices:
+        def __init__(self):self.touched=[]
+        async def prepare(self,job):return "updream_cloned_voice"
+        async def touch(self,job,voice_id):self.touched.append(voice_id)
+        async def voice_exists(self,voice_id):return True
+        async def invalidate(self,job,voice_id):raise AssertionError("active clone must not be invalidated")
+    voices=Voices();value.voice_clones=voices
+    monkeypatch.setattr(value,"_client",client_factory)
+    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep",no_sleep)
+    result=await value._minimax_audio({"id":"job","owner_id":"a"*64,
+        "model":"speech-2.8-turbo","provider_job_id":"","parameters":{"text":"hello"},
+        "references":[{"sha256":"1"*64,"role":"reference_audio","usage":"audio"}]})
+    assert result.status=="success"
+    assert submitted.posts[0][1]["json"]["voice_setting"]["voice_id"]=="updream_cloned_voice"
+    assert voices.touched==["updream_cloned_voice"]
+
+
+@pytest.mark.asyncio
+async def test_audio_submit_ambiguous_provider_failure_is_unknown(monkeypatch):
+    value=worker();client=Client([Response({"base_resp":{"status_code":1013}},500)])
+    async def client_factory():return client
+    monkeypatch.setattr(value,"_client",client_factory)
+    result=await value._minimax_audio({"id":"job","owner_id":"a"*64,
+        "model":"speech-2.8-turbo","provider_job_id":"",
+        "parameters":{"text":"hello"},"references":[]})
+    assert result.status=="unknown" and not result.provider_job_id
+    assert result.error=="audio_submission_outcome_unknown:1013"
+
+
+@pytest.mark.asyncio
 async def test_audio_processing_keeps_polling_same_provider_job(monkeypatch):
     value = worker()
     processing = Client([Response({"status":"processing"})])

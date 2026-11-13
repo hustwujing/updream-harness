@@ -84,9 +84,10 @@ def inspect_reference(data: bytes, role: str, path: str) -> dict[str, Any]:
                     "codec": stream.codec_context.name or "",
                     "audio_codec": audio_stream.codec_context.name if audio_stream else ""}
             suffix = PurePosixPath(path).suffix.lower()
-            if suffix not in {".mp3", ".wav"}:
-                raise ValueError("Reference audio must be MP3 or WAV")
-            return {"mime": "audio/wav" if suffix == ".wav" else "audio/mpeg",
+            if suffix not in {".mp3", ".wav", ".m4a"}:
+                raise ValueError("Reference audio must be MP3, M4A or WAV")
+            return {"mime": "audio/wav" if suffix == ".wav" else (
+                    "audio/mp4" if suffix == ".m4a" else "audio/mpeg"),
                 "duration_seconds": duration, "codec": stream.codec_context.name or ""}
     except av.error.FFmpegError as exc:
         raise ValueError("Reference media cannot be decoded") from exc

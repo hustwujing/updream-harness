@@ -560,6 +560,31 @@ async def test_media_refresh_revives_known_audio_without_stealing_active_lease(t
         await store.close()
 
 
+async def test_voice_clone_cache_is_owner_scoped_and_lease_fenced(tmp_path):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"voice-clones.db"));await store.initialize()
+    reference={"sha256":"1"*64,"mime":"audio/mpeg","size":123,
+        "object_ref":"sha256:"+"1"*64}
+    try:
+        first=await store.ensure_media_voice_clone("a"*64,reference)
+        repeated=await store.ensure_media_voice_clone("a"*64,reference)
+        other=await store.ensure_media_voice_clone("b"*64,reference)
+        assert first["id"]==repeated["id"] and first["voice_id"]!=other["voice_id"]
+        claimed,ok=await store.claim_media_voice_clone("a"*64,reference["sha256"],"worker-one")
+        assert ok and claimed["lease_owner"]=="worker-one"
+        held,ok=await store.claim_media_voice_clone("a"*64,reference["sha256"],"worker-two")
+        assert not ok and held["lease_owner"]=="worker-one"
+        active=await store.update_media_voice_clone("a"*64,reference["sha256"],"worker-one",
+            status="active",provider_file_id="123",release=True)
+        assert active["status"]=="active" and not active["lease_owner"]
+        assert await store.touch_media_voice_clone("a"*64,reference["sha256"],first["voice_id"])
+        assert (await store.get_media_voice_clone("a"*64,reference["sha256"]))["last_used_at"]
+        await store.claim_media_voice_clone("a"*64,reference["sha256"],"worker-one")
+        rotated=await store.rotate_media_voice_clone("a"*64,reference["sha256"],"worker-one")
+        assert rotated["revision"]==2 and rotated["voice_id"]!=first["voice_id"]
+        assert not rotated["provider_file_id"] and rotated["status"]=="pending"
+    finally:await store.close()
+
+
 async def test_thread_deletion_rejects_active_work_and_removes_owned_records(tmp_path):
     store = Store("sqlite+aiosqlite:///" + str(tmp_path / "delete-thread.db")); await store.initialize()
     try:

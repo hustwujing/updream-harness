@@ -27,6 +27,14 @@ locally. MiniMax text must be shorter than 10,000 characters; this product also
 caps one audio draft at an estimated 180 seconds and requires longer narration
 to be split at sentence boundaries.
 
+MiniMax speech accepts either a system `voice_id` or one `reference_audio`,
+never both. Voice cloning references are frozen ProjectFile versions in MP3,
+M4A or WAV format, 10-300 seconds and at most 20 MB. The confirmation card
+states that confirmation asserts the user's right to use the referenced voice.
+Worker uploads the frozen bytes with `purpose=voice_clone`, creates a
+deterministic owner-scoped voice ID, and then submits the normal async TTS Job.
+The Sandbox never receives Provider file IDs, cloned voice IDs or credentials.
+
 Reference modes are `reference_image` for Seedream and `first_frame`,
 `first_last_frame`, `multimodal_reference`, `edit_video` and `extend_video` for
 Seedance. A reference is always a frozen ProjectFile version and object digest;
@@ -150,6 +158,15 @@ concurrency, so a large batch cannot flood the Provider queue. Once the
 configured reconciliation window expires, a still-processing task becomes
 `UNKNOWN`; its existing Provider ID is retained and the request is never
 resubmitted.
+
+Voice clones are cached by `(owner_id, reference_sha256)` and fenced by a
+separate lease, so concurrent drafts do not purchase the same clone twice. The
+clone request includes a short preview synthesis, which makes its deterministic
+voice ID reconcilable through `get_voice` if the clone response is lost. Cached
+voices are checked before reuse after six days because MiniMax deletes a clone
+that remains unused for seven days. A missing voice is recreated from the
+frozen ProjectFile; an unavailable lookup defers the Job without submitting
+TTS or cloning a second voice.
 
 `POST /api/media/jobs/{job_id}/refresh` is an owner-scoped scheduling hint, not
 a Provider proxy. It may make the next poll immediately eligible only when no

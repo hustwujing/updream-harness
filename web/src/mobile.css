@@ -10,6 +10,7 @@
  .media-confirmation,.media-confirmation-copy,.media-confirmation-title{min-width:0;max-width:100%}
  .media-progress>summary{align-items:center;min-width:0}
  .media-progress>summary>div{overflow:hidden}
+ .media-progress-actions{margin-left:auto}
  .media-progress>summary b,.media-progress>summary small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
  .inspector{width:100vw;max-width:100vw}
 }

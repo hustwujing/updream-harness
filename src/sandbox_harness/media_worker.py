@@ -18,6 +18,7 @@ import av
 
 from .media_catalog import MediaCatalog
 from .media_reference_publisher import MediaReferencePreparationError, MediaReferencePublisher
+from .minimax_voice import MiniMaxVoiceCloneError, MiniMaxVoiceClonePending, MiniMaxVoiceClones
 from .observability import event
 from .objects import ObjectStore, S3ObjectStore
 from .store import Store
@@ -44,6 +45,7 @@ class MediaWorker:
         self.catalog = catalog
         self.owner = "media-worker-" + uuid.uuid4().hex
         self.reference_publisher = MediaReferencePublisher(settings, store, objects, self.owner)
+        self.voice_clones = MiniMaxVoiceClones(settings, store, objects, self.owner)
         self.stop_event = asyncio.Event()
         self.concurrency = getattr(settings, "media_worker_concurrency", 6)
         self.tripo_concurrency = getattr(settings, "tripo_worker_concurrency", 2)
@@ -122,7 +124,8 @@ class MediaWorker:
             stage = "provider_request" if not job.get("provider_job_id") else "provider_poll"
             await self.store.update_media_job(job["id"], self.owner, status="running",
                 phase="provider_polling" if job.get("provider_job_id") else (
-                    "preparing_references" if job.get("references") else "requesting"))
+                    "preparing_voice_clone" if job.get("references") and job.get("adapter") == "minimax_t2a"
+                    else "preparing_references" if job.get("references") else "requesting"))
             result = await self._execute(job)
             if result.status == "unknown":
                 error_code = ("provider_result_unresolved" if result.provider_job_id
@@ -217,7 +220,7 @@ class MediaWorker:
                 failure_stage=stage, exception_type=type(exc).__name__)
 
     async def _execute(self, job: dict[str, Any]) -> ProviderResult:
-        if job.get("references") and job["adapter"] != "tripo_v3":
+        if job.get("references") and job["adapter"] not in {"tripo_v3", "minimax_t2a"}:
             job = {**job, "references": await self.reference_publisher.prepare(job,
                 require_ark=job["adapter"] == "ark_video_v2")}
         if job["adapter"] == "ark_image":
@@ -355,8 +358,16 @@ class MediaWorker:
         base = self.settings.upstream_audio.rstrip("/")
         key = os.environ.get("SANDBOX_HARNESS_UPSTREAM_AUDIO_KEY", "")
         p = job["parameters"]
+        voice_id = p.get("voice_id", "male-qn-qingse")
+        if job.get("references"):
+            try:
+                voice_id = await self.voice_clones.prepare(job)
+            except MiniMaxVoiceClonePending as exc:
+                return ProviderResult("pending", error=str(exc))
+            except MiniMaxVoiceCloneError as exc:
+                return ProviderResult("failed", error=str(exc))
         payload = {"model": job["model"], "text": p.get("text", ""),
-                   "voice_setting": {"voice_id": p.get("voice_id", "male-qn-qingse"), "speed": p.get("speed", 1), "vol": 1, "pitch": 0},
+                   "voice_setting": {"voice_id": voice_id, "speed": p.get("speed", 1), "vol": 1, "pitch": 0},
                    "audio_setting": {"format": p.get("audio_format", "mp3"), "audio_sample_rate": 32000, "bitrate": 128000, "channel": 2}}
         headers = {"Authorization": "Bearer " + key, "Content-Type": "application/json"}
         task_id = str(job.get("provider_job_id") or "")
@@ -372,11 +383,25 @@ class MediaWorker:
                 response = await client.post(urljoin(base + "/", "t2a_async_v2"), headers=headers, json=payload)
             raw = response.json(); task_id = str(raw.get("task_id") or "")
             if not response.is_success or not task_id:
-                return ProviderResult("failed", error="audio_submit_failed")
+                code = raw.get("base_resp", {}).get("status_code", "unreported")
+                if response.status_code == 429 or code == 1002:
+                    return ProviderResult("pending", error="audio_submit_rate_limited")
+                if response.status_code >= 500 or code in {1000, 1001, 1013}:
+                    return ProviderResult("unknown", error=f"audio_submission_outcome_unknown:{code}")
+                if job.get("references"):
+                    exists = await self.voice_clones.voice_exists(voice_id)
+                    if exists is False:
+                        await self.voice_clones.invalidate(job, voice_id)
+                        return ProviderResult("pending", error="voice_clone_revalidation_required")
+                    if exists is None:
+                        return ProviderResult("pending", error="voice_clone_lookup_unavailable")
+                return ProviderResult("failed", error=f"audio_submit_failed:{code}")
             if not await self.store.update_media_job(job["id"], self.owner, status="running",
                     phase="provider_polling", provider_job_id=task_id):
                 return ProviderResult("failed", provider_job_id=task_id, error="media_job_lease_lost")
             provider_started_at = datetime.now(timezone.utc)
+            if job.get("references"):
+                await self.voice_clones.touch(job, voice_id)
             event("media.provider.submitted", job_id=job["id"], provider="minimax", provider_job_id=task_id)
         await asyncio.sleep(5)
         async with await self._client() as client:

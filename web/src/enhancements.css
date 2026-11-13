@@ -404,15 +404,14 @@ body[data-network-access="restricted"] .topbar>div:nth-child(2)>span::after{cont
 .media-elapsed{font:inherit;color:inherit;font-variant-numeric:tabular-nums}
 .media-progress article.previewable{cursor:pointer}
 .media-progress article.previewable:hover,.media-progress article.previewable:focus-visible{border-color:#aebbb4;background:#f4f7f5;outline:none}
-.media-progress-dismiss{display:grid;place-items:center;width:26px;height:26px;margin-left:auto;border:0;border-radius:4px;background:transparent;color:#777872}
+.media-progress-dismiss{display:grid;place-items:center;width:26px;height:26px;border:0;border-radius:4px;background:transparent;color:#777872}
 .media-progress-dismiss:hover{background:#eeeeea;color:#333431}
-.media-progress-refresh{display:grid;place-items:center;width:26px;height:26px;margin-left:auto;border:0;border-radius:4px;background:transparent;color:#777872}.media-progress-refresh:hover{background:#eeeeea;color:#333431}.media-progress-refresh:disabled svg{animation:spin 1s linear infinite}
-.media-progress-refresh+.media-progress-dismiss{margin-left:0}
+.media-progress-refresh{display:grid;place-items:center;width:26px;height:26px;border:0;border-radius:4px;background:transparent;color:#777872}.media-progress-refresh:hover{background:#eeeeea;color:#333431}.media-progress-refresh:disabled svg{animation:spin 1s linear infinite}
 .media-progress>summary{display:flex;align-items:center;gap:9px;max-width:780px;margin:0 auto;list-style:none;color:#50514c;cursor:pointer}
 .media-progress>summary::-webkit-details-marker{display:none}
-.media-progress>summary>div{display:flex;align-items:baseline;gap:7px;min-width:0}
+.media-progress>summary>div{display:flex;flex:1 1 auto;align-items:baseline;gap:7px;min-width:0}
 .media-progress>summary b{font-size:11px}.media-progress>summary small{color:#858680;font-size:9px}
-.media-progress-chevron{margin-left:auto;transition:transform .16s}
+.media-progress-actions{display:flex;flex:0 0 auto;align-items:center;gap:2px;margin-left:auto}.media-progress-chevron{margin:0 2px;transition:transform .16s}
 .media-progress[open] .media-progress-chevron{transform:rotate(180deg)}
 .media-progress.active>summary b{color:#356f58}
 .media-progress:not([open])>div{display:none}
