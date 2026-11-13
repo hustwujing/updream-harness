@@ -105,6 +105,22 @@ primary model and rendered preview. Each row points to its Artifact and, for
 columns for the Runtime fetch contract and stores the external task ID plus
 reported credit consumption.
 
+## Static site deployment
+
+`site_projects` owns a globally unique public slug, Thread/owner identity,
+status and current immutable version pointer. `site_drafts` stores the
+content-addressed validated tar and confirmation state; `site_draft_files`
+indexes its individually content-addressed files for efficient owner-scoped
+preview. `site_deploy_jobs` stores asynchronous phase, progress, lease, error
+and terminal timestamps for the independent Site Worker.
+
+`site_versions` is unique by project/version and project/bundle digest.
+`site_files` maps each version path to its immutable object reference, MIME,
+size and SHA-256. The Worker writes objects before one transaction inserts the
+version/files, advances the project pointer and completes the Job. Partial
+object writes are never visible. Rollback updates only the project pointer;
+downline changes project status while retaining version history.
+
 ## Interactions
 
 `interactions` stores execution-bound approvals/questions, request/response,

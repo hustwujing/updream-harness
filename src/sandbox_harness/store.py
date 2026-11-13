@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .observability import observed
-from .domain import AccountView, RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, TurnProjectFileSnapshot, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, TERMINAL, identifier, now, MediaDraftView, MediaJobView, MediaJobOutputView, MediaReferenceUploadView
+from .domain import AccountView, RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, TurnProjectFileSnapshot, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, TERMINAL, identifier, now, MediaDraftView, MediaJobView, MediaJobOutputView, MediaReferenceUploadView, SiteDeployJobView, SiteDraftView, SiteProjectView, SiteVersionView
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
 
@@ -347,6 +347,106 @@ class MediaOutboxRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class SiteProjectRow(Base):
+    __tablename__ = "site_projects"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    slug: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(20), index=True, default="draft", server_default="draft")
+    current_version_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    public_url: Mapped[str] = mapped_column(Text, default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SiteDraftRow(Base):
+    __tablename__ = "site_drafts"
+    __table_args__ = (UniqueConstraint("thread_id", "idempotency_key"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    turn_id: Mapped[str] = mapped_column(String(32), default="", index=True)
+    project_id: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    slug: Mapped[str] = mapped_column(String(64))
+    archive_object_ref: Mapped[str] = mapped_column(Text)
+    bundle_sha256: Mapped[str] = mapped_column(String(64))
+    archive_size: Mapped[int] = mapped_column(Integer)
+    file_count: Mapped[int] = mapped_column(Integer)
+    total_size: Mapped[int] = mapped_column(Integer)
+    idempotency_key: Mapped[str] = mapped_column(String(160))
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    job_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SiteDraftFileRow(Base):
+    __tablename__ = "site_draft_files"
+    __table_args__ = (UniqueConstraint("draft_id", "path"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    draft_id: Mapped[str] = mapped_column(String(32), index=True)
+    path: Mapped[str] = mapped_column(String(300))
+    sha256: Mapped[str] = mapped_column(String(64))
+    size: Mapped[int] = mapped_column(Integer)
+    mime: Mapped[str] = mapped_column(String(200))
+    object_ref: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SiteDeployJobRow(Base):
+    __tablename__ = "site_deploy_jobs"
+    __table_args__ = (UniqueConstraint("draft_id"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    turn_id: Mapped[str] = mapped_column(String(32), default="", index=True)
+    project_id: Mapped[str] = mapped_column(String(32), index=True)
+    draft_id: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    slug: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    phase: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    progress: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_code: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    error_detail: Mapped[str] = mapped_column(Text, default="", server_default="")
+    lease_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SiteVersionRow(Base):
+    __tablename__ = "site_versions"
+    __table_args__ = (UniqueConstraint("project_id", "version"),
+        UniqueConstraint("project_id", "bundle_sha256"))
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(32), index=True)
+    job_id: Mapped[str] = mapped_column(String(32), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    bundle_sha256: Mapped[str] = mapped_column(String(64))
+    file_count: Mapped[int] = mapped_column(Integer)
+    total_size: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SiteFileRow(Base):
+    __tablename__ = "site_files"
+    __table_args__ = (UniqueConstraint("version_id", "path"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    version_id: Mapped[str] = mapped_column(String(32), index=True)
+    path: Mapped[str] = mapped_column(String(300))
+    sha256: Mapped[str] = mapped_column(String(64))
+    size: Mapped[int] = mapped_column(Integer)
+    mime: Mapped[str] = mapped_column(String(200))
+    object_ref: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class SandboxControlRow(Base):
     __tablename__ = "sandbox_controls"
     thread_id: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -579,6 +679,12 @@ class Store:
                         .values(owner_id=row.owner_id))
                     await db.execute(update(MediaJobRow).where(MediaJobRow.owner_id == source_owner_id)
                         .values(owner_id=row.owner_id))
+                    await db.execute(update(SiteProjectRow).where(SiteProjectRow.owner_id == source_owner_id)
+                        .values(owner_id=row.owner_id))
+                    await db.execute(update(SiteDraftRow).where(SiteDraftRow.owner_id == source_owner_id)
+                        .values(owner_id=row.owner_id))
+                    await db.execute(update(SiteDeployJobRow).where(SiteDeployJobRow.owner_id == source_owner_id)
+                        .values(owner_id=row.owner_id))
         except IntegrityError as exc:
             raise RuntimeError("username_taken") from exc
         return self.account_view(row)
@@ -806,6 +912,14 @@ class Store:
                 MediaJobRow.thread_id == thread_id))).scalars().all()
             if any(job.status not in {"succeeded", "failed", "cancelled", "unknown"} for job in media_jobs):
                 raise RuntimeError("active_thread_cannot_be_deleted")
+            site_jobs = (await db.execute(select(SiteDeployJobRow).where(
+                SiteDeployJobRow.thread_id == thread_id))).scalars().all()
+            if any(job.status not in {"succeeded", "failed"} for job in site_jobs):
+                raise RuntimeError("active_thread_cannot_be_deleted")
+            site_projects = (await db.execute(select(SiteProjectRow).where(
+                SiteProjectRow.thread_id == thread_id))).scalars().all()
+            if any(project.status == "active" for project in site_projects):
+                raise RuntimeError("published_site_prevents_thread_delete")
             turn_ids = [turn.id for turn in turns]
             await db.execute(delete(SandboxAuditRow).where(SandboxAuditRow.thread_id == thread_id))
             await db.execute(delete(SandboxPortGrantRow).where(SandboxPortGrantRow.thread_id == thread_id))
@@ -818,6 +932,19 @@ class Store:
             await db.execute(delete(MediaDraftRow).where(MediaDraftRow.thread_id == thread_id))
             await db.execute(delete(MediaBatchRow).where(MediaBatchRow.thread_id == thread_id))
             await db.execute(delete(MediaReferenceUploadRow).where(MediaReferenceUploadRow.thread_id == thread_id))
+            site_project_ids = [project.id for project in site_projects]
+            site_version_ids = list((await db.execute(select(SiteVersionRow.id).where(
+                SiteVersionRow.project_id.in_(site_project_ids)))).scalars().all()) if site_project_ids else []
+            if site_version_ids:
+                await db.execute(delete(SiteFileRow).where(SiteFileRow.version_id.in_(site_version_ids)))
+                await db.execute(delete(SiteVersionRow).where(SiteVersionRow.id.in_(site_version_ids)))
+            site_draft_ids = list((await db.execute(select(SiteDraftRow.id).where(
+                SiteDraftRow.thread_id == thread_id))).scalars().all())
+            if site_draft_ids:
+                await db.execute(delete(SiteDraftFileRow).where(SiteDraftFileRow.draft_id.in_(site_draft_ids)))
+            await db.execute(delete(SiteDeployJobRow).where(SiteDeployJobRow.thread_id == thread_id))
+            await db.execute(delete(SiteDraftRow).where(SiteDraftRow.thread_id == thread_id))
+            await db.execute(delete(SiteProjectRow).where(SiteProjectRow.thread_id == thread_id))
             await db.execute(delete(InteractionRow).where(InteractionRow.thread_id == thread_id))
             await db.execute(delete(ProjectFileRow).where(ProjectFileRow.thread_id == thread_id))
             await db.execute(delete(ItemRow).where(ItemRow.thread_id == thread_id))
@@ -2721,6 +2848,331 @@ class Store:
                 MediaJobRow.status.not_in(["succeeded", "failed", "cancelled", "unknown"]),
             ).values(lease_owner="", lease_expires_at=None, updated_at=now()))
             return result.rowcount or 0
+
+    @staticmethod
+    def _site_draft_view(row: SiteDraftRow) -> SiteDraftView:
+        status = ("expired" if row.status == "awaiting_confirmation"
+            and utc_datetime(row.expires_at) <= now() else row.status)
+        return SiteDraftView(id=row.id, thread_id=row.thread_id, turn_id=row.turn_id,
+            project_id=row.project_id, name=row.name, slug=row.slug, status=status,
+            file_count=row.file_count, total_size=row.total_size,
+            bundle_sha256=row.bundle_sha256, expires_at=utc_datetime(row.expires_at),
+            job_id=row.job_id or "")
+
+    @staticmethod
+    def _site_job_view(row: SiteDeployJobRow, public_url: str = "") -> SiteDeployJobView:
+        return SiteDeployJobView(id=row.id, thread_id=row.thread_id, turn_id=row.turn_id,
+            project_id=row.project_id, draft_id=row.draft_id, name=row.name, slug=row.slug,
+            status=row.status, phase=row.phase or "", progress=row.progress,
+            error_code=row.error_code or "", public_url=public_url,
+            created_at=utc_datetime(row.created_at),
+            finished_at=utc_datetime(row.finished_at) if row.finished_at else None)
+
+    async def create_site_draft(self, owner_id: str, thread_id: str, turn_id: str, *,
+                                name: str, slug: str, idempotency_key: str,
+                                archive_object_ref: str, bundle_sha256: str,
+                                archive_size: int, file_count: int, total_size: int,
+                                expires_at: datetime, public_base_path: str,
+                                files: list[dict] | None = None) -> tuple[SiteDraftView, bool]:
+        files = files or []
+        if (len(files) != file_count or sum(value.get("size", -1) for value in files) != total_size
+                or len({value.get("path") for value in files}) != file_count
+                or not any(value.get("path") == "index.html" for value in files)):
+            raise ValueError("site_draft_files_invalid")
+        timestamp = now(); draft_id = identifier()
+        async with self.connections.begin() as db:
+            thread = (await db.execute(select(ThreadRow).where(ThreadRow.id == thread_id,
+                ThreadRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
+            if not thread:
+                raise KeyError("thread_not_found")
+            if turn_id:
+                turn = await db.get(TurnRow, turn_id)
+                if not turn or turn.thread_id != thread_id:
+                    raise KeyError("turn_not_found")
+            existing = (await db.execute(select(SiteDraftRow).where(
+                SiteDraftRow.thread_id == thread_id,
+                SiteDraftRow.idempotency_key == idempotency_key).with_for_update())).scalar_one_or_none()
+            if existing:
+                if (existing.bundle_sha256 != bundle_sha256 or existing.name != name
+                        or existing.archive_size != archive_size):
+                    raise RuntimeError("site_draft_idempotency_conflict")
+                return self._site_draft_view(existing), False
+            project = (await db.execute(select(SiteProjectRow).where(
+                SiteProjectRow.thread_id == thread_id, SiteProjectRow.owner_id == owner_id,
+                SiteProjectRow.slug == slug).with_for_update())).scalar_one_or_none()
+            if project is None:
+                project_id = identifier(); candidate = slug
+                collision = (await db.execute(select(SiteProjectRow.id).where(
+                    SiteProjectRow.slug == candidate))).scalar_one_or_none()
+                if collision:
+                    candidate = f"{slug[:41]}-{project_id[:6]}"
+                project = SiteProjectRow(id=project_id, owner_id=owner_id, thread_id=thread_id,
+                    name=name, slug=candidate, status="draft", current_version_id="",
+                    public_url=public_base_path.rstrip("/") + "/" + candidate + "/",
+                    created_at=timestamp, updated_at=timestamp)
+                db.add(project)
+            elif project.status == "unpublished":
+                project.name = name; project.updated_at = timestamp
+            row = SiteDraftRow(id=draft_id, owner_id=owner_id, thread_id=thread_id,
+                turn_id=turn_id, project_id=project.id, name=name, slug=project.slug,
+                archive_object_ref=archive_object_ref, bundle_sha256=bundle_sha256,
+                archive_size=archive_size, file_count=file_count, total_size=total_size,
+                idempotency_key=idempotency_key, status="awaiting_confirmation",
+                expires_at=expires_at, job_id="", created_at=timestamp, updated_at=timestamp)
+            db.add(row)
+            for value in files:
+                db.add(SiteDraftFileRow(id=identifier(), draft_id=row.id, path=value["path"],
+                    sha256=value["sha256"], size=value["size"], mime=value["mime"],
+                    object_ref=value["object_ref"], created_at=timestamp))
+        return self._site_draft_view(row), True
+
+    async def get_site_draft(self, draft_id: str, owner_id: str) -> SiteDraftView | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(SiteDraftRow).where(SiteDraftRow.id == draft_id,
+                SiteDraftRow.owner_id == owner_id))).scalar_one_or_none()
+        return self._site_draft_view(row) if row else None
+
+    async def get_site_draft_archive(self, draft_id: str, owner_id: str) -> dict | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(SiteDraftRow).where(SiteDraftRow.id == draft_id,
+                SiteDraftRow.owner_id == owner_id))).scalar_one_or_none()
+        return ({"object_ref":row.archive_object_ref, "size":row.archive_size,
+            "sha256":row.bundle_sha256} if row else None)
+
+    async def get_site_draft_file(self, draft_id: str, path: str, owner_id: str) -> dict | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(SiteDraftFileRow).join(SiteDraftRow,
+                SiteDraftRow.id == SiteDraftFileRow.draft_id).where(
+                    SiteDraftFileRow.draft_id == draft_id, SiteDraftFileRow.path == path,
+                    SiteDraftRow.owner_id == owner_id))).scalar_one_or_none()
+        return ({"object_ref":row.object_ref, "size":row.size, "sha256":row.sha256,
+            "mime":row.mime} if row else None)
+
+    async def list_site_drafts(self, thread_id: str, owner_id: str) -> list[SiteDraftView]:
+        async with self.connections() as db:
+            rows = (await db.execute(select(SiteDraftRow).where(
+                SiteDraftRow.thread_id == thread_id, SiteDraftRow.owner_id == owner_id,
+            ).order_by(SiteDraftRow.created_at.desc()))).scalars().all()
+        return [self._site_draft_view(row) for row in rows]
+
+    async def cancel_site_draft(self, draft_id: str, owner_id: str) -> SiteDraftView:
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(SiteDraftRow).where(SiteDraftRow.id == draft_id,
+                SiteDraftRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
+            if not row:
+                raise KeyError("site_draft_not_found")
+            if row.status == "confirmed":
+                raise RuntimeError("site_draft_already_confirmed")
+            if row.status == "awaiting_confirmation":
+                row.status = "cancelled"; row.updated_at = now()
+        return self._site_draft_view(row)
+
+    async def confirm_site_draft(self, draft_id: str, owner_id: str) -> SiteDeployJobView:
+        timestamp = now()
+        async with self.connections.begin() as db:
+            draft = (await db.execute(select(SiteDraftRow).where(SiteDraftRow.id == draft_id,
+                SiteDraftRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
+            if not draft:
+                raise KeyError("site_draft_not_found")
+            project = await db.get(SiteProjectRow, draft.project_id)
+            if draft.job_id:
+                job = await db.get(SiteDeployJobRow, draft.job_id)
+                if job:
+                    return self._site_job_view(job, project.public_url if project else "")
+            if draft.status != "awaiting_confirmation" or utc_datetime(draft.expires_at) <= timestamp:
+                raise RuntimeError("site_draft_not_confirmable")
+            job = SiteDeployJobRow(id=identifier(), owner_id=owner_id,
+                thread_id=draft.thread_id, turn_id=draft.turn_id, project_id=draft.project_id,
+                draft_id=draft.id, name=draft.name, slug=draft.slug, status="created",
+                phase="queued", progress=0, created_at=timestamp, updated_at=timestamp)
+            db.add(job); draft.status = "confirmed"; draft.job_id = job.id; draft.updated_at = timestamp
+        return self._site_job_view(job, project.public_url if project else "")
+
+    async def claim_site_jobs(self, owner: str, limit: int = 2) -> list[dict]:
+        async with self.connections.begin() as db:
+            rows = (await db.execute(select(SiteDeployJobRow).where(
+                SiteDeployJobRow.status.in_(["created", "running"]),
+                or_(SiteDeployJobRow.lease_expires_at.is_(None),
+                    SiteDeployJobRow.lease_expires_at < now()),
+            ).order_by(SiteDeployJobRow.created_at).limit(limit).with_for_update())).scalars().all()
+            result = []
+            for row in rows:
+                draft = await db.get(SiteDraftRow, row.draft_id)
+                if not draft:
+                    row.status = "failed"; row.phase = "terminal"
+                    row.error_code = "site_draft_missing"; row.finished_at = now(); row.updated_at = now()
+                    continue
+                row.status = "running"; row.phase = "validating"; row.progress = 5
+                row.lease_owner = owner; row.lease_expires_at = now() + timedelta(seconds=60)
+                row.updated_at = now()
+                result.append({"id":row.id, "project_id":row.project_id,
+                    "draft_id":row.draft_id, "thread_id":row.thread_id, "owner_id":row.owner_id,
+                    "archive_object_ref":draft.archive_object_ref,
+                    "archive_size":draft.archive_size, "bundle_sha256":draft.bundle_sha256,
+                    "file_count":draft.file_count, "total_size":draft.total_size,
+                    "files":[{"path":value.path, "sha256":value.sha256, "size":value.size,
+                        "mime":value.mime, "object_ref":value.object_ref} for value in
+                        (await db.execute(select(SiteDraftFileRow).where(
+                            SiteDraftFileRow.draft_id == draft.id))).scalars().all()]})
+            return result
+
+    async def update_site_job(self, job_id: str, owner: str, *, phase: str,
+                              progress: int, error_code: str = "", error_detail: str = "") -> bool:
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(SiteDeployJobRow).where(
+                SiteDeployJobRow.id == job_id, SiteDeployJobRow.lease_owner == owner,
+            ).with_for_update())).scalar_one_or_none()
+            if not row:
+                return False
+            row.phase = phase; row.progress = progress; row.error_code = error_code
+            row.error_detail = error_detail[:1000]; row.updated_at = now()
+            row.lease_expires_at = now() + timedelta(seconds=60)
+            return True
+
+    async def fail_site_job(self, job_id: str, owner: str, *, error_code: str,
+                            error_detail: str = "") -> bool:
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(SiteDeployJobRow).where(
+                SiteDeployJobRow.id == job_id, SiteDeployJobRow.lease_owner == owner,
+            ).with_for_update())).scalar_one_or_none()
+            if not row:
+                return False
+            row.status = "failed"; row.phase = "terminal"; row.progress = None
+            row.error_code = error_code; row.error_detail = error_detail[:1000]
+            row.finished_at = now(); row.updated_at = row.finished_at
+            row.lease_owner = ""; row.lease_expires_at = None
+            return True
+
+    async def complete_site_job(self, job_id: str, owner: str, *, bundle_sha256: str,
+                                files: list[dict]) -> bool:
+        if not files or not any(value["path"] == "index.html" for value in files):
+            raise ValueError("site_files_invalid")
+        timestamp = now()
+        async with self.connections.begin() as db:
+            job = (await db.execute(select(SiteDeployJobRow).where(
+                SiteDeployJobRow.id == job_id, SiteDeployJobRow.lease_owner == owner,
+            ).with_for_update())).scalar_one_or_none()
+            if not job:
+                return False
+            project = (await db.execute(select(SiteProjectRow).where(
+                SiteProjectRow.id == job.project_id).with_for_update())).scalar_one_or_none()
+            draft = await db.get(SiteDraftRow, job.draft_id)
+            if not project or not draft or draft.bundle_sha256 != bundle_sha256:
+                raise ValueError("site_job_contract_mismatch")
+            existing = (await db.execute(select(SiteVersionRow).where(
+                SiteVersionRow.project_id == project.id,
+                SiteVersionRow.bundle_sha256 == bundle_sha256).with_for_update())).scalar_one_or_none()
+            if existing is None:
+                latest = (await db.execute(select(func.max(SiteVersionRow.version)).where(
+                    SiteVersionRow.project_id == project.id))).scalar_one() or 0
+                existing = SiteVersionRow(id=identifier(), project_id=project.id, job_id=job.id,
+                    version=latest + 1, bundle_sha256=bundle_sha256, file_count=len(files),
+                    total_size=sum(value["size"] for value in files), created_at=timestamp)
+                db.add(existing)
+                for value in files:
+                    db.add(SiteFileRow(id=identifier(), version_id=existing.id, path=value["path"],
+                        sha256=value["sha256"], size=value["size"], mime=value["mime"],
+                        object_ref=value["object_ref"], created_at=timestamp))
+            project.current_version_id = existing.id; project.status = "active"
+            project.name = job.name; project.updated_at = timestamp
+            job.status = "succeeded"; job.phase = "activated"; job.progress = 100
+            job.error_code = ""; job.error_detail = ""; job.finished_at = timestamp
+            job.updated_at = timestamp; job.lease_owner = ""; job.lease_expires_at = None
+            draft.status = "deployed"; draft.updated_at = timestamp
+            return True
+
+    async def release_site_job_leases(self, owner: str) -> int:
+        async with self.connections.begin() as db:
+            result = await db.execute(update(SiteDeployJobRow).where(
+                SiteDeployJobRow.lease_owner == owner,
+                SiteDeployJobRow.status == "running",
+            ).values(lease_owner="", lease_expires_at=None, updated_at=now()))
+            return result.rowcount or 0
+
+    async def get_site_job(self, job_id: str, owner_id: str) -> SiteDeployJobView | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(SiteDeployJobRow).where(
+                SiteDeployJobRow.id == job_id,
+                SiteDeployJobRow.owner_id == owner_id))).scalar_one_or_none()
+            project = await db.get(SiteProjectRow, row.project_id) if row else None
+        return self._site_job_view(row, project.public_url if project else "") if row else None
+
+    async def get_site_job_for_thread(self, job_id: str, thread_id: str) -> SiteDeployJobView | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(SiteDeployJobRow).where(
+                SiteDeployJobRow.id == job_id,
+                SiteDeployJobRow.thread_id == thread_id))).scalar_one_or_none()
+            project = await db.get(SiteProjectRow, row.project_id) if row else None
+        return self._site_job_view(row, project.public_url if project else "") if row else None
+
+    async def list_site_jobs(self, thread_id: str, owner_id: str) -> list[SiteDeployJobView]:
+        async with self.connections() as db:
+            rows = (await db.execute(select(SiteDeployJobRow).where(
+                SiteDeployJobRow.thread_id == thread_id,
+                SiteDeployJobRow.owner_id == owner_id,
+            ).order_by(SiteDeployJobRow.created_at.desc()))).scalars().all()
+            projects = {value.id:value for value in (await db.execute(select(SiteProjectRow).where(
+                SiteProjectRow.id.in_([row.project_id for row in rows])))).scalars().all()} if rows else {}
+        return [self._site_job_view(row, projects[row.project_id].public_url) for row in rows]
+
+    async def list_site_projects(self, thread_id: str, owner_id: str) -> list[SiteProjectView]:
+        async with self.connections() as db:
+            projects = (await db.execute(select(SiteProjectRow).where(
+                SiteProjectRow.thread_id == thread_id, SiteProjectRow.owner_id == owner_id,
+            ).order_by(SiteProjectRow.updated_at.desc()))).scalars().all()
+            versions = (await db.execute(select(SiteVersionRow).where(
+                SiteVersionRow.project_id.in_([row.id for row in projects]),
+            ).order_by(SiteVersionRow.version.desc()))).scalars().all() if projects else []
+        grouped: dict[str, list[SiteVersionView]] = defaultdict(list)
+        current = {row.id:row.current_version_id for row in projects}
+        for row in versions:
+            grouped[row.project_id].append(SiteVersionView(id=row.id, version=row.version,
+                bundle_sha256=row.bundle_sha256, file_count=row.file_count,
+                total_size=row.total_size, created_at=utc_datetime(row.created_at),
+                active=current[row.project_id] == row.id))
+        return [SiteProjectView(id=row.id, thread_id=row.thread_id, name=row.name,
+            slug=row.slug, status=row.status, public_url=row.public_url,
+            current_version_id=row.current_version_id, versions=grouped[row.id],
+            created_at=utc_datetime(row.created_at), updated_at=utc_datetime(row.updated_at))
+            for row in projects]
+
+    async def activate_site_version(self, project_id: str, version_id: str,
+                                    owner_id: str) -> SiteProjectView:
+        async with self.connections.begin() as db:
+            project = (await db.execute(select(SiteProjectRow).where(
+                SiteProjectRow.id == project_id, SiteProjectRow.owner_id == owner_id,
+            ).with_for_update())).scalar_one_or_none()
+            version = await db.get(SiteVersionRow, version_id)
+            if not project or not version or version.project_id != project.id:
+                raise KeyError("site_version_not_found")
+            project.current_version_id = version.id; project.status = "active"; project.updated_at = now()
+            row = project
+        projects = await self.list_site_projects(row.thread_id, owner_id)
+        return next(value for value in projects if value.id == row.id)
+
+    async def unpublish_site(self, project_id: str, owner_id: str) -> SiteProjectView:
+        async with self.connections.begin() as db:
+            project = (await db.execute(select(SiteProjectRow).where(
+                SiteProjectRow.id == project_id, SiteProjectRow.owner_id == owner_id,
+            ).with_for_update())).scalar_one_or_none()
+            if not project:
+                raise KeyError("site_project_not_found")
+            project.status = "unpublished"; project.updated_at = now(); thread_id = project.thread_id
+        projects = await self.list_site_projects(thread_id, owner_id)
+        return next(value for value in projects if value.id == project_id)
+
+    async def public_site_file(self, slug: str, path: str) -> dict | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(SiteFileRow, SiteProjectRow).join(SiteProjectRow,
+                SiteProjectRow.current_version_id == SiteFileRow.version_id).where(
+                    SiteProjectRow.slug == slug, SiteProjectRow.status == "active",
+                    SiteFileRow.path == path))).first()
+        if not row:
+            return None
+        file, project = row
+        return {"project_id":project.id, "version_id":project.current_version_id,
+            "path":file.path, "sha256":file.sha256, "size":file.size,
+            "mime":file.mime, "object_ref":file.object_ref}
 
     async def update_media_job(self, job_id: str, owner: str, *, status: str, phase: str = "",
                                progress: int | None = None, provider_job_id: str = "",

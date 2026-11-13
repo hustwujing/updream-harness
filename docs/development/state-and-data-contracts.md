@@ -10,7 +10,8 @@ write endpoints, SSE, project files, interactions or cancellation.
 `store.py` currently defines these tables:
 
 `threads`, `turns`, `events`, `turn_inputs`, `artifacts`, `items`, `uploads`,
-`project_files`, `turn_project_files` and `interactions`.
+`project_files`, `turn_project_files`, `interactions`, media draft/job/output
+tables, and static-site project/draft/job/version/file tables.
 
 There is no separate sandbox-attempt, checkpoint or capability-grant table.
 Sandbox identity, capability nonce, lease and Runtime cursor live on `turns`;

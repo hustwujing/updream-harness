@@ -1,0 +1,30 @@
+const {chromium}=require('playwright');
+const assert=require('node:assert/strict');
+
+(async()=>{let browser;try{
+ browser=await chromium.launch({headless:true,args:['--no-sandbox'],ignoreDefaultArgs:['--disable-dev-shm-usage']});
+ const page=await browser.newPage({viewport:{width:1280,height:850}}),errors=[];page.on('pageerror',error=>errors.push(error.message));
+ const now=new Date().toISOString(),thread={id:'site-thread',title:'互动贝叶斯定律',harness:'codex',model:'gpt-5.6',reasoning_level:'standard',updated_at:now,latest_turn_id:'site-turn',latest_turn_state:'COMPLETED',unread_completion:false},turn={id:'site-turn',thread_id:thread.id,harness:'codex',model:'gpt-5.6',reasoning_level:'standard',state:'COMPLETED',updated_at:now};
+ const drafts=[{id:'site-draft',thread_id:thread.id,turn_id:turn.id,project_id:'site-project',name:'贝叶斯定律互动实验室',slug:'bayes-lab',status:'awaiting_confirmation',file_count:7,total_size:245760,bundle_sha256:'a'.repeat(64),expires_at:new Date(Date.now()+600000).toISOString(),job_id:''}],jobs=[],projects=[];
+ await page.route('**/api/**',async route=>{const url=new URL(route.request().url()),path=url.pathname,json=value=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(value)});
+  if(path.endsWith('/api/session'))return json({ready:true,authentication_required:false,authenticated:false,user:null});
+  if(path.endsWith('/api/catalog/harnesses'))return json([{id:'codex',label:'Codex',available:true,default_model:'gpt-5.6',models:[{id:'gpt-5.6',label:'GPT-5.6',available:true,reasoning:[{id:'standard',label:'标准'}]}]}]);
+  if(path.endsWith('/api/threads'))return json([thread]);
+  if(path.endsWith('/api/threads/site-thread/turns'))return json([turn]);
+  if(path.includes('/api/threads/site-thread/items')||path.includes('/interactions')||path.includes('/project-files')||path.includes('/background-jobs')||path.includes('/media/'))return json([]);
+  if(path.endsWith('/api/threads/site-thread/sites/drafts'))return json(drafts);
+  if(path.endsWith('/api/threads/site-thread/sites/jobs'))return json(jobs);
+  if(path.endsWith('/api/threads/site-thread/sites'))return json(projects);
+  if(path.endsWith('/api/sites/drafts/site-draft/confirm')){drafts[0]={...drafts[0],status:'confirmed',job_id:'site-job'};jobs.push({id:'site-job',thread_id:thread.id,turn_id:turn.id,project_id:'site-project',draft_id:'site-draft',name:drafts[0].name,slug:'bayes-lab',status:'running',phase:'uploading',progress:40,error_code:'',public_url:'/sandbox-harness/sites/bayes-lab/',created_at:now,finished_at:null});return json(jobs[0])}
+  return json([]);
+ });
+ await page.goto(process.env.TEST_BASE_URL||'http://127.0.0.1:22766/');await page.waitForSelector('.new-thread');await page.locator('.thread-list button').filter({hasText:'互动贝叶斯定律'}).click();await page.waitForSelector('.site-confirmations');
+ assert.match(await page.locator('.site-confirmations').textContent(),/贝叶斯定律互动实验室.*7 个文件.*部署站点/s);
+ await page.setViewportSize({width:390,height:844});await page.waitForTimeout(100);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+ await page.setViewportSize({width:1280,height:850});await page.getByRole('button',{name:'部署站点'}).click();await page.waitForSelector('.site-progress');assert.equal(await page.locator('.site-progress').getAttribute('open'),'');assert.match(await page.locator('.site-progress').textContent(),/站点正在发布.*上传站点文件/s);
+ jobs[0]={...jobs[0],status:'succeeded',phase:'activated',progress:100,finished_at:new Date().toISOString()};projects.push({id:'site-project',thread_id:thread.id,name:drafts[0].name,slug:'bayes-lab',status:'active',public_url:'/sandbox-harness/sites/bayes-lab/',current_version_id:'version-1',versions:[{id:'version-1',version:1,bundle_sha256:'a'.repeat(64),file_count:7,total_size:245760,created_at:now,active:true}],created_at:now,updated_at:now});
+ await page.waitForFunction(()=>document.body.innerText.includes('发布完成'),null,{timeout:5000});assert.equal(await page.locator('.site-progress .media-card-spinner').count(),0);assert.equal(await page.locator('.site-progress a').getAttribute('href'),'/sandbox-harness/sites/bayes-lab/');
+ await page.getByTitle('Workspace 与 Sandbox').click();await page.waitForSelector('.site-projects');assert.match(await page.locator('.site-projects').textContent(),/已部署站点.*在线.*1 个版本/s);
+ const published=await browser.newPage();await published.route('http://published.test/**',route=>{const path=new URL(route.request().url()).pathname;if(path.endsWith('/app.js'))return route.fulfill({status:200,contentType:'text/javascript',body:"document.body.dataset.ready='yes'"});return route.fulfill({status:200,contentType:'text/html',headers:{'Content-Security-Policy':"sandbox allow-scripts; default-src 'self'; script-src 'self'"},body:'<!doctype html><body><script src="app.js"></script></body>'})});await published.goto('http://published.test/sites/demo/');await published.waitForFunction(()=>document.body.dataset.ready==='yes');await published.close();
+ assert.deepEqual(errors,[]);console.log(JSON.stringify({passed:true,confirmation:true,progress:true,public_link:true,workspace_management:true,mobile:true,sandboxed_scripts:true,page_errors:0}));
+ }finally{await browser?.close()}})().catch(error=>{console.error(error);process.exit(1)});

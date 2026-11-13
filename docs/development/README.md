@@ -31,6 +31,7 @@ Every code change requires:
 | API, SSE or browser behavior | [API and frontend](api-and-frontend.md), [State and data contracts](state-and-data-contracts.md) when persistence changes |
 | Live sandbox files, terminal, processes, ports or takeover | [Sandbox Inspector](sandbox-inspector.md), [Sandbox and Harness](sandbox-and-harness.md), [Recovery and observability](recovery-and-observability.md) |
 | Upload, file card or online document preview | [File upload and preview](file-upload-and-preview.md), [API and frontend](api-and-frontend.md) |
+| Static interactive site preparation, deployment, rollback or serving | [Static site deployment](static-site-deployment.md), [Adding a Runtime tool](add-runtime-tool.md), [Adding a Gateway capability](add-gateway-capability.md), [API and frontend](api-and-frontend.md) |
 | Logging, tracing or error reporting | [Recovery and observability](recovery-and-observability.md) and [observability contract](../observability.md) |
 | Deployment, service unit, image or environment change | [Deployment and collaboration](deployment-and-collaboration.md) |
 

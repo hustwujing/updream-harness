@@ -17,6 +17,7 @@ the summary.
 | `sandbox.py` | OpenSandbox HTTP adapter, metadata reconciliation and fake backend |
 | `runtime.py` | Typed host client for the in-sandbox Runtime API and reconnecting event streams |
 | `objects.py` | Content-addressed local and S3/BOSS storage with size/hash validation |
+| `site_bundle.py` / `site_worker.py` | bounded static-site packages, durable deployment Jobs and atomic immutable version activation |
 | `sessions.py` | Signed anonymous browser identity cookie; owner ID is its hash |
 | `events.py` | Redis Streams wake-up/bounded replay aid; PostgreSQL remains authoritative |
 

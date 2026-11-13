@@ -148,6 +148,26 @@ Draft `generation_mode` and `references` are validated before confirmation.
 References identify a managed ProjectFile by ID or path and provide only a
 role/usage. Callers cannot provide Provider URLs or Ark Asset IDs.
 
+## Static interactive sites
+
+```text
+GET  /api/threads/{thread_id}/sites/drafts
+POST /api/sites/drafts/{draft_id}/confirm
+POST /api/sites/drafts/{draft_id}/cancel
+GET  /api/threads/{thread_id}/sites/jobs
+GET  /api/sites/jobs/{job_id}
+GET  /api/threads/{thread_id}/sites
+POST /api/sites/{project_id}/versions/{version_id}/activate
+POST /api/sites/{project_id}/unpublish
+GET  /sites/{slug}/{path}
+```
+
+The Runtime prepares a tar through the Turn-scoped `POST /v1/sites/drafts`
+Gateway capability. Preparation validates and stores a draft only. Browser
+confirmation creates the asynchronous Job. Public reads resolve only the
+current active immutable version, support byte ranges and ETags, set no
+application Cookie and sandbox HTML scripts away from the application origin.
+
 ## Sandbox inspector
 
 ```text

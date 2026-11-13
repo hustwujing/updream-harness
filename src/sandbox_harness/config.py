@@ -99,6 +99,10 @@ class Settings(BaseSettings):
     media_catalog_json: str = ""
     media_draft_ttl_seconds: int = Field(default=24 * 3600, ge=600, le=7 * 86400)
     media_worker_concurrency: int = Field(default=6, ge=1, le=32)
+    site_worker_concurrency: int = Field(default=2, ge=1, le=16)
+    site_draft_ttl_seconds: int = Field(default=24 * 3600, ge=600, le=7 * 86400)
+    site_public_base_path: str = Field(default="/sandbox-harness/sites",
+        pattern=r"^/[A-Za-z0-9/_-]+$")
     model_routes_json: str = ""
     harness_catalog_json: str = ""
     model_catalog_discovery: bool = True

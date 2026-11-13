@@ -10,11 +10,12 @@ from pathlib import Path
 import sandbox_harness.app
 import sandbox_harness.gateway
 import sandbox_harness.media_service
+import sandbox_harness.site_service
 for file in Path('web/dist').rglob('*'):
     if file.is_file():
         with file.open('rb') as stream:
             stream.read(1)
-print('Service user can import API/Gateway/Media Worker and read every web asset')
+print('Service user can import API/Gateway/Media Worker/Site Worker and read every web asset')
 PY
 test -x /usr/bin/libreoffice
 test -r /etc/libreoffice/registry/impress.xcd

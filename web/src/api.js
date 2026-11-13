@@ -27,6 +27,13 @@ export const createMediaDraft=(threadId,value)=>api(`threads/${threadId}/media/d
 export const updateMediaDraft=(draftId,value)=>api(`media/drafts/${draftId}`,{method:'PATCH',body:JSON.stringify(value)});
 export const confirmMediaDraft=draftId=>api(`media/drafts/${draftId}/confirm`,{method:'POST'});
 export const cancelMediaDraft=draftId=>api(`media/drafts/${draftId}/cancel`,{method:'POST'});
+export const listSiteDrafts=threadId=>api(`threads/${threadId}/sites/drafts`);
+export const confirmSiteDraft=draftId=>api(`sites/drafts/${draftId}/confirm`,{method:'POST'});
+export const cancelSiteDraft=draftId=>api(`sites/drafts/${draftId}/cancel`,{method:'POST'});
+export const listSiteJobs=threadId=>api(`threads/${threadId}/sites/jobs`);
+export const listSiteProjects=threadId=>api(`threads/${threadId}/sites`);
+export const activateSiteVersion=(projectId,versionId)=>api(`sites/${projectId}/versions/${versionId}/activate`,{method:'POST'});
+export const unpublishSite=projectId=>api(`sites/${projectId}/unpublish`,{method:'POST'});
 export const createThread=value=>api('threads',{method:'POST',body:JSON.stringify(value)});
 export const setThreadArchived=(id,archived)=>api(`threads/${id}/${archived?'archive':'unarchive'}`,{method:'POST'});
 export const deleteThread=id=>api(`threads/${id}`,{method:'DELETE'});

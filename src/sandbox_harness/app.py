@@ -39,6 +39,7 @@ from .pool import SandboxPool
 from .runtime import RuntimeClient
 from .sandbox import FakeSandboxBackend, OpenSandboxBackend
 from .sandbox_inspector import SandboxInspector, websocket_endpoint_headers
+from .site_bundle import safe_site_path
 from .sessions import COOKIE, Sessions
 from .store import Store
 
@@ -301,7 +302,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ingress = request.headers.get("x-updream-ingress", "direct").strip().lower()
         if ingress not in {"direct", "frpc"}:ingress = "direct"
         account, auth_token_hash = await account_auth.resolve(request.cookies.get(AUTH_COOKIE))
-        if request.url.path == "/api/health":owner_id, token, new_session = "", "", False
+        if request.url.path == "/api/health" or request.url.path.startswith("/sites/"):
+            owner_id, token, new_session = "", "", False
         elif account:owner_id, token, new_session = account.owner_id, "", False
         elif ingress == "frpc":owner_id, token, new_session = "", "", False
         else:owner_id, token, new_session = sessions.resolve(request.cookies.get(COOKIE))
@@ -507,6 +509,91 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if str(exc) == "media_cancel_not_supported":
                 raise HTTPException(409, str(exc))
             raise HTTPException(409, str(exc))
+
+    @app.get("/api/threads/{thread_id}/sites/drafts")
+    async def list_site_drafts(thread_id: str, request: Request):
+        if not await store.get_thread(thread_id, request.state.owner_id):
+            raise HTTPException(404, "Thread not found")
+        return await store.list_site_drafts(thread_id, request.state.owner_id)
+
+    @app.post("/api/sites/drafts/{draft_id}/confirm")
+    async def confirm_site_draft(draft_id: str, request: Request):
+        try:
+            return await store.confirm_site_draft(draft_id, request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404, "Site draft not found")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+
+    @app.post("/api/sites/drafts/{draft_id}/cancel")
+    async def cancel_site_draft(draft_id: str, request: Request):
+        try:
+            return await store.cancel_site_draft(draft_id, request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404, "Site draft not found")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+
+    async def site_draft_preview_response(draft_id: str, path: str, request: Request):
+        try:
+            path = safe_site_path(path.strip("/") or "index.html")
+            file = await store.get_site_draft_file(draft_id, path, request.state.owner_id)
+        except ValueError:
+            file = None
+        if file is None:
+            raise HTTPException(404, "Site draft preview file not found")
+        data = await asyncio.to_thread(objects.get, file["object_ref"], maximum=file["size"])
+        if len(data) != file["size"] or hashlib.sha256(data).hexdigest() != file["sha256"]:
+            raise HTTPException(409, "Site draft preview identity mismatch")
+        headers = {"Cache-Control":"private, no-cache", "ETag":'"' + file["sha256"] + '"'}
+        if file["mime"] == "text/html":
+            headers["Content-Security-Policy"] = ("sandbox allow-scripts allow-forms allow-modals "
+                "allow-pointer-lock allow-downloads; default-src 'self' data: blob:; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; "
+                "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+                "media-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:")
+        return Response(data, media_type=file["mime"], headers=headers)
+
+    @app.get("/api/sites/drafts/{draft_id}/preview/")
+    async def site_draft_preview_index(draft_id: str, request: Request):
+        return await site_draft_preview_response(draft_id, "index.html", request)
+
+    @app.get("/api/sites/drafts/{draft_id}/preview/{path:path}")
+    async def site_draft_preview_file(draft_id: str, path: str, request: Request):
+        return await site_draft_preview_response(draft_id, path, request)
+
+    @app.get("/api/threads/{thread_id}/sites/jobs")
+    async def list_site_jobs(thread_id: str, request: Request):
+        if not await store.get_thread(thread_id, request.state.owner_id):
+            raise HTTPException(404, "Thread not found")
+        return await store.list_site_jobs(thread_id, request.state.owner_id)
+
+    @app.get("/api/sites/jobs/{job_id}")
+    async def get_site_job(job_id: str, request: Request):
+        value = await store.get_site_job(job_id, request.state.owner_id)
+        if not value:
+            raise HTTPException(404, "Site deployment job not found")
+        return value
+
+    @app.get("/api/threads/{thread_id}/sites")
+    async def list_site_projects(thread_id: str, request: Request):
+        if not await store.get_thread(thread_id, request.state.owner_id):
+            raise HTTPException(404, "Thread not found")
+        return await store.list_site_projects(thread_id, request.state.owner_id)
+
+    @app.post("/api/sites/{project_id}/versions/{version_id}/activate")
+    async def activate_site_version(project_id: str, version_id: str, request: Request):
+        try:
+            return await store.activate_site_version(project_id, version_id, request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404, "Site version not found")
+
+    @app.post("/api/sites/{project_id}/unpublish")
+    async def unpublish_site(project_id: str, request: Request):
+        try:
+            return await store.unpublish_site(project_id, request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404, "Site project not found")
 
     @app.get("/api/session")
     async def session_ready(request: Request):
@@ -1205,6 +1292,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         filename = Path(value.path).name
         return await immutable_object_response(value, maximum=maximum, request=request,
             filename=filename, inline=inline)
+
+    async def public_site_response(slug: str, path: str, request: Request):
+        try:
+            path = path.strip("/") or "index.html"
+            if path.endswith("/"):
+                path += "index.html"
+            path = safe_site_path(path)
+            value = await store.public_site_file(slug, path)
+        except ValueError:
+            value = None
+        if not value:
+            raise HTTPException(404, "Published site file not found")
+        size = value["size"]; etag = '"' + value["sha256"] + '"'
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers={"ETag":etag, "Cache-Control":"no-cache"})
+        try:
+            selected = requested_byte_range(request.headers.get("range", ""), size)
+        except ValueError:
+            raise HTTPException(416, "invalid_byte_range", headers={"Content-Range":f"bytes */{size}"})
+        start, end = selected or (0, size - 1)
+        headers = {"ETag":etag, "Accept-Ranges":"bytes", "Cache-Control":"no-cache",
+            "Content-Length":str(end - start + 1), "X-Published-Site-Version":value["version_id"]}
+        if selected:
+            headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+        if value["mime"] == "text/html":
+            headers["Content-Security-Policy"] = ("sandbox allow-scripts allow-forms allow-modals "
+                "allow-pointer-lock allow-downloads; default-src 'self' data: blob:; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; "
+                "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+                "font-src 'self' data:; media-src 'self' data: blob:; "
+                "connect-src 'self'; worker-src 'self' blob:; frame-ancestors *")
+        return StreamingResponse(objects.iter_bytes(value["object_ref"], maximum=settings.max_artifact_bytes,
+            start=start, end=end), status_code=206 if selected else 200,
+            media_type=value["mime"], headers=headers)
+
+    @app.get("/sites/{slug}/")
+    async def public_site_index(slug: str, request: Request):
+        return await public_site_response(slug, "index.html", request)
+
+    @app.get("/sites/{slug}/{path:path}")
+    async def public_site_file(slug: str, path: str, request: Request):
+        return await public_site_response(slug, path, request)
 
     @app.get("/api/previews/{source}/{file_id}")
     async def document_preview(source: str, file_id: str, request: Request):

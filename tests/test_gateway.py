@@ -84,6 +84,55 @@ async def test_gateway_media_status_is_capability_and_thread_scoped(tmp_path, mo
     assert calls == [("job-1", "thread-1")]
 
 
+async def test_gateway_site_prepare_is_capability_scoped_and_turn_bound(tmp_path, monkeypatch):
+    import io
+    import tarfile
+    from starlette.requests import Request
+    import sandbox_harness.gateway as gateway
+    from sandbox_harness.capability import CapabilityCodec
+    from sandbox_harness.config import Settings
+    from sandbox_harness.domain import Harness
+    calls = []
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w") as archive:
+        content = b"<!doctype html><h1>site</h1>"; info = tarfile.TarInfo("index.html")
+        info.size = len(content); archive.addfile(info, io.BytesIO(content))
+    body = output.getvalue()
+
+    class Redis:
+        async def eval(self, *args): return 1
+    class Draft:
+        def model_dump(self, mode=None): return {"id":"draft", "thread_id":"thread-1"}
+    class Store:
+        def __init__(self, *args, **kwargs): pass
+        async def owner_id_for_thread(self, thread_id): return "a" * 64
+        async def create_site_draft(self, owner_id, thread_id, turn_id, **values):
+            calls.append((owner_id, thread_id, turn_id, values)); return Draft(), True
+    class Objects:
+        def put(self, data):
+            import hashlib
+            digest = hashlib.sha256(data).hexdigest(); return "sha256:" + digest, digest
+    monkeypatch.setattr(gateway.Redis, "from_url", lambda *args, **kwargs: Redis())
+    monkeypatch.setattr(gateway, "Store", Store)
+    monkeypatch.setattr(gateway, "object_store", lambda settings: Objects())
+    settings = Settings(backend="fake", database_url="sqlite+aiosqlite:///" + str(tmp_path / "gateway.db"))
+    app = gateway.create_gateway(settings)
+    token, _ = CapabilityCodec(settings.gateway_signing_key).issue(thread_id="thread-1", turn_id="turn-1",
+        sandbox_id="sandbox-1", harness=Harness.CODEX, model="gpt-5.6", routes=["/v1/sites"],
+        ttl_seconds=60, max_requests=10, max_public_requests=1, token_budget=1000)
+    sent = False
+    async def receive():
+        nonlocal sent
+        if sent:return {"type":"http.request", "body":b"", "more_body":False}
+        sent = True; return {"type":"http.request", "body":body, "more_body":False}
+    request = Request({"type":"http", "method":"POST", "path":"/v1/sites/drafts",
+        "query_string":b"", "headers":[(b"authorization", ("Bearer " + token).encode())]}, receive)
+    endpoint = next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/v1/sites/drafts")
+    response = await endpoint(request, name="Demo", slug="demo-site", idempotency_key="site-key-123")
+    assert response["requires_confirmation"] and calls[0][:3] == ("a" * 64, "thread-1", "turn-1")
+    assert calls[0][3]["file_count"] == 1 and calls[0][3]["total_size"] == len(content)
+
+
 async def test_gateway_media_prepare_creates_turn_bound_draft(tmp_path, monkeypatch):
     import json
     from types import SimpleNamespace

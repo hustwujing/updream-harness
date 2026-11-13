@@ -86,12 +86,14 @@ runtime-media = [
 sandbox-harness-api = "sandbox_harness.main:run"
 sandbox-harness-gateway = "sandbox_harness.gateway:run"
 sandbox-harness-media-worker = "sandbox_harness.media_service:run"
+sandbox-harness-site-worker = "sandbox_harness.site_service:run"
 sandbox-harness-logs = "sandbox_harness.log_query:main"
 sandbox-harness-user = "sandbox_harness.auth_cli:main"
 sandbox-harness-runtime = "sandbox_runtime.main:run"
 sandbox-background = "sandbox_runtime.background_cli:main"
 sandbox-interact = "sandbox_runtime.interaction_cli:main"
 sandbox-media = "sandbox_runtime.media_cli:main"
+sandbox-site = "sandbox_runtime.site_cli:main"
 
 [build-system]
 requires = ["hatchling>=1.27"]

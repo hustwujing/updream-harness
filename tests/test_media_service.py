@@ -29,7 +29,8 @@ def test_media_worker_is_a_separate_service():
     assert "ExecStart=/data2/wujing03/sandbox-harness-platform/.venv/bin/sandbox-harness-media-worker" in unit
     assert 'sandbox-harness-media-worker = "sandbox_harness.media_service:run"' in project
     assert "sandbox-harness-media-worker.service" in install
-    for command in ("sandbox-harness-api", "sandbox-harness-gateway", "sandbox-harness-media-worker"):
+    for command in ("sandbox-harness-api", "sandbox-harness-gateway", "sandbox-harness-media-worker",
+                    "sandbox-harness-site-worker"):
         assert f"/usr/local/bin/{command}" in base
     instructions = (ROOT / "src/sandbox_runtime/instructions.py").read_text()
     adapters = (ROOT / "src/sandbox_runtime/adapters.py").read_text()

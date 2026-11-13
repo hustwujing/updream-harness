@@ -84,6 +84,12 @@ history and active supervised background jobs. Managed input/output labels show
 the authoritative source and version. Users can compare text versions and
 restore an old immutable version as a new current version.
 
+Static interactive output prepared by a Harness appears as a dedicated
+confirmation card. After confirmation, a collapsible deployment panel shows
+validation, upload and activation progress independently of the Agent Turn.
+Successful Jobs provide the public link. Workspace lists deployed sites with
+current status, immutable version history, rollback and downline actions.
+
 The right inspector switches between Workspace and Sandbox. Sandbox provides
 overview, live files, terminal, processes, private port previews and audit
 history. Observation remains available while an Agent runs. A write terminal

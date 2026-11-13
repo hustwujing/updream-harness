@@ -524,3 +524,58 @@ class MediaJobView(BaseModel):
     output_role: Literal["candidate", "workspace", "delivery"] = "candidate"
     created_at: datetime
     finished_at: datetime | None = None
+
+
+class SiteDraftView(BaseModel):
+    id: str
+    thread_id: str
+    turn_id: str = ""
+    project_id: str
+    name: str
+    slug: str
+    status: Literal["awaiting_confirmation", "confirmed", "cancelled", "expired", "deployed"]
+    file_count: int = Field(ge=1)
+    total_size: int = Field(ge=1)
+    bundle_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expires_at: datetime
+    job_id: str = ""
+
+
+class SiteDeployJobView(BaseModel):
+    id: str
+    thread_id: str
+    turn_id: str = ""
+    project_id: str
+    draft_id: str
+    name: str
+    slug: str
+    status: str
+    phase: str = ""
+    progress: int | None = None
+    error_code: str = ""
+    public_url: str = ""
+    created_at: datetime
+    finished_at: datetime | None = None
+
+
+class SiteVersionView(BaseModel):
+    id: str
+    version: int = Field(ge=1)
+    bundle_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    file_count: int = Field(ge=1)
+    total_size: int = Field(ge=1)
+    created_at: datetime
+    active: bool = False
+
+
+class SiteProjectView(BaseModel):
+    id: str
+    thread_id: str
+    name: str
+    slug: str
+    status: Literal["draft", "active", "unpublished"]
+    public_url: str = ""
+    current_version_id: str = ""
+    versions: list[SiteVersionView] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime

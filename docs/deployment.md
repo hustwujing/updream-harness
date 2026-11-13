@@ -6,6 +6,7 @@ The product has its own API, Gateway, PostgreSQL cluster and data namespace. It 
 | --- | --- | --- |
 | PostgreSQL | `sandbox-harness-postgresql.service`, `127.0.0.1:25432` | `.data/postgresql`, database and role `sandbox_harness` |
 | Media Worker | `sandbox-harness-media-worker.service` | Provider submission, polling, lease recovery and media artifact commit |
+| Site Worker | `sandbox-harness-site-worker.service` | static bundle validation, immutable upload, version activation and recovery |
 | Redis | `127.0.0.1:6379` | key prefix `sandbox-harness:` |
 | Docker/runsc | `opensandbox-docker.service` | image repository `sandbox-harness/*` |
 | image registry | `127.0.0.1:25001` | repository prefix `sandbox-harness/` |

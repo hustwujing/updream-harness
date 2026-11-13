@@ -1,6 +1,6 @@
 # updream-harness
 
-A thin, stateful OpenSandbox platform that sends every user message to a Codex, Claude or DeepSeek Harness. The platform restores the Harness workspace, streams its public output and steps, exports files, checkpoints the environment and removes the sandbox. It contains no DAG, planner or reviewer; media generation uses a small durable Job service with an independent Provider Worker.
+A thin, stateful OpenSandbox platform that sends every user message to a Codex, Claude or DeepSeek Harness. The platform restores the Harness workspace, streams its public output and steps, exports files, checkpoints the environment and removes the sandbox. It contains no DAG, planner or reviewer; media generation and static-site deployment use durable Jobs with independent Workers.
 
 ## Services
 
@@ -12,6 +12,9 @@ Web → Session API → Leased Turn Worker → Warm Sandbox Pool → OpenSandbox
 Media confirmation → Session API → PostgreSQL Job → Media Worker → Provider
                                       ├── reference → public BOSS → Ark Asset
                                       └── terminal Outbox → Broker continuation
+
+Site confirmation  → Session API → PostgreSQL Job → Site Worker → Object storage
+                                                        └── immutable version → public route
 
 PostgreSQL: Session, Turn, event and artifact metadata
 Redis: live event fan-out and short-lived capability revocation
@@ -26,6 +29,12 @@ The Media Worker is a separate systemd service. API creates and queries Jobs;
 the Worker alone submits external Provider requests, persists external IDs,
 resumes polling after crashes and commits the Artifact, terminal state and
 Outbox transaction. API and Worker can restart independently.
+
+The Site Worker is another independent service. A Harness packages a complete
+static site with `sandbox-site prepare`; user confirmation creates a durable
+deployment Job. The Worker validates and uploads content-addressed files, then
+atomically activates an immutable version. Published pages survive Sandbox,
+API, Worker and browser restarts and support rollback and downline.
 
 Seedream supports immutable single/multi-image references through stable public
 BOSS URLs. Seedance supports first frame, first/last frame, multimodal reference,
