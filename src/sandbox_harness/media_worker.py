@@ -312,7 +312,8 @@ class MediaWorker:
             if error_code == "provider_rate_limited" else "unknown"
             if error_code == "provider_service_unavailable" else "failed")
         return ProviderResult(status, url=url, error=error,
-            error_code="" if status == "success" else error_code)
+            error_code="" if status == "success" else (
+                "provider_submission_outcome_unknown" if status == "unknown" else error_code))
 
     async def _ark_video(self, job: dict[str, Any]) -> ProviderResult:
         base = self.settings.upstream_video.rstrip("/")

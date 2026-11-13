@@ -234,6 +234,17 @@ async def test_image_rate_limit_is_deferred_with_stable_error(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_image_service_failure_without_result_is_ambiguous_not_retried(monkeypatch):
+    value=worker();client=Client([Response({"error":{"code":"ServiceUnavailable"}},503)])
+    async def client_factory():return client
+    monkeypatch.setattr(value,"_client",client_factory)
+    result=await value._ark_image({"id":"job","model":"seedream-5.0",
+        "parameters":{"prompt":"test","size":"2K"}})
+    assert result.status=="unknown"
+    assert result.error_code=="provider_submission_outcome_unknown"
+
+
+@pytest.mark.asyncio
 async def test_seedream_reference_payload_uses_frozen_object_urls(monkeypatch):
     value = worker(); client = Client([Response({"data":[{"url":"https://result.test/image.png"}]})])
     async def client_factory(): return client
