@@ -28,6 +28,15 @@ class ObjectStore:
     def _path(self, digest: str) -> Path:
         return self.root / digest[:2] / digest[2:]
 
+    @staticmethod
+    def _digest(reference: str) -> str:
+        if not reference.startswith("sha256:"):
+            raise ValueError("Unknown object reference")
+        digest = reference.removeprefix("sha256:")
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("Invalid object digest")
+        return digest
+
     @observed_sync("object.put")
     def put(self, data: bytes) -> tuple[str, str]:
         digest = hashlib.sha256(data).hexdigest()
@@ -43,11 +52,7 @@ class ObjectStore:
 
     @observed_sync("object.get")
     def get(self, reference: str, *, maximum: int) -> bytes:
-        if not reference.startswith("sha256:"):
-            raise ValueError("Unknown object reference")
-        digest = reference.removeprefix("sha256:")
-        if not re.fullmatch(r"[0-9a-f]{64}", digest):
-            raise ValueError("Invalid object digest")
+        digest = self._digest(reference)
         path = self._path(digest)
         if path.stat().st_size > maximum:
             raise ValueError("Object exceeds byte limit")
@@ -55,6 +60,32 @@ class ObjectStore:
         if hashlib.sha256(data).hexdigest() != digest:
             raise ValueError("Object integrity check failed")
         return data
+
+    def size(self, reference: str, *, maximum: int) -> int:
+        size = self._path(self._digest(reference)).stat().st_size
+        if size > maximum:
+            raise ValueError("Object exceeds byte limit")
+        return size
+
+    def iter_bytes(self, reference: str, *, maximum: int, start: int = 0,
+                   end: int | None = None, chunk_size: int = 1024 * 1024):
+        digest = self._digest(reference); size = self.size(reference, maximum=maximum)
+        end = size - 1 if end is None else end
+        if start < 0 or end < start or end >= size:
+            raise ValueError("Invalid object byte range")
+        full = start == 0 and end == size - 1; hasher = hashlib.sha256() if full else None
+        remaining = end - start + 1
+        with self._path(digest).open("rb") as stream:
+            stream.seek(start)
+            while remaining:
+                data = stream.read(min(chunk_size, remaining))
+                if not data:
+                    raise ValueError("Object ended before the declared range")
+                remaining -= len(data)
+                if hasher: hasher.update(data)
+                yield data
+        if hasher and hasher.hexdigest() != digest:
+            raise ValueError("Object integrity check failed")
 
     def prepare_media_upload(self, **_):
         raise RuntimeError("Public media upload requires the configured BOSS backend")
@@ -109,6 +140,10 @@ class S3ObjectStore:
     def _key(self, digest: str) -> str:
         return f"{self.prefix}/objects/{digest[:2]}/{digest[2:]}"
 
+    @staticmethod
+    def _digest(reference: str) -> str:
+        return ObjectStore._digest(reference)
+
     @observed_sync("object.put")
     def put(self, data: bytes) -> tuple[str, str]:
         digest = hashlib.sha256(data).hexdigest()
@@ -128,11 +163,7 @@ class S3ObjectStore:
 
     @observed_sync("object.get")
     def get(self, reference: str, *, maximum: int) -> bytes:
-        if not reference.startswith("sha256:"):
-            raise ValueError("Unknown object reference")
-        digest = reference.removeprefix("sha256:")
-        if not re.fullmatch(r"[0-9a-f]{64}", digest):
-            raise ValueError("Invalid object digest")
+        digest = self._digest(reference)
         response = self.client.get_object(Bucket=self.bucket, Key=self._key(digest))
         body = response["Body"]
         try:
@@ -147,6 +178,37 @@ class S3ObjectStore:
         if hashlib.sha256(data).hexdigest() != digest:
             raise ValueError("Object integrity check failed")
         return data
+
+    def size(self, reference: str, *, maximum: int) -> int:
+        digest = self._digest(reference)
+        size = int(self.client.head_object(Bucket=self.bucket,
+            Key=self._key(digest)).get("ContentLength", 0))
+        if size > maximum:
+            raise ValueError("Object exceeds byte limit")
+        return size
+
+    def iter_bytes(self, reference: str, *, maximum: int, start: int = 0,
+                   end: int | None = None, chunk_size: int = 1024 * 1024):
+        digest = self._digest(reference); size = self.size(reference, maximum=maximum)
+        end = size - 1 if end is None else end
+        if start < 0 or end < start or end >= size:
+            raise ValueError("Invalid object byte range")
+        full = start == 0 and end == size - 1; hasher = hashlib.sha256() if full else None
+        response = self.client.get_object(Bucket=self.bucket, Key=self._key(digest),
+            Range=f"bytes={start}-{end}")
+        body = response["Body"]; remaining = end - start + 1
+        try:
+            while remaining:
+                data = body.read(min(chunk_size, remaining))
+                if not data:
+                    raise ValueError("Object ended before the declared range")
+                remaining -= len(data)
+                if hasher: hasher.update(data)
+                yield data
+        finally:
+            body.close()
+        if hasher and hasher.hexdigest() != digest:
+            raise ValueError("Object integrity check failed")
 
     def media_object_key(self, kind: str, digest: str, mime: str) -> str:
         if kind not in {"image", "video", "audio"} or not re.fullmatch(r"[0-9a-f]{64}", digest):

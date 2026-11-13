@@ -6,6 +6,7 @@ import difflib
 import hashlib
 import json
 import logging
+import re
 import time
 import uuid
 from botocore.exceptions import ClientError
@@ -45,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 SAFE_INLINE_MIMES = {
     "image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp", "image/svg+xml",
-    "text/plain", "application/pdf",
+    "text/plain", "application/pdf", "model/gltf-binary",
 }
 MAX_AVATAR_BYTES = 5 * 1024 * 1024
 
@@ -80,6 +81,24 @@ def content_disposition(filename: str, *, inline: bool) -> str:
 def sandbox_preview_target(endpoint: str, path: str, query: str = "") -> str:
     target = urljoin(endpoint.rstrip("/") + "/", path.lstrip("/"))
     return target + ("?" + query if query else "")
+
+
+def requested_byte_range(value: str, size: int) -> tuple[int, int] | None:
+    if not value:
+        return None
+    match = re.fullmatch(r"bytes=(\d*)-(\d*)", value.strip())
+    if not match or size <= 0:
+        raise ValueError("invalid_byte_range")
+    first, last = match.groups()
+    if not first:
+        suffix = int(last or 0)
+        if suffix <= 0:
+            raise ValueError("invalid_byte_range")
+        return max(0, size - suffix), size - 1
+    start = int(first); end = int(last) if last else size - 1
+    if start >= size or end < start:
+        raise ValueError("invalid_byte_range")
+    return start, min(end, size - 1)
 
 
 async def limited_body(request: Request, maximum: int) -> bytes:
@@ -302,7 +321,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
         if request.url.path.startswith("/api/"):
-            response.headers["Cache-Control"] = "no-store"
+            response.headers.setdefault("Cache-Control", "no-store")
         elif request.url.path == "/":
             response.headers["Cache-Control"] = "no-store, max-age=0"
         elif request.url.path.startswith("/assets/"):
@@ -1135,17 +1154,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await store.record_upload(request.state.owner_id, attachment)
         return attachment
 
+    async def immutable_object_response(value, *, maximum: int, request: Request,
+                                        filename: str, inline: bool):
+        size = await asyncio.to_thread(objects.size, value.object_ref, maximum=maximum)
+        etag = '"' + value.sha256 + '"'
+        cache_headers = {"ETag":etag,"Accept-Ranges":"bytes",
+            "Cache-Control":"private, max-age=31536000, immutable"}
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers=cache_headers)
+        try:
+            selected = requested_byte_range(request.headers.get("range", ""), size)
+        except ValueError:
+            raise HTTPException(416, "invalid_byte_range", headers={"Content-Range":f"bytes */{size}"})
+        start, end = selected or (0, max(0, size - 1))
+        safe_inline = inline and (value.mime in SAFE_INLINE_MIMES or
+            value.mime.startswith(("video/", "audio/")))
+        if size == 0:
+            headers = {**cache_headers,
+                "Content-Disposition":content_disposition(filename, inline=safe_inline),
+                "Content-Security-Policy":"sandbox; default-src 'none'",
+                "Content-Length":"0"}
+            media_type = value.mime if safe_inline or not inline else "application/octet-stream"
+            return Response(b"", media_type=media_type, headers=headers)
+        headers = {**cache_headers,
+            "Content-Disposition":content_disposition(filename, inline=safe_inline),
+            "Content-Security-Policy":"sandbox; default-src 'none'",
+            "Content-Length":str(end - start + 1)}
+        if selected:
+            headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+        media_type = value.mime if safe_inline or not inline else "application/octet-stream"
+        return StreamingResponse(objects.iter_bytes(value.object_ref, maximum=maximum,
+            start=start, end=end), status_code=206 if selected else 200,
+            media_type=media_type, headers=headers)
+
     @app.get("/api/artifacts/{artifact_id}")
     async def artifact(artifact_id: str, request: Request, inline: bool = False):
         value = await store.get_artifact_for_owner(artifact_id, request.state.owner_id)
         if not value:
             raise HTTPException(404, "Artifact not found")
-        data = await asyncio.to_thread(objects.get, value.object_ref, maximum=settings.max_artifact_bytes)
         filename = Path(value.path).name
-        safe_inline = inline and (value.mime in SAFE_INLINE_MIMES or value.mime.startswith(("video/", "audio/")))
-        return Response(data, media_type=value.mime if safe_inline or not inline else "application/octet-stream",
-            headers={"Content-Disposition": content_disposition(filename, inline=safe_inline),
-                     "Content-Security-Policy": "sandbox; default-src 'none'"})
+        return await immutable_object_response(value, maximum=settings.max_artifact_bytes,
+            request=request, filename=filename, inline=inline)
 
     @app.get("/api/project-files/{file_id}")
     async def project_file(file_id: str, request: Request, inline: bool = False):
@@ -1153,12 +1202,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not value:
             raise HTTPException(404, "Project file not found")
         maximum = settings.max_attachment_bytes if value.source_type == "upload" else settings.max_artifact_bytes
-        data = await asyncio.to_thread(objects.get, value.object_ref, maximum=maximum)
         filename = Path(value.path).name
-        safe_inline = inline and (value.mime in SAFE_INLINE_MIMES or value.mime.startswith(("video/", "audio/")))
-        return Response(data, media_type=value.mime if safe_inline or not inline else "application/octet-stream",
-            headers={"Content-Disposition": content_disposition(filename, inline=safe_inline),
-                     "Content-Security-Policy": "sandbox; default-src 'none'"})
+        return await immutable_object_response(value, maximum=maximum, request=request,
+            filename=filename, inline=inline)
 
     @app.get("/api/previews/{source}/{file_id}")
     async def document_preview(source: str, file_id: str, request: Request):

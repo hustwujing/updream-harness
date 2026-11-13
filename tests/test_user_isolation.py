@@ -119,6 +119,15 @@ def test_upload_names_dispositions_inline_policy_and_body_limits(tmp_path):
             params={"path":"assets/报告.txt", "mime":"text/plain"}, content=b"hello").json()
         response = client.get(f"/api/project-files/{created['id']}?inline=true")
         assert response.status_code == 200 and "filename*=UTF-8''" in response.headers["content-disposition"]
+        assert response.content==b"hello" and response.headers["accept-ranges"]=="bytes"
+        assert response.headers["cache-control"]=="private, max-age=31536000, immutable"
+        partial=client.get(f"/api/project-files/{created['id']}?inline=true",headers={"Range":"bytes=1-3"})
+        assert partial.status_code==206 and partial.content==b"ell"
+        assert partial.headers["content-range"]=="bytes 1-3/5"
+        assert client.get(f"/api/project-files/{created['id']}",headers={
+            "If-None-Match":response.headers["etag"]}).status_code==304
+        invalid=client.get(f"/api/project-files/{created['id']}",headers={"Range":"bytes=99-100"})
+        assert invalid.status_code==416 and invalid.headers["content-range"]=="bytes */5"
         html = client.post(f"/api/threads/{thread['id']}/project-files",
             params={"path":"assets/page.html", "mime":"text/html"}, content=b"<script>alert(1)</script>").json()
         unsafe = client.get(f"/api/project-files/{html['id']}?inline=true")

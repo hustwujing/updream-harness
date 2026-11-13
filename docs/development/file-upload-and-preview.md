@@ -22,6 +22,13 @@ inline previews and document conversion. The source entries are
 - SVG is served as `image/svg+xml` only under `Content-Security-Policy:
   sandbox; default-src 'none'` so image rendering works without script or
   external-resource execution.
+- GLB uses a lazy Three.js viewer whose chunk is prefetched while the browser is
+  idle. The modal reports viewer initialization, byte download, parsing and
+  scene preparation separately. Browsers without WebGL get an actionable
+  download fallback instead of a blank canvas.
+- Artifact and ProjectFile responses stream from object storage, support one
+  HTTP byte range, and use an owner-scoped immutable ETag cache. Do not buffer a
+  complete large video or GLB in API memory before sending the first byte.
 
 ## Host dependency
 
@@ -36,3 +43,6 @@ Run the frontend production build, `tests/test_document_preview.py`,
 `tests/browser_document_previews.cjs` and `tests/browser_media_gallery.cjs`.
 The browser cases cover pasted files, document thumbnails, PPT paging, PDF and
 DOCX scrolling, spreadsheet sheet switching, SVG rendering and page errors.
+Run `tests/browser_model3d_preview.cjs` for GLB prefetch, loading/rendering and
+the no-WebGL fallback, plus object-store and owner tests for Range and ETag
+behavior.

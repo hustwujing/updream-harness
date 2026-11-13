@@ -15,8 +15,13 @@ class S3:
         assert IfNoneMatch == "*"
         self.values[Key] = bytes(Body)
 
-    def get_object(self, *, Bucket, Key):
+    def head_object(self, *, Bucket, Key):
+        return {"ContentLength":len(self.values[Key])}
+
+    def get_object(self, *, Bucket, Key, Range=None):
         data = self.values[Key]
+        if Range:
+            first,last=Range.removeprefix("bytes=").split("-");data=data[int(first):int(last)+1]
         return {"ContentLength": len(data), "Body": BytesIO(data)}
 
 
@@ -28,6 +33,8 @@ def test_s3_objects_use_prefix_and_verify_content():
     assert reference == "sha256:" + digest
     assert list(client.values) == [f"sandbox-harness/objects/{digest[:2]}/{digest[2:]}"]
     assert store.get(reference, maximum=100) == b"artifact"
+    assert store.size(reference,maximum=100)==8
+    assert b"".join(store.iter_bytes(reference,maximum=100,start=1,end=3,chunk_size=2))==b"rti"
 
 
 def test_s3_objects_enforce_read_limit_and_prefix():
