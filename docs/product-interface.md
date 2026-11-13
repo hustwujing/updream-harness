@@ -89,6 +89,9 @@ confirmation card. After confirmation, a collapsible deployment panel shows
 validation, upload and activation progress independently of the Agent Turn.
 Successful Jobs provide the public link. Workspace lists deployed sites with
 current status, immutable version history, rollback and downline actions.
+Completed output directories containing `index.html` receive the same card
+even if the Harness omitted the preparation command. Selecting the HTML
+Artifact runs it inside an isolated full-size iframe rather than showing source.
 
 The right inspector switches between Workspace and Sandbox. Sandbox provides
 overview, live files, terminal, processes, private port previews and audit

@@ -13,6 +13,12 @@ through the Turn-scoped `/v1/sites` capability. It has no database, Redis or
 object-store credential. Preparation creates a confirmation draft and performs
 no public side effect.
 
+As a deterministic fallback, Broker detects each completed output directory
+containing `index.html` and creates the same confirmation draft after Artifact
+publication. The bundle digest deduplicates this with an earlier CLI draft.
+This keeps deployment discoverable when a Harness produces a valid site but
+omits `sandbox-site prepare`; it still never publishes without user confirmation.
+
 The browser confirms a draft. API creates a durable `site_deploy_job`; the
 independent Site Worker validates the archive again, writes every file to the
 content-addressed store and atomically activates a new immutable version. A
@@ -36,6 +42,9 @@ Sandbox process or private port is a preview, never a deployment.
   active.
 - Static sites need no server process or credential. Dynamic backends are a
   separate product capability and must not be smuggled through this protocol.
+- An immutable `index.html` Artifact opens through its owner-scoped directory
+  preview route in a CSP-sandboxed iframe. Do not render it as source text or
+  let its script inherit the main application origin.
 
 ## Completion
 

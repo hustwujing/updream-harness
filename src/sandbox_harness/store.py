@@ -2932,6 +2932,29 @@ class Store:
                 SiteDraftRow.owner_id == owner_id))).scalar_one_or_none()
         return self._site_draft_view(row) if row else None
 
+    async def site_draft_by_bundle(self, thread_id: str, bundle_sha256: str) -> SiteDraftView | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(SiteDraftRow).where(
+                SiteDraftRow.thread_id == thread_id,
+                SiteDraftRow.bundle_sha256 == bundle_sha256,
+            ).order_by(SiteDraftRow.created_at).limit(1))).scalar_one_or_none()
+        return self._site_draft_view(row) if row else None
+
+    async def artifact_site_file(self, artifact_id: str, path: str, owner_id: str) -> dict | None:
+        async with self.connections() as db:
+            root = (await db.execute(select(ArtifactRow).join(TurnRow,
+                TurnRow.id == ArtifactRow.turn_id).join(ThreadRow,
+                ThreadRow.id == TurnRow.thread_id).where(ArtifactRow.id == artifact_id,
+                    ThreadRow.owner_id == owner_id))).scalar_one_or_none()
+            if not root or PurePosixPath(root.path).name.lower() != "index.html":
+                return None
+            prefix = PurePosixPath(root.path).parent
+            target = (prefix / path).as_posix() if prefix.as_posix() != "." else path
+            row = (await db.execute(select(ArtifactRow).where(
+                ArtifactRow.turn_id == root.turn_id, ArtifactRow.path == target))).scalar_one_or_none()
+        return ({"object_ref":row.object_ref, "size":row.size, "sha256":row.sha256,
+            "mime":row.mime} if row else None)
+
     async def get_site_draft_archive(self, draft_id: str, owner_id: str) -> dict | None:
         async with self.connections() as db:
             row = (await db.execute(select(SiteDraftRow).where(SiteDraftRow.id == draft_id,

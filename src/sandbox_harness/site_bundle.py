@@ -124,3 +124,19 @@ def build_site_archive(source: Path) -> tuple[bytes, list[SiteFile]]:
                 raise ValueError("site_file_count_invalid")
     data = output.getvalue()
     return data, validate_site_archive(data)
+
+
+def build_site_archive_from_files(files: dict[str, bytes]) -> tuple[bytes, list[SiteFile]]:
+    if not files:
+        raise ValueError("site_source_empty")
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w", format=tarfile.PAX_FORMAT) as archive:
+        for raw_path in sorted(files):
+            path = safe_site_path(raw_path); content = files[raw_path]
+            if not isinstance(content, bytes) or len(content) > MAX_SITE_FILE_BYTES:
+                raise ValueError("site_file_size_invalid")
+            info = tarfile.TarInfo(path); info.size = len(content); info.mode = 0o644
+            info.mtime = 0; info.uid = info.gid = 0; info.uname = info.gname = ""
+            archive.addfile(info, io.BytesIO(content))
+    data = output.getvalue()
+    return data, validate_site_archive(data)

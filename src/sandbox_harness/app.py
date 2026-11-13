@@ -1283,6 +1283,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return await immutable_object_response(value, maximum=settings.max_artifact_bytes,
             request=request, filename=filename, inline=inline)
 
+    async def artifact_site_preview_response(artifact_id: str, path: str, request: Request):
+        try:
+            path = safe_site_path(path.strip("/") or "index.html")
+            value = await store.artifact_site_file(artifact_id, path, request.state.owner_id)
+        except ValueError:
+            value = None
+        if not value:
+            raise HTTPException(404, "Site preview file not found")
+        data = await asyncio.to_thread(objects.get, value["object_ref"], maximum=value["size"])
+        if len(data) != value["size"] or hashlib.sha256(data).hexdigest() != value["sha256"]:
+            raise HTTPException(409, "Site preview identity mismatch")
+        headers = {"Cache-Control":"private, no-cache", "ETag":'"' + value["sha256"] + '"'}
+        if value["mime"] == "text/html":
+            headers["Content-Security-Policy"] = ("sandbox allow-scripts allow-forms allow-modals "
+                "allow-pointer-lock allow-downloads; default-src 'self' data: blob:; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; "
+                "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+                "font-src 'self' data:; media-src 'self' data: blob:; connect-src 'self'; "
+                "worker-src 'self' blob:")
+        return Response(data, media_type=value["mime"], headers=headers)
+
+    @app.get("/api/artifacts/{artifact_id}/site-preview/")
+    async def artifact_site_preview_index(artifact_id: str, request: Request):
+        return await artifact_site_preview_response(artifact_id, "index.html", request)
+
+    @app.get("/api/artifacts/{artifact_id}/site-preview/{path:path}")
+    async def artifact_site_preview_file(artifact_id: str, path: str, request: Request):
+        return await artifact_site_preview_response(artifact_id, path, request)
+
     @app.get("/api/project-files/{file_id}")
     async def project_file(file_id: str, request: Request, inline: bool = False):
         value = await store.get_project_file_for_owner(file_id, request.state.owner_id)

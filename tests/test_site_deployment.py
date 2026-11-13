@@ -14,7 +14,7 @@ from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.config import Settings
 from sandbox_harness.domain import Harness, ThreadCreate, TurnCreate, now
 from sandbox_harness.objects import ObjectStore
-from sandbox_harness.site_bundle import build_site_archive, validate_site_archive
+from sandbox_harness.site_bundle import build_site_archive, build_site_archive_from_files, validate_site_archive
 from sandbox_harness.site_worker import SiteWorker
 from sandbox_harness.store import Store
 from sandbox_harness.sessions import COOKIE, Sessions
@@ -126,6 +126,9 @@ def test_site_bundle_rejects_path_escape_links_and_missing_index(tmp_path):
     (source / "index.html").write_text("ok"); (source / "link.js").symlink_to(source / "app.js")
     with pytest.raises(ValueError, match="site_source_symlink"):
         build_site_archive(source)
+    archive, files = build_site_archive_from_files({"index.html":b"<h1>site</h1>",
+        "assets/app.js":b"document.body.dataset.ready='yes'"})
+    assert len(files) == 2 and validate_site_archive(archive)[0].path == "assets/app.js"
 
 
 def test_public_site_serves_isolated_html_ranges_and_stops_after_unpublish(tmp_path):
@@ -135,20 +138,30 @@ def test_public_site_serves_isolated_html_ranges_and_stops_after_unpublish(tmp_p
         session_signing_key="site-public-session-secret")
 
     async def prepare():
-        store, objects, _, thread, _, draft, _ = await context(tmp_path, owner=owner)
+        store, objects, _, thread, turn, draft, _ = await context(tmp_path, owner=owner)
+        html=b"<!doctype html><h1>Artifact site</h1><script src='app.js'></script>"
+        script=b"document.body.dataset.ready='yes'"
+        html_ref,html_digest=objects.put(html);script_ref,script_digest=objects.put(script)
+        html_artifact=await store.add_artifact(turn.id,path="artifact-site/index.html",
+            sha256=html_digest,size=len(html),mime="text/html",object_ref=html_ref)
+        await store.add_artifact(turn.id,path="artifact-site/app.js",sha256=script_digest,
+            size=len(script),mime="text/javascript",object_ref=script_ref)
         worker = SiteWorker(SimpleNamespace(site_worker_concurrency=1), store, objects)
         await store.confirm_site_draft(draft.id, owner)
         claimed = await store.claim_site_jobs(worker.owner, 1); await worker.process(claimed[0])
         project = (await store.list_site_projects(thread.id, owner))[0]
         await store.close()
-        return project, owner, draft.id
+        return project, owner, draft.id, html_artifact.id
 
-    project, owner, draft_id = asyncio.run(prepare())
+    project, owner, draft_id, artifact_id = asyncio.run(prepare())
     with TestClient(create_app(settings)) as client:
         client.cookies.set(COOKIE, token)
         preview = client.get(f"/api/sites/drafts/{draft_id}/preview/")
         assert preview.status_code == 200 and b"Hello" in preview.content
         assert "sandbox allow-scripts" in preview.headers["content-security-policy"]
+        artifact_preview=client.get(f"/api/artifacts/{artifact_id}/site-preview/")
+        assert artifact_preview.status_code==200 and b"Artifact site" in artifact_preview.content
+        assert client.get(f"/api/artifacts/{artifact_id}/site-preview/app.js").content.startswith(b"document")
         response = client.get(f"/sites/{project.slug}/")
         assert response.status_code == 200 and b"Hello" in response.content
         assert "sandbox allow-scripts" in response.headers["content-security-policy"]

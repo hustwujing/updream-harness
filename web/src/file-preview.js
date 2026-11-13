@@ -2,6 +2,7 @@ const extension=value=>String(value?.name||'').split('.').at(-1)?.toLowerCase()|
 
 export function previewKind(value){
  const mime=String(value?.mime||'').toLowerCase(),ext=extension(value);
+ if((mime==='text/html'||ext==='html'||ext==='htm')&&String(value?.name||'').toLowerCase().endsWith('index.html'))return 'site';
  if(mime==='application/pdf'||ext==='pdf')return 'pdf';
  if(mime.includes('presentation')||mime==='application/vnd.ms-powerpoint'||['ppt','pptx'].includes(ext))return 'presentation';
  if(mime.includes('wordprocessingml')||mime==='application/msword'||['doc','docx'].includes(ext))return ext==='doc'?'unsupported':'document';
