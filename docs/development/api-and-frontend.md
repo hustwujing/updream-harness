@@ -16,6 +16,11 @@ ownership and aggregate byte limits are checked before scheduling. Object reads
 verify size and digest. Inline preview is limited to approved MIME families and
 returns a sandboxing Content-Security-Policy.
 
+Static-site Artifact preview resolves sibling files only within the immutable
+owning Turn and directory selected by an owner-scoped `index.html` Artifact.
+Path traversal and foreign Artifact IDs return 404. Generated HTML uses both a
+response CSP sandbox and an iframe sandbox without `allow-same-origin`.
+
 SSE reads durable events from PostgreSQL and uses Redis only to wake waiters.
 Honor `Last-Event-ID`, preserve event sequence and close only after a terminal
 Turn has no remaining rows. Do not make reconnect correctness depend on Redis.
@@ -36,6 +41,10 @@ Turn has no remaining rows. Do not make reconnect correctness depend on Redis.
 - Markdown renders no raw HTML. Sandbox paths become links only after resolving
   to owner-checked artifact/project-file APIs.
 - Preview and download use API URLs, never object-store URLs.
+- `index.html` Artifacts are interactive sites, not source-text previews. A
+  successful output directory creates one digest-deduplicated deployment draft
+  even when the Harness omitted `sandbox-site prepare`; partial/failed Turn
+  publication must not create one.
 
 ## Error behavior
 
