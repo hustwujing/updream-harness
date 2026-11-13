@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 from datetime import datetime, timezone
 
+import httpx
 import pytest
 
 from sandbox_harness.media_worker import MediaWorker
@@ -274,6 +275,34 @@ async def test_pending_provider_poll_releases_lease_with_delay(monkeypatch):
         "provider":"minimax", "adapter":"minimax_t2a", "status":"running",
         "phase":"provider_polling", "provider_job_id":"provider-audio", "references":[]})
     assert store.releases[-1][2]["retry_after_seconds"] == 15
+
+
+@pytest.mark.asyncio
+async def test_audio_poll_transport_timeout_releases_lease_with_delay(monkeypatch):
+    store = Store(); value = worker(store)
+    async def timeout(_):
+        raise httpx.ReadTimeout("provider query timed out")
+    monkeypatch.setattr(value, "_execute", timeout)
+    await value.process({"id":"job", "kind":"audio", "model":"speech-2.8-turbo",
+        "provider":"minimax", "adapter":"minimax_t2a", "status":"running",
+        "phase":"provider_polling", "provider_job_id":"provider-audio",
+        "provider_started_at":datetime.now(timezone.utc), "references":[]})
+    assert store.releases[-1][2]["error_code"] == "provider_poll_unavailable"
+    assert store.releases[-1][2]["retry_after_seconds"] == 15
+
+
+@pytest.mark.asyncio
+async def test_audio_poll_transport_timeout_past_window_becomes_unknown(monkeypatch):
+    store = Store(); value = worker(store)
+    async def timeout(_):
+        raise httpx.ReadTimeout("provider query timed out")
+    monkeypatch.setattr(value, "_execute", timeout)
+    await value.process({"id":"job", "kind":"audio", "model":"speech-2.8-turbo",
+        "provider":"minimax", "adapter":"minimax_t2a", "status":"running",
+        "phase":"provider_polling", "provider_job_id":"provider-audio",
+        "provider_started_at":datetime.fromtimestamp(0, timezone.utc), "references":[]})
+    assert store.updates[-1][2]["status"] == "unknown"
+    assert store.updates[-1][2]["error_code"] == "provider_result_unresolved"
 
 
 @pytest.mark.asyncio

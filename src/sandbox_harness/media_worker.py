@@ -178,6 +178,27 @@ class MediaWorker:
                     error_detail=f"{stage}:{type(exc).__name__}", retry_after_seconds=15)
                 event("media.output.retry_scheduled", level=30, job_id=job["id"], provider=job["provider"],
                     model=job["model"], failure_stage=stage, exception_type=type(exc).__name__)
+            elif (stage == "provider_poll" and job.get("adapter") == "minimax_t2a"
+                    and job.get("provider_job_id")):
+                started = job.get("provider_started_at")
+                if isinstance(started, str):
+                    started = datetime.fromisoformat(started)
+                if isinstance(started, datetime) and started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+                elapsed = ((datetime.now(timezone.utc) - started).total_seconds()
+                    if isinstance(started, datetime) else 0)
+                if elapsed >= self.settings.audio_task_timeout_seconds:
+                    await self.store.update_media_job(job["id"], self.owner, status="unknown",
+                        phase="recovery_required", provider_job_id=job["provider_job_id"],
+                        error_code="provider_result_unresolved",
+                        error_detail=f"provider_poll:{type(exc).__name__}:after_reconciliation_window")
+                else:
+                    await self.store.release_media_job_lease(job["id"], self.owner,
+                        phase="provider_polling", error_code="provider_poll_unavailable",
+                        error_detail=f"provider_poll:{type(exc).__name__}", retry_after_seconds=15)
+                event("media.audio.poll_transport_failure", level=30, job_id=job["id"],
+                    provider=job["provider"], model=job["model"], elapsed_seconds=round(elapsed),
+                    exception_type=type(exc).__name__)
             else:
                 await self.store.update_media_job(job["id"], self.owner, status="unknown",
                     phase="recovery_required", error_code="worker_error",
@@ -375,8 +396,13 @@ class MediaWorker:
             async with await self._client() as client:
                 file_resp = await client.get(urljoin(base + "/", "files/retrieve"),
                     headers=headers, params={"file_id": file_id})
-            url = file_resp.json().get("file", {}).get("download_url", "")
-            return ProviderResult("success" if url else "failed", url=url, provider_job_id=task_id)
+            if not file_resp.is_success:
+                status = f"file_http_{file_resp.status_code}"
+            else:
+                url = file_resp.json().get("file", {}).get("download_url", "")
+                if url:
+                    return ProviderResult("success", url=url, provider_job_id=task_id)
+                status = "file_url_unreported"
         if status in {"failed", "expired"}:
             return ProviderResult("failed", provider_job_id=task_id, error="audio_provider_failed")
         if elapsed >= self.settings.audio_task_timeout_seconds:
