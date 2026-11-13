@@ -26,6 +26,11 @@ inline previews and document conversion. The source entries are
   idle. The modal reports viewer initialization, byte download, parsing and
   scene preparation separately. Browsers without WebGL get an actionable
   download fallback instead of a blank canvas.
+- A successful Artifact whose basename is `index.html` represents a static
+  interactive site. Its card uses the site treatment and opens the immutable
+  sibling Artifact directory through `/api/artifacts/{id}/site-preview/` in an
+  iframe sandbox without `allow-same-origin`. Never fetch it into a text `<pre>`
+  and never render generated HTML in the main document origin.
 - Artifact and ProjectFile responses stream from object storage, support one
   HTTP byte range, and use an owner-scoped immutable ETag cache. Do not buffer a
   complete large video or GLB in API memory before sending the first byte.
@@ -46,3 +51,6 @@ DOCX scrolling, spreadsheet sheet switching, SVG rendering and page errors.
 Run `tests/browser_model3d_preview.cjs` for GLB prefetch, loading/rendering and
 the no-WebGL fallback, plus object-store and owner tests for Range and ETag
 behavior.
+Run `tests/browser_site_deployment.cjs` and `tests/test_site_deployment.py` when
+HTML detection, directory resolution, iframe isolation or deployment cards
+change.

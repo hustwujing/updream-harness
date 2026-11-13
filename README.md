@@ -36,6 +36,15 @@ deployment Job. The Worker validates and uploads content-addressed files, then
 atomically activates an immutable version. Published pages survive Sandbox,
 API, Worker and browser restarts and support rollback and downline.
 
+Deployment remains discoverable if a Harness omits the CLI call: after a
+successful Turn, Broker detects each exported directory containing
+`index.html`, builds the same content-addressed draft and deduplicates it by
+bundle digest. This is still only a confirmation draft; no public version is
+activated until the user chooses **部署站点**. The HTML Artifact opens as an
+interactive owner-scoped preview in a CSP-sandboxed iframe instead of source
+text. Published versions use `/sandbox-harness/sites/<slug>/`, and Workspace
+provides the stable link, immutable history, rollback and downline controls.
+
 Seedream supports immutable single/multi-image references through stable public
 BOSS URLs. Seedance supports first frame, first/last frame, multimodal reference,
 video editing and extension; image/video/audio inputs are registered as Ark
@@ -123,12 +132,12 @@ If terminal work changed `project/assets` or `project/artifacts`, release
 requires an explicit choice: discard and rematerialize, preserve the changed
 files under `project/work`, or register them as new managed versions.
 
-The browser keeps the selected Thread in `?thread=<id>`, restores it after refresh and supports history navigation. Users may delete terminal Threads; deletion first removes any retained Session Sandbox, then removes the owner's conversation records. Images, videos and text files open in an ownership-checked inline preview, while every file retains an explicit download action.
+The browser keeps the selected Thread in `?thread=<id>`, restores it after refresh and supports history navigation. Users may delete terminal Threads; deletion first removes any retained Session Sandbox, then removes the owner's conversation records. Images, videos, text files and interactive HTML sites open in ownership-checked previews, while every file retains an explicit download action. A Thread with an active published site must first downline that site before deletion.
 
 ## Development
 
 ```bash
-UV_CACHE_DIR=.data/uv-cache uv sync --extra test
+UV_CACHE_DIR=.data/uv-cache uv sync --extra test --extra runtime-media
 .venv/bin/pytest
 .venv/bin/uvicorn sandbox_harness.app:create_app --factory --reload --port 22766
 ```

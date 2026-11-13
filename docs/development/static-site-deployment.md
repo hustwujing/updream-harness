@@ -18,6 +18,7 @@ containing `index.html` and creates the same confirmation draft after Artifact
 publication. The bundle digest deduplicates this with an earlier CLI draft.
 This keeps deployment discoverable when a Harness produces a valid site but
 omits `sandbox-site prepare`; it still never publishes without user confirmation.
+Failed/partial workspace preservation does not create a deployment draft.
 
 The browser confirms a draft. API creates a durable `site_deploy_job`; the
 independent Site Worker validates the archive again, writes every file to the
@@ -45,6 +46,10 @@ Sandbox process or private port is a preview, never a deployment.
 - An immutable `index.html` Artifact opens through its owner-scoped directory
   preview route in a CSP-sandboxed iframe. Do not render it as source text or
   let its script inherit the main application origin.
+- Runtime instructions must state that `apply_patch` is rooted at its current
+  working directory: build under `/workspace/project/work`, verify there, then
+  copy regular deliverables to `/workspace/outputs`. Do not weaken the helper's
+  path boundary to accommodate generated output.
 
 ## Completion
 
