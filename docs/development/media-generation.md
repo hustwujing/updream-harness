@@ -27,8 +27,10 @@ locally. MiniMax text must be shorter than 10,000 characters; this product also
 caps one audio draft at an estimated 180 seconds and requires longer narration
 to be split at sentence boundaries.
 
-MiniMax speech accepts either a system `voice_id` or one `reference_audio`,
-never both. Voice cloning references are frozen ProjectFile versions in MP3,
+MiniMax speech exposes two discriminated modes: `text_to_audio` accepts no
+reference and may use a system `voice_id`; `reference_voice` requires exactly
+one `reference_audio` with `usage=audio` and forbids `voice_id`. Voice cloning
+references are frozen ProjectFile versions in MP3,
 M4A or WAV format, 10-300 seconds and at most 20 MB. The confirmation card
 states that confirmation asserts the user's right to use the referenced voice.
 Worker uploads the frozen bytes with `purpose=voice_clone`, creates a

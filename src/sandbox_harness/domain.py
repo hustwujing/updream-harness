@@ -373,7 +373,7 @@ class MediaDraftCreate(BaseModel):
     kind: Literal["image", "video", "audio", "model3d"]
     model: str = Field(min_length=1, max_length=160)
     generation_mode: Literal["text_to_image", "reference_image", "text_to_video", "first_frame",
-        "first_last_frame", "multimodal_reference", "edit_video", "extend_video", "text_to_audio",
+        "first_last_frame", "multimodal_reference", "edit_video", "extend_video", "text_to_audio", "reference_voice",
         "text_to_model", "image_to_model", "multiview_to_model", "texture_model", "decimate_model",
         "convert_model"] | None = None
     parameters: dict[str, Any] = Field(default_factory=dict)
@@ -391,7 +391,7 @@ class MediaDraftCreate(BaseModel):
         if not self.generation_mode.startswith({"image": ("text_to_image", "reference_image"),
                 "video": ("text_to_video", "first_frame", "first_last_frame", "multimodal_reference",
                     "edit_video", "extend_video"),
-                "audio": ("text_to_audio",),
+                "audio": ("text_to_audio", "reference_voice"),
                 "model3d": ("text_to_model", "image_to_model", "multiview_to_model", "texture_model",
                     "decimate_model", "convert_model")}[self.kind]):
             raise ValueError("Generation mode does not match media kind")
@@ -470,7 +470,7 @@ class MediaDraftUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: str | None = Field(default=None, min_length=1, max_length=160)
     generation_mode: Literal["text_to_image", "reference_image", "text_to_video", "first_frame",
-        "first_last_frame", "multimodal_reference", "edit_video", "extend_video", "text_to_audio",
+        "first_last_frame", "multimodal_reference", "edit_video", "extend_video", "text_to_audio", "reference_voice",
         "text_to_model", "image_to_model", "multiview_to_model", "texture_model", "decimate_model",
         "convert_model"] | None = None
     parameters: dict[str, Any] | None = None

@@ -29,7 +29,9 @@ def test_default_catalog_contains_only_real_probe_models():
     assert "first_frame" not in video["reference_schema"]["usages"]
     assert schemas["image"]["limits"]["min_total_pixels"] == 2560 * 1440
     assert "voice_id" in schemas["audio"]["optional"] and "voice_setting" not in schemas["audio"]["optional"]
-    assert schemas["audio"]["generation_modes"]["text_to_audio"]["references"] == "0..1"
+    assert schemas["audio"]["generation_modes"]["text_to_audio"]["references"] == 0
+    assert schemas["audio"]["generation_modes"]["reference_voice"]["references"] == 1
+    assert "voice_id" not in schemas["audio"]["generation_modes"]["reference_voice"]["allowed_parameters"]
     assert next(item for item in catalog.public("audio"))["reference_schema"]["roles"] == ["reference_audio"]
     assert schemas["audio"]["limits"]["max_estimated_duration_seconds"] == 180
     assert set(schemas["model3d"]["generation_modes"]) == {"text_to_model", "image_to_model",
@@ -162,21 +164,24 @@ def test_voice_clone_reference_contract_enforces_provider_boundaries():
     reference={"role":"reference_audio","usage":"audio","size":1024,
         "mime":"audio/mpeg","duration_seconds":10,"codec":"mp3"}
     catalog.validate_parameters("audio","speech-2.8-turbo",{"text":"hello"},
-        generation_mode="text_to_audio",references=[reference])
+        generation_mode="reference_voice",references=[reference])
     for invalid in ({**reference,"duration_seconds":9.99},
             {**reference,"duration_seconds":301},
             {**reference,"size":20*1024*1024+1},
             {**reference,"mime":"audio/ogg"}):
         with pytest.raises(ValueError,match="10..300"):
             catalog.validate_parameters("audio","speech-2.8-turbo",{"text":"hello"},
-                generation_mode="text_to_audio",references=[invalid])
+                generation_mode="reference_voice",references=[invalid])
     with pytest.raises(ValueError,match="does not accept voice_id"):
         catalog.validate_parameters("audio","speech-2.8-turbo",
             {"text":"hello","voice_id":"male-qn-qingse"},
-            generation_mode="text_to_audio",references=[reference])
-    with pytest.raises(ValueError,match="at most one"):
+            generation_mode="reference_voice",references=[reference])
+    with pytest.raises(ValueError,match="exactly one"):
         catalog.validate_parameters("audio","speech-2.8-turbo",{"text":"hello"},
-            generation_mode="text_to_audio",references=[reference,reference])
+            generation_mode="reference_voice",references=[reference,reference])
+    with pytest.raises(ValueError,match="use reference_voice"):
+        catalog.validate_parameters("audio","speech-2.8-turbo",{"text":"hello"},
+            generation_mode="text_to_audio",references=[reference])
 
 
 def test_seedance_reference_modes_are_gated_by_ark_asset_configuration():

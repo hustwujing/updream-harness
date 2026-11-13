@@ -98,8 +98,16 @@ class MediaModelSpec:
                         "fixed_parameters": {"aspect_ratio": "adaptive"}}}},
             "audio": {"required": ["text"], "optional": {"voice_id": list(SUPPORTED_AUDIO_VOICES),
                 "speed": "number 0.5..2", "audio_format": ["mp3", "wav", "flac"]},
-                "generation_modes": {"text_to_audio": {"roles": ["reference_audio"],
-                    "references": "0..1", "effect": "reference voice cloning"}},
+                "mode_parameter_policy": "Use only allowed_parameters for the selected generation mode",
+                "generation_modes": {
+                    "text_to_audio": {"references": 0,
+                        "allowed_parameters": ["text", "voice_id", "speed", "audio_format"]},
+                    "reference_voice": {"roles": ["reference_audio"], "references": 1,
+                        "required_usage": "audio", "forbidden_parameters": ["voice_id"],
+                        "allowed_parameters": ["text", "speed", "audio_format"],
+                        "reference_limits": {"formats": ["mp3", "m4a", "wav"],
+                            "duration_seconds": "10..300", "max_bytes": 20 * 1024 * 1024},
+                        "effect": "clone the reference voice, then synthesize text"}},
                 "limits": {"max_characters": MAX_AUDIO_CHARACTERS,
                     "max_estimated_duration_seconds": MAX_AUDIO_ESTIMATED_SECONDS}},
             "model3d": {"required": [], "optional": {
@@ -322,12 +330,17 @@ class MediaCatalog:
         elif kind == "video":
             self._validate_video_mode(generation_mode, parameters, references)
         elif kind == "audio":
-            if generation_mode != "text_to_audio":
+            self.validate_audio_parameter_names(generation_mode, parameters)
+            if generation_mode == "text_to_audio":
+                if references:
+                    raise ValueError("text_to_audio does not accept references; use reference_voice")
+                return
+            if generation_mode != "reference_voice":
                 raise ValueError("Invalid audio generation mode")
-            if len(references) > 1 or any(item.get("role") != "reference_audio"
+            if len(references) != 1 or any(item.get("role") != "reference_audio"
                     or item.get("usage") != "audio" for item in references):
-                raise ValueError("Audio generation accepts at most one reference_audio with audio usage")
-            if references and "voice_id" in parameters:
+                raise ValueError("reference_voice requires exactly one reference_audio with audio usage")
+            if "voice_id" in parameters:
                 raise ValueError("Reference voice cloning does not accept voice_id")
             for item in references:
                 duration, size, mime = item.get("duration_seconds"), item.get("size", 0), item.get("mime")
@@ -336,6 +349,18 @@ class MediaCatalog:
                     raise ValueError("Voice cloning reference must be MP3, M4A or WAV, 10..300 seconds, at most 20 MB")
         else:
             self._validate_model3d_mode(generation_mode, parameters, references)
+
+    @staticmethod
+    def validate_audio_parameter_names(mode: str, parameters: dict[str, Any]) -> None:
+        if mode == "reference_voice" and "voice_id" in parameters:
+            raise ValueError("reference_voice does not accept voice_id; the host derives it from reference_audio")
+        allowed = ({"text", "voice_id", "speed", "audio_format"} if mode == "text_to_audio"
+            else {"text", "speed", "audio_format"} if mode == "reference_voice" else None)
+        if allowed is None:
+            raise ValueError("Invalid audio generation mode")
+        irrelevant = sorted(set(parameters) - allowed)
+        if irrelevant:
+            raise ValueError(f"Unsupported parameter(s) for {mode}: {', '.join(irrelevant)}")
 
     @staticmethod
     def validate_model3d_parameter_names(mode: str, parameters: dict[str, Any]) -> None:

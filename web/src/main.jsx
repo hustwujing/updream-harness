@@ -19,7 +19,7 @@ const activityTypes=new Set(['reasoning','plan','command','tool','file_change','
 const statusLabels={QUEUED:'已排队',RESTORING:'恢复环境',STARTING:'启动沙箱',RUNNING:'正在工作',AWAITING_USER:'等待你的操作',DRAINING_INPUTS:'接收追加消息',CHECKPOINTING:'保存环境',WAITING_USER:'等待回复',COMPLETED:'已完成',FAILED:'失败',CANCELLED:'已停止'};
 const harnessLabels={claude:'Claude',codex:'Codex',deepseek:'DeepSeek'};
 const harnessIcons={codex:codexIcon,claude:claudeIcon,deepseek:deepseekIcon};
-const mediaModeLabels={text_to_image:'文生图',reference_image:'参考图编辑',text_to_video:'文生视频',first_frame:'首帧生视频',first_last_frame:'首尾帧生视频',multimodal_reference:'多模态参考',edit_video:'视频编辑',extend_video:'视频延长',text_to_audio:'语音生成',text_to_model:'文本生成 3D',image_to_model:'图片生成 3D',multiview_to_model:'多视图生成 3D',texture_model:'重绘 3D 贴图',decimate_model:'3D 减面',convert_model:'3D 格式转换'};
+const mediaModeLabels={text_to_image:'文生图',reference_image:'参考图编辑',text_to_video:'文生视频',first_frame:'首帧生视频',first_last_frame:'首尾帧生视频',multimodal_reference:'多模态参考',edit_video:'视频编辑',extend_video:'视频延长',text_to_audio:'预置音色语音',reference_voice:'参考音色语音',text_to_model:'文本生成 3D',image_to_model:'图片生成 3D',multiview_to_model:'多视图生成 3D',texture_model:'重绘 3D 贴图',decimate_model:'3D 减面',convert_model:'3D 格式转换'};
 const mediaReferenceLabels={reference_image:'参考图',reference_video:'参考视频',reference_audio:'参考音频',first_frame:'首帧',last_frame:'尾帧',front_view:'正视图',left_view:'左视图',back_view:'背视图',right_view:'右视图'};
 const mediaUsageLabels={subject:'主体',style:'风格',composition:'构图',action:'动作',camera:'运镜',audio:'声音',edit_source:'编辑源',extend_source:'延长源'};
 const DocumentPreview=React.lazy(()=>import('./DocumentPreview'));
