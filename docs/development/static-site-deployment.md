@@ -38,6 +38,13 @@ Sandbox process or private port is a preview, never a deployment.
 - Public HTML uses a CSP sandbox without `allow-same-origin`. Generated scripts
   cannot inherit the main application's authenticated origin. Published pages
   receive no application Cookie.
+- The serving layer prepends an isolated in-memory `localStorage` and
+  `sessionStorage` compatibility shim before generated scripts. This prevents
+  a direct Storage API read from aborting all page initialization while keeping
+  the page on an opaque origin. It intentionally does not promise persistence
+  across reloads; durable browser storage requires a separate site origin or a
+  bounded trusted-shell bridge and must never be implemented by adding
+  `allow-same-origin` on the application origin.
 - Versions are immutable. Updating creates a version; rollback changes only the
   active version pointer. Thread deletion is rejected while a published site is
   active.

@@ -9,6 +9,7 @@ import tarfile
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
@@ -46,30 +47,53 @@ class MediaWorker:
         self.stop_event = asyncio.Event()
         self.concurrency = getattr(settings, "media_worker_concurrency", 6)
         self.tripo_concurrency = getattr(settings, "tripo_worker_concurrency", 2)
+        self.audio_concurrency = getattr(settings, "audio_worker_concurrency", 6)
 
     async def run(self) -> None:
         active: set[asyncio.Task] = set()
         tripo_active: set[asyncio.Task] = set()
+        audio_active: set[asyncio.Task] = set()
         try:
             while not self.stop_event.is_set():
                 finished = {task for task in active if task.done()}
                 active.difference_update(finished)
                 tripo_active.difference_update(finished)
+                audio_active.difference_update(finished)
                 for task in finished:
                     if not task.cancelled() and task.exception():
                         event("media.worker.task_failed", level=40,
                             exception_type=type(task.exception()).__name__)
-                tripo_available = self.tripo_concurrency - len(tripo_active)
+                tripo_available = min(self.tripo_concurrency - len(tripo_active),
+                    max(0, self.concurrency - len(active)))
                 if tripo_available > 0:
                     jobs = await self.store.claim_media_jobs(self.owner, limit=tripo_available,
                         adapter="tripo_v3")
                     for job in jobs:
                         task = asyncio.create_task(self.process(job), name="media-job-" + job["id"])
                         active.add(task); tripo_active.add(task)
+                audio_available = min(self.audio_concurrency - len(audio_active),
+                    max(0, self.concurrency - len(active)))
+                if audio_available > 0:
+                    jobs = await self.store.claim_media_jobs(self.owner, limit=audio_available,
+                        adapter="minimax_t2a", has_provider_job=True)
+                    for job in jobs:
+                        task = asyncio.create_task(self.process(job), name="media-job-" + job["id"])
+                        active.add(task); audio_active.add(task)
+                    audio_available -= len(jobs)
+                if audio_available > 0:
+                    outstanding = await self.store.count_media_provider_jobs("minimax_t2a")
+                    submit_available = min(audio_available,
+                        max(0, self.audio_concurrency - outstanding))
+                    if submit_available > 0:
+                        jobs = await self.store.claim_media_jobs(self.owner, limit=submit_available,
+                            adapter="minimax_t2a", has_provider_job=False)
+                        for job in jobs:
+                            task = asyncio.create_task(self.process(job), name="media-job-" + job["id"])
+                            active.add(task); audio_active.add(task)
                 available = self.concurrency - len(active)
                 if available > 0:
                     jobs = await self.store.claim_media_jobs(self.owner, limit=available,
-                        exclude_adapter="tripo_v3")
+                        exclude_adapters={"tripo_v3", "minimax_t2a"})
                     for job in jobs:
                         active.add(asyncio.create_task(self.process(job), name="media-job-" + job["id"]))
                 try:
@@ -101,14 +125,16 @@ class MediaWorker:
                     "preparing_references" if job.get("references") else "requesting"))
             result = await self._execute(job)
             if result.status == "unknown":
+                error_code = ("provider_result_unresolved" if result.provider_job_id
+                    else "provider_submission_outcome_unknown")
                 await self.store.update_media_job(job["id"], self.owner, status="unknown",
                     phase="recovery_required", provider_job_id=result.provider_job_id,
-                    error_code="provider_submission_outcome_unknown", error_detail=result.error[:2000])
+                    error_code=error_code, error_detail=result.error[:2000])
                 return
             if result.status == "pending":
                 await self.store.release_media_job_lease(job["id"], self.owner,
                     phase="provider_polling", error_code="provider_poll_deferred",
-                    error_detail=result.error[:2000])
+                    error_detail=result.error[:2000], retry_after_seconds=15)
                 return
             if result.status != "success":
                 await self.store.update_media_job(job["id"], self.owner, status="failed", phase="terminal",
@@ -313,6 +339,11 @@ class MediaWorker:
                    "audio_setting": {"format": p.get("audio_format", "mp3"), "audio_sample_rate": 32000, "bitrate": 128000, "channel": 2}}
         headers = {"Authorization": "Bearer " + key, "Content-Type": "application/json"}
         task_id = str(job.get("provider_job_id") or "")
+        provider_started_at = job.get("provider_started_at")
+        if isinstance(provider_started_at, str):
+            provider_started_at = datetime.fromisoformat(provider_started_at)
+        if isinstance(provider_started_at, datetime) and provider_started_at.tzinfo is None:
+            provider_started_at = provider_started_at.replace(tzinfo=timezone.utc)
         if task_id:
             event("media.provider.resumed", job_id=job["id"], provider="minimax", provider_job_id=task_id)
         if not task_id:
@@ -324,23 +355,36 @@ class MediaWorker:
             if not await self.store.update_media_job(job["id"], self.owner, status="running",
                     phase="provider_polling", provider_job_id=task_id):
                 return ProviderResult("failed", provider_job_id=task_id, error="media_job_lease_lost")
+            provider_started_at = datetime.now(timezone.utc)
             event("media.provider.submitted", job_id=job["id"], provider="minimax", provider_job_id=task_id)
-        for _ in range(120):
-            await asyncio.sleep(5)
+        await asyncio.sleep(5)
+        async with await self._client() as client:
+            poll = await client.get(urljoin(base + "/", "query/t2a_async_query_v2"),
+                headers=headers, params={"task_id": task_id})
+        elapsed = ((datetime.now(timezone.utc) - provider_started_at).total_seconds()
+            if isinstance(provider_started_at, datetime) else 0)
+        if not poll.is_success:
+            if elapsed >= self.settings.audio_task_timeout_seconds:
+                return ProviderResult("unknown", provider_job_id=task_id,
+                    error=f"audio_poll_http_{poll.status_code}_after_reconciliation_window")
+            return ProviderResult("pending", provider_job_id=task_id,
+                error=f"audio_poll_http_{poll.status_code}")
+        body = poll.json(); status = str(body.get("status", "")).lower()
+        if status == "success":
+            file_id = body.get("file_id")
             async with await self._client() as client:
-                poll = await client.get(urljoin(base + "/", "query/t2a_async_query_v2"), headers=headers, params={"task_id": task_id})
-            body = poll.json(); status = str(body.get("status", "")).lower()
-            if status == "success":
-                file_id = body.get("file_id")
-                async with await self._client() as client:
-                    file_resp = await client.get(urljoin(base + "/", "files/retrieve"), headers=headers, params={"file_id": file_id})
-                url = file_resp.json().get("file", {}).get("download_url", "")
-                return ProviderResult("success" if url else "failed", url=url, provider_job_id=task_id)
-            if status in {"failed", "expired"}:
-                return ProviderResult("failed", provider_job_id=task_id, error="audio_provider_failed")
-            await self.store.update_media_job(job["id"], self.owner, status="running",
-                phase="provider_polling", provider_job_id=task_id)
-        return ProviderResult("failed", provider_job_id=task_id, error="audio_timeout")
+                file_resp = await client.get(urljoin(base + "/", "files/retrieve"),
+                    headers=headers, params={"file_id": file_id})
+            url = file_resp.json().get("file", {}).get("download_url", "")
+            return ProviderResult("success" if url else "failed", url=url, provider_job_id=task_id)
+        if status in {"failed", "expired"}:
+            return ProviderResult("failed", provider_job_id=task_id, error="audio_provider_failed")
+        if elapsed >= self.settings.audio_task_timeout_seconds:
+            return ProviderResult("unknown", provider_job_id=task_id,
+                error="audio_processing_outlived_reconciliation_window")
+        event("media.audio.poll_deferred", job_id=job["id"], provider="minimax",
+            provider_job_id=task_id, elapsed_seconds=round(elapsed), provider_status=status or "unreported")
+        return ProviderResult("pending", provider_job_id=task_id, error="audio_still_processing")
 
     @staticmethod
     def _filename_for_mime(filename: str, mime: str) -> str:

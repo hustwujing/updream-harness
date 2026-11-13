@@ -23,6 +23,7 @@ export const listMediaJobs=threadId=>api(`threads/${threadId}/media/jobs`);
 export const listMediaDrafts=threadId=>api(`threads/${threadId}/media/drafts`);
 export const getMediaJob=jobId=>api(`media/jobs/${jobId}`);
 export const cancelMediaJob=jobId=>api(`media/jobs/${jobId}/cancel`,{method:'POST'});
+export const refreshMediaJob=jobId=>api(`media/jobs/${jobId}/refresh`,{method:'POST'});
 export const createMediaDraft=(threadId,value)=>api(`threads/${threadId}/media/drafts`,{method:'POST',body:JSON.stringify(value)});
 export const updateMediaDraft=(draftId,value)=>api(`media/drafts/${draftId}`,{method:'PATCH',body:JSON.stringify(value)});
 export const confirmMediaDraft=draftId=>api(`media/drafts/${draftId}/confirm`,{method:'POST'});

@@ -165,6 +165,12 @@ def test_public_site_serves_isolated_html_ranges_and_stops_after_unpublish(tmp_p
         response = client.get(f"/sites/{project.slug}/")
         assert response.status_code == 200 and b"Hello" in response.content
         assert "sandbox allow-scripts" in response.headers["content-security-policy"]
+        assert "allow-same-origin" not in response.headers["content-security-policy"]
+        assert b'window.__updreamStorageMode="isolated-memory"' in response.content
+        assert response.headers["content-length"] == str(len(response.content))
+        cached = client.get(f"/sites/{project.slug}/",
+            headers={"If-None-Match":response.headers["etag"]})
+        assert cached.status_code == 304
         assert "sandbox_harness_session" not in response.cookies
         partial = client.get(f"/sites/{project.slug}/app.js", headers={"Range":"bytes=0-7"})
         assert partial.status_code == 206 and partial.headers["content-range"].startswith("bytes 0-7/")

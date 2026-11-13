@@ -406,6 +406,8 @@ body[data-network-access="restricted"] .topbar>div:nth-child(2)>span::after{cont
 .media-progress article.previewable:hover,.media-progress article.previewable:focus-visible{border-color:#aebbb4;background:#f4f7f5;outline:none}
 .media-progress-dismiss{display:grid;place-items:center;width:26px;height:26px;margin-left:auto;border:0;border-radius:4px;background:transparent;color:#777872}
 .media-progress-dismiss:hover{background:#eeeeea;color:#333431}
+.media-progress-refresh{display:grid;place-items:center;width:26px;height:26px;margin-left:auto;border:0;border-radius:4px;background:transparent;color:#777872}.media-progress-refresh:hover{background:#eeeeea;color:#333431}.media-progress-refresh:disabled svg{animation:spin 1s linear infinite}
+.media-progress-refresh+.media-progress-dismiss{margin-left:0}
 .media-progress>summary{display:flex;align-items:center;gap:9px;max-width:780px;margin:0 auto;list-style:none;color:#50514c;cursor:pointer}
 .media-progress>summary::-webkit-details-marker{display:none}
 .media-progress>summary>div{display:flex;align-items:baseline;gap:7px;min-width:0}

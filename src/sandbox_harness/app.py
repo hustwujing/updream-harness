@@ -50,6 +50,15 @@ SAFE_INLINE_MIMES = {
     "text/plain", "application/pdf", "model/gltf-binary",
 }
 MAX_AVATAR_BYTES = 5 * 1024 * 1024
+ISOLATED_SITE_STORAGE_SHIM = b'''<script>(()=>{const makeStorage=()=>{const values=Object.create(null);return Object.freeze({getItem:key=>Object.prototype.hasOwnProperty.call(values,String(key))?values[String(key)]:null,setItem:(key,value)=>{values[String(key)]=String(value)},removeItem:key=>{delete values[String(key)]},clear:()=>{for(const key of Object.keys(values))delete values[key]},key:index=>Object.keys(values)[Number(index)]??null,get length(){return Object.keys(values).length}})};for(const name of ["localStorage","sessionStorage"]){try{window[name].getItem("__updream_storage_probe__")}catch{Object.defineProperty(window,name,{value:makeStorage(),configurable:false})}}window.__updreamStorageMode="isolated-memory"})();</script>'''
+
+
+def isolated_site_html(data: bytes) -> bytes:
+    return ISOLATED_SITE_STORAGE_SHIM + data
+
+
+def isolated_site_etag(source_sha256: str) -> str:
+    return hashlib.sha256((source_sha256 + ":isolated-storage").encode()).hexdigest()
 
 
 def avatar_mime(data: bytes) -> str:
@@ -510,6 +519,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(409, str(exc))
             raise HTTPException(409, str(exc))
 
+    @app.post("/api/media/jobs/{job_id}/refresh")
+    async def refresh_media_job(job_id: str, request: Request):
+        try:
+            value = await store.request_media_refresh(job_id, request.state.owner_id)
+            event("media.job.refresh_requested", job_id=job_id, status=value.status,
+                phase=value.phase)
+            return value
+        except KeyError:
+            raise HTTPException(404, "Media job not found")
+
     @app.get("/api/threads/{thread_id}/sites/drafts")
     async def list_site_drafts(thread_id: str, request: Request):
         if not await store.get_thread(thread_id, request.state.owner_id):
@@ -547,6 +566,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(409, "Site draft preview identity mismatch")
         headers = {"Cache-Control":"private, no-cache", "ETag":'"' + file["sha256"] + '"'}
         if file["mime"] == "text/html":
+            data = isolated_site_html(data)
+            headers["ETag"] = '"' + isolated_site_etag(file["sha256"]) + '"'
             headers["Content-Security-Policy"] = ("sandbox allow-scripts allow-forms allow-modals "
                 "allow-pointer-lock allow-downloads; default-src 'self' data: blob:; "
                 "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; "
@@ -1296,6 +1317,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(409, "Site preview identity mismatch")
         headers = {"Cache-Control":"private, no-cache", "ETag":'"' + value["sha256"] + '"'}
         if value["mime"] == "text/html":
+            data = isolated_site_html(data)
+            headers["ETag"] = '"' + isolated_site_etag(value["sha256"]) + '"'
             headers["Content-Security-Policy"] = ("sandbox allow-scripts allow-forms allow-modals "
                 "allow-pointer-lock allow-downloads; default-src 'self' data: blob:; "
                 "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; "
@@ -1333,11 +1356,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             value = None
         if not value:
             raise HTTPException(404, "Published site file not found")
-        size = value["size"]; etag = '"' + value["sha256"] + '"'
+        source_size = value["size"]
+        is_html = value["mime"] == "text/html"
+        size = source_size + (len(ISOLATED_SITE_STORAGE_SHIM) if is_html else 0)
+        etag_value = isolated_site_etag(value["sha256"]) if is_html else value["sha256"]
+        etag = '"' + etag_value + '"'
         if request.headers.get("if-none-match") == etag:
             return Response(status_code=304, headers={"ETag":etag, "Cache-Control":"no-cache"})
         try:
-            selected = requested_byte_range(request.headers.get("range", ""), size)
+            selected = None if is_html else requested_byte_range(request.headers.get("range", ""), size)
         except ValueError:
             raise HTTPException(416, "invalid_byte_range", headers={"Content-Range":f"bytes */{size}"})
         start, end = selected or (0, size - 1)
@@ -1345,15 +1372,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "Content-Length":str(end - start + 1), "X-Published-Site-Version":value["version_id"]}
         if selected:
             headers["Content-Range"] = f"bytes {start}-{end}/{size}"
-        if value["mime"] == "text/html":
+        if is_html:
             headers["Content-Security-Policy"] = ("sandbox allow-scripts allow-forms allow-modals "
                 "allow-pointer-lock allow-downloads; default-src 'self' data: blob:; "
                 "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; "
                 "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
                 "font-src 'self' data:; media-src 'self' data: blob:; "
                 "connect-src 'self'; worker-src 'self' blob:; frame-ancestors *")
-        return StreamingResponse(objects.iter_bytes(value["object_ref"], maximum=settings.max_artifact_bytes,
-            start=start, end=end), status_code=206 if selected else 200,
+        def content():
+            if is_html:
+                yield ISOLATED_SITE_STORAGE_SHIM
+                yield from objects.iter_bytes(value["object_ref"], maximum=settings.max_artifact_bytes,
+                    start=0, end=source_size - 1)
+            else:
+                yield from objects.iter_bytes(value["object_ref"], maximum=settings.max_artifact_bytes,
+                    start=start, end=end)
+        return StreamingResponse(content(), status_code=206 if selected else 200,
             media_type=value["mime"], headers=headers)
 
     @app.get("/sites/{slug}/")

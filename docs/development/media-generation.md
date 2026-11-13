@@ -142,6 +142,23 @@ restart it may resume only that ID. A `REQUESTING` Job without a Provider ID
 has an ambiguous submission outcome and becomes `UNKNOWN`. Artifact
 registration, terminal Job state and Outbox creation use one transaction.
 
+Long-running MiniMax audio Jobs use bounded polling slices. One Worker claim
+performs one Provider query, then releases the lease with a short retry delay
+while the Provider still reports processing. The number of submitted,
+nonterminal MiniMax tasks is capped independently from total Worker
+concurrency, so a large batch cannot flood the Provider queue. Once the
+configured reconciliation window expires, a still-processing task becomes
+`UNKNOWN`; its existing Provider ID is retained and the request is never
+resubmitted.
+
+`POST /api/media/jobs/{job_id}/refresh` is an owner-scoped scheduling hint, not
+a Provider proxy. It may make the next poll immediately eligible only when no
+Worker holds an active lease. For a recoverable `UNKNOWN` audio Job, and for
+legacy false `audio_timeout` failures that retain a Provider ID, it permits one
+more Worker query. Success and explicit Provider failure become terminal;
+continued processing or a transient query failure returns to `UNKNOWN` after
+that bounded check. The browser never calls the Provider directly.
+
 Reference preparation uses `PREPARING_REFERENCES`, `WAITING_REFERENCE_ASSET`
 and `REGISTERING_ASSETS` before `REQUESTING`. These phases are safe to reclaim.
 Only a crash after the Provider request boundary becomes an unknown submission.

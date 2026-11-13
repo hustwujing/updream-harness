@@ -301,6 +301,7 @@ class MediaJobRow(Base):
     parameters_json: Mapped[str] = mapped_column(Text, default="{}")
     references_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
     provider_job_id: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    provider_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(160))
     error_code: Mapped[str] = mapped_column(String(100), default="", server_default="")
     error_detail: Mapped[str] = mapped_column(Text, default="", server_default="")
@@ -616,6 +617,13 @@ class Store:
                 if table == "media_jobs" and "credits_consumed" not in media_columns:
                     await connection.execute(text(
                         "ALTER TABLE media_jobs ADD COLUMN credits_consumed VARCHAR(40) NOT NULL DEFAULT ''"))
+                if table == "media_jobs" and "provider_started_at" not in media_columns:
+                    definition = "TIMESTAMP WITH TIME ZONE NULL" if connection.dialect.name == "postgresql" else "DATETIME NULL"
+                    await connection.execute(text(
+                        f"ALTER TABLE media_jobs ADD COLUMN provider_started_at {definition}"))
+                    await connection.execute(text(
+                        "UPDATE media_jobs SET provider_started_at = updated_at "
+                        "WHERE provider_job_id != '' AND provider_started_at IS NULL"))
             user_columns = await connection.run_sync(
                 lambda value: {column["name"] for column in inspect(value).get_columns("users")})
             user_additions = {
@@ -2809,8 +2817,28 @@ class Store:
             row.status = "cancel_requested"; row.updated_at = now()
         return self._media_job_view(row)
 
+    async def request_media_refresh(self, job_id: str, owner_id: str) -> MediaJobView:
+        async with self.connections.begin() as db:
+            row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
+                MediaJobRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
+            if not row:
+                raise KeyError("media_job_not_found")
+            recoverable_audio = (row.adapter == "minimax_t2a" and bool(row.provider_job_id)
+                and (row.status == "unknown" or (row.status == "failed"
+                    and row.error_detail == "audio_timeout")))
+            if recoverable_audio:
+                row.status = "running"; row.phase = "provider_polling"; row.progress = None
+                row.error_code = ""; row.error_detail = ""; row.finished_at = None
+                row.lease_owner = ""; row.lease_expires_at = None; row.updated_at = now()
+            elif row.status in {"created", "submitted", "running", "cancel_requested"}:
+                if not row.lease_owner or not row.lease_expires_at or utc_datetime(row.lease_expires_at) <= now():
+                    row.lease_owner = ""; row.lease_expires_at = None; row.updated_at = now()
+            return self._media_job_view(row)
+
     async def claim_media_jobs(self, owner: str, limit: int = 4, *, adapter: str | None = None,
-                               exclude_adapter: str | None = None) -> list[dict]:
+                               exclude_adapter: str | None = None,
+                               exclude_adapters: set[str] | None = None,
+                               has_provider_job: bool | None = None) -> list[dict]:
         async with self.connections.begin() as db:
             query = select(MediaJobRow).where(
                 MediaJobRow.status.in_(["created", "submitted", "running", "cancel_requested"]),
@@ -2820,6 +2848,12 @@ class Store:
                 query = query.where(MediaJobRow.adapter == adapter)
             if exclude_adapter is not None:
                 query = query.where(MediaJobRow.adapter != exclude_adapter)
+            if exclude_adapters:
+                query = query.where(MediaJobRow.adapter.not_in(exclude_adapters))
+            if has_provider_job is True:
+                query = query.where(MediaJobRow.provider_job_id != "")
+            elif has_provider_job is False:
+                query = query.where(MediaJobRow.provider_job_id == "")
             rows = (await db.execute(query.order_by(MediaJobRow.created_at.asc()).limit(limit)
                 .with_for_update())).scalars().all()
             expiry = now() + timedelta(seconds=60)
@@ -2831,8 +2865,17 @@ class Store:
                     "generation_mode": row.generation_mode or "", "parameters": json.loads(row.parameters_json or "{}"),
                     "references": json.loads(row.references_json or "[]"), "provider_job_id": row.provider_job_id,
                     "thread_id": row.thread_id, "owner_id": row.owner_id, "turn_id": row.turn_id,
-                    "output_role": row.output_role})
+                    "output_role":row.output_role, "created_at":utc_datetime(row.created_at),
+                    "provider_started_at":(utc_datetime(row.provider_started_at)
+                        if row.provider_started_at else None)})
         return result
+
+    async def count_media_provider_jobs(self, adapter: str) -> int:
+        async with self.connections() as db:
+            return int((await db.execute(select(func.count()).select_from(MediaJobRow).where(
+                MediaJobRow.adapter == adapter, MediaJobRow.provider_job_id != "",
+                MediaJobRow.status.in_(["created", "submitted", "running", "cancel_requested"]),
+            ))).scalar_one())
 
     async def release_media_job_lease(self, job_id: str, owner: str, *, phase: str,
                                       error_code: str = "", error_detail: str = "",
@@ -3225,6 +3268,7 @@ class Store:
             if not row: return False
             row.status = status; row.phase = phase or row.phase; row.progress = progress
             if provider_job_id: row.provider_job_id = provider_job_id
+            if provider_job_id and row.provider_started_at is None: row.provider_started_at = now()
             if output_object_ref: row.output_object_ref = output_object_ref; row.output_mime = output_mime; row.output_size = output_size
             row.error_code = error_code; row.error_detail = error_detail; row.updated_at = now()
             if status in {"succeeded", "failed", "cancelled", "unknown"}:

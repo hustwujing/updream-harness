@@ -2,7 +2,7 @@ from sandbox_harness.catalog import HarnessCatalog
 from datetime import timedelta
 
 from sandbox_harness.domain import EventKind, Harness, ItemType, RuntimeEvent, ThreadCreate, TurnCreate, TurnInputCreate, TurnState, now
-from sandbox_harness.store import Store, ThreadRow, TurnRow, valid_project_file_path
+from sandbox_harness.store import MediaJobRow, Store, ThreadRow, TurnRow, valid_project_file_path
 import pytest
 
 
@@ -527,6 +527,35 @@ async def test_thread_summaries_include_latest_turn_state(tmp_path):
         rows = await store.list_thread_summaries(owner)
         assert rows[0]["latest_turn_state"] == "RUNNING"
         assert rows[0]["latest_turn_updated_at"] is not None
+    finally:
+        await store.close()
+
+
+async def test_media_refresh_revives_known_audio_without_stealing_active_lease(tmp_path):
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "media-refresh.db")); await store.initialize()
+    owner, timestamp = "a" * 64, now()
+    try:
+        async with store.connections.begin() as db:
+            db.add(MediaJobRow(id="1" * 32, owner_id=owner, thread_id="2" * 32,
+                turn_id="", draft_id="3" * 32, kind="audio", model="speech-2.8-turbo",
+                generation_mode="text_to_audio", provider="minimax", adapter="minimax_t2a",
+                execution_mode="async", cancellation_mode="unsupported", status="unknown",
+                phase="recovery_required", parameters_json='{"text":"test"}', references_json="[]",
+                provider_job_id="provider-audio", provider_started_at=timestamp - timedelta(hours=3),
+                idempotency_key="media-refresh-test", error_code="provider_submission_outcome_unknown",
+                error_detail="audio_processing_outlived_reconciliation_window", output_role="workspace",
+                created_at=timestamp, finished_at=timestamp, updated_at=timestamp))
+        with pytest.raises(KeyError):
+            await store.request_media_refresh("1" * 32, "b" * 64)
+        refreshed = await store.request_media_refresh("1" * 32, owner)
+        assert refreshed.status == "running" and refreshed.phase == "provider_polling"
+        claimed = await store.claim_media_jobs("worker-one", adapter="minimax_t2a",
+            has_provider_job=True)
+        assert [job["provider_job_id"] for job in claimed] == ["provider-audio"]
+        await store.request_media_refresh("1" * 32, owner)
+        async with store.connections() as db:
+            held = await db.get(MediaJobRow, "1" * 32)
+            assert held.lease_owner == "worker-one" and held.lease_expires_at is not None
     finally:
         await store.close()
 

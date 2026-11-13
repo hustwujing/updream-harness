@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from datetime import datetime, timezone
 
 import pytest
 
@@ -71,7 +72,7 @@ def worker(store=None, objects=None):
         tripo_base_url="https://tripo.test/v3", tripo_api_key="test-key",
         tripo_poll_seconds=1, tripo_task_timeout_seconds=3,
         tripo_worker_concurrency=2, tripo_submit_max_retries=5,
-        tripo_max_output_bytes=1024 * 1024)
+        tripo_max_output_bytes=1024 * 1024, audio_task_timeout_seconds=7200)
     return MediaWorker(settings, store or Store(), objects or Objects(), None)
 
 
@@ -104,6 +105,60 @@ async def test_audio_recovery_polls_persisted_provider_job_without_resubmit(monk
         "provider_job_id": "provider-audio", "parameters": {"text": "test"}})
     assert result.status == "success" and result.provider_job_id == "provider-audio"
     assert not client.posts and len(client.gets) == 2
+
+
+@pytest.mark.asyncio
+async def test_audio_processing_keeps_polling_same_provider_job(monkeypatch):
+    value = worker()
+    processing = Client([Response({"status":"processing"})])
+    completed = Client([Response({"status":"success", "file_id":"file"}),
+        Response({"file":{"download_url":"https://result.test/audio.mp3"}})])
+    clients = [processing, completed, completed]
+    async def client_factory(): return clients.pop(0)
+    async def no_sleep(_): return None
+    monkeypatch.setattr(value, "_client", client_factory)
+    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    job={"id":"job", "model":"speech-2.8-turbo", "provider_job_id":"provider-audio",
+        "provider_started_at":datetime.now(timezone.utc), "parameters":{"text":"test"}}
+    pending = await value._minimax_audio(job)
+    assert pending.status == "pending" and pending.provider_job_id == "provider-audio"
+    result = await value._minimax_audio(job)
+    assert result.status == "success" and result.provider_job_id == "provider-audio"
+    assert not processing.posts and not completed.posts
+
+
+@pytest.mark.asyncio
+async def test_audio_processing_past_reconciliation_window_returns_unknown(monkeypatch):
+    value = worker()
+    client = Client([Response({"status": "processing"})])
+    async def client_factory(): return client
+    async def no_sleep(_): return None
+    monkeypatch.setattr(value, "_client", client_factory)
+    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    result = await value._minimax_audio({"id": "job", "model": "speech-2.8-turbo",
+        "provider_job_id": "provider-audio",
+        "provider_started_at": datetime.fromtimestamp(0, timezone.utc),
+        "parameters": {"text": "test"}})
+    assert result.status == "unknown"
+    assert result.provider_job_id == "provider-audio"
+    assert result.error == "audio_processing_outlived_reconciliation_window"
+    assert not client.posts and len(client.gets) == 1
+
+
+@pytest.mark.asyncio
+async def test_audio_poll_http_failure_past_reconciliation_window_returns_unknown(monkeypatch):
+    value = worker()
+    client = Client([Response({}, status_code=503)])
+    async def client_factory(): return client
+    async def no_sleep(_): return None
+    monkeypatch.setattr(value, "_client", client_factory)
+    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    result = await value._minimax_audio({"id": "job", "model": "speech-2.8-turbo",
+        "provider_job_id": "provider-audio",
+        "provider_started_at": datetime.fromtimestamp(0, timezone.utc),
+        "parameters": {"text": "test"}})
+    assert result.status == "unknown" and result.provider_job_id == "provider-audio"
+    assert result.error == "audio_poll_http_503_after_reconciliation_window"
 
 
 @pytest.mark.asyncio
@@ -195,6 +250,33 @@ async def test_requesting_job_without_provider_id_becomes_unknown(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_known_provider_result_unknown_has_distinct_error_and_releases_lease(monkeypatch):
+    store = Store(); value = worker(store)
+    async def unresolved(_):
+        return __import__('sandbox_harness.media_worker', fromlist=['ProviderResult']).ProviderResult(
+            "unknown", provider_job_id="provider-audio", error="still processing")
+    monkeypatch.setattr(value, "_execute", unresolved)
+    await value.process({"id":"job", "kind":"audio", "model":"speech-2.8-turbo",
+        "provider":"minimax", "adapter":"minimax_t2a", "status":"running",
+        "phase":"provider_polling", "provider_job_id":"provider-audio", "references":[]})
+    assert store.updates[-1][2]["status"] == "unknown"
+    assert store.updates[-1][2]["error_code"] == "provider_result_unresolved"
+
+
+@pytest.mark.asyncio
+async def test_pending_provider_poll_releases_lease_with_delay(monkeypatch):
+    store = Store(); value = worker(store)
+    async def pending(_):
+        return __import__('sandbox_harness.media_worker', fromlist=['ProviderResult']).ProviderResult(
+            "pending", provider_job_id="provider-audio", error="still processing")
+    monkeypatch.setattr(value, "_execute", pending)
+    await value.process({"id":"job", "kind":"audio", "model":"speech-2.8-turbo",
+        "provider":"minimax", "adapter":"minimax_t2a", "status":"running",
+        "phase":"provider_polling", "provider_job_id":"provider-audio", "references":[]})
+    assert store.releases[-1][2]["retry_after_seconds"] == 15
+
+
+@pytest.mark.asyncio
 async def test_reference_preparation_phase_is_safe_to_resume(monkeypatch):
     store=Store();value=worker(store)
     async def failed(_):return __import__('sandbox_harness.media_worker',fromlist=['ProviderResult']).ProviderResult(
@@ -223,6 +305,8 @@ async def test_media_worker_refills_free_slot_without_waiting_for_long_batch(mon
                 return []
             claimed, self.jobs = self.jobs[:limit], self.jobs[limit:]
             return claimed
+        async def count_media_provider_jobs(self, adapter):
+            return 0
     store = QueueStore(); value = worker(store); value.concurrency = 2
     started, release = [], __import__('asyncio').Event()
     async def process(job):
