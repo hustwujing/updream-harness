@@ -171,9 +171,13 @@ class MediaWorker:
             event("media.job.succeeded", job_id=job["id"], provider=job["provider"], model=job["model"],
                 bytes=total_bytes)
         except MediaReferencePreparationError as exc:
+            detail = str(exc)[:200]
+            error_code = ("media_reference_policy_rejected"
+                if "SensitiveContentDetected" in detail or "PolicyViolation" in detail
+                else "media_reference_unavailable")
             await self.store.update_media_job(job["id"], self.owner, status="failed", phase="terminal",
-                error_code="media_reference_unavailable", error_detail=str(exc)[:200])
-            event("media.reference.failed", level=30, job_id=job["id"], error_code=str(exc)[:80])
+                error_code=error_code, error_detail=detail)
+            event("media.reference.failed", level=30, job_id=job["id"], error_code=error_code)
         except httpx.HTTPError as exc:
             if stage.startswith("download"):
                 await self.store.release_media_job_lease(job["id"], self.owner,

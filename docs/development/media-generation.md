@@ -85,6 +85,13 @@ to Asset ID mapping. A deterministic Asset name derived from SHA-256 lets a
 replacement Worker reconcile a lost CreateAsset response with `ListAssets`
 instead of creating a duplicate.
 
+The Harness never performs this publication and never supplies a URL. Ark
+content-policy rejection during Asset activation is classified as
+`media_reference_policy_rejected`, distinct from transport or storage failure.
+It is deterministic for the same bytes and must not be retried unchanged;
+browser and continuation surfaces preserve this category so the next Agent can
+choose a different authorized input or a local editing path.
+
 Direct clients may use:
 
 ```text

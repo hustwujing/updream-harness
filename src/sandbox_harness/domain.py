@@ -516,6 +516,8 @@ class MediaJobView(BaseModel):
     status: str
     phase: str = ""
     progress: int | None = None
+    error_code: str = ""
+    error_detail: str = ""
     cancelable: bool = False
     cancel_reason: str = ""
     artifact_ids: list[str] = Field(default_factory=list)

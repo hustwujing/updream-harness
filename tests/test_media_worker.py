@@ -356,6 +356,20 @@ async def test_reference_preparation_phase_is_safe_to_resume(monkeypatch):
     assert all(update[2].get("error_code")!="provider_submission_outcome_unknown" for update in store.updates)
 
 
+@pytest.mark.asyncio
+async def test_reference_policy_rejection_is_a_deterministic_failure_category(monkeypatch):
+    store=Store();value=worker(store)
+    async def rejected(_):
+        raise MediaReferencePreparationError(
+            "ark_asset_processing_failed:InputVideoSensitiveContentDetected.PolicyViolation")
+    monkeypatch.setattr(value,"_execute",rejected)
+    await value.process({"id":"job","kind":"video","model":"sed2","provider":"ark",
+        "adapter":"ark_video_v2","status":"running","phase":"preparing_references",
+        "provider_job_id":"","references":[{"sha256":"1"*64}]})
+    assert store.updates[-1][2]["status"]=="failed"
+    assert store.updates[-1][2]["error_code"]=="media_reference_policy_rejected"
+
+
 def test_media_worker_lease_owner_is_instance_unique():
     first = worker(); second = worker()
     assert first.owner.startswith("media-worker-") and first.owner != second.owner

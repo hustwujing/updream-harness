@@ -2594,7 +2594,8 @@ class Store:
             model=row.model, generation_mode=row.generation_mode or "", references=json.loads(row.references_json or "[]"),
             provider=row.provider, adapter=row.adapter, execution_mode=row.execution_mode,
             cancellation_mode=row.cancellation_mode, status=row.status, phase=row.phase or "",
-            progress=row.progress, cancelable=row.execution_mode == "async" and row.cancellation_mode == "supported",
+            progress=row.progress, error_code=row.error_code or "", error_detail=row.error_detail or "",
+            cancelable=row.execution_mode == "async" and row.cancellation_mode == "supported",
             cancel_reason=reason, artifact_ids=artifact_ids or [], outputs=outputs or [],
             credits_consumed=credits, output_role=row.output_role,
             created_at=row.created_at, finished_at=row.finished_at)
