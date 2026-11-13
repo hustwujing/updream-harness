@@ -46,6 +46,8 @@ def test_media_worker_is_a_separate_service():
     assert "compatibility location only" in instructions
     assert "Markdown link" in instructions
     assert "current-Turn publication" in instructions and "verify every input path exists" in instructions
+    assert "`apply_patch` is rooted at the current working directory" in instructions
+    assert "then copy the finished regular files into `/workspace/outputs`" in instructions
     assert "setsar=1" in instructions
     assert "--append-system-prompt" in adapters
     assert '"developerInstructions": RUNTIME_INSTRUCTIONS' in codex

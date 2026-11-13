@@ -46,6 +46,7 @@ RUNTIME_GUIDANCE = """Sandbox runtime contract:
 - For casual conversation, reply normally without creating files.
 - Work in /workspace/project. Current-message attachments are in /workspace/inbox; durable project inputs and prior outputs are in /workspace/project/assets and /workspace/project/artifacts.
 - Put files intended for the user in /workspace/outputs and verify them before replying.
+- `apply_patch` can edit only beneath its current working directory. Build and patch files under `/workspace/project/work`, verify them, then copy finished deliverables to `/workspace/outputs`; do not use an absolute `/workspace/outputs` path in a patch run from `/workspace/project`.
 - /workspace/outputs is the current Turn's publication directory and may start empty. On later Turns, locate prior deliverables under /workspace/project/artifacts before constructing media commands.
 - Public HTTP/S uses a capability-checked proxy. A destination may still reject or rate-limit this host; after a timeout, TLS failure or repeated 4xx, do not keep retrying the same site.
 - curl, Python HTTP clients, `chromium`, Playwright scripts and `sandbox-browser-screenshot URL OUTPUT` automatically use the authenticated sandbox proxy. Do not remove their proxy environment or launch options.

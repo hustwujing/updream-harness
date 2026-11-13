@@ -20,6 +20,8 @@ def test_runtime_guidance_has_network_and_browser_fallbacks():
     assert "ImageMagick (`convert` and `identify`)" in runtime_app.RUNTIME_GUIDANCE
     assert "current Turn's publication directory" in runtime_app.RUNTIME_GUIDANCE
     assert "--replaces FAILED_JOB_ID" in runtime_app.RUNTIME_GUIDANCE
+    assert "Build and patch files under `/workspace/project/work`" in runtime_app.RUNTIME_GUIDANCE
+    assert "do not use an absolute `/workspace/outputs` path" in runtime_app.RUNTIME_GUIDANCE
 
 
 def test_background_failure_requires_successful_explicit_replacement():
