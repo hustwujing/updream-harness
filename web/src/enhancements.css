@@ -355,6 +355,7 @@ body[data-network-access="restricted"] .topbar>div:nth-child(2)>span::after{cont
 
 .input-status {display:block;font-size:12px;margin-top:6px;color:#7b8493}
 .input-status.failed {color:#bd4545}
+.input-status.unknown {color:#8a6a2f}
 
 .activity-row { grid-template-columns: 18px minmax(0,1fr) auto; align-items: start; }
 .activity-duration {font-size:10px;line-height:1.5;color:#83867f;white-space:nowrap;font-variant-numeric:tabular-nums;padding-left:8px}

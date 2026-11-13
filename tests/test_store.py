@@ -49,6 +49,9 @@ async def test_thread_turn_items_and_idempotency(tmp_path):
                 TurnCreate(message="different", idempotency_key="idempotency-1"), profile, owner)
         appended, created = await store.create_turn_input(turn.id,
             TurnInputCreate(message="follow up", idempotency_key="input-key-1"), owner)
+        pending_item = (await store.items_after(thread.id))[1]
+        assert pending_item.payload["input_status"] == "pending"
+        assert pending_item.payload["delivery_mode"] == "pending"
         repeated, created_again = await store.create_turn_input(turn.id,
             TurnInputCreate(message="follow up", idempotency_key="input-key-1"), owner)
         assert created and not created_again and repeated.id == appended.id
@@ -57,13 +60,22 @@ async def test_thread_turn_items_and_idempotency(tmp_path):
                 TurnInputCreate(message="different", idempotency_key="input-key-1"), owner)
         claimed = await store.next_pending_input(turn.id)
         assert claimed.id == appended.id and claimed.status == "pending" and claimed.delivery_mode == "pending"
+        await store.set_input_status(claimed.id, "delivered", "native_stream")
+        delivered_item = (await store.items_after(thread.id))[1]
+        assert delivered_item.status == "in_progress"
+        assert delivered_item.payload["input_status"] == "delivered"
+        assert delivered_item.payload["delivery_mode"] == "native_stream"
         await store.set_input_status(claimed.id, "applied")
         assert (await store.list_turn_inputs(turn.id))[0].status == "applied"
-        assert (await store.items_after(thread.id))[1].status == "completed"
-        input_event = (await store.events_after(turn.id, 0))[0]
+        applied_item = (await store.items_after(thread.id))[1]
+        assert applied_item.status == "completed" and applied_item.payload["input_status"] == "applied"
+        delivered_event, input_event = (await store.events_after(turn.id, 0))[:2]
+        assert delivered_event.kind == EventKind.ITEM_UPDATED
+        assert delivered_event.payload["input_status"] == "delivered"
         assert input_event.kind == EventKind.ITEM_UPDATED
         assert input_event.payload == {"item_id": input_event.item_id,
-            "status": "completed", "input_id": claimed.id}
+            "status":"completed", "input_id":claimed.id,
+            "input_status":"applied", "delivery_mode":""}
         agent = await store.append_agent_delta(thread.id, turn.id, "hel")
         agent = await store.append_agent_delta(thread.id, turn.id, "lo")
         assert agent.summary == "hello"

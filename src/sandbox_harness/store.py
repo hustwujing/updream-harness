@@ -1300,6 +1300,7 @@ class Store:
     @observed("db.execution.start")
     async def start_runtime_execution(self, turn_id: str, execution_id: str, owner: str, generation: int,
                                       *, input_id: str | None = None) -> None:
+        updated_item_id = ""
         async with self.connections.begin() as db:
             row = await db.get(TurnRow, turn_id, with_for_update=True)
             if not row or row.lease_owner != owner or row.recovery_generation != generation:
@@ -1310,9 +1311,24 @@ class Store:
                     raise RuntimeError("input_not_pending")
                 pending.status = "delivered"; pending.delivery_mode = "deferred_safe_point"
                 pending.updated_at = now()
+                items = (await db.execute(select(ItemRow).where(ItemRow.turn_id == turn_id,
+                    ItemRow.type == ItemType.USER_MESSAGE.value))).scalars().all()
+                item = next((candidate for candidate in items
+                    if json.loads(candidate.payload_json).get("input_id") == input_id), None)
+                if item:
+                    payload = json.loads(item.payload_json or "{}")
+                    payload.update({"input_status":"delivered",
+                        "delivery_mode":"deferred_safe_point"})
+                    item.payload_json = json.dumps(payload); item.updated_at = now()
+                    updated_item_id = item.id
             row.runtime_execution_id = execution_id
             row.runtime_sequence = 0
             row.updated_at = now()
+        if updated_item_id:
+            await self.append_event(turn_id, EventKind.ITEM_UPDATED,
+                {"item_id":updated_item_id, "status":"in_progress", "input_id":input_id,
+                    "input_status":"delivered", "delivery_mode":"deferred_safe_point"},
+                item_id=updated_item_id)
 
     async def set_turn_capability(self, turn_id: str, nonce: str, owner: str, generation: int) -> None:
         async with self.connections.begin() as db:
@@ -1370,7 +1386,9 @@ class Store:
             item_sequence = await self.next_item_sequence(db, turn.thread_id)
             db.add(ItemRow(id=identifier(), thread_id=turn.thread_id, turn_id=turn_id, sequence=item_sequence,
                 type=ItemType.USER_MESSAGE.value, status="in_progress", summary=value.message,
-                payload_json=json.dumps({"input_id": row.id, "attachments": [item.model_dump(mode="json") for item in value.attachments]}),
+                payload_json=json.dumps({"input_id":row.id, "input_status":"pending",
+                    "delivery_mode":"pending",
+                    "attachments":[item.model_dump(mode="json") for item in value.attachments]}),
                 created_at=timestamp, updated_at=timestamp))
         return self.input_view(row), True
 
@@ -1403,16 +1421,16 @@ class Store:
                 item = next((candidate for candidate in items
                     if json.loads(candidate.payload_json).get("input_id") == input_id), None)
                 if item:
+                    payload = json.loads(item.payload_json or "{}")
+                    payload.update({"input_status":status, "delivery_mode":row.delivery_mode})
                     next_status = {"applied":"completed", "failed":"failed"}.get(status, "in_progress")
-                    if item.status != next_status:
-                        item.status = next_status
-                        item.updated_at = now()
-                        updated_item_id = item.id
-                        turn_id = row.turn_id
-                        item_status = next_status
+                    item.status = next_status; item.payload_json = json.dumps(payload)
+                    item.updated_at = now(); updated_item_id = item.id
+                    turn_id = row.turn_id; item_status = next_status
         if updated_item_id:
             await self.append_event(turn_id, EventKind.ITEM_UPDATED,
-                {"item_id": updated_item_id, "status": item_status, "input_id": input_id},
+                {"item_id":updated_item_id, "status":item_status, "input_id":input_id,
+                    "input_status":status, "delivery_mode":delivery_mode or ""},
                 item_id=updated_item_id)
 
     async def get_turn_input(self, input_id: str) -> TurnInputView | None:
