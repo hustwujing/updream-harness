@@ -17,6 +17,7 @@ from .observability import observed
 from .domain import AccountView, RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, TurnProjectFileSnapshot, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, TERMINAL, identifier, now, MediaDraftView, MediaJobView, MediaJobOutputView, MediaReferenceUploadView, SiteDeployJobView, SiteDraftView, SiteProjectView, SiteVersionView
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
+from .media_errors import media_error_guidance
 
 
 class Base(DeclarativeBase):
@@ -2595,6 +2596,7 @@ class Store:
             provider=row.provider, adapter=row.adapter, execution_mode=row.execution_mode,
             cancellation_mode=row.cancellation_mode, status=row.status, phase=row.phase or "",
             progress=row.progress, error_code=row.error_code or "", error_detail=row.error_detail or "",
+            error_guidance=media_error_guidance(row.error_code) if row.error_code else "",
             cancelable=row.execution_mode == "async" and row.cancellation_mode == "supported",
             cancel_reason=reason, artifact_ids=artifact_ids or [], outputs=outputs or [],
             credits_consumed=credits, output_role=row.output_role,
@@ -2902,6 +2904,8 @@ class Store:
                 "output_mime": row.output_mime if row else "",
                 "output_size": row.output_size if row else 0,
                 "error_code": row.error_code if row else "",
+                "error_detail": row.error_detail if row else "",
+                "error_guidance": media_error_guidance(row.error_code) if row and row.error_code else "",
                 "output_role": draft.output_role,
                 "project_path": (primary_paths.get(row.id) or self._media_project_path(row.id, row.output_mime))
                     if row and row.output_object_ref and row.output_role in {"workspace", "delivery"} else "",

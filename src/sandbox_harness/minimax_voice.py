@@ -9,6 +9,7 @@ from urllib.parse import urljoin
 import httpx
 
 from .domain import now
+from .media_errors import classify_provider_error
 from .observability import event
 
 
@@ -23,6 +24,14 @@ class MiniMaxVoiceClonePending(RuntimeError):
 class MiniMaxVoiceClones:
     fresh_for = timedelta(days=6)
     transient_codes = {1000, 1001, 1002, 1013}
+
+    @staticmethod
+    def _failure_code(http_status: int, body: dict) -> str:
+        base = body.get("base_resp", {}) if isinstance(body, dict) else {}
+        message = base.get("status_msg", "")
+        by_message = classify_provider_error(http_status, message)
+        return (by_message if by_message != "provider_processing_failed"
+            else classify_provider_error(http_status, base.get("status_code")))
 
     def __init__(self, settings, store, objects, worker_owner: str):
         self.settings = settings
@@ -71,9 +80,13 @@ class MiniMaxVoiceClones:
         file_id = str(body.get("file", {}).get("file_id") or "")
         if response.is_success and code == 0 and file_id:
             return file_id, 0
-        if response.status_code >= 500 or response.status_code == 429 or code in self.transient_codes:
-            raise MiniMaxVoiceClonePending("voice_clone_upload_transient")
-        raise MiniMaxVoiceCloneError("voice_clone_upload_rejected")
+        failure = self._failure_code(response.status_code, body)
+        if failure in {"provider_rate_limited", "provider_service_unavailable"}:
+            raise MiniMaxVoiceClonePending("voice_clone_rate_limited" if failure == "provider_rate_limited"
+                else "voice_clone_upload_transient")
+        raise MiniMaxVoiceCloneError("voice_clone_permission_denied" if code == 2038
+            else "voice_clone_input_invalid" if failure == "provider_input_invalid"
+            else failure)
 
     async def _clone(self, record: dict, model: str) -> None:
         payload = {"file_id": int(record["provider_file_id"]), "voice_id": record["voice_id"],
@@ -95,15 +108,18 @@ class MiniMaxVoiceClones:
         exists = await self.voice_exists(record["voice_id"])
         if exists:
             return
-        if (exists is None or response.status_code >= 500 or response.status_code == 429
-                or code in self.transient_codes):
-            raise MiniMaxVoiceClonePending("voice_clone_provider_transient")
-        raise MiniMaxVoiceCloneError("voice_clone_provider_rejected")
+        failure = self._failure_code(response.status_code, body)
+        if exists is None or failure in {"provider_rate_limited", "provider_service_unavailable"}:
+            raise MiniMaxVoiceClonePending("voice_clone_rate_limited" if failure == "provider_rate_limited"
+                else "voice_clone_provider_transient")
+        raise MiniMaxVoiceCloneError("voice_clone_permission_denied" if code == 2038
+            else "voice_clone_input_invalid" if failure == "provider_input_invalid"
+            else failure if failure != "provider_processing_failed" else "voice_clone_failed")
 
     async def prepare(self, job: dict) -> str:
         references = job.get("references") or []
         if len(references) != 1:
-            raise MiniMaxVoiceCloneError("voice_clone_reference_invalid")
+            raise MiniMaxVoiceCloneError("voice_clone_input_invalid")
         reference = references[0]
         record = await self.store.ensure_media_voice_clone(job["owner_id"], reference)
         if (record["status"] == "active" and record["last_used_at"]
@@ -146,7 +162,7 @@ class MiniMaxVoiceClones:
                     maximum=20 * 1024 * 1024)
                 if (len(data) != reference["size"]
                         or hashlib.sha256(data).hexdigest() != reference["sha256"]):
-                    raise MiniMaxVoiceCloneError("voice_clone_source_integrity_failed")
+                    raise MiniMaxVoiceCloneError("voice_clone_input_invalid")
                 if not record["provider_file_id"]:
                     await self.store.update_media_job(job["id"], self.worker_owner,
                         status="running", phase="uploading_voice_reference")

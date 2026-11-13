@@ -92,6 +92,29 @@ It is deterministic for the same bytes and must not be retried unchanged;
 browser and continuation surfaces preserve this category so the next Agent can
 choose a different authorized input or a local editing path.
 
+## Stable failure contract
+
+Provider response text is diagnostic data, not orchestration control. Worker
+maps image, video and speech failures to stable categories and persists the
+sanitized detail separately. Job API, browser details and Agent continuation
+all expose the same `error_code` and `error_guidance`:
+
+- platform retry: `provider_rate_limited`, `provider_service_unavailable`,
+  `provider_output_unavailable`;
+- change input or method: `provider_input_invalid`,
+  `provider_content_policy_rejected`, `media_reference_policy_rejected`,
+  `provider_processing_failed`, `voice_clone_input_invalid`;
+- operator action: `provider_authentication_failed`,
+  `provider_permission_denied`, `voice_clone_permission_denied`;
+- reconcile the original request without resubmission:
+  `provider_submission_outcome_unknown`, `provider_result_unresolved`;
+- terminal protocol/result defects: `provider_job_expired`,
+  `provider_result_invalid`, `voice_clone_failed`.
+
+Adapters may retain a sanitized Provider code in `error_detail`, but prompts,
+browser logic and recovery decisions use only the stable category. New Provider
+codes require a classifier regression test before changing retry behavior.
+
 Direct clients may use:
 
 ```text

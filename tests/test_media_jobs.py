@@ -132,9 +132,11 @@ async def test_media_continuation_waits_for_every_image_and_video_job(tmp_path):
         ready, group = await store.media_continuation_group(turn.id)
         assert ready is False and len(group) == 4
         await store.update_media_job(jobs[-1].id, "worker", status="failed", phase="failed",
-            error_code="provider_failed", error_detail="provider failed")
+            error_code="provider_processing_failed", error_detail="provider failed")
         ready, group = await store.media_continuation_group(turn.id)
         assert ready is True
+        failed = next(item for item in group if item["status"] == "failed")
+        assert failed["error_detail"] == "provider failed" and failed["error_guidance"]
         assert [item["status"] for item in group].count("succeeded") == 3
         assert [item["status"] for item in group].count("failed") == 1
         assert await store.current_project_files(thread.id, owner) == []

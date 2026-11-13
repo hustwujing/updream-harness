@@ -17,6 +17,7 @@ import httpx
 import av
 
 from .media_catalog import MediaCatalog
+from .media_errors import classify_provider_error
 from .media_reference_publisher import MediaReferencePreparationError, MediaReferencePublisher
 from .minimax_voice import MiniMaxVoiceCloneError, MiniMaxVoiceClonePending, MiniMaxVoiceClones
 from .observability import event
@@ -31,6 +32,7 @@ class ProviderResult:
     provider_job_id: str = ""
     progress: int | None = None
     error: str = ""
+    error_code: str = ""
     outputs: list[dict[str, str]] | None = None
     credits_consumed: float | None = None
 
@@ -128,7 +130,7 @@ class MediaWorker:
                     else "preparing_references" if job.get("references") else "requesting"))
             result = await self._execute(job)
             if result.status == "unknown":
-                error_code = ("provider_result_unresolved" if result.provider_job_id
+                error_code = result.error_code or ("provider_result_unresolved" if result.provider_job_id
                     else "provider_submission_outcome_unknown")
                 await self.store.update_media_job(job["id"], self.owner, status="unknown",
                     phase="recovery_required", provider_job_id=result.provider_job_id,
@@ -136,12 +138,14 @@ class MediaWorker:
                 return
             if result.status == "pending":
                 await self.store.release_media_job_lease(job["id"], self.owner,
-                    phase="provider_polling", error_code="provider_poll_deferred",
+                    phase="provider_polling", error_code=result.error_code or "provider_poll_deferred",
                     error_detail=result.error[:2000], retry_after_seconds=15)
                 return
             if result.status != "success":
                 await self.store.update_media_job(job["id"], self.owner, status="failed", phase="terminal",
-                    provider_job_id=result.provider_job_id, error_code="provider_failed", error_detail=result.error[:2000])
+                    provider_job_id=result.provider_job_id,
+                    error_code=result.error_code or "provider_processing_failed",
+                    error_detail=result.error[:2000])
                 return
             if result.outputs:
                 completed = []
@@ -302,8 +306,13 @@ class MediaWorker:
             error += ":" + re.sub(r"[^A-Za-z0-9_.-]", "_", str(provider_code))[:100]
         elif response.is_success:
             error = "image_result_missing"
-        return ProviderResult("success" if response.is_success and url else "failed", url=url,
-            error=error)
+        error_code = classify_provider_error(response.status_code, provider_code,
+            "provider_result_invalid" if response.is_success else "provider_processing_failed")
+        status = ("success" if response.is_success and url else "pending"
+            if error_code == "provider_rate_limited" else "unknown"
+            if error_code == "provider_service_unavailable" else "failed")
+        return ProviderResult(status, url=url, error=error,
+            error_code="" if status == "success" else error_code)
 
     async def _ark_video(self, job: dict[str, Any]) -> ProviderResult:
         base = self.settings.upstream_video.rstrip("/")
@@ -337,7 +346,13 @@ class MediaWorker:
                     headers={"Authorization": "Bearer " + key}, json=payload)
             raw = response.json(); task_id = str(raw.get("id") or raw.get("task_id") or "")
             if not response.is_success or not task_id:
-                return ProviderResult("failed", error="video_submit_failed")
+                provider_error = raw.get("error") if isinstance(raw.get("error"), dict) else {}
+                provider_code = provider_error.get("code") or raw.get("code")
+                error_code = classify_provider_error(response.status_code, provider_code)
+                status = ("pending" if error_code == "provider_rate_limited" else "unknown"
+                    if error_code == "provider_service_unavailable" else "failed")
+                return ProviderResult(status, error="video_submit_failed", error_code=(
+                    "provider_submission_outcome_unknown" if status == "unknown" else error_code))
             if not await self.store.update_media_job(job["id"], self.owner, status="running",
                     phase="provider_polling", provider_job_id=task_id):
                 return ProviderResult("failed", provider_job_id=task_id, error="media_job_lease_lost")
@@ -347,16 +362,35 @@ class MediaWorker:
             async with await self._client() as client:
                 poll = await client.get(urljoin(base + "/", f"contents/generations/tasks/{task_id}"),
                     headers={"Authorization": "Bearer " + key})
-            body = poll.json(); status = str(body.get("status", "")).lower()
+            body = poll.json()
+            if not poll.is_success:
+                provider_error = body.get("error") if isinstance(body.get("error"), dict) else {}
+                provider_code = provider_error.get("code") or body.get("code")
+                error_code = classify_provider_error(poll.status_code, provider_code,
+                    "provider_service_unavailable")
+                return ProviderResult("pending" if error_code in {
+                    "provider_rate_limited", "provider_service_unavailable"} else "failed",
+                    provider_job_id=task_id, error=f"video_poll_http_{poll.status_code}",
+                    error_code=error_code)
+            status = str(body.get("status", "")).lower()
             if status in {"succeeded", "success", "completed"}:
                 url = body.get("content", {}).get("video_url", "") or body.get("video_url", "")
-                return ProviderResult("success" if url else "failed", url=url, provider_job_id=task_id)
+                return ProviderResult("success" if url else "failed", url=url, provider_job_id=task_id,
+                    error="video_result_missing" if not url else "",
+                    error_code="provider_result_invalid" if not url else "")
             if status in {"failed", "cancelled", "canceled"}:
-                return ProviderResult("failed", provider_job_id=task_id, error="video_provider_failed")
+                provider_error = body.get("error") if isinstance(body.get("error"), dict) else {}
+                provider_code = provider_error.get("code") or body.get("code")
+                return ProviderResult("failed", provider_job_id=task_id, error="video_provider_failed",
+                    error_code=classify_provider_error(poll.status_code, provider_code))
+            if status == "expired":
+                return ProviderResult("failed", provider_job_id=task_id, error="video_provider_expired",
+                    error_code="provider_job_expired")
             progress = body.get("progress")
             await self.store.update_media_job(job["id"], self.owner, status="running", phase="provider_polling",
                 provider_job_id=task_id, progress=progress if isinstance(progress, int) else None)
-        return ProviderResult("failed", provider_job_id=task_id, error="video_timeout")
+        return ProviderResult("unknown", provider_job_id=task_id, error="video_timeout",
+            error_code="provider_result_unresolved")
 
     async def _minimax_audio(self, job: dict[str, Any]) -> ProviderResult:
         base = self.settings.upstream_audio.rstrip("/")
@@ -367,9 +401,14 @@ class MediaWorker:
             try:
                 voice_id = await self.voice_clones.prepare(job)
             except MiniMaxVoiceClonePending as exc:
-                return ProviderResult("pending", error=str(exc))
+                return ProviderResult("pending", error=str(exc), error_code="provider_rate_limited"
+                    if "rate" in str(exc) else "provider_poll_deferred")
             except MiniMaxVoiceCloneError as exc:
-                return ProviderResult("failed", error=str(exc))
+                code = (str(exc) if str(exc) in {"voice_clone_input_invalid",
+                    "voice_clone_permission_denied", "provider_content_policy_rejected",
+                    "provider_authentication_failed", "provider_permission_denied"}
+                    else "voice_clone_failed")
+                return ProviderResult("failed", error=str(exc), error_code=code)
         payload = {"model": job["model"], "text": p.get("text", ""),
                    "voice_setting": {"voice_id": voice_id, "speed": p.get("speed", 1), "vol": 1, "pitch": 0},
                    "audio_setting": {"format": p.get("audio_format", "mp3"), "audio_sample_rate": 32000, "bitrate": 128000, "channel": 2}}
@@ -389,9 +428,11 @@ class MediaWorker:
             if not response.is_success or not task_id:
                 code = raw.get("base_resp", {}).get("status_code", "unreported")
                 if response.status_code == 429 or code == 1002:
-                    return ProviderResult("pending", error="audio_submit_rate_limited")
+                    return ProviderResult("pending", error="audio_submit_rate_limited",
+                        error_code="provider_rate_limited")
                 if response.status_code >= 500 or code in {1000, 1001, 1013}:
-                    return ProviderResult("unknown", error=f"audio_submission_outcome_unknown:{code}")
+                    return ProviderResult("unknown", error=f"audio_submission_outcome_unknown:{code}",
+                        error_code="provider_submission_outcome_unknown")
                 if job.get("references"):
                     exists = await self.voice_clones.voice_exists(voice_id)
                     if exists is False:
@@ -399,7 +440,8 @@ class MediaWorker:
                         return ProviderResult("pending", error="voice_clone_revalidation_required")
                     if exists is None:
                         return ProviderResult("pending", error="voice_clone_lookup_unavailable")
-                return ProviderResult("failed", error=f"audio_submit_failed:{code}")
+                return ProviderResult("failed", error=f"audio_submit_failed:{code}",
+                    error_code=classify_provider_error(response.status_code, code))
             if not await self.store.update_media_job(job["id"], self.owner, status="running",
                     phase="provider_polling", provider_job_id=task_id):
                 return ProviderResult("failed", provider_job_id=task_id, error="media_job_lease_lost")
@@ -416,9 +458,14 @@ class MediaWorker:
         if not poll.is_success:
             if elapsed >= self.settings.audio_task_timeout_seconds:
                 return ProviderResult("unknown", provider_job_id=task_id,
-                    error=f"audio_poll_http_{poll.status_code}_after_reconciliation_window")
-            return ProviderResult("pending", provider_job_id=task_id,
-                error=f"audio_poll_http_{poll.status_code}")
+                    error=f"audio_poll_http_{poll.status_code}_after_reconciliation_window",
+                    error_code="provider_result_unresolved")
+            error_code = classify_provider_error(poll.status_code, None,
+                "provider_service_unavailable")
+            return ProviderResult("pending" if error_code in {
+                "provider_rate_limited", "provider_service_unavailable"} else "failed",
+                provider_job_id=task_id, error=f"audio_poll_http_{poll.status_code}",
+                error_code=error_code)
         body = poll.json(); status = str(body.get("status", "")).lower()
         if status == "success":
             file_id = body.get("file_id")
@@ -426,20 +473,34 @@ class MediaWorker:
                 file_resp = await client.get(urljoin(base + "/", "files/retrieve"),
                     headers=headers, params={"file_id": file_id})
             if not file_resp.is_success:
-                status = f"file_http_{file_resp.status_code}"
+                output_error = classify_provider_error(file_resp.status_code, None,
+                    "provider_output_unavailable")
+                if output_error in {"provider_authentication_failed", "provider_permission_denied",
+                        "provider_input_invalid", "provider_content_policy_rejected"}:
+                    return ProviderResult("failed", provider_job_id=task_id,
+                        error=f"audio_file_http_{file_resp.status_code}", error_code=output_error)
+                return ProviderResult("pending", provider_job_id=task_id,
+                    error=f"audio_file_http_{file_resp.status_code}",
+                    error_code="provider_output_unavailable")
             else:
                 url = file_resp.json().get("file", {}).get("download_url", "")
                 if url:
                     return ProviderResult("success", url=url, provider_job_id=task_id)
                 status = "file_url_unreported"
         if status in {"failed", "expired"}:
-            return ProviderResult("failed", provider_job_id=task_id, error="audio_provider_failed")
+            code = body.get("base_resp", {}).get("status_code") or body.get("code")
+            return ProviderResult("failed", provider_job_id=task_id,
+                error="audio_provider_" + status,
+                error_code="provider_job_expired" if status == "expired" else classify_provider_error(
+                    poll.status_code, code))
         if elapsed >= self.settings.audio_task_timeout_seconds:
             return ProviderResult("unknown", provider_job_id=task_id,
-                error="audio_processing_outlived_reconciliation_window")
+                error="audio_processing_outlived_reconciliation_window",
+                error_code="provider_result_unresolved")
         event("media.audio.poll_deferred", job_id=job["id"], provider="minimax",
             provider_job_id=task_id, elapsed_seconds=round(elapsed), provider_status=status or "unreported")
-        return ProviderResult("pending", provider_job_id=task_id, error="audio_still_processing")
+        return ProviderResult("pending", provider_job_id=task_id, error="audio_still_processing",
+            error_code="provider_poll_deferred")
 
     @staticmethod
     def _filename_for_mime(filename: str, mime: str) -> str:

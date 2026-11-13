@@ -200,6 +200,19 @@ async def test_audio_poll_http_failure_past_reconciliation_window_returns_unknow
 
 
 @pytest.mark.asyncio
+async def test_audio_poll_authentication_failure_is_terminal(monkeypatch):
+    value=worker();client=Client([Response({},status_code=401)])
+    async def client_factory():return client
+    async def no_sleep(_):return None
+    monkeypatch.setattr(value,"_client",client_factory)
+    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep",no_sleep)
+    result=await value._minimax_audio({"id":"job","model":"speech-2.8-turbo",
+        "provider_job_id":"provider-audio","provider_started_at":datetime.now(timezone.utc),
+        "parameters":{"text":"test"}})
+    assert result.status=="failed" and result.error_code=="provider_authentication_failed"
+
+
+@pytest.mark.asyncio
 async def test_image_provider_failure_preserves_safe_http_and_business_code(monkeypatch):
     value = worker(); client = Client([Response({"error":{"code":"InvalidParameter"}}, 400)])
     async def client_factory(): return client
@@ -207,6 +220,17 @@ async def test_image_provider_failure_preserves_safe_http_and_business_code(monk
     result = await value._ark_image({"id":"job", "model":"seedream-5.0",
         "parameters":{"prompt":"test", "size":"2560x1440"}})
     assert result.status == "failed" and result.error == "image_http_400:InvalidParameter"
+    assert result.error_code == "provider_input_invalid"
+
+
+@pytest.mark.asyncio
+async def test_image_rate_limit_is_deferred_with_stable_error(monkeypatch):
+    value=worker();client=Client([Response({"error":{"code":"RateLimitExceeded"}},429)])
+    async def client_factory():return client
+    monkeypatch.setattr(value,"_client",client_factory)
+    result=await value._ark_image({"id":"job","model":"seedream-5.0",
+        "parameters":{"prompt":"test","size":"2K"}})
+    assert result.status=="pending" and result.error_code=="provider_rate_limited"
 
 
 @pytest.mark.asyncio
@@ -262,6 +286,31 @@ async def test_seedance_first_last_frame_payload_preserves_roles(monkeypatch):
         "parameters":{"prompt":"transition","duration":5,"aspect_ratio":"adaptive"}})
     content=client.posts[0][1]["json"]["content"]
     assert [item.get("role") for item in content[1:]]==["first_frame","last_frame"]
+
+
+@pytest.mark.asyncio
+async def test_video_poll_service_unavailable_releases_existing_provider_job(monkeypatch):
+    value=worker();client=Client([Response({"error":{"code":"ServiceUnavailable"}},503)])
+    async def client_factory():return client
+    async def no_sleep(_):return None
+    monkeypatch.setattr(value,"_client",client_factory)
+    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep",no_sleep)
+    result=await value._ark_video({"id":"job","model":"sed2",
+        "provider_job_id":"provider-video","parameters":{"prompt":"test","duration":5},
+        "references":[]})
+    assert result.status=="pending" and result.provider_job_id=="provider-video"
+    assert result.error_code=="provider_service_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_video_submission_content_policy_is_not_retryable(monkeypatch):
+    value=worker();client=Client([Response({"error":{
+        "code":"OutputVideoSensitiveContentDetected.PolicyViolation"}},400)])
+    async def client_factory():return client
+    monkeypatch.setattr(value,"_client",client_factory)
+    result=await value._ark_video({"id":"job","model":"sed2","provider_job_id":"",
+        "parameters":{"prompt":"test","duration":5},"references":[]})
+    assert result.status=="failed" and result.error_code=="provider_content_policy_rejected"
 
 
 @pytest.mark.asyncio
@@ -352,7 +401,7 @@ async def test_reference_preparation_phase_is_safe_to_resume(monkeypatch):
         "adapter":"ark_video_v2","status":"running","phase":"preparing_references",
         "provider_job_id":"","references":[{"sha256":"1"*64}]})
     assert store.updates[-1][2]["status"]=="failed"
-    assert store.updates[-1][2]["error_code"]=="provider_failed"
+    assert store.updates[-1][2]["error_code"]=="provider_processing_failed"
     assert all(update[2].get("error_code")!="provider_submission_outcome_unknown" for update in store.updates)
 
 
