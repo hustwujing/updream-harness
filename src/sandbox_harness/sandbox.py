@@ -89,7 +89,7 @@ class OpenSandboxBackend:
                     sandbox.runtime_headers = dict(self.client.headers)
                     try:
                         health = await self.client.get(sandbox.runtime_url.rstrip("/") + "/health")
-                        if health.status_code == 200 and health.json().get("status") == "ok":
+                        if health.status_code == 200 and health.json().get("status") in {"ok", "bootstrap"}:
                             return sandbox
                     except (httpx.TimeoutException, httpx.TransportError, ValueError):
                         pass

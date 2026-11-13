@@ -21,8 +21,11 @@ object storage as part of this product's release.
 1. Inspect `git status`; preserve concurrent edits.
 2. Run focused tests, then the release-level suite required by the change.
 3. Build `web/dist` when frontend or API static serving changed.
-4. Build/push Runtime images when Runtime, adapters, tools or image dependencies
-   changed; deploy immutable digests.
+4. `record-release.py` builds deterministic signed Runtime Code and Content
+   Bundles under `.data/runtime-code-bundles` and `.data/runtime-bundles`, then
+   freezes both digests. Runtime Python, CLI, prompt and Skill changes stop
+   here. Build/push images only when Bootstrap, native helpers, Harness clients,
+   verification protocol or image dependencies changed.
 5. Confirm no active Turn would be interrupted.
 6. Run `deploy/check-service-access.sh`.
 7. Use `deploy/record-release.py` to pin Git revision and `PYTHONPATH`.
@@ -63,4 +66,6 @@ correctness.
 
 The deployed health endpoint reports the intended revision, the worker has no
 unexpected active leases, Gateway/API telemetry has no new loss/error counters,
-the public entry works, and a targeted real case proves the changed boundary.
+the warm pool reports the intended image digests, Runtime reports the frozen
+Bundle digest, the public entry works, and a targeted real case proves the
+changed boundary.

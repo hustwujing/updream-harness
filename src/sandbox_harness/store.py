@@ -78,6 +78,9 @@ class TurnRow(Base):
     recovery_generation: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     runtime_sequence: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     runtime_execution_id: Mapped[str] = mapped_column(String(160), default="", server_default="")
+    runtime_image_digest: Mapped[str] = mapped_column(Text, default="", server_default="")
+    runtime_code_bundle_digest: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    runtime_bundle_digest: Mapped[str] = mapped_column(String(64), default="", server_default="")
     capability_nonce: Mapped[str] = mapped_column(String(64), default="", server_default="")
     submit_traceparent: Mapped[str] = mapped_column(String(128), default="", server_default="")
     last_traceparent: Mapped[str] = mapped_column(String(128), default="", server_default="")
@@ -584,6 +587,9 @@ class Store:
                 "recovery_generation": "INTEGER NOT NULL DEFAULT 0",
                 "runtime_sequence": "INTEGER NOT NULL DEFAULT 0",
                 "runtime_execution_id": "VARCHAR(160) NOT NULL DEFAULT ''",
+                "runtime_image_digest": "TEXT NOT NULL DEFAULT ''",
+                "runtime_code_bundle_digest": "VARCHAR(64) NOT NULL DEFAULT ''",
+                "runtime_bundle_digest": "VARCHAR(64) NOT NULL DEFAULT ''",
                 "capability_nonce": "VARCHAR(64) NOT NULL DEFAULT ''",
                 "pending_final_state": "VARCHAR(24) NOT NULL DEFAULT ''",
                 "project_files_frozen": "BOOLEAN NOT NULL DEFAULT FALSE",
@@ -1162,7 +1168,9 @@ class Store:
     @observed("db.turn.create")
     async def create_turn(self, thread_id: str, value: TurnCreate, resolved: ResolvedProfile, owner_id: str, *,
                           traceparent: str = "", network_access: str = "restricted",
-                          internal: bool = False) -> tuple[TurnView, bool, bool]:
+                          internal: bool = False, runtime_image_digest: str = "",
+                          runtime_bundle_digest: str = "",
+                          runtime_code_bundle_digest: str = "") -> tuple[TurnView, bool, bool]:
         if network_access not in {"restricted", "public"}:
             raise ValueError("Invalid Turn network access")
         async with self.connections.begin() as db:
@@ -1206,6 +1214,9 @@ class Store:
                 harness=resolved.harness.value, model=resolved.model, reasoning_level=resolved.reasoning_level,
                 reasoning_effort=resolved.reasoning_effort, delivery_mode=value.delivery_mode,
                 network_access=network_access, internal=internal,
+                runtime_image_digest=runtime_image_digest,
+                runtime_code_bundle_digest=runtime_code_bundle_digest,
+                runtime_bundle_digest=runtime_bundle_digest,
                 state=TurnState.QUEUED.value, submit_traceparent=traceparent, created_at=timestamp, updated_at=timestamp,
             )
             db.add(row)

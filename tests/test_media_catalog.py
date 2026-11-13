@@ -10,19 +10,24 @@ def test_default_catalog_contains_only_real_probe_models():
     assert {(item["kind"], item["model"]) for item in catalog.public()} == {
         ("image", "seedream-5.0"),
         ("video", "sed2"),
+        ("video", "happyhorse-video-edit"),
+        ("video", "wan-2.7-video-edit"),
         ("audio", "speech-2.8-turbo"),
         ("model3d", "v3.1-20260211"),
     }
-    schemas = {item["kind"]: item["parameter_schema"] for item in catalog.public()}
-    assert "aspect_ratio" in schemas["video"]["optional"] and "ratio" not in schemas["video"]["optional"]
-    assert schemas["video"]["optional"]["duration"] == "integer 4..15 or -1"
-    assert set(schemas["video"]["generation_modes"]) == {"text_to_video", "first_frame",
+    by_identity = {(item["kind"], item["model"]): item for item in catalog.public()}
+    schemas = {kind: next(item["parameter_schema"] for item in catalog.public() if item["kind"] == kind)
+        for kind in {item["kind"] for item in catalog.public()}}
+    video_schema = by_identity[("video", "sed2")]["parameter_schema"]
+    assert "aspect_ratio" in video_schema["optional"] and "ratio" not in video_schema["optional"]
+    assert video_schema["optional"]["duration"] == "integer 4..15 or -1"
+    assert set(video_schema["generation_modes"]) == {"text_to_video", "first_frame",
         "first_last_frame", "multimodal_reference", "edit_video", "extend_video"}
-    assert schemas["video"]["generation_modes"]["edit_video"]["fixed_parameters"] == {
+    assert video_schema["generation_modes"]["edit_video"]["fixed_parameters"] == {
         "aspect_ratio": "adaptive", "duration": -1}
-    assert schemas["video"]["generation_modes"]["extend_video"]["fixed_parameters"] == {
+    assert video_schema["generation_modes"]["extend_video"]["fixed_parameters"] == {
         "aspect_ratio": "adaptive"}
-    assert schemas["video"]["generation_modes"]["extend_video"]["required_parameters"] == ["extend_direction"]
+    assert video_schema["generation_modes"]["extend_video"]["required_parameters"] == ["extend_direction"]
     assert schemas["image"]["generation_modes"]["reference_image"]["max_references"] == 14
     video=next(item for item in catalog.public("video") if item["model"]=="sed2")
     assert video["reference_schema"]["recommended_usage"]["first_frame"]=="composition"
@@ -41,6 +46,83 @@ def test_default_catalog_contains_only_real_probe_models():
     assert "target_format" not in text_mode["allowed_parameters"]
     assert text_mode["effects"]["quad=true"] == "output is FBX"
     assert schemas["model3d"]["limits"]["face_limit"]["smart_low_poly_triangle"] == 20_000
+
+
+def test_video_catalog_exposes_model_selection_guidance_and_real_mode_boundaries():
+    catalog = MediaCatalog(ark_assets_configured=False)
+    videos = {item["model"]: item for item in catalog.public("video")}
+    assert set(videos) == {"sed2", "happyhorse-video-edit", "wan-2.7-video-edit"}
+    assert videos["sed2"]["reference_inputs_available"] is False
+    assert videos["happyhorse-video-edit"]["reference_inputs_available"] is True
+    assert set(videos["happyhorse-video-edit"]["parameter_schema"]["generation_modes"]) == {"edit_video"}
+    assert set(videos["wan-2.7-video-edit"]["parameter_schema"]["generation_modes"]) == {"edit_video"}
+    happy = videos["happyhorse-video-edit"]["parameter_schema"]
+    wan = videos["wan-2.7-video-edit"]["parameter_schema"]
+    assert happy["optional"]["resolution"] == ["720p", "1080p"]
+    assert happy["defaults"]["resolution"] == "1080p"
+    assert happy["generation_modes"]["edit_video"]["max_images"] == 5
+    assert happy["limits"]["input_video_duration_seconds"] == "3..60"
+    assert wan["generation_modes"]["edit_video"]["max_images"] == 4
+    assert wan["limits"]["input_video_duration_seconds"] == "2..10"
+    assert videos["happyhorse-video-edit"]["reference_schema"]["roles"] == [
+        "reference_image", "reference_video"]
+    assert all(item["guidance"]["strengths"] and item["guidance"]["limitations"]
+        and item["guidance"]["selection_rules"] for item in videos.values())
+
+
+@pytest.mark.parametrize(("model", "duration"), [
+    ("happyhorse-video-edit", 60), ("wan-2.7-video-edit", 10)])
+def test_dashscope_video_edit_does_not_require_ark_assets(model, duration):
+    catalog = MediaCatalog(ark_assets_configured=False)
+    source = {"role": "reference_video", "usage": "edit_source", "size": 2_000_000,
+        "mime": "video/mp4", "duration_seconds": duration, "width": 1280, "height": 720,
+        "fps": 29, "codec": "h264", "audio_codec": "aac"}
+    catalog.validate_parameters("video", model,
+        {"prompt": "sync lips", "duration": -1, "resolution": "720p", "aspect_ratio": "adaptive"},
+        generation_mode="edit_video", references=[source])
+    with pytest.raises(ValueError, match="does not support generation mode"):
+        catalog.validate_parameters("video", model, {"prompt": "new scene", "duration": 5},
+            generation_mode="text_to_video")
+
+
+def test_dashscope_video_edit_enforces_each_provider_boundary():
+    catalog = MediaCatalog(ark_assets_configured=False)
+    source = {"role": "reference_video", "usage": "edit_source", "size": 2_000_000,
+        "mime": "video/mp4", "duration_seconds": 12, "width": 1280, "height": 720,
+        "fps": 29, "codec": "h264", "audio_codec": "aac"}
+    parameters = {"prompt": "edit", "duration": -1, "resolution": "1080p",
+        "aspect_ratio": "adaptive"}
+    catalog.validate_parameters("video", "happyhorse-video-edit", parameters,
+        generation_mode="edit_video", references=[source])
+    with pytest.raises(ValueError, match="2..10"):
+        catalog.validate_parameters("video", "wan-2.7-video-edit", parameters,
+            generation_mode="edit_video", references=[source])
+    with pytest.raises(ValueError, match="720p or 1080p"):
+        catalog.validate_parameters("video", "happyhorse-video-edit",
+            {**parameters, "resolution": "480p"}, generation_mode="edit_video",
+            references=[{**source, "duration_seconds": 10}])
+    with pytest.raises(ValueError, match="does not accept: generate_audio"):
+        catalog.validate_parameters("video", "wan-2.7-video-edit",
+            {**parameters, "generate_audio": True}, generation_mode="edit_video",
+            references=[{**source, "duration_seconds": 10}])
+
+
+def test_dashscope_video_edit_enforces_reference_image_limits():
+    catalog = MediaCatalog()
+    source = {"role": "reference_video", "usage": "edit_source", "size": 2_000_000,
+        "mime": "video/quicktime", "duration_seconds": 10, "width": 720, "height": 1280,
+        "fps": 30, "codec": "h264", "audio_codec": "aac"}
+    image = {"role": "reference_image", "usage": "style", "size": 1_000_000,
+        "mime": "image/png", "width": 512, "height": 512}
+    parameters = {"prompt": "edit", "duration": -1, "aspect_ratio": "adaptive"}
+    catalog.validate_parameters("video", "happyhorse-video-edit", parameters,
+        generation_mode="edit_video", references=[source, *[dict(image) for _ in range(5)]])
+    with pytest.raises(ValueError, match="up to 4"):
+        catalog.validate_parameters("video", "wan-2.7-video-edit", parameters,
+            generation_mode="edit_video", references=[source, *[dict(image) for _ in range(5)]])
+    with pytest.raises(ValueError, match="format, size, dimension"):
+        catalog.validate_parameters("video", "happyhorse-video-edit", parameters,
+            generation_mode="edit_video", references=[source, {**image, "mime": "image/bmp"}])
 
 
 def test_tripo_contract_rejects_invalid_reference_and_topology_combinations():
@@ -121,6 +203,18 @@ def test_catalog_rejects_sync_cancellation():
 def test_public_catalog_does_not_expose_credential_environment():
     value = MediaCatalog().public()
     assert all("credential_env" not in item for item in value)
+
+
+def test_explicit_catalog_inherits_builtin_model_guidance_and_modes():
+    catalog = MediaCatalog(json.dumps([{
+        "kind": "video", "model": "happyhorse-video-edit", "provider": "alibaba",
+        "adapter": "happyhorse_video_edit", "route": "/v1/providers/video",
+        "execution": "async", "cancellation": "unsupported", "progress": "provider",
+        "credential_env": "SANDBOX_HARNESS_UPSTREAM_VIDEO_KEY",
+    }]))
+    item = catalog.public("video")[0]
+    assert set(item["parameter_schema"]["generation_modes"]) == {"edit_video"}
+    assert item["guidance"]["selection_rules"]
 
 
 @pytest.mark.parametrize(("kind", "model", "parameters"), [

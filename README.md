@@ -172,6 +172,12 @@ The final 21-case capability, interaction, Workspace, background execution, reco
 
 Every Harness image inherits the same immutable foundation with Python, Node.js, ffmpeg/ffprobe, Chromium, Playwright with its pinned Chromium browser, ImageMagick, Three.js, Git, curl, jq, ripgrep, file inspection, GCC/G++, Make, CMake, pkg-config, archive tools and CJK fonts. The common Runtime layer additionally carries NumPy, Pillow, OpenCV, Beautiful Soup, psutil, SciPy, scikit-image, librosa, SoundFile, Matplotlib, MoviePy, PyAV, ImageIO, CairoSVG, PSD Tools, rembg/ONNX Runtime, Trimesh and related media libraries, plus the workspace-scoped `apply_patch` helper. `runtime/media_probe.py` imports the declared modules during every image build. [toolchain.lock.json](runtime/toolchain.lock.json) records the observed foundation command and package versions; image builds fail when the foundation no longer matches it. The deployed Harness images are referenced by registry digest rather than mutable tag.
 
+Runtime Python and CLI ship as a signed Code Bundle; instructions and Skills
+ship as a signed Content Bundle. A minimal image-resident Bootstrap verifies,
+activates and supervises the Runtime child. A Turn freezes image and both
+Bundle digests, while dependency, Bootstrap and native Harness changes still
+use immutable image releases.
+
 ## Public Network Policy
 
 Sandboxes have no direct public route. The Runtime injects a short-lived Turn capability into standard `HTTP_PROXY` and `HTTPS_PROXY` variables, so libraries such as Requests use the authenticated Gateway automatically. `sandbox-browser-screenshot URL OUTPUT` uses the same Gateway for the page, redirects and subresources; raw Chromium cannot bypass it.

@@ -34,6 +34,25 @@ async def test_runtime_configuration_retries_transient_proxy_startup_errors():
     assert json.loads(requests[-1].content)["model"] == "claude-opus-5-5"
 
 
+async def test_runtime_configuration_installs_code_before_content_bundle(tmp_path):
+    requests=[];code=b"code-bundle";content=b"content-bundle"
+    code_digest=__import__('hashlib').sha256(code).hexdigest();content_digest=__import__('hashlib').sha256(content).hexdigest()
+    code_dir=tmp_path/'code';content_dir=tmp_path/'content';code_dir.mkdir();content_dir.mkdir()
+    (code_dir/(code_digest+'.tar')).write_bytes(code);(code_dir/(code_digest+'.sig')).write_bytes(b'code-signature')
+    (content_dir/(content_digest+'.tar')).write_bytes(content);(content_dir/(content_digest+'.sig')).write_bytes(b'content-signature')
+    def respond(request):
+        requests.append((request.method,request.url.path))
+        if request.method=='GET':return httpx.Response(200,json={'sha256':''})
+        return httpx.Response(200,json={'sha256':code_digest if 'bootstrap' in request.url.path else content_digest})
+    runtime=RuntimeClient(code_bundle_dir=code_dir,default_code_bundle_digest=code_digest,
+        bundle_dir=content_dir,default_bundle_digest=content_digest,transport=httpx.MockTransport(respond))
+    sandbox=Sandbox(id='s',harness=Harness.CODEX,image='i',runtime_url='http://runtime',metadata={})
+    await runtime.inject(sandbox,capability_token='x'*32,gateway_url='http://gateway:28600',
+        proxy_url='http://proxy:28601',harness='codex',model='gpt')
+    assert requests == [('GET','/bootstrap/code-bundle'),('PUT','/bootstrap/code-bundle'),
+        ('GET','/v1/runtime-bundle'),('PUT','/v1/runtime-bundle'),('POST','/v1/configure')]
+
+
 async def test_runtime_client_ignores_transport_heartbeats():
     def respond(request: httpx.Request):
         return httpx.Response(200, text='{"type":"heartbeat"}\n{"type":"result","runtime_sequence":2,"result":{"status":"completed","native_thread_id":"native","input_ids":["initial"]}}\n')

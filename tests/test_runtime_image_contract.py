@@ -22,6 +22,20 @@ def test_runtime_user_is_named_and_keeps_stable_uid_contract():
     assert 'SANDBOX_HARNESS_SANDBOX_USERNAME:-updream' in build
 
 
+def test_runtime_python_dependencies_are_a_stable_layer_before_application_source():
+    source = (ROOT / "runtime/base.Dockerfile").read_text()
+    requirements = ROOT / "runtime/requirements-runtime.txt"
+    assert requirements.is_file() and "opencv-python-headless==" in requirements.read_text()
+    assert source.index("COPY runtime/requirements-runtime.txt") < source.index("COPY src")
+    assert source.index("-r /tmp/requirements-runtime.txt") < source.index("COPY src")
+    assert "COPY . /opt/platform" not in source
+    assert "COPY src /opt/platform/src" not in source
+    assert "ENTRYPOINT [\"python\", \"-m\", \"sandbox_bootstrap.main\"]" in source
+    assert "bootstrap_entrypoint.sh /usr/local/bin/sandbox-harness-runtime" in source
+    assert 'runtime_cli_dispatch.sh "/usr/local/bin/$command"' in source
+    assert source.index("COPY src/sandbox_bootstrap") < source.index("ARG RELEASE=unknown")
+
+
 def test_runtime_installs_supported_public_browser_helper():
     source = (ROOT / "runtime/base.Dockerfile").read_text()
     helper = ROOT / "runtime/browser_screenshot.mjs"

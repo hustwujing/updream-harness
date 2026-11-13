@@ -29,6 +29,9 @@ Project dependencies, caches, database files, logs, temporary files and build ou
 
 - Every OpenSandbox create request includes the product namespace. Reconciliation and cleanup query both namespace and Turn identity.
 - Runtime images use immutable digests under `127.0.0.1:25001/sandbox-harness/*`.
+- Every Turn freezes its Runtime image, Runtime Code Bundle and Content Bundle digests.
+  Queued Turns keep those versions across later releases; recovery reinjects
+  the recorded Bundle and never silently upgrades an active execution.
 - The read-only Runtime Skill bundle is digest-verified at build time and materialized into native Harness roots after fresh configuration or checkpoint restore.
 - PostgreSQL connects only to the dedicated cluster as the `sandbox_harness` role and database.
 - Every Redis key starts with the configured prefix. Lua scripts and scans must include that prefix.
@@ -86,6 +89,14 @@ WebSocket support. Nginx must preserve WebSocket upgrade headers for `/api/`;
 the application remains the owner/authentication boundary.
 
 The foundation image tag includes the SHA-256 prefix of `runtime/foundation.Dockerfile`. `runtime/toolchain.lock.json` is verified while building the common runtime base, and the three final Harness images must expose the same locked toolchain before their immutable registry digests are deployed.
+
+`deploy/record-release.py` publishes both signed Bundles and sets their directory
+and digest variables. Retain old files while a queued or running Turn references
+them. Code activation accepts only declared Runtime/shared Python modules and
+CLI packages compatible with the frozen dependency lock. Content activation
+accepts ordinary files under `skills/` plus the two instruction files. Both
+reject links, devices, path traversal, unknown files, oversize and hash or
+signature mismatches.
 
 Before restarting API/Gateway after adding source files or building the frontend,
 run `bash deploy/check-service-access.sh`. It grants the service user read/traverse

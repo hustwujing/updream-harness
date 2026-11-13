@@ -31,7 +31,7 @@ def test_media_worker_is_a_separate_service():
     assert "sandbox-harness-media-worker.service" in install
     for command in ("sandbox-harness-api", "sandbox-harness-gateway", "sandbox-harness-media-worker",
                     "sandbox-harness-site-worker"):
-        assert f"/usr/local/bin/{command}" in base
+        assert command not in base
     instructions = (ROOT / "src/sandbox_runtime/instructions.py").read_text()
     adapters = (ROOT / "src/sandbox_runtime/adapters.py").read_text()
     codex = (ROOT / "src/sandbox_runtime/codex_runner.py").read_text()
@@ -50,8 +50,8 @@ def test_media_worker_is_a_separate_service():
     assert "then copy the finished regular files into `/workspace/outputs`" in instructions
     assert "setsar=1" in instructions
     assert "--append-system-prompt" in adapters
-    assert '"developerInstructions": RUNTIME_INSTRUCTIONS' in codex
-    assert 'RUNTIME_INSTRUCTIONS + "\\nUser request:' in deepseek
+    assert '"developerInstructions": runtime_instructions()' in codex
+    assert 'runtime_instructions() + "\\nUser request:' in deepseek
 
 
 def test_media_cli_prepare_creates_confirmation_draft_only(tmp_path, monkeypatch, capsys):
@@ -178,7 +178,7 @@ def test_media_reference_api_freezes_owned_project_file_snapshot(tmp_path):
             "references":[{"project_file_id":project["id"],"role":"first_frame","usage":"composition"}],
             "idempotency_key":"reference-api-draft","output_role":"workspace"}
         forbidden=client.post(f"/api/threads/{second['id']}/media/drafts",json=payload)
-        assert forbidden.status_code==422 and "missing, stale" in forbidden.json()["detail"]
+        assert forbidden.status_code==422 and "registered ProjectFile" in forbidden.json()["detail"]
         draft=client.post(f"/api/threads/{first['id']}/media/drafts",json=payload)
         assert draft.status_code==200
         value=draft.json();assert value["generation_mode"]=="first_frame"

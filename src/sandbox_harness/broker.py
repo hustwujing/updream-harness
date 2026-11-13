@@ -135,7 +135,8 @@ class Broker:
             "X-Updream-Turn-ID":turn.id,"X-Updream-Thread-ID":turn.thread_id,
             "X-Updream-Sandbox-ID":sandbox_id or turn.sandbox_id}
 
-    async def close(self) -> None:
+    async def close(self) -> set[str]:
+        preserve_sandbox_ids = {sandbox.id for sandbox in self.active_sandboxes.values()}
         self.closing = True
         if self.recovery_task:
             self.recovery_task.cancel()
@@ -152,6 +153,7 @@ class Broker:
         self.heartbeats.clear()
         for turn_id, generation in list(self.leases.items()):
             await self.store.release_turn_lease(turn_id, self.instance_id, generation)
+        return preserve_sandbox_ids
 
     async def _recovery_loop(self) -> None:
         while True:
@@ -344,7 +346,10 @@ class Broker:
         resolved = self.catalog.resolve(thread.harness, value.model or thread.model,
             value.reasoning_level or thread.reasoning_level)
         turn, created, start_now = await self.store.create_turn(thread_id, value, resolved, thread.owner_id,
-            traceparent=carrier().get("traceparent", ""), network_access=network_access, internal=internal)
+            traceparent=carrier().get("traceparent", ""), network_access=network_access, internal=internal,
+            runtime_image_digest=self.settings.image_for(resolved.harness.value),
+            runtime_code_bundle_digest=self.settings.runtime_code_bundle_digest,
+            runtime_bundle_digest=self.settings.runtime_bundle_digest)
         event("turn.accepted",thread_id=thread_id,turn_id=turn.id,harness=turn.harness,model=turn.model,reasoning_effort=turn.reasoning_effort,reused=not created,state=turn.state)
         if created and start_now:
             self._schedule(turn.id)
@@ -645,6 +650,7 @@ class Broker:
                         turn_id=turn.id,
                         harness=turn.harness,
                         environment={},
+                        image=turn.runtime_image_digest or self.settings.image_for(turn.harness.value),
                     )
                     token, claims = self.codec.issue(
                         thread_id=thread.id,
@@ -673,6 +679,9 @@ class Broker:
                         model_start_timeout_seconds=self.settings.runtime_model_start_timeout_seconds,
                         event_idle_timeout_seconds=self.settings.runtime_event_idle_timeout_seconds,
                         defer_skill_install=bool(thread.checkpoint_ref and not sandbox.reused),
+                        runtime_bundle_digest=turn.runtime_bundle_digest or self.settings.runtime_bundle_digest,
+                        runtime_code_bundle_digest=(turn.runtime_code_bundle_digest
+                            or self.settings.runtime_code_bundle_digest),
                     )
                     if thread.checkpoint_ref and not sandbox.reused:
                         archive = await asyncio.to_thread(self.objects.get, thread.checkpoint_ref, maximum=self.settings.max_checkpoint_bytes)

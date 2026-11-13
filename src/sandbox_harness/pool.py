@@ -128,8 +128,11 @@ class SandboxPool:
             if not value.cancelled() and value.exception() else None)
 
     @observed("sandbox.acquire")
-    async def acquire(self, *, thread_id: str, turn_id: str, harness: Harness, environment: dict[str, str]) -> Sandbox:
+    async def acquire(self, *, thread_id: str, turn_id: str, harness: Harness,
+                      environment: dict[str, str], image: str | None = None) -> Sandbox:
         async with self._thread_lock(thread_id):
+            desired_image = image or self.images[harness]
+            image_frozen = image is not None
             slot_reserved = False
             async with self._lock:
                 if self._closed:
@@ -141,7 +144,7 @@ class SandboxPool:
                     self._attached.pop(thread_id, None)
             if expiry:
                 expiry.cancel()
-            if attached and attached.harness == harness:
+            if attached and attached.harness == harness and (not image_frozen or attached.image == desired_image):
                 try:
                     await self.backend.bind(attached, thread_id, turn_id)
                     attached.turn_id = turn_id
@@ -182,7 +185,9 @@ class SandboxPool:
                 async with self._lock:
                     if self._closed:
                         raise RuntimeError("sandbox_pool_closed")
-                    sandbox = self._warm[harness].pop() if self._warm[harness] else None
+                    matching = next((index for index in range(len(self._warm[harness]) - 1, -1, -1)
+                        if not image_frozen or self._warm[harness][index].image == desired_image), None)
+                    sandbox = self._warm[harness].pop(matching) if matching is not None else None
                 if sandbox:
                     # Pristine warm instances do not contain a user token. Runtime injection
                     # happens through its control endpoint after ownership is frozen.
@@ -192,7 +197,7 @@ class SandboxPool:
                     except SandboxNotFound:
                         sandbox = await self.backend.create(
                             harness,
-                            self.images[harness],
+                            desired_image,
                             {"sandbox-harness.io/thread": thread_id, "sandbox-harness.io/turn": turn_id,
                              "sandbox-harness.io/harness": harness.value},
                             environment,
@@ -200,7 +205,7 @@ class SandboxPool:
                 else:
                     sandbox = await self.backend.create(
                         harness,
-                        self.images[harness],
+                        desired_image,
                         {"sandbox-harness.io/thread": thread_id, "sandbox-harness.io/turn": turn_id, "sandbox-harness.io/harness": harness.value},
                         environment,
                     )

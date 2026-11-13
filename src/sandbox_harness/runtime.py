@@ -3,9 +3,11 @@ from __future__ import annotations
 from .observability import observed, event, enrich, carrier, add_link, telemetry
 
 import asyncio
+import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import httpx
 
@@ -23,25 +25,67 @@ class RuntimeStreamInterrupted(RuntimeError):
 class RuntimeClient:
     def __init__(self, *, timeout_seconds: int = 3600, reattach_attempts: int = 8,
                  reattach_max_delay_seconds: float = 4,
+                 bundle_dir: Path | None = None, default_bundle_digest: str = "",
+                 code_bundle_dir: Path | None = None, default_code_bundle_digest: str = "",
                  transport: httpx.AsyncBaseTransport | None = None):
         self.timeout = httpx.Timeout(timeout_seconds, connect=20)
         self.reattach_attempts = reattach_attempts
         self.reattach_max_delay_seconds = reattach_max_delay_seconds
+        self.bundle_dir = bundle_dir
+        self.default_bundle_digest = default_bundle_digest
+        self.code_bundle_dir = code_bundle_dir
+        self.default_code_bundle_digest = default_code_bundle_digest
         self.transport = transport
 
     @observed("runtime.configure")
     async def inject(self, sandbox: Sandbox, *, capability_token: str, gateway_url: str, proxy_url: str, harness: str, model: str,
                      model_start_timeout_seconds: float = 150, event_idle_timeout_seconds: float = 900,
-                     defer_skill_install: bool = False) -> None:
+                     defer_skill_install: bool = False, runtime_bundle_digest: str = "",
+                     runtime_code_bundle_digest: str = "") -> None:
+        bundle_digest = runtime_bundle_digest or self.default_bundle_digest
+        code_digest = runtime_code_bundle_digest or self.default_code_bundle_digest
         payload = {"capability_token": capability_token, "gateway_url": gateway_url,
             "harness": harness, "model": model, "proxy_url": proxy_url,
             "model_start_timeout_seconds": model_start_timeout_seconds,
             "event_idle_timeout_seconds": event_idle_timeout_seconds,
             "defer_skill_install": defer_skill_install,
+            "runtime_bundle_digest": bundle_digest,
             "thread_id":sandbox.thread_id or sandbox.metadata.get("sandbox-harness.io/thread", ""),
             "turn_id":sandbox.turn_id or sandbox.metadata.get("sandbox-harness.io/turn", ""),"sandbox_id":sandbox.id}
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()}, timeout=20,
             trust_env=False, transport=self.transport) as client:
+            if code_digest:
+                if not self.code_bundle_dir:
+                    raise RuntimeError("runtime_code_bundle_directory_missing")
+                code_path = self.code_bundle_dir / (code_digest + ".tar")
+                code = await asyncio.to_thread(code_path.read_bytes)
+                signature = await asyncio.to_thread(
+                    (self.code_bundle_dir / (code_digest + ".sig")).read_bytes)
+                if hashlib.sha256(code).hexdigest() != code_digest:
+                    raise RuntimeError("runtime_code_bundle_digest_mismatch")
+                status = await client.get("/bootstrap/code-bundle")
+                status.raise_for_status()
+                if status.json().get("sha256") != code_digest:
+                    response = await client.put("/bootstrap/code-bundle", params={"sha256": code_digest},
+                        content=code, headers={"Content-Type": "application/x-tar",
+                            "X-Runtime-Bundle-Signature": signature.hex()})
+                    response.raise_for_status()
+            if bundle_digest:
+                if not self.bundle_dir:
+                    raise RuntimeError("runtime_bundle_directory_missing")
+                bundle_path = self.bundle_dir / (bundle_digest + ".tar")
+                bundle = await asyncio.to_thread(bundle_path.read_bytes)
+                signature = await asyncio.to_thread(
+                    (self.bundle_dir / (bundle_digest + ".sig")).read_bytes)
+                if hashlib.sha256(bundle).hexdigest() != bundle_digest:
+                    raise RuntimeError("runtime_bundle_digest_mismatch")
+                status = await client.get("/v1/runtime-bundle")
+                status.raise_for_status()
+                if status.json().get("sha256") != bundle_digest:
+                    response = await client.put("/v1/runtime-bundle", params={"sha256": bundle_digest},
+                        content=bundle, headers={"Content-Type": "application/x-tar",
+                            "X-Runtime-Bundle-Signature": signature.hex()})
+                    response.raise_for_status()
             for attempt in range(8):
                 try:
                     response = await client.post("/v1/configure", json=payload)

@@ -117,9 +117,11 @@ def test_runtime_image_declares_skill_dependencies_and_domestic_mirrors():
     assert 'chmod -R a+rX /usr/local/lib/node_modules /usr/local/bin' in foundation
     assert 'DRAWIO_SHA256=' in foundation and 'sha256sum -c -' in foundation
     assert 'mirrors.cloud.aliyuncs.com' in base
-    assert 'runtime/skill_bundle.py verify' in base
+    assert 'runtime/skill_bundle.py verify' not in base
+    assert '"runtime" / "skills"' in (ROOT/'runtime/build_runtime_bundle.py').read_text()
     assert 'chmod -R a+rX runtime' in base
-    assert 'USER 10001:10001\nRUN python runtime/skill_probe.py' in base
-    assert 'runtime/skill_probe.py' in base
+    assert 'ENTRYPOINT ["python", "-m", "sandbox_bootstrap.main"]' in base
+    assert 'COPY runtime/skills' not in base
+    assert (ROOT / "runtime/build_runtime_bundle.py").is_file()
     assert 'runtime/skill_smoke.py /usr/local/bin/sandbox-skill-smoke' in base
     assert 'runtime/drawio_wrapper.sh /usr/local/bin/drawio' in base

@@ -36,6 +36,24 @@ class FailingRuntime(Runtime):
         yield RuntimeResult(status="failed", error_code="harness_exit", error_detail="native process exited")
 
 
+async def test_broker_close_preserves_sandbox_that_was_active_before_task_cancellation(tmp_path):
+    settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "close.db"),
+        backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9")
+    store = Store(settings.database_url); await store.initialize(); objects = ObjectStore(tmp_path / "objects")
+    backend = FakeSandboxBackend(); pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
+    broker = Broker(settings, store, objects, pool, Runtime(), HarnessCatalog())
+    sandbox = await pool.acquire(thread_id="thread", turn_id="turn", harness=Harness.CLAUDE, environment={})
+    broker.active_sandboxes["turn"] = sandbox
+    try:
+        preserve = await broker.close()
+        await pool.close(preserve_sandbox_ids=preserve)
+        assert preserve == {sandbox.id}
+        assert sandbox.id in backend.items
+    finally:
+        await backend.delete(sandbox)
+        await store.close()
+
+
 class InterruptedRuntime(Runtime):
     async def run(self, sandbox, **kwargs):
         yield RuntimeEvent(kind=EventKind.TEXT_DELTA, payload={"text": "partial"})

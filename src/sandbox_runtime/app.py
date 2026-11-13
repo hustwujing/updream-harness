@@ -6,6 +6,7 @@ import json
 import mimetypes
 import os
 import pwd
+import re
 from pathlib import Path, PurePosixPath
 import psutil
 import signal
@@ -26,6 +27,8 @@ from pydantic import BaseModel, Field
 from sandbox_harness.observability import RequestLoggingMiddleware, observed, event, enrich, telemetry, ToolObservations
 
 from .adapters import command, control_interaction_response, control_user_message, normalize, streaming_user_message
+from .instructions import RUNTIME_GUIDANCE, runtime_guidance
+from .runtime_bundle import MAX_BUNDLE_BYTES, activate_runtime_bundle, verify_runtime_bundle_signature
 from .skills import materialize_skills
 
 
@@ -42,22 +45,6 @@ INSPECT_INTERNAL_PORTS = {8080, 18080, 28600, 28601, 44772}
 RUN = Path("/run/harness")
 HARNESS_JSONL_LIMIT = 16 * 1024 * 1024
 RUNTIME_EVENT_JOURNAL_LIMIT = 256 * 1024 * 1024
-RUNTIME_GUIDANCE = """Sandbox runtime contract:
-- For casual conversation, reply normally without creating files.
-- Work in /workspace/project. Current-message attachments are in /workspace/inbox; durable project inputs and prior outputs are in /workspace/project/assets and /workspace/project/artifacts.
-- Put files intended for the user in /workspace/outputs and verify them before replying.
-- `apply_patch` can edit only beneath its current working directory. Build and patch files under `/workspace/project/work`, verify them, then copy finished deliverables to `/workspace/outputs`; do not use an absolute `/workspace/outputs` path in a patch run from `/workspace/project`.
-- /workspace/outputs is the current Turn's publication directory and may start empty. On later Turns, locate prior deliverables under /workspace/project/artifacts before constructing media commands.
-- Public HTTP/S uses a capability-checked proxy. A destination may still reject or rate-limit this host; after a timeout, TLS failure or repeated 4xx, do not keep retrying the same site.
-- curl, Python HTTP clients, `chromium`, Playwright scripts and `sandbox-browser-screenshot URL OUTPUT` automatically use the authenticated sandbox proxy. Do not remove their proxy environment or launch options.
-- ImageMagick (`convert` and `identify`), Pillow, FFmpeg and the locked media toolchain are installed. Probe a less common command with `command -v` before building a long pipeline.
-- For a long subprocess that should outlive the immediate tool call, use `sandbox-background start --name NAME -- argv...`; its exit status is part of this Turn. When retrying a failed job, use `sandbox-background start --name NAME --replaces FAILED_JOB_ID -- argv...`; only a successful explicit replacement resolves the old failure.
-- When a material user decision is required, use `sandbox-interact question --prompt TEXT --question id=TEXT` or `sandbox-interact approval --prompt TEXT`; continue only after its JSON response. Do not ask for confirmation when the request already authorizes the action.
-
-User message:
-"""
-
-
 class Configure(BaseModel):
     thread_id: str = Field(default="",max_length=160)
     turn_id: str = Field(default="",max_length=160)
@@ -70,6 +57,7 @@ class Configure(BaseModel):
     defer_skill_install: bool = False
     model_start_timeout_seconds: float = Field(default=150, ge=10, le=900)
     event_idle_timeout_seconds: float = Field(default=900, ge=60, le=3600)
+    runtime_bundle_digest: str = Field(default="", pattern=r"^$|^[0-9a-f]{64}$")
 
 
 class TurnRequest(BaseModel):
@@ -231,6 +219,7 @@ def create_app() -> FastAPI:
     app.state.process_command = None
     app.state.pending_inputs = 0
     app.state.execution = None
+    app.state.runtime_bundle_digest = ""
     app.state.background_jobs = {}
     app.state.interaction_waiters = {}
     app.state.interaction_response_lock = asyncio.Lock()
@@ -718,10 +707,39 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health():
-        return {"status": "ok"}
+        execution = app.state.execution
+        return {"status": "ok", "runtime_bundle_digest": app.state.runtime_bundle_digest,
+            "runtime_code_bundle_digest": os.environ.get("SANDBOX_RUNTIME_CODE_DIGEST", ""),
+            "execution": "running" if execution and execution.result is None else "idle"}
+
+    @app.get("/v1/runtime-bundle")
+    async def runtime_bundle_status():
+        return {"sha256": app.state.runtime_bundle_digest}
+
+    @app.put("/v1/runtime-bundle")
+    async def install_runtime_bundle(request: Request, sha256: str):
+        if not re.fullmatch(r"[0-9a-f]{64}", sha256):
+            raise HTTPException(400, "Invalid Runtime Bundle digest")
+        if app.state.execution is not None and app.state.execution.result is None:
+            raise HTTPException(409, "Cannot replace Runtime Bundle during an active execution")
+        data = await request.body()
+        if len(data) > MAX_BUNDLE_BYTES:
+            raise HTTPException(413, "Runtime Bundle too large")
+        try:
+            signature = bytes.fromhex(request.headers.get("X-Runtime-Bundle-Signature", ""))
+            verify_runtime_bundle_signature(data, signature)
+            value = await asyncio.to_thread(activate_runtime_bundle, data, sha256, RUN)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(400, str(exc))
+        app.state.runtime_bundle_digest = value["sha256"]
+        event("runtime.bundle.activated", runtime_bundle_digest=value["sha256"],
+            bundle_version=value["bundle_version"], file_count=value["files"])
+        return value
 
     @app.post("/v1/configure")
     async def configure(value: Configure, request: Request = None):
+        if value.runtime_bundle_digest and value.runtime_bundle_digest != app.state.runtime_bundle_digest:
+            raise HTTPException(409, "Required Runtime Bundle is not active")
         app.state.log_context={"thread_id":value.thread_id,"turn_id":value.turn_id,"sandbox_id":value.sandbox_id,"harness":value.harness,"model":value.model}
         if request is not None:
             request.state.log_context.clear();request.state.log_context.update(app.state.log_context)
@@ -952,7 +970,7 @@ def create_app() -> FastAPI:
                 raise HTTPException(409, "Execution is no longer accepting input")
             if not initial and not execution.selected.streaming_input:
                 raise HTTPException(409, "Harness does not have a live input stream")
-            prompt = (RUNTIME_GUIDANCE if initial else "") + value.message
+            prompt = (runtime_guidance() if initial else "") + value.message
             if value.attachments:
                 prompt += "\n\nAttached files are available in /workspace/inbox. Their immutable records are listed in attachments.json."
                 (WORKSPACE / "inbox" / "attachments.json").write_text(json.dumps(value.attachments, ensure_ascii=False))

@@ -27,6 +27,13 @@ locally. MiniMax text must be shorter than 10,000 characters; this product also
 caps one audio draft at an estimated 180 seconds and requires longer narration
 to be split at sentence boundaries.
 
+DashScope edit models use a narrower platform contract that is generated and
+validated from the same adapter limits. Happyhorse accepts one 3-60 second
+MP4/MOV source plus up to five reference images and produces at most 15 seconds.
+Wan 2.7 accepts one 2-10 second MP4/MOV source plus up to four reference images.
+Both expose only 720p/1080p, preserve source aspect and request original audio;
+unsupported Provider-native fields are rejected before Draft creation.
+
 MiniMax speech exposes two discriminated modes: `text_to_audio` accepts no
 reference and may use a system `voice_id`; `reference_voice` requires exactly
 one `reference_audio` with `usage=audio` and forbids `voice_id`. Voice cloning
@@ -287,8 +294,18 @@ are eligible for the first remote catalog:
 | --- | --- | --- | --- |
 | image | `seedream-5.0` | Ark image | platform async |
 | video | `sed2` | Ark video v2 | async Provider |
+| video | `happyhorse-video-edit` | DashScope Happyhorse | async Provider; `edit_video` only |
+| video | `wan-2.7-video-edit` | DashScope Wan 2.7 | async Provider; `edit_video` only |
 | audio | `speech-2.8-turbo` | MiniMax T2A | async Provider |
 | 3D | `v3.1-20260211` | Tripo v3 | async Provider |
+
+The two DashScope edit adapters were probed on 2026-11-13 with the same 12.6
+second 720p H.264/AAC source. Happyhorse succeeded in 217.5 seconds and
+preserved the full source duration and audio. Wan 2.7 succeeded in 839.1
+seconds and preserved an AAC track, but its output was limited to 10 seconds.
+These measurements are probe evidence only; public model guidance describes
+capabilities and documented limits rather than routing around another
+Provider's policy decision.
 
 Other local models remain disabled until individually probed. Reports include
 revision, model, route/config mode, elapsed time, result validation and cleanup

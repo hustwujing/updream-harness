@@ -7,6 +7,9 @@ from pathlib import Path
 
 
 def bundle_root() -> Path:
+    runtime_bundle = os.environ.get("SANDBOX_RUNTIME_BUNDLE_ROOT")
+    if runtime_bundle and (Path(runtime_bundle) / "skills").is_dir():
+        return Path(runtime_bundle) / "skills"
     configured = os.environ.get("SANDBOX_RUNTIME_SKILL_ROOT")
     if configured:
         return Path(configured)

@@ -137,7 +137,7 @@ async def test_create_scopes_sandbox_for_the_shared_internal_network():
     def respond(request: httpx.Request):
         requests.append(request)
         if request.url.path.endswith("/health"):
-            return httpx.Response(200, json={"status": "ok"})
+            return httpx.Response(200, json={"status": "bootstrap"})
         if request.url.path.endswith("/endpoints/8080"):
             return httpx.Response(200, json={"endpoint": "127.0.0.1:28090/proxy/8080"})
         if request.method == "GET":
@@ -193,6 +193,20 @@ async def test_reacquiring_attached_sandbox_cancels_expiration():
     await __import__('asyncio').sleep(.02)
     assert sandbox.id in backend.items
     await pool.release(sandbox, keep_attached=False)
+    await pool.close()
+
+
+async def test_frozen_image_does_not_reuse_attached_sandbox_from_another_release():
+    backend = FakeSandboxBackend()
+    pool = SandboxPool(backend, {harness: "image-a@sha256:" + "1" * 64 for harness in Harness},
+        {harness: 0 for harness in Harness})
+    first = await pool.acquire(thread_id="thread", turn_id="one", harness=Harness.CLAUDE,
+        environment={}, image="image-a@sha256:" + "1" * 64)
+    await pool.release(first, keep_attached=True, keepalive_seconds=60)
+    second = await pool.acquire(thread_id="thread", turn_id="two", harness=Harness.CLAUDE,
+        environment={}, image="image-b@sha256:" + "2" * 64)
+    assert second.id != first.id
+    assert second.image.endswith("2" * 64) and first.id not in backend.items
     await pool.close()
 
 

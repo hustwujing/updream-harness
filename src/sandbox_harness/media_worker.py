@@ -235,6 +235,8 @@ class MediaWorker:
             return await self._ark_image(job)
         if job["adapter"] == "ark_video_v2":
             return await self._ark_video(job)
+        if job["adapter"] in {"happyhorse_video_edit", "wan27_video_edit"}:
+            return await self._dashscope_video_edit(job)
         if job["adapter"] == "minimax_t2a":
             return await self._minimax_audio(job)
         if job["adapter"] == "tripo_v3":
@@ -392,6 +394,123 @@ class MediaWorker:
                 provider_job_id=task_id, progress=progress if isinstance(progress, int) else None)
         return ProviderResult("unknown", provider_job_id=task_id, error="video_timeout",
             error_code="provider_result_unresolved")
+
+    async def _dashscope_video_edit(self, job: dict[str, Any]) -> ProviderResult:
+        adapter = job["adapter"]
+        provider, model_id = {
+            "happyhorse_video_edit": ("happyhorse", "happyhorse-1.0-video-edit"),
+            "wan27_video_edit": ("wan", "wan2.7-videoedit"),
+        }[adapter]
+        key = os.environ.get("SANDBOX_HARNESS_UPSTREAM_VIDEO_KEY", "")
+        create_url = self.settings.dashscope_video_create_url
+        task_url = self.settings.dashscope_video_task_url.rstrip("/")
+        references = self._ordered_references(job)
+        source = next((item for item in references if item.get("role") == "reference_video"
+            and item.get("usage") == "edit_source"), None)
+        if not source:
+            return ProviderResult("failed", error="video_edit_source_missing",
+                error_code="provider_input_invalid")
+        media = [{"type": "video", "url": await self._reference_url(source)}]
+        for reference in references:
+            if reference.get("role") == "reference_image":
+                media.append({"type": "reference_image", "url": await self._reference_url(reference)})
+        parameters: dict[str, Any] = {"watermark": False}
+        resolution = job["parameters"].get("resolution")
+        if resolution:
+            parameters["resolution"] = str(resolution).upper()
+        parameters["audio_setting"] = "origin"
+        payload = {"model": model_id,
+            "input": {"media": media, "prompt": self._video_prompt("edit_video", job["parameters"])},
+            "parameters": parameters}
+        headers = {"Authorization": "Bearer " + key, "Content-Type": "application/json",
+            "X-DashScope-Async": "enable"}
+        task_id = str(job.get("provider_job_id") or "")
+        if task_id:
+            event("media.provider.resumed", job_id=job["id"], provider=provider,
+                provider_job_id=task_id)
+        if not task_id:
+            if not await self.store.update_media_job(job["id"], self.owner,
+                    status="running", phase="requesting"):
+                return ProviderResult("failed", error="media_job_lease_lost")
+            try:
+                async with await self._client() as client:
+                    response = await client.post(create_url, headers=headers, json=payload)
+            except httpx.HTTPError:
+                return ProviderResult("unknown", error="dashscope_video_submit_transport_unknown",
+                    error_code="provider_submission_outcome_unknown")
+            try:
+                body = response.json()
+            except (ValueError, TypeError):
+                body = None
+            output = body.get("output", {}) if isinstance(body, dict) else {}
+            task_id = str(output.get("task_id") or "")
+            provider_code = output.get("code") or (body.get("code") if isinstance(body, dict) else None)
+            if not task_id:
+                error_code = classify_provider_error(response.status_code, provider_code,
+                    "provider_result_invalid" if response.is_success else "provider_processing_failed")
+                status = ("pending" if error_code == "provider_rate_limited" else "unknown"
+                    if response.status_code >= 500 or response.is_success else "failed")
+                return ProviderResult(status, error="dashscope_video_submit_failed",
+                    error_code="provider_submission_outcome_unknown" if status == "unknown" else error_code)
+            if not await self.store.update_media_job(job["id"], self.owner, status="running",
+                    phase="provider_polling", provider_job_id=task_id):
+                return ProviderResult("failed", provider_job_id=task_id, error="media_job_lease_lost")
+            event("media.provider.submitted", job_id=job["id"], provider=provider,
+                provider_job_id=task_id)
+        started = job.get("provider_started_at")
+        if isinstance(started, str):
+            started = datetime.fromisoformat(started)
+        if isinstance(started, datetime) and started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        elapsed = ((datetime.now(timezone.utc) - started).total_seconds()
+            if isinstance(started, datetime) else 0)
+
+        def deferred(error: str, error_code: str) -> ProviderResult:
+            if elapsed >= self.settings.video_task_timeout_seconds:
+                return ProviderResult("unknown", provider_job_id=task_id,
+                    error=error + "_after_reconciliation_window",
+                    error_code="provider_result_unresolved")
+            return ProviderResult("pending", provider_job_id=task_id,
+                error=error, error_code=error_code)
+
+        await asyncio.sleep(5)
+        try:
+            async with await self._client() as client:
+                response = await client.get(f"{task_url}/{task_id}",
+                    headers={"Authorization": "Bearer " + key})
+        except httpx.HTTPError:
+            return deferred("dashscope_video_poll_unavailable", "provider_poll_unavailable")
+        try:
+            body = response.json()
+        except (ValueError, TypeError):
+            return deferred("dashscope_video_poll_invalid_response", "provider_poll_unavailable")
+        output = body.get("output", {}) if isinstance(body, dict) else {}
+        provider_code = output.get("code") or (body.get("code") if isinstance(body, dict) else None)
+        if not response.is_success:
+            error_code = classify_provider_error(response.status_code, provider_code,
+                "provider_service_unavailable")
+            if error_code in {"provider_rate_limited", "provider_service_unavailable"}:
+                return deferred(f"dashscope_video_poll_http_{response.status_code}", error_code)
+            return ProviderResult("failed", provider_job_id=task_id,
+                error=f"dashscope_video_poll_http_{response.status_code}", error_code=error_code)
+        status = str(output.get("task_status") or "").upper()
+        if status == "SUCCEEDED":
+            url = str(output.get("video_url") or "")
+            return ProviderResult("success" if url else "failed", url=url,
+                provider_job_id=task_id, error="dashscope_video_result_missing" if not url else "",
+                error_code="provider_result_invalid" if not url else "")
+        if status in {"FAILED", "CANCELED", "CANCELLED"}:
+            return ProviderResult("failed", provider_job_id=task_id,
+                error="dashscope_video_provider_failed",
+                error_code=classify_provider_error(response.status_code, provider_code))
+        if status == "UNKNOWN":
+            return ProviderResult("unknown", provider_job_id=task_id,
+                error="dashscope_video_provider_status_unknown", error_code="provider_result_unresolved")
+        if elapsed >= self.settings.video_task_timeout_seconds:
+            return ProviderResult("unknown", provider_job_id=task_id,
+                error="dashscope_video_processing_timeout", error_code="provider_result_unresolved")
+        return ProviderResult("pending", provider_job_id=task_id,
+            error="dashscope_video_processing", error_code="provider_poll_deferred")
 
     async def _minimax_audio(self, job: dict[str, Any]) -> ProviderResult:
         base = self.settings.upstream_audio.rstrip("/")

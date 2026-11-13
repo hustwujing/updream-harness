@@ -16,6 +16,7 @@ class Response:
         self.headers = headers or {}
 
     def json(self):
+        if isinstance(self.body, Exception): raise self.body
         return self.body
 
 
@@ -33,11 +34,15 @@ class Client:
 
     async def post(self, url, **kwargs):
         self.posts.append((url, kwargs))
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception): raise response
+        return response
 
     async def get(self, url, **kwargs):
         self.gets.append((url, kwargs))
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception): raise response
+        return response
 
 
 class Store:
@@ -73,7 +78,10 @@ def worker(store=None, objects=None):
         tripo_base_url="https://tripo.test/v3", tripo_api_key="test-key",
         tripo_poll_seconds=1, tripo_task_timeout_seconds=3,
         tripo_worker_concurrency=2, tripo_submit_max_retries=5,
-        tripo_max_output_bytes=1024 * 1024, audio_task_timeout_seconds=7200)
+        tripo_max_output_bytes=1024 * 1024, audio_task_timeout_seconds=7200,
+        video_task_timeout_seconds=7200,
+        dashscope_video_create_url="https://dashscope.test/video-synthesis",
+        dashscope_video_task_url="https://dashscope.test/tasks")
     return MediaWorker(settings, store or Store(), objects or Objects(), None)
 
 
@@ -297,6 +305,148 @@ async def test_seedance_first_last_frame_payload_preserves_roles(monkeypatch):
         "parameters":{"prompt":"transition","duration":5,"aspect_ratio":"adaptive"}})
     content=client.posts[0][1]["json"]["content"]
     assert [item.get("role") for item in content[1:]]==["first_frame","last_frame"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("adapter", "model_id"), [
+    ("happyhorse_video_edit", "happyhorse-1.0-video-edit"),
+    ("wan27_video_edit", "wan2.7-videoedit"),
+])
+async def test_dashscope_video_edit_submits_persists_and_returns_output(
+        monkeypatch, adapter, model_id):
+    value = worker()
+    client = Client([Response({"output": {"task_id": "provider-video"}}),
+        Response({"output": {"task_status": "SUCCEEDED",
+            "video_url": "https://result.test/video.mp4"}})])
+    async def client_factory(): return client
+    async def no_sleep(_): return None
+    monkeypatch.setattr(value, "_client", client_factory)
+    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    references = [
+        {"kind": "video", "role": "reference_video", "usage": "edit_source",
+            "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/video/source.mp4"},
+        {"kind": "image", "role": "reference_image", "usage": "style",
+            "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/image/style.png"},
+    ]
+    result = await value._dashscope_video_edit({"id": "job", "adapter": adapter,
+        "provider_job_id": "", "generation_mode": "edit_video", "references": references,
+        "parameters": {"prompt": "sync lips", "resolution": "720p"}})
+    payload = client.posts[0][1]["json"]
+    assert result.status == "success" and result.provider_job_id == "provider-video"
+    assert payload["model"] == model_id
+    assert payload["input"]["media"] == [
+        {"type": "video", "url": references[0]["public_url"]},
+        {"type": "reference_image", "url": references[1]["public_url"]},
+    ]
+    assert payload["input"]["prompt"].startswith("严格编辑视频1")
+    assert payload["parameters"]["resolution"] == "720P"
+    assert payload["parameters"]["audio_setting"] == "origin"
+    assert value.store.updates[-1][2]["provider_job_id"] == "provider-video"
+
+
+@pytest.mark.asyncio
+async def test_dashscope_non_success_receipt_with_task_id_is_persisted(monkeypatch):
+    value = worker()
+    client = Client([Response({"output": {"task_id": "accepted-task"}}, 503),
+        Response({"output": {"task_status": "RUNNING"}})])
+    async def client_factory(): return client
+    async def no_sleep(_): return None
+    monkeypatch.setattr(value, "_client", client_factory)
+    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    result = await value._dashscope_video_edit({"id": "job", "adapter": "wan27_video_edit",
+        "provider_job_id": "", "references": [{"kind": "video", "role": "reference_video",
+            "usage": "edit_source", "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/video/source.mp4"}],
+        "parameters": {"prompt": "edit"}})
+    assert result.status == "pending" and result.provider_job_id == "accepted-task"
+    assert value.store.updates[-1][2]["provider_job_id"] == "accepted-task"
+
+
+@pytest.mark.asyncio
+async def test_dashscope_video_edit_recovery_only_polls_persisted_job(monkeypatch):
+    value = worker()
+    client = Client([Response({"output": {"task_status": "SUCCEEDED",
+        "video_url": "https://result.test/video.mp4"}})])
+    async def client_factory(): return client
+    async def no_sleep(_): return None
+    monkeypatch.setattr(value, "_client", client_factory)
+    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    result = await value._dashscope_video_edit({"id": "job", "adapter": "happyhorse_video_edit",
+        "provider_job_id": "persisted-task", "generation_mode": "edit_video",
+        "references": [{"kind": "video", "role": "reference_video", "usage": "edit_source",
+            "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/video/source.mp4"}],
+        "parameters": {"prompt": "sync lips", "resolution": "720p"}})
+    assert result.status == "success" and not client.posts and len(client.gets) == 1
+
+
+@pytest.mark.asyncio
+async def test_dashscope_video_edit_submit_transport_failure_is_unknown(monkeypatch):
+    value = worker(); client = Client([httpx.ReadTimeout("unknown submission")])
+    async def client_factory(): return client
+    monkeypatch.setattr(value, "_client", client_factory)
+    result = await value._dashscope_video_edit({"id": "job", "adapter": "happyhorse_video_edit",
+        "provider_job_id": "", "references": [{"kind": "video", "role": "reference_video", "usage": "edit_source",
+            "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/video/source.mp4"}],
+        "parameters": {"prompt": "edit"}})
+    assert result.status == "unknown" and not result.provider_job_id
+    assert result.error_code == "provider_submission_outcome_unknown"
+
+
+@pytest.mark.asyncio
+async def test_dashscope_video_edit_invalid_success_receipt_is_unknown(monkeypatch):
+    value = worker(); client = Client([Response(ValueError("invalid json"))])
+    async def client_factory(): return client
+    monkeypatch.setattr(value, "_client", client_factory)
+    result = await value._dashscope_video_edit({"id": "job", "adapter": "happyhorse_video_edit",
+        "provider_job_id": "", "references": [{"kind": "video", "role": "reference_video", "usage": "edit_source",
+            "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/video/source.mp4"}],
+        "parameters": {"prompt": "edit"}})
+    assert result.status == "unknown" and result.error_code == "provider_submission_outcome_unknown"
+
+
+@pytest.mark.asyncio
+async def test_dashscope_video_edit_invalid_poll_receipt_retries_same_job(monkeypatch):
+    value = worker(); client = Client([Response(ValueError("invalid json"))])
+    async def client_factory(): return client
+    async def no_sleep(_): return None
+    monkeypatch.setattr(value, "_client", client_factory)
+    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    result = await value._dashscope_video_edit({"id": "job", "adapter": "wan27_video_edit",
+        "provider_job_id": "persisted", "references": [{"kind": "video", "role": "reference_video",
+            "usage": "edit_source", "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/video/source.mp4"}],
+        "parameters": {"prompt": "edit"}})
+    assert result.status == "pending" and result.provider_job_id == "persisted"
+    assert result.error_code == "provider_poll_unavailable" and not client.posts
+
+
+@pytest.mark.asyncio
+async def test_dashscope_video_edit_invalid_poll_past_window_becomes_unknown(monkeypatch):
+    value = worker(); client = Client([Response(ValueError("invalid json"))])
+    async def client_factory(): return client
+    async def no_sleep(_): return None
+    monkeypatch.setattr(value, "_client", client_factory)
+    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    result = await value._dashscope_video_edit({"id": "job", "adapter": "wan27_video_edit",
+        "provider_job_id": "persisted", "provider_started_at": datetime.fromtimestamp(0, timezone.utc),
+        "references": [{"kind": "video", "role": "reference_video", "usage": "edit_source",
+            "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/video/source.mp4"}],
+        "parameters": {"prompt": "edit"}})
+    assert result.status == "unknown" and result.provider_job_id == "persisted"
+    assert result.error_code == "provider_result_unresolved"
+
+
+@pytest.mark.asyncio
+async def test_dashscope_video_edit_provider_unknown_requires_reconciliation(monkeypatch):
+    value = worker(); client = Client([Response({"output": {"task_status": "UNKNOWN"}})])
+    async def client_factory(): return client
+    async def no_sleep(_): return None
+    monkeypatch.setattr(value, "_client", client_factory)
+    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    result = await value._dashscope_video_edit({"id": "job", "adapter": "wan27_video_edit",
+        "provider_job_id": "persisted", "references": [{"kind": "video", "role": "reference_video",
+            "usage": "edit_source", "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/video/source.mp4"}],
+        "parameters": {"prompt": "edit"}})
+    assert result.status == "unknown" and result.provider_job_id == "persisted"
+    assert result.error_code == "provider_result_unresolved"
 
 
 @pytest.mark.asyncio

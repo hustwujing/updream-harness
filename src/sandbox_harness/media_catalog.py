@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
@@ -27,6 +27,51 @@ MODEL3D_MODE_PARAMETERS = {
     "convert_model": {"input_job_id", "target_format", "bake", "export_orientation"},
 }
 
+DASHSCOPE_VIDEO_CONTRACTS = {
+    "happyhorse_video_edit": {
+        "max_images": 5, "video_duration": (3, 60), "video_dimensions": (360, 4096),
+        "video_ratio": (1 / 2.5, 2.5), "video_fps": (8, 60),
+        "image_dimensions": (300, None), "image_ratio": (1 / 2.5, 2.5),
+        "image_mimes": {"image/jpeg", "image/png", "image/webp"},
+        "prompt_cjk_limit": 2_500, "prompt_other_limit": 5_000,
+    },
+    "wan27_video_edit": {
+        "max_images": 4, "video_duration": (2, 10), "video_dimensions": (240, 4096),
+        "video_ratio": (1 / 8, 8), "video_fps": None,
+        "image_dimensions": (240, 8000), "image_ratio": (1 / 8, 8),
+        "image_mimes": {"image/jpeg", "image/png", "image/bmp", "image/webp"},
+        "prompt_cjk_limit": 5_000, "prompt_other_limit": 5_000,
+    },
+}
+
+
+def dashscope_video_public_contract(adapter: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    contract = DASHSCOPE_VIDEO_CONTRACTS[adapter]
+    minimum, maximum = contract["video_duration"]
+    reference_schema = {
+        "roles": ["reference_image", "reference_video"],
+        "usages": ["subject", "style", "composition", "edit_source"],
+        "recommended_usage": {"reference_image": "subject", "reference_video": "edit_source"},
+    }
+    parameter_schema = {
+        "required": ["prompt"],
+        "optional": {"duration": "fixed -1 (preserve source within Provider output limit)",
+            "resolution": ["720p", "1080p"], "aspect_ratio": ["adaptive"]},
+        "defaults": {"resolution": "1080p", "duration": -1, "aspect_ratio": "adaptive"},
+        "mode_parameter_policy": "Use only allowed_parameters for the selected generation mode",
+        "generation_modes": {"edit_video": {
+            "roles": ["reference_image", "reference_video"],
+            "required_usage": "edit_source", "max_images": contract["max_images"],
+            "references": f"one edit_source video and 0..{contract['max_images']} reference images",
+            "allowed_parameters": ["prompt", "duration", "resolution", "aspect_ratio"],
+            "fixed_parameters": {"aspect_ratio": "adaptive", "duration": -1}}},
+        "limits": {"input_video_duration_seconds": f"{minimum}..{maximum}",
+            "output_video_duration_seconds": "3..15" if adapter == "happyhorse_video_edit" else "2..10",
+            "max_video_bytes": 100 * 1024 * 1024, "max_reference_image_bytes": 20 * 1024 * 1024,
+            "max_reference_images": contract["max_images"]},
+    }
+    return reference_schema, parameter_schema
+
 
 def estimate_audio_duration_seconds(text: str, speed: float = 1) -> float:
     intervals = sum(float(value) for value in re.findall(r"<#([0-9]+(?:\.[0-9]{1,2})?)#>", text))
@@ -49,6 +94,8 @@ class MediaModelSpec:
     progress: str
     credential_env: str
     enabled: bool = True
+    supported_generation_modes: tuple[str, ...] = ()
+    guidance: dict[str, Any] = field(default_factory=dict)
 
     def public(self) -> dict[str, Any]:
         value = asdict(self)
@@ -149,12 +196,48 @@ class MediaModelSpec:
                         "quad": 150_000, "smart_low_poly_triangle": 20_000,
                         "smart_low_poly_quad": 10_000}}},
         }[self.kind]
+        if self.kind == "video" and self.adapter in DASHSCOPE_VIDEO_CONTRACTS:
+            value["reference_schema"], value["parameter_schema"] = dashscope_video_public_contract(self.adapter)
+        if self.kind == "video" and self.supported_generation_modes:
+            modes = value["parameter_schema"]["generation_modes"]
+            value["parameter_schema"]["generation_modes"] = {
+                mode: modes[mode] for mode in self.supported_generation_modes
+            }
         return value
 
 
 DEFAULT_MEDIA_CATALOG = (
     MediaModelSpec("image", "seedream-5.0", "ark", "ark_image", "/v1/providers/image", "sync", "unsupported", "none", "SANDBOX_HARNESS_UPSTREAM_IMAGE_KEY"),
-    MediaModelSpec("video", "sed2", "ark", "ark_video_v2", "/v1/providers/video", "async", "unsupported", "provider", "SANDBOX_HARNESS_UPSTREAM_VIDEO_KEY"),
+    MediaModelSpec("video", "sed2", "ark", "ark_video_v2", "/v1/providers/video", "async", "unsupported", "provider", "SANDBOX_HARNESS_UPSTREAM_VIDEO_KEY",
+        supported_generation_modes=("text_to_video", "first_frame", "first_last_frame",
+            "multimodal_reference", "edit_video", "extend_video"),
+        guidance={
+            "summary": "Seedance 2.0 is the most capable all-purpose video model, with text, frame, multimodal, edit and extend modes.",
+            "best_for": ["complex multimodal direction", "video extension", "generated audio", "up to 15 second outputs"],
+            "strengths": ["widest mode coverage", "strong instruction following", "supports image, video and audio references"],
+            "limitations": ["references require Ark Asset activation", "reference activation or generation can be rejected by Provider policy"],
+            "selection_rules": ["Choose when multimodal control, extension or generated audio is required.", "After a deterministic reference-policy rejection, follow the stable error guidance instead of rerouting unchanged bytes."],
+        }),
+    MediaModelSpec("video", "happyhorse-video-edit", "alibaba", "happyhorse_video_edit",
+        "/v1/providers/video", "async", "unsupported", "provider",
+        "SANDBOX_HARNESS_UPSTREAM_VIDEO_KEY", supported_generation_modes=("edit_video",),
+        guidance={
+            "summary": "Happyhorse edits one existing video with optional appearance or style reference images.",
+            "best_for": ["prompt-based edits", "lip-sync and subtle face motion", "preserving original audio"],
+            "strengths": ["accepts source videos up to 60 seconds", "supports up to 5 reference images", "can force original-audio preservation"],
+            "limitations": ["edit_video only in this integration", "no separate reference audio", "provider acceptance is not proof of source authorization"],
+            "selection_rules": ["Use one authorized edit_source video; optional reference images may guide appearance or style.", "Inputs longer than 15 seconds produce only the first 15 seconds."],
+        }),
+    MediaModelSpec("video", "wan-2.7-video-edit", "alibaba", "wan27_video_edit",
+        "/v1/providers/video", "async", "unsupported", "provider",
+        "SANDBOX_HARNESS_UPSTREAM_VIDEO_KEY", supported_generation_modes=("edit_video",),
+        guidance={
+            "summary": "Wan 2.7 edits a short existing video with optional appearance or style reference images.",
+            "best_for": ["prompt-based short video edits", "alternate rendering style", "preserving original audio"],
+            "strengths": ["supports broad input aspect ratios", "supports up to 4 reference images", "can force original-audio preservation"],
+            "limitations": ["input and output are limited to 10 seconds", "edit_video only in this integration"],
+            "selection_rules": ["Use one authorized 2 to 10 second edit_source video.", "Split longer source material into semantic clips before submission."],
+        }),
     MediaModelSpec("audio", "speech-2.8-turbo", "minimax", "minimax_t2a", "/v1/providers/audio", "async", "unsupported", "none", "SANDBOX_HARNESS_UPSTREAM_AUDIO_KEY"),
     MediaModelSpec("model3d", "v3.1-20260211", "tripo", "tripo_v3", "/v3", "async", "unsupported", "provider", "SANDBOX_HARNESS_TRIPO_API_KEY"),
 )
@@ -178,7 +261,9 @@ class MediaCatalog:
         for item in value:
             if not isinstance(item, dict):
                 raise ValueError("Media catalog entries must be objects")
-            spec = MediaModelSpec(**item)
+            inherited = next((asdict(default) for default in DEFAULT_MEDIA_CATALOG
+                if default.kind == item.get("kind") and default.model == item.get("model")), {})
+            spec = MediaModelSpec(**{**inherited, **item})
             if spec.kind not in {"image", "video", "audio", "model3d"}:
                 raise ValueError("Invalid media kind")
             if spec.execution not in {"sync", "async"}:
@@ -187,6 +272,14 @@ class MediaCatalog:
                 raise ValueError("Invalid media cancellation mode")
             if spec.execution == "sync" and spec.cancellation == "supported":
                 raise ValueError("Synchronous media jobs cannot be cancellable")
+            allowed_modes = {"text_to_video", "first_frame", "first_last_frame",
+                "multimodal_reference", "edit_video", "extend_video"}
+            if spec.kind != "video" and spec.supported_generation_modes:
+                raise ValueError("Only video models may declare supported generation modes")
+            if any(mode not in allowed_modes for mode in spec.supported_generation_modes):
+                raise ValueError("Invalid supported video generation mode")
+            if not isinstance(spec.guidance, dict):
+                raise ValueError("Media model guidance must be an object")
             if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", spec.credential_env):
                 raise ValueError("Invalid media credential environment")
             result.append(spec)
@@ -309,12 +402,16 @@ class MediaCatalog:
     def validate_parameters(self, kind: str, model: str, parameters: dict[str, Any], *,
                             generation_mode: str | None = None,
                             references: list[dict[str, Any]] | None = None) -> None:
-        self.resolve(kind, model)
+        spec = self.resolve(kind, model)
         self.validate_parameter_shape(kind, parameters)
         generation_mode = generation_mode or {"image": "text_to_image", "video": "text_to_video",
             "audio": "text_to_audio", "model3d": "text_to_model"}[kind]
         references = references or []
-        if kind == "video" and references and not self.ark_assets_configured:
+        if spec.adapter in DASHSCOPE_VIDEO_CONTRACTS and generation_mode != "edit_video":
+            raise ValueError(f"{model} does not support generation mode {generation_mode}")
+        if spec.supported_generation_modes and generation_mode not in spec.supported_generation_modes:
+            raise ValueError(f"{model} does not support generation mode {generation_mode}")
+        if kind == "video" and spec.adapter == "ark_video_v2" and references and not self.ark_assets_configured:
             raise ValueError("Seedance reference inputs require Ark Asset credentials and group configuration")
         if kind == "image":
             if generation_mode == "text_to_image" and references:
@@ -328,7 +425,7 @@ class MediaCatalog:
             elif generation_mode != "text_to_image":
                 raise ValueError("Invalid image generation mode")
         elif kind == "video":
-            self._validate_video_mode(generation_mode, parameters, references)
+            self._validate_video_mode(generation_mode, parameters, references, adapter=spec.adapter)
         elif kind == "audio":
             self.validate_audio_parameter_names(generation_mode, parameters)
             if generation_mode == "text_to_audio":
@@ -438,7 +535,7 @@ class MediaCatalog:
 
     @classmethod
     def _validate_video_mode(cls, mode: str, parameters: dict[str, Any],
-                             references: list[dict[str, Any]]) -> None:
+                             references: list[dict[str, Any]], *, adapter: str = "ark_video_v2") -> None:
         roles = [item.get("role") for item in references]
         if mode == "text_to_video":
             if references: raise ValueError("Text-to-video does not accept references")
@@ -468,6 +565,9 @@ class MediaCatalog:
         images = [item for item in references if item.get("role") in IMAGE_REFERENCE_ROLES]
         videos = [item for item in references if item.get("role") in VIDEO_REFERENCE_ROLES]
         audios = [item for item in references if item.get("role") in AUDIO_REFERENCE_ROLES]
+        if adapter in DASHSCOPE_VIDEO_CONTRACTS:
+            cls._validate_dashscope_video_edit(adapter, parameters, images, videos, audios)
+            return
         if len(images) > 9 or len(videos) > 3 or len(audios) > 3:
             raise ValueError("Seedance supports at most 9 images, 3 videos and 3 audio references")
         if mode in {"multimodal_reference", "edit_video", "extend_video"} and audios and not (images or videos):
@@ -500,12 +600,58 @@ class MediaCatalog:
         if sum(float(item["duration_seconds"]) for item in audios) > 15:
             raise ValueError("Seedance reference audio may total at most 15 seconds")
 
+    @staticmethod
+    def _validate_dashscope_video_edit(adapter: str, parameters: dict[str, Any],
+                                        images: list[dict[str, Any]], videos: list[dict[str, Any]],
+                                        audios: list[dict[str, Any]]) -> None:
+        contract = DASHSCOPE_VIDEO_CONTRACTS[adapter]
+        unsupported = sorted(set(parameters) - {"prompt", "duration", "resolution", "aspect_ratio"})
+        if unsupported:
+            raise ValueError("DashScope video edit does not accept: " + ", ".join(unsupported))
+        prompt = parameters.get("prompt", "")
+        prompt_limit = (contract["prompt_cjk_limit"] if re.search(r"[\u3400-\u9fff]", prompt)
+            else contract["prompt_other_limit"])
+        if len(prompt) > prompt_limit:
+            raise ValueError(f"DashScope video edit prompt exceeds {prompt_limit} characters")
+        if parameters.get("duration", -1) != -1 or parameters.get("aspect_ratio", "adaptive") != "adaptive":
+            raise ValueError("DashScope video edit preserves source duration/aspect; use duration=-1 and aspect_ratio=adaptive")
+        if parameters.get("resolution", "1080p") not in {"720p", "1080p"}:
+            raise ValueError("DashScope video edit resolution must be 720p or 1080p")
+        if len(videos) != 1 or audios or len(images) > contract["max_images"]:
+            raise ValueError(f"DashScope video edit requires one edit_source video, up to {contract['max_images']} reference images, and no reference audio")
+        source = videos[0]
+        duration, width, height, fps, size = (source.get("duration_seconds"), source.get("width"),
+            source.get("height"), source.get("fps"), source.get("size", 0))
+        minimum, maximum = contract["video_duration"]
+        if (not duration or not minimum <= duration <= maximum or size <= 0
+                or size > 100 * 1024 * 1024 or source.get("mime") not in {"video/mp4", "video/quicktime"}):
+            raise ValueError(f"DashScope edit_source must be MP4/MOV, {minimum}..{maximum} seconds, at most 100 MB")
+        dimension_min, dimension_max = contract["video_dimensions"]
+        ratio_min, ratio_max = contract["video_ratio"]
+        if (not isinstance(width, int) or not isinstance(height, int)
+                or min(width, height) < dimension_min or max(width, height) > dimension_max
+                or not ratio_min <= width / height <= ratio_max):
+            raise ValueError("DashScope edit_source dimensions are outside Provider limits")
+        if contract["video_fps"] and (fps is None or not contract["video_fps"][0] <= fps <= contract["video_fps"][1]):
+            raise ValueError("Happyhorse edit_source frame rate must be 8..60 FPS")
+        image_min, image_max = contract["image_dimensions"]
+        image_ratio_min, image_ratio_max = contract["image_ratio"]
+        for image in images:
+            width, height, size = image.get("width"), image.get("height"), image.get("size", 0)
+            if (image.get("mime") not in contract["image_mimes"] or size <= 0 or size > 20 * 1024 * 1024
+                    or not isinstance(width, int) or not isinstance(height, int)
+                    or min(width, height) < image_min
+                    or image_max is not None and max(width, height) > image_max
+                    or not image_ratio_min <= width / height <= image_ratio_max):
+                raise ValueError("DashScope reference image is outside Provider format, size, dimension or aspect-ratio limits")
+
     def public(self, kind: str | None = None) -> list[dict[str, Any]]:
         values = [item.public() for item in self._models if item.enabled and (kind is None or item.kind == kind)]
         for value in values:
             if value["kind"] == "video":
-                value["reference_inputs_available"] = self.ark_assets_configured
-                if not self.ark_assets_configured:
+                uses_ark_assets = value["adapter"] == "ark_video_v2"
+                value["reference_inputs_available"] = self.ark_assets_configured if uses_ark_assets else True
+                if uses_ark_assets and not self.ark_assets_configured:
                     value["reference_inputs_error"] = "ark_asset_configuration_missing"
             if value["kind"] == "model3d":
                 value["available"] = self.tripo_configured

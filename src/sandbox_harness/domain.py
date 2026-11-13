@@ -238,6 +238,9 @@ class TurnView(BaseModel):
     recovery_generation: int = 0
     runtime_sequence: int = 0
     runtime_execution_id: str = ""
+    runtime_image_digest: str = ""
+    runtime_code_bundle_digest: str = ""
+    runtime_bundle_digest: str = ""
     capability_nonce: str = ""
     submit_traceparent: str = ""
     last_traceparent: str = ""

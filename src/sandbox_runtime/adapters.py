@@ -6,7 +6,7 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
-from .instructions import RUNTIME_INSTRUCTIONS
+from .instructions import runtime_instructions
 
 
 @dataclass(frozen=True)
@@ -62,7 +62,7 @@ def command(harness: str, model: str, native_thread_id: str = "") -> HarnessComm
     if harness == "claude":
         argv = ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                 "--include-partial-messages", "--replay-user-messages",
-                "--permission-mode", "bypassPermissions", "--append-system-prompt", RUNTIME_INSTRUCTIONS,
+                "--permission-mode", "bypassPermissions", "--append-system-prompt", runtime_instructions(),
                 "--model", model]
         if native_thread_id:
             argv += ["--resume", native_thread_id]

@@ -108,7 +108,7 @@ async def test_reference_resolution_freezes_owned_current_project_version(tmp_pa
         assert snapshots[0]["object_ref"] == object_ref and snapshots[0]["mime"] == "image/png"
         assert (snapshots[0]["width"], snapshots[0]["height"]) == (640, 480)
         await store.delete_project_file(project_file.id, owner)
-        with pytest.raises(ValueError, match="missing, stale"):
+        with pytest.raises(ValueError, match="registered ProjectFile"):
             await resolve_media_references(store, objects, thread.id, owner,
                 [MediaReferenceInput(project_file_id=project_file.id, role="first_frame", usage="composition")])
     finally:

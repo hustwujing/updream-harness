@@ -103,7 +103,7 @@ async def resolve_media_references(store, objects, thread_id: str, owner_id: str
         project_file = await store.resolve_project_file_reference(thread_id, owner_id,
             file_id=reference.project_file_id, path=path)
         if not project_file:
-            raise ValueError("Reference project file is missing, stale, or not owned by this Thread")
+            raise ValueError("Reference must be a registered ProjectFile owned by this Thread; copying a local file into assets/artifacts does not register it")
         identity = (project_file.id, reference.role, reference.usage)
         if identity in seen:
             raise ValueError("Duplicate media reference")

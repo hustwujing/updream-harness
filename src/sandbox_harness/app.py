@@ -163,7 +163,11 @@ def components(settings: Settings):
     pool = SandboxPool(backend, images, targets, max_sandboxes=settings.max_sandboxes)
     runtime = RuntimeClient(timeout_seconds=settings.sandbox_timeout_seconds,
         reattach_attempts=settings.runtime_stream_reattach_attempts,
-        reattach_max_delay_seconds=settings.runtime_stream_reattach_max_delay_seconds)
+        reattach_max_delay_seconds=settings.runtime_stream_reattach_max_delay_seconds,
+        bundle_dir=settings.runtime_bundle_dir,
+        default_bundle_digest=settings.runtime_bundle_digest,
+        code_bundle_dir=settings.runtime_code_bundle_dir,
+        default_code_bundle_digest=settings.runtime_code_bundle_digest)
     catalog = HarnessCatalog(settings.harness_catalog_json or None)
     media_catalog = MediaCatalog(settings.media_catalog_json,
         ark_assets_configured=bool(settings.ark_access_key and settings.ark_secret_key
@@ -280,8 +284,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         media_outbox_stop.set()
         await media_outbox_task
         await inspector.close()
-        await broker.close()
-        await pool.close(preserve_sandbox_ids=({sandbox.id for sandbox in broker.active_sandboxes.values()}
+        preserve_sandbox_ids = await broker.close()
+        await pool.close(preserve_sandbox_ids=(preserve_sandbox_ids
             | await store.active_sandbox_control_ids()))
         await store.close()
 

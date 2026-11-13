@@ -37,8 +37,12 @@ async def test_thread_turn_items_and_idempotency(tmp_path):
             reasoning_level="deep", title="Thread"), profile, owner)
         value = TurnCreate(message="hello", idempotency_key="idempotency-1")
         turn, created, start = await store.create_turn(thread.id, value, profile, owner,
-            network_access="public")
+            network_access="public", runtime_image_digest="registry/claude@sha256:" + "1" * 64,
+            runtime_bundle_digest="2" * 64, runtime_code_bundle_digest="3" * 64)
         assert created and start and turn.reasoning_effort == "high" and turn.network_access == "public"
+        assert turn.runtime_image_digest.endswith("1" * 64)
+        assert turn.runtime_bundle_digest == "2" * 64
+        assert turn.runtime_code_bundle_digest == "3" * 64
         duplicate, created, _ = await store.create_turn(thread.id, value, profile, owner,
             network_access="public")
         assert not created and duplicate.id == turn.id

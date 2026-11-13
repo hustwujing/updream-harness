@@ -16,6 +16,21 @@ The Runtime HTTP API in `sandbox_runtime/app.py` is the host/data-plane
 contract. Host calls go through `RuntimeClient`; do not make Broker code depend
 on a native Harness protocol.
 
+Each Turn freezes a content-addressed Runtime Code Bundle and Content Bundle.
+The image starts only `sandbox_bootstrap` on port 8080. Before configuration,
+the host injects the Turn's Code Bundle; Bootstrap verifies its Ed25519
+signature, archive digest, Python ABI, dependency lock, allowed module paths and
+every file hash, then starts the Runtime child on loopback port 18080 and streams
+HTTP through to it. The Content Bundle is then injected through Runtime and
+provides instructions and Skills. Both are excluded from checkpoints and
+reapplied by digest after sandbox creation or restore.
+
+Bootstrap refuses a Code Bundle switch while the child reports an active
+execution. It supervises unexpected child exit and restarts the same digest.
+Only signed `sandbox_runtime`, its required shared modules and declared CLI
+packages are accepted; arbitrary package paths, links and special files are
+rejected.
+
 ## Workspace ownership
 
 ```text
@@ -74,6 +89,12 @@ OpenSandbox creation rejects mutable image references; deployment uses
 `base.Dockerfile` owns Runtime and common media dependencies, and Harness
 Dockerfiles add native clients. `toolchain.lock.json` and probe scripts make the
 foundation contract executable.
+
+Python/media dependencies are installed from `runtime/requirements-runtime.txt`.
+Runtime Python and CLI changes publish a signed Code Bundle; Skills and
+instructions publish a signed Content Bundle. Neither requires an image build.
+Native dependencies, helper executables, Harness clients, system packages,
+Bootstrap or either Bundle verification protocol still require an image build.
 
 Use [image dependency guidance](add-image-dependency.md) for package changes and
 [Agent Skill guidance](add-agent-skill.md) for reusable Harness instructions or

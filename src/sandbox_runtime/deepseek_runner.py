@@ -7,7 +7,7 @@ import os
 import sys
 import uuid
 
-from .instructions import RUNTIME_INSTRUCTIONS
+from .instructions import runtime_instructions
 
 from deepseek_harness import DeepSeekHarness
 
@@ -59,7 +59,7 @@ def main() -> None:
                 continue
             if not isinstance(command, dict) or command.get("type") != "input":
                 continue
-            message = RUNTIME_INSTRUCTIONS + "\nUser request:\n" + command.get("message", "")
+            message = runtime_instructions() + "\nUser request:\n" + command.get("message", "")
             result = session.run(message,
                 on_notification=lambda value: emit({"type": "deepseek.notification", "event": public_notification(value)}))
             emit({"type": "assistant_delta", "text": result.final_response, "snapshot": True})

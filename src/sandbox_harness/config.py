@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     runtime_event_idle_timeout_seconds: float = Field(default=900, ge=60, le=3600)
     runtime_stream_reattach_attempts: int = Field(default=8, ge=2, le=12)
     runtime_stream_reattach_max_delay_seconds: float = Field(default=4, ge=0.1, le=10)
+    runtime_bundle_dir: Path = Path(".data/runtime-bundles")
+    runtime_bundle_digest: str = Field(default="", pattern=r"^$|^[0-9a-f]{64}$")
+    runtime_code_bundle_dir: Path = Path(".data/runtime-code-bundles")
+    runtime_code_bundle_digest: str = Field(default="", pattern=r"^$|^[0-9a-f]{64}$")
 
     @property
     def public_proxy_url(self) -> str:
@@ -89,6 +93,8 @@ class Settings(BaseSettings):
     upstream_image: str = ""
     upstream_video: str = ""
     upstream_audio: str = ""
+    dashscope_video_create_url: str = "https://bashscope.bilibili.co/api/v1/services/aigc/video-generation/video-synthesis"
+    dashscope_video_task_url: str = "https://bashscope.bilibili.co/api/v1/tasks"
     tripo_base_url: str = "https://openapi.tripo3d.com/v3"
     tripo_api_key: str = ""
     tripo_worker_concurrency: int = Field(default=2, ge=1, le=5)
@@ -101,6 +107,7 @@ class Settings(BaseSettings):
     media_worker_concurrency: int = Field(default=6, ge=1, le=32)
     audio_worker_concurrency: int = Field(default=6, ge=1, le=16)
     audio_task_timeout_seconds: int = Field(default=2 * 3600, ge=600, le=24 * 3600)
+    video_task_timeout_seconds: int = Field(default=2 * 3600, ge=600, le=24 * 3600)
     site_worker_concurrency: int = Field(default=2, ge=1, le=16)
     site_draft_ttl_seconds: int = Field(default=24 * 3600, ge=600, le=7 * 86400)
     site_public_base_path: str = Field(default="/sandbox-harness/sites",
@@ -136,3 +143,13 @@ def validate_service_settings(value: Settings) -> None:
         configured = (value.gateway_signing_key, value.gateway_control_key, value.session_signing_key)
         if any(secret in DEVELOPMENT_SECRETS for secret in configured):
             raise ValueError("OpenSandbox deployment requires explicit signing and control secrets")
+        if not value.runtime_bundle_digest:
+            raise ValueError("OpenSandbox deployment requires a frozen Runtime Bundle digest")
+        if not value.runtime_code_bundle_digest:
+            raise ValueError("OpenSandbox deployment requires a frozen Runtime Code Bundle digest")
+        bundle = value.runtime_bundle_dir / (value.runtime_bundle_digest + ".tar")
+        code_bundle = value.runtime_code_bundle_dir / (value.runtime_code_bundle_digest + ".tar")
+        if not bundle.is_file():
+            raise ValueError("Configured Runtime Bundle is unavailable")
+        if not code_bundle.is_file():
+            raise ValueError("Configured Runtime Code Bundle is unavailable")
