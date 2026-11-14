@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "bundle_version": "2026.11.14.1",
+  "bundle_version": "2026.11.14.2",
   "retired_skills": [],
   "skills": [
     {
@@ -96,6 +96,35 @@
       },
       "content_sha256": "315480a4efd8acc1a2ecef5d927c5f359337dba27c99e185f1aebc9648c6c126",
       "file_count": 127
+    },
+    {
+      "id": "brainstorming",
+      "version": "7.0.2",
+      "profile": "superpowers",
+      "network": "optional public brand image; visual companion binds loopback only",
+      "test_case": "validate local visual companion scripts and instruction contract",
+      "source": "obra-superpowers",
+      "source_url": "https://github.com/obra/superpowers",
+      "source_commit": "22f0b463e7a5e579904dd6211a520321035526f7",
+      "license": "MIT",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "entry": "SKILL.md",
+      "dependencies": {
+        "commands": [
+          "bash",
+          "node",
+          "npm",
+          "python3"
+        ],
+        "python_modules": [],
+        "node_modules": []
+      },
+      "content_sha256": "9cbcfcd803d6c921ad499badc53894798c8de9722144beab1a5a4cd6de538aaa",
+      "file_count": 9
     },
     {
       "id": "brand-guidelines",
@@ -223,6 +252,36 @@
       },
       "content_sha256": "755b8f05233435e181be8d51cefe362465adc496e81828e87c59be582b3f3b5d",
       "file_count": 41
+    },
+    {
+      "id": "data-quality-audit",
+      "version": "1.2.0+9449d363",
+      "profile": "data-analytics",
+      "network": "none",
+      "test_case": "audit nulls and duplicates in a deterministic CSV",
+      "source": "nimrodfisher-data-analytics-skills",
+      "source_url": "https://github.com/nimrodfisher/data-analytics-skills",
+      "source_commit": "9449d363e1ae43cf1706c73bebc16774e339c427",
+      "license": "MIT",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "entry": "SKILL.md",
+      "dependencies": {
+        "commands": [
+          "python3"
+        ],
+        "python_modules": [
+          "numpy",
+          "pandas",
+          "sqlglot"
+        ],
+        "node_modules": []
+      },
+      "content_sha256": "981e6af0ffdef065763c1023286a83a6dfbaf30ff3202b4ffcde65db21c1bcb6",
+      "file_count": 11
     },
     {
       "id": "diagram-design",
@@ -674,6 +733,66 @@
       "file_count": 56
     },
     {
+      "id": "programmatic-eda",
+      "version": "1.2.0+9449d363",
+      "profile": "data-analytics",
+      "network": "none",
+      "test_case": "profile a deterministic CSV and validate findings output",
+      "source": "nimrodfisher-data-analytics-skills",
+      "source_url": "https://github.com/nimrodfisher/data-analytics-skills",
+      "source_commit": "9449d363e1ae43cf1706c73bebc16774e339c427",
+      "license": "MIT",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "entry": "SKILL.md",
+      "dependencies": {
+        "commands": [
+          "python3"
+        ],
+        "python_modules": [
+          "numpy",
+          "pandas",
+          "sqlglot"
+        ],
+        "node_modules": []
+      },
+      "content_sha256": "f51f113387b8aee2c21f1a591543059902e3a04aba3155d13af17badc9bd0f78",
+      "file_count": 12
+    },
+    {
+      "id": "query-validation",
+      "version": "1.2.0+9449d363",
+      "profile": "data-analytics",
+      "network": "none",
+      "test_case": "lint deterministic PostgreSQL SQL with sqlglot",
+      "source": "nimrodfisher-data-analytics-skills",
+      "source_url": "https://github.com/nimrodfisher/data-analytics-skills",
+      "source_commit": "9449d363e1ae43cf1706c73bebc16774e339c427",
+      "license": "MIT",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "entry": "SKILL.md",
+      "dependencies": {
+        "commands": [
+          "python3"
+        ],
+        "python_modules": [
+          "numpy",
+          "pandas",
+          "sqlglot"
+        ],
+        "node_modules": []
+      },
+      "content_sha256": "28618d3ebc9341d820d3ed1b92312af17a82cfcc578f513ab3f550c322cc7f2f",
+      "file_count": 9
+    },
+    {
       "id": "skill-creator",
       "version": "2c5958ec",
       "profile": "web",
@@ -736,6 +855,35 @@
       "file_count": 7
     },
     {
+      "id": "systematic-debugging",
+      "version": "7.0.2",
+      "profile": "superpowers",
+      "network": "none",
+      "test_case": "validate debugging resources and polluter script syntax",
+      "source": "obra-superpowers",
+      "source_url": "https://github.com/obra/superpowers",
+      "source_commit": "22f0b463e7a5e579904dd6211a520321035526f7",
+      "license": "MIT",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "entry": "SKILL.md",
+      "dependencies": {
+        "commands": [
+          "bash",
+          "node",
+          "npm",
+          "python3"
+        ],
+        "python_modules": [],
+        "node_modules": []
+      },
+      "content_sha256": "bd40195f384a44a301ef7a7a11469fe626e8ecb992baf86c81f4de316917cf27",
+      "file_count": 7
+    },
+    {
       "id": "theme-factory",
       "version": "2c5958ec",
       "profile": "instructions",
@@ -761,6 +909,33 @@
       },
       "content_sha256": "4fa601e9ee98cee8b46ab5c1cdec298cf91a88aab5fae6b8123e9e3d0e94598a",
       "file_count": 13
+    },
+    {
+      "id": "verification-before-completion",
+      "version": "7.0.2",
+      "profile": "instructions",
+      "network": "none",
+      "test_case": "validate evidence-gate instruction contract",
+      "source": "obra-superpowers",
+      "source_url": "https://github.com/obra/superpowers",
+      "source_commit": "22f0b463e7a5e579904dd6211a520321035526f7",
+      "license": "MIT",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "entry": "SKILL.md",
+      "dependencies": {
+        "commands": [
+          "python3",
+          "node"
+        ],
+        "python_modules": [],
+        "node_modules": []
+      },
+      "content_sha256": "2848ae643f448814455b4dc29ff5b7b494e42f42bdb2308cc300fd87e33c9fde",
+      "file_count": 2
     },
     {
       "id": "web-artifacts-builder",
@@ -831,6 +1006,33 @@
       },
       "content_sha256": "3ded4688bd2037c39fe7f604a7e0ae8abac53fd95861e6b3c829baad25b29482",
       "file_count": 6
+    },
+    {
+      "id": "writing-plans",
+      "version": "7.0.2",
+      "profile": "instructions",
+      "network": "none",
+      "test_case": "validate plan structure instruction contract",
+      "source": "obra-superpowers",
+      "source_url": "https://github.com/obra/superpowers",
+      "source_commit": "22f0b463e7a5e579904dd6211a520321035526f7",
+      "license": "MIT",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "entry": "SKILL.md",
+      "dependencies": {
+        "commands": [
+          "python3",
+          "node"
+        ],
+        "python_modules": [],
+        "node_modules": []
+      },
+      "content_sha256": "98883feb71121ce980c0048ffab7617e6082f3d2ccb549870506798db48e52c9",
+      "file_count": 2
     },
     {
       "id": "xlsx",

@@ -22,6 +22,7 @@ REQUIRED_FILES = {
     "academy-guide": ["LICENSE.txt"],
     "algorithmic-art": ["templates/generator_template.js", "templates/viewer.html"],
     "anatomy": ["kit/audit.mjs", "examples/dial-indicator/build.mjs"],
+    "brainstorming": ["LICENSE", "scripts/server.cjs", "scripts/start-server.sh", "scripts/stop-server.sh"],
     "brand-guidelines": ["LICENSE.txt"],
     "canvas-design": ["canvas-fonts/InstrumentSans-Regular.ttf"],
     "claude-api": ["shared/models.md", "curl/examples.md"],
@@ -32,6 +33,7 @@ REQUIRED_FILES = {
     "doc-coauthoring": [],
     "docx": ["scripts/office/validate.py", "scripts/merge_runs.py"],
     "drawio-skill": ["scripts/diagramctl.py", "data/diagram-ir.schema.json"],
+    "data-quality-audit": ["LICENSE", "scripts/null_counter.py", "scripts/duplicate_finder.py"],
     "frontend-design": ["LICENSE.txt"],
     "image-to-editable-ppt": ["cli/pyproject.toml", "prompts/page-worker.md"],
     "internal-comms": ["examples/3p-updates.md", "examples/faq-answers.md"],
@@ -39,11 +41,16 @@ REQUIRED_FILES = {
     "manim-video": ["README.md", "references/scene-planning.md", "scripts/setup.sh", "LICENSE"],
     "pdf": ["forms.md", "scripts/convert_pdf_to_images.py"],
     "pptx": ["scripts/thumbnail.py", "scripts/office/validate.py"],
+    "programmatic-eda": ["LICENSE", "scripts/data_overview.py", "scripts/null_profiler.py"],
+    "query-validation": ["LICENSE", "scripts/sql_lint.py", "references/sql_anti_patterns.md"],
     "skill-creator": ["scripts/quick_validate.py", "references/schemas.md"],
     "slack-gif-creator": ["core/gif_builder.py", "core/validators.py"],
+    "systematic-debugging": ["LICENSE", "find-polluter.sh", "root-cause-tracing.md"],
     "theme-factory": ["theme-showcase.pdf", "themes/modern-minimalist.md"],
+    "verification-before-completion": ["LICENSE"],
     "web-artifacts-builder": ["scripts/init-artifact.sh", "scripts/shadcn-components.tar.gz"],
     "webapp-testing": ["scripts/with_server.py", "examples/static_html_automation.py"],
+    "writing-plans": ["LICENSE"],
     "xlsx": ["scripts/recalc.py", "scripts/office/validate.py"],
 }
 
@@ -84,7 +91,7 @@ def main() -> None:
     for harness in ("codex", "claude", "deepseek"):
         installed = materialize_skills(harness, Path("/workspace"))
         root = Path(installed["root"])
-        assert len(list(root.glob("*/SKILL.md"))) == 26
+        assert len(list(root.glob("*/SKILL.md"))) == 33
         results["harnesses"][harness] = installed["skill_count"]
 
     run("node", "--check", str(ROOT / "algorithmic-art/templates/generator_template.js"))
@@ -237,11 +244,36 @@ Follow the requested sample workflow and return the resulting artifact.
     run("python3", str(ROOT / "webapp-testing/scripts/with_server.py"), "--help")
     evidence("webapp-testing", "server_runner_cli")
 
+    run("bash", "-n", str(ROOT / "systematic-debugging/find-polluter.sh"))
+    run("bash", "-n", str(ROOT / "brainstorming/scripts/start-server.sh"))
+    run("bash", "-n", str(ROOT / "brainstorming/scripts/stop-server.sh"))
+    run("node", "--check", str(ROOT / "brainstorming/scripts/server.cjs"))
+    evidence("systematic-debugging", "polluter_script_syntax", "debugging_references")
+    evidence("brainstorming", "visual_companion_shell_syntax", "visual_companion_node_syntax")
+    evidence("verification-before-completion", "evidence_gate_contract")
+    evidence("writing-plans", "plan_structure_contract")
+
+    analytics = WORK / "analytics.csv"
+    analytics.write_text("id,value,category\n1,10,a\n2,,a\n2,30,b\n")
+    overview = run("python3", str(ROOT / "programmatic-eda/scripts/data_overview.py"),
+        "--input", str(analytics))
+    nulls = run("python3", str(ROOT / "data-quality-audit/scripts/null_counter.py"),
+        "--input", str(analytics))
+    duplicates = run("python3", str(ROOT / "data-quality-audit/scripts/duplicate_finder.py"),
+        "--input", str(analytics), "--key", "id")
+    lint = run("python3", str(ROOT / "query-validation/scripts/sql_lint.py"),
+        "--sql", "SELECT * FROM events", "--dialect", "postgres")
+    assert "Shape:" in overview and "value" in nulls and "Full-row duplicates" in duplicates
+    assert "SELECT *" in lint and "full table scan" in lint
+    evidence("programmatic-eda", "deterministic_csv_overview")
+    evidence("data-quality-audit", "null_and_duplicate_audit")
+    evidence("query-validation", "sqlglot_postgres_lint")
+
     for skill_id in ("academy-guide", "brand-guidelines", "discernment-nudge",
             "doc-and-modernize", "doc-coauthoring", "frontend-design", "internal-comms"):
         evidence(skill_id, "instruction_resource_contract")
 
-    assert len(results["skills"]) == 25
+    assert len(results["skills"]) == 33
 
     print(json.dumps({"passed":True,**results},sort_keys=True))
 

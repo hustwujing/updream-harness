@@ -143,6 +143,7 @@ soundfile==0.14.0
 soupsieve==4.1
 soxr==1.1.0
 sqlalchemy==2.1.8
+sqlglot==28.10.1
 sse-starlette==3.7.0
 starlette==1.10.0
 svgwrite==1.4.3

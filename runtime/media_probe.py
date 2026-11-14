@@ -9,7 +9,7 @@ MODULES = (
     "imagehash", "imageio", "jsonschema", "librosa", "lxml", "markitdown", "matplotlib", "mcp",
     "manim", "manimpango", "moviepy", "mutagen", "networkx", "numpy", "onnxruntime", "openai", "openpyxl", "pandas",
     "pdf2image", "pdfplumber", "piexif", "PIL", "playwright", "pptx", "psd_tools", "psutil",
-    "pydub", "pymupdf", "pypdf", "pytesseract", "rembg", "reportlab", "requests", "scipy",
+    "pydub", "pymupdf", "pypdf", "pytesseract", "rembg", "reportlab", "requests", "scipy", "sqlglot",
     "shapely", "skimage", "sklearn", "soundfile", "svgwrite", "sympy", "trimesh", "xmltodict", "yaml",
 )
 

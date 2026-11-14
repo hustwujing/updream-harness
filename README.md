@@ -90,10 +90,11 @@ the deduplication boundary resets for every appended input.
 
 Harnesses can request user decisions with `sandbox-interact`; Codex native user-input and approval requests map to the same durable Interaction protocol. Long commands can be delegated to `sandbox-background`, whose process group, bounded log, cancellation and exit status are supervised by the Runtime and remain part of the Turn result.
 
-Every Runtime image carries one pinned 25-Skill bundle shared by Codex, Claude
-and DeepSeek. It includes diagram, documentation, editable/image-based
-PowerPoint and the complete pinned `anthropics/skills` collection with declared
-runtime dependencies. See [Runtime Skill Bundle](docs/skills.md).
+Every Turn receives one pinned 33-Skill bundle shared by Codex, Claude and
+DeepSeek. It includes diagram, documentation, editable/image-based PowerPoint,
+four focused Superpowers workflows, three data-quality/SQL workflows and the
+complete pinned `anthropics/skills` collection with declared runtime
+dependencies. See [Runtime Skill Bundle](docs/skills.md).
 
 ## Workspace
 

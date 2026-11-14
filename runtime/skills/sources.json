@@ -1,11 +1,21 @@
 {
   "schema_version": 1,
-  "bundle_version": "2026.11.14.1",
+  "bundle_version": "2026.11.14.2",
   "retired_skills": [],
   "dependency_profiles": {
     "instructions": {
       "commands": ["python3", "node"],
       "python_modules": [],
+      "node_modules": []
+    },
+    "superpowers": {
+      "commands": ["bash", "node", "npm", "python3"],
+      "python_modules": [],
+      "node_modules": []
+    },
+    "data-analytics": {
+      "commands": ["python3"],
+      "python_modules": ["numpy", "pandas", "sqlglot"],
       "node_modules": []
     },
     "anatomy": {
@@ -98,6 +108,29 @@
       "commit": "45de99548311ac67240217f23c8ead033a3dbe65",
       "license": "MIT",
       "skills": [{"id": "manim-video", "version": "1.0.0+45de9954", "profile": "manim", "network": "none for local rendering; narration/provider access requires a configured capability", "test_case": "render a deterministic low-quality mathematical scene and validate the MP4"}]
+    },
+    {
+      "id": "obra-superpowers",
+      "url": "https://github.com/obra/superpowers",
+      "commit": "22f0b463e7a5e579904dd6211a520321035526f7",
+      "license": "MIT",
+      "skills": [
+        {"id": "brainstorming", "version": "7.0.2", "profile": "superpowers", "network": "optional public brand image; visual companion binds loopback only", "test_case": "validate local visual companion scripts and instruction contract"},
+        {"id": "systematic-debugging", "version": "7.0.2", "profile": "superpowers", "network": "none", "test_case": "validate debugging resources and polluter script syntax"},
+        {"id": "verification-before-completion", "version": "7.0.2", "profile": "instructions", "network": "none", "test_case": "validate evidence-gate instruction contract"},
+        {"id": "writing-plans", "version": "7.0.2", "profile": "instructions", "network": "none", "test_case": "validate plan structure instruction contract"}
+      ]
+    },
+    {
+      "id": "nimrodfisher-data-analytics-skills",
+      "url": "https://github.com/nimrodfisher/data-analytics-skills",
+      "commit": "9449d363e1ae43cf1706c73bebc16774e339c427",
+      "license": "MIT",
+      "skills": [
+        {"id": "programmatic-eda", "version": "1.2.0+9449d363", "profile": "data-analytics", "network": "none", "test_case": "profile a deterministic CSV and validate findings output"},
+        {"id": "data-quality-audit", "version": "1.2.0+9449d363", "profile": "data-analytics", "network": "none", "test_case": "audit nulls and duplicates in a deterministic CSV"},
+        {"id": "query-validation", "version": "1.2.0+9449d363", "profile": "data-analytics", "network": "none", "test_case": "lint deterministic PostgreSQL SQL with sqlglot"}
+      ]
     },
     {
       "id": "anthropics-skills",
