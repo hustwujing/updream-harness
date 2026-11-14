@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "bundle_version": "2026.11.11.1",
+  "bundle_version": "2026.11.14.1",
   "retired_skills": [],
   "dependency_profiles": {
     "instructions": {
@@ -42,6 +42,11 @@
       "commands": ["python3", "node", "pnpm", "chromium"],
       "python_modules": ["playwright"],
       "node_modules": ["react", "react-dom", "typescript"]
+    },
+    "manim": {
+      "commands": ["python3", "manim", "latex", "dvisvgm", "ffmpeg", "ffprobe"],
+      "python_modules": ["manim"],
+      "node_modules": []
     }
   },
   "sources": [
@@ -86,6 +91,13 @@
       "commit": "941dcafe2f23ea4ae61de99e9b22fb0ef3d9e06c",
       "license": "MIT",
       "skills": [{"id": "codex-ppt", "version": "0.6.0+941dcafe", "profile": "presentation", "network": "image backend required for slide generation", "test_case": "assemble a deterministic local slide image into PPTX"}]
+    },
+    {
+      "id": "vj-distributed-media-edit-system",
+      "url": "https://github.com/hustwujing/vj-distributed-media-edit-system",
+      "commit": "45de99548311ac67240217f23c8ead033a3dbe65",
+      "license": "MIT",
+      "skills": [{"id": "manim-video", "version": "1.0.0+45de9954", "profile": "manim", "network": "none for local rendering; narration/provider access requires a configured capability", "test_case": "render a deterministic low-quality mathematical scene and validate the MP4"}]
     },
     {
       "id": "anthropics-skills",

@@ -3,8 +3,11 @@ FROM ${FOUNDATION_IMAGE}
 ARG PYPI_INDEX=http://mirrors.cloud.aliyuncs.com/pypi/simple/
 WORKDIR /opt/platform
 COPY runtime/requirements-runtime.txt /tmp/requirements-runtime.txt
-RUN pip install --no-cache-dir --trusted-host mirrors.cloud.aliyuncs.com --index-url ${PYPI_INDEX} \
-      -r /tmp/requirements-runtime.txt
+RUN apt-get update && apt-get install -y --no-install-recommends libcairo2-dev libpango1.0-dev && \
+    pip install --no-cache-dir --trusted-host mirrors.cloud.aliyuncs.com --index-url ${PYPI_INDEX} \
+      -r /tmp/requirements-runtime.txt && \
+    apt-get purge -y libcairo2-dev libpango1.0-dev && \
+    apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 COPY runtime/requirements-runtime.txt /opt/bootstrap/requirements-runtime.txt
 ARG SANDBOX_USERNAME=updream
 COPY src/sandbox_bootstrap /opt/bootstrap/sandbox_bootstrap
@@ -13,6 +16,7 @@ COPY runtime/*.py runtime/*.mjs runtime/*.cjs runtime/*.sh runtime/*.json /opt/p
 RUN python runtime/toolchain_probe.py --verify runtime/toolchain.lock.json && \
     python runtime/media_probe.py && \
     install -m 0755 runtime/apply_patch.py /usr/local/bin/apply_patch && \
+    install -m 0755 runtime/manim_smoke.py /usr/local/bin/sandbox-manim-smoke && \
     install -m 0755 runtime/skill_smoke.py /usr/local/bin/sandbox-skill-smoke && \
     install -m 0755 runtime/browser_render.mjs /usr/local/bin/sandbox-browser-render && \
     install -m 0644 runtime/proxy_bridge.cjs /usr/local/lib/sandbox-proxy-bridge.cjs && \

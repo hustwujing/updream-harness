@@ -10,6 +10,7 @@ def test_foundation_installs_declared_browser_and_image_tools_from_domestic_mirr
     assert "ARG NPM_REGISTRY=https://registry.npmmirror.com" in source
     assert "ARG PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright" in source
     assert "imagemagick" in source
+    assert "dvisvgm" in source and "texlive-latex-extra" in source
     assert "playwright install chromium" in source
     assert "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright" in source
 
@@ -60,8 +61,10 @@ def test_runtime_installs_patch_helper_and_probes_recovered_dependencies():
     probe = (ROOT / "runtime/media_probe.py").read_text()
     dependencies = (ROOT / "pyproject.toml").read_text()
     assert "runtime/apply_patch.py /usr/local/bin/apply_patch" in dockerfile
+    assert "runtime/manim_smoke.py /usr/local/bin/sandbox-manim-smoke" in dockerfile
     assert (ROOT / "runtime/apply_patch.py").is_file()
     assert '"beautifulsoup4>=4.12,<5"' in dependencies
     assert '"psutil>=6,<8"' in dependencies
     assert '"bs4"' in probe
     assert '"psutil"' in probe
+    assert '"manim"' in probe and '"manimpango"' in probe

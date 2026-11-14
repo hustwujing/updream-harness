@@ -8,11 +8,11 @@ from pathlib import Path
 
 
 PACKAGES = (
-    "build-essential", "ca-certificates", "chromium", "cmake", "curl", "draw.io", "ffmpeg", "file",
+    "build-essential", "ca-certificates", "chromium", "cmake", "curl", "draw.io", "dvisvgm", "ffmpeg", "file",
     "fonts-liberation2", "fonts-noto-color-emoji", "fonts-wqy-zenhei", "git", "graphviz",
-    "imagemagick", "jq", "libgbm1", "libgl1-mesa-dri", "libglx-mesa0", "libreoffice-calc",
-    "libreoffice-core", "libreoffice-impress", "libreoffice-writer", "mesa-utils", "pandoc", "pkg-config",
-    "poppler-utils", "procps", "qpdf", "ripgrep", "tesseract-ocr", "tesseract-ocr-chi-sim", "unzip",
+    "imagemagick", "jq", "libcairo2", "libgbm1", "libgl1-mesa-dri", "libglx-mesa0", "libpango-1.0-0", "libpangocairo-1.0-0", "libreoffice-calc",
+    "libreoffice-core", "libreoffice-impress", "libreoffice-writer", "lmodern", "mesa-utils", "pandoc", "pkg-config",
+    "poppler-utils", "procps", "qpdf", "ripgrep", "tesseract-ocr", "tesseract-ocr-chi-sim", "texlive-fonts-recommended", "texlive-latex-base", "texlive-latex-extra", "unzip",
     "xauth", "xvfb", "xz-utils", "zip",
 )
 
@@ -22,6 +22,7 @@ COMMANDS = {
     "curl": ["curl", "--version"],
     "dot": ["dot", "-V"],
     "drawio": ["xvfb-run", "-a", "/usr/bin/drawio", "--no-sandbox", "--version"],
+    "dvisvgm": ["dvisvgm", "--version"],
     "ffmpeg": ["ffmpeg", "-version"],
     "ffprobe": ["ffprobe", "-version"],
     "file": ["file", "--version"],
@@ -31,7 +32,9 @@ COMMANDS = {
     "g++": ["g++", "--version"],
     "gcc": ["gcc", "--version"],
     "jq": ["jq", "--version"],
+    "latex": ["latex", "--version"],
     "make": ["make", "--version"],
+    "manim": ["manim", "--version"],
     "libreoffice": ["libreoffice", "--version"],
     "node": ["node", "--version"],
     "npm": ["npm", "--version"],

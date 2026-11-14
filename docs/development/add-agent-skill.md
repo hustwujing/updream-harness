@@ -5,6 +5,11 @@
 Required when adding reusable instructions, scripts, references or assets that
 a sandboxed Codex, Claude or DeepSeek Harness should discover and apply.
 
+For the complete change, build and release sequence, read [Skill and Runtime
+Image Lifecycle](skill-and-image-lifecycle.md). This document defines the
+Skill distribution contract and safety rules; the lifecycle document is the
+cross-layer checklist when a Skill also needs native dependencies.
+
 ## Distribution contract
 
 The repository-owned bundle lives in `runtime/skills/`. `sources.json` records
@@ -35,6 +40,33 @@ must remain Gateway capabilities.
 
 Keep one canonical source in `runtime/skills`; do not fork instructions per
 Harness. Verify native discovery with pinned client versions on Harness upgrade.
+
+## Layering and heavy rendering dependencies
+
+Separate a Skill's instruction bundle from the tools it requires to execute:
+
+- `SKILL.md`, references, examples, schemas and small deterministic scripts
+  belong in the signed Content Bundle. They are materialized per Harness and do
+  not require an image rebuild.
+- Python packages used by Runtime-owned commands belong in the Runtime base
+  dependency profile and `requirements-runtime.txt`.
+- OS packages, fonts, compilers, browsers, codecs and native renderers belong
+  in `foundation.Dockerfile` or a deliberately scoped optional Runtime image.
+- A large, infrequently used dependency must not be added to the common
+  foundation only for convenience. Give it a named dependency profile,
+  explicit capability detection and an image-size/cold-start review. If the
+  current routing cannot select an optional image, keep the Skill unavailable
+  until that image contract exists; do not ship instructions that advertise a
+  command which is absent at runtime.
+
+The Skill manifest records the split through `profile`, `dependencies` and
+`network`. A Skill is executable only when its declared commands and imports
+are present in the selected image. Content Bundle materialization alone is not
+evidence that a native renderer is installed.
+
+When a Skill needs an image dependency, update the dependency profile and the
+image probes in the same change. Do not merge a content-only Bundle that
+advertises a command which the deployed image cannot execute.
 
 ## Persistence and upgrades
 
@@ -67,3 +99,8 @@ OpenSandbox cases, prove native discovery, representative artifact execution,
 checkpoint, resume in a different sandbox, version upgrade and cleanup. Record
 the bundle version and image digest. A response that merely follows the Skill
 is insufficient evidence.
+
+For a Skill with a native or heavy renderer, the completion evidence must also
+include a low-quality deterministic render, output validation (codec, duration
+or file structure as applicable), a bounded timeout, and a clear failure when
+the selected image does not provide the capability.

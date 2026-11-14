@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "bundle_version": "2026.11.11.1",
+  "bundle_version": "2026.11.14.1",
   "retired_skills": [],
   "skills": [
     {
@@ -511,6 +511,39 @@
       },
       "content_sha256": "7f6f64a9647d855240a83a7bd96967339a1704c8b25f1410d699f793d1d1c5d4",
       "file_count": 6
+    },
+    {
+      "id": "manim-video",
+      "version": "1.0.0+45de9954",
+      "profile": "manim",
+      "network": "none for local rendering; narration/provider access requires a configured capability",
+      "test_case": "render a deterministic low-quality mathematical scene and validate the MP4",
+      "source": "vj-distributed-media-edit-system",
+      "source_url": "https://github.com/hustwujing/vj-distributed-media-edit-system",
+      "source_commit": "45de99548311ac67240217f23c8ead033a3dbe65",
+      "license": "MIT",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "entry": "SKILL.md",
+      "dependencies": {
+        "commands": [
+          "python3",
+          "manim",
+          "latex",
+          "dvisvgm",
+          "ffmpeg",
+          "ffprobe"
+        ],
+        "python_modules": [
+          "manim"
+        ],
+        "node_modules": []
+      },
+      "content_sha256": "54ed25332ce5d7cb34068752a635bc5edd6bee3cd0ca3d1d638bbac345c53818",
+      "file_count": 18
     },
     {
       "id": "mcp-builder",

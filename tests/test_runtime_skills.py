@@ -19,7 +19,7 @@ def test_skill_bundle_manifest_is_frozen_complete_and_licensed():
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     expected=json.loads((ROOT/'runtime/skills/manifest.json').read_text())
     assert module.expanded()==expected
-    assert len(expected['skills'])==25
+    assert len(expected['skills'])==26
     assert {row['id'] for row in expected['skills']}=={
         path.parent.name for path in (ROOT/'runtime/skills').glob('*/SKILL.md')}
     for row in expected['skills']:
@@ -51,11 +51,11 @@ def test_skills_materialize_for_each_native_harness_and_upgrade_managed_entries(
         (root/'.image-bundle.json').write_text(json.dumps({'bundle_version':'old','skills':['anatomy','removed-skill']}))
         (root/'removed-skill').mkdir()
         result=materialize_skills(harness,workspace)
-        assert result['bundle_version']=='2026.11.11.1' and result['skill_count']==25
+        assert result['bundle_version']=='2026.11.14.1' and result['skill_count']==26
         assert (root/'anatomy').is_symlink() and (root/'anatomy/SKILL.md').is_file()
         assert (root/'removed-skill').is_dir()
         assert (root/'custom-skill').is_dir()
-        assert len(list(root.glob('*/SKILL.md')))==25
+        assert len(list(root.glob('*/SKILL.md')))==26
 
 
 def test_deferred_skill_install_replaces_checkpoint_copy_after_restore(tmp_path, monkeypatch):
@@ -106,7 +106,8 @@ def test_checkpoint_restore_never_writes_through_materialized_skill_link(tmp_pat
 def test_runtime_image_declares_skill_dependencies_and_domestic_mirrors():
     foundation=(ROOT/'runtime/foundation.Dockerfile').read_text()
     base=(ROOT/'runtime/base.Dockerfile').read_text()
-    for package in ('graphviz','libreoffice-core','pandoc','poppler-utils','qpdf','tesseract-ocr'):
+    for package in ('dvisvgm','graphviz','libcairo2','libpango-1.0-0','libpangocairo-1.0-0','libreoffice-core',
+            'pandoc','poppler-utils','qpdf','tesseract-ocr','texlive-latex-base','texlive-latex-extra'):
         assert package in foundation
     for version in ('ARG REACT_VERSION=19.3.1','ARG DOCX_VERSION=9.15.3',
             'ARG PPTXGENJS_VERSION=4.0.1','ARG PNPM_VERSION=12.18.0'):

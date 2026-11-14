@@ -16,6 +16,7 @@ RUN sed -i -e "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}/debian|g" \
       cmake \
       chromium \
       curl \
+      dvisvgm \
       ffmpeg \
       file \
       fonts-noto-color-emoji \
@@ -26,6 +27,10 @@ RUN sed -i -e "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}/debian|g" \
       libgbm1 \
       libgl1-mesa-dri \
       libglx-mesa0 \
+      libcairo2 \
+      libpango-1.0-0 \
+      libpangocairo-1.0-0 \
+      lmodern \
       mesa-utils \
       pkg-config \
       procps \
@@ -72,6 +77,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       qpdf \
       tesseract-ocr \
       tesseract-ocr-chi-sim \
+      texlive-fonts-recommended \
+      texlive-latex-base \
+      texlive-latex-extra \
       zip && \
     echo "${DRAWIO_SHA256}  /tmp/drawio.deb" | sha256sum -c - && \
     apt-get install -y --no-install-recommends /tmp/drawio.deb && \

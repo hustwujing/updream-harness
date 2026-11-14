@@ -36,6 +36,7 @@ REQUIRED_FILES = {
     "image-to-editable-ppt": ["cli/pyproject.toml", "prompts/page-worker.md"],
     "internal-comms": ["examples/3p-updates.md", "examples/faq-answers.md"],
     "mcp-builder": ["scripts/connections.py", "reference/python_mcp_server.md"],
+    "manim-video": ["README.md", "references/scene-planning.md", "scripts/setup.sh", "LICENSE"],
     "pdf": ["forms.md", "scripts/convert_pdf_to_images.py"],
     "pptx": ["scripts/thumbnail.py", "scripts/office/validate.py"],
     "skill-creator": ["scripts/quick_validate.py", "references/schemas.md"],
@@ -83,7 +84,7 @@ def main() -> None:
     for harness in ("codex", "claude", "deepseek"):
         installed = materialize_skills(harness, Path("/workspace"))
         root = Path(installed["root"])
-        assert len(list(root.glob("*/SKILL.md"))) == 25
+        assert len(list(root.glob("*/SKILL.md"))) == 26
         results["harnesses"][harness] = installed["skill_count"]
 
     run("node", "--check", str(ROOT / "algorithmic-art/templates/generator_template.js"))
@@ -130,6 +131,28 @@ def main() -> None:
     results["artifacts"]["anatomy_png"] = anatomy_png.stat().st_size
     run("node", "--test", "scripts/lines.test.mjs", cwd=anatomy)
     evidence("anatomy", "example_build", "browser_capture", "node_test")
+
+    manim_dir = WORK / "manim"
+    manim_dir.mkdir()
+    manim_script = manim_dir / "smoke.py"
+    manim_script.write_text("""from manim import MathTex, Scene, Write
+
+class SmokeScene(Scene):
+    def construct(self):
+        formula = MathTex(r"e^{i\\pi}+1=0")
+        self.play(Write(formula), run_time=0.2)
+        self.wait(0.1)
+""")
+    run("manim", "-ql", "--disable_caching", "--media_dir", str(manim_dir / "media"),
+        str(manim_script), "SmokeScene")
+    videos = sorted((manim_dir / "media").glob("videos/smoke/480p15/SmokeScene.mp4"))
+    assert len(videos) == 1 and videos[0].stat().st_size > 0
+    probe = json.loads(run("ffprobe", "-v", "error", "-show_entries",
+        "format=duration:stream=codec_name,width,height", "-of", "json", str(videos[0])))
+    duration = float(probe["format"]["duration"])
+    assert duration > 0 and any(stream.get("codec_name") == "h264" for stream in probe["streams"])
+    results["artifacts"]["manim_mp4"] = videos[0].stat().st_size
+    evidence("manim-video", "latex_scene_render", "ffprobe_mp4")
 
     docx = WORK / "document.docx"
     node_docx = WORK / "document.cjs"

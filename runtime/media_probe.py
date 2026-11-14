@@ -7,7 +7,7 @@ import importlib
 MODULES = (
     "anthropic", "av", "bs4", "cairosvg", "cv2", "defusedxml", "ffmpeg", "filelock",
     "imagehash", "imageio", "jsonschema", "librosa", "lxml", "markitdown", "matplotlib", "mcp",
-    "moviepy", "mutagen", "networkx", "numpy", "onnxruntime", "openai", "openpyxl", "pandas",
+    "manim", "manimpango", "moviepy", "mutagen", "networkx", "numpy", "onnxruntime", "openai", "openpyxl", "pandas",
     "pdf2image", "pdfplumber", "piexif", "PIL", "playwright", "pptx", "psd_tools", "psutil",
     "pydub", "pymupdf", "pypdf", "pytesseract", "rembg", "reportlab", "requests", "scipy",
     "shapely", "skimage", "sklearn", "soundfile", "svgwrite", "sympy", "trimesh", "xmltodict", "yaml",

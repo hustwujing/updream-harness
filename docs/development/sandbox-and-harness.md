@@ -96,6 +96,11 @@ instructions publish a signed Content Bundle. Neither requires an image build.
 Native dependencies, helper executables, Harness clients, system packages,
 Bootstrap or either Bundle verification protocol still require an image build.
 
+Use the [Skill and Runtime Image Lifecycle](skill-and-image-lifecycle.md) when
+a Skill crosses these boundaries. The Skill must be present in the Content
+Bundle and its commands/imports must be proven in the selected final image;
+there is no implicit dependency installation or silent image fallback.
+
 Use [image dependency guidance](add-image-dependency.md) for package changes and
 [Agent Skill guidance](add-agent-skill.md) for reusable Harness instructions or
 assets. A dependency being present does not make a Skill discoverable, and a

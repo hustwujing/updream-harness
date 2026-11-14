@@ -1,6 +1,6 @@
 # Runtime Skill Bundle
 
-The immutable Runtime bundle contains 25 filesystem Skills. The exact source
+The immutable Runtime bundle contains 26 filesystem Skills. The exact source
 commit, content digest, license, dependency profile and test case for each is
 recorded in `runtime/skills/manifest.json`; `sources.json` is its editable
 source.
@@ -14,6 +14,7 @@ source.
 | `ningzimu/image-to-editable-ppt-skill` | Skill plus `editppt` CLI source |
 | `ningzimu/codex-ppt-skill` | `codex-ppt` |
 | `anthropics/skills` | all 19 directories containing `SKILL.md` |
+| `vj-distributed-media-edit-system` | `manim-video` with pinned Manim/LaTeX runtime dependencies |
 
 Every source is pinned by commit and copied into the repository; builds do not
 fetch Skill text. The upstream `doc-coauthoring` folder is the only directory
