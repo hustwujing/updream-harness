@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import httpx
 from typing import Any, Awaitable, Callable, Protocol
 
 from .domain import Harness
+from .grants import GrantAuthority,JobGrantRequest,TurnGrantRequest
 from .job_adapters import AdapterStatus, AdapterSubmission, BaseJobAdapter, JobExecutionContext
 from .job_contracts import JobState
 from .scheduler import ResourceRequest, Scheduler
@@ -17,6 +19,45 @@ class ChildExecutionBackend(Protocol):
                      receipt: dict[str, Any]) -> AdapterStatus: ...
     async def cleanup(self, context: JobExecutionContext, external_execution_id: str,
                       receipt: dict[str, Any]) -> None: ...
+
+
+class JobGrantFactory:
+    def __init__(self,settings):self.settings=settings;self.authority=GrantAuthority(settings.gateway_signing_key)
+    async def __call__(self,context:JobExecutionContext,reservation,sandbox_id:str):
+        request=context.request;harness=Harness(reservation.harness)
+        capability_ids=tuple(request.resource_requirements.get('required_capability_ids',()))
+        operation_ids=tuple(dict.fromkeys((request.descriptor_id,
+            *request.resource_requirements.get('required_operation_ids',()))))
+        output_scopes=tuple(f'{value.artifact_role}:{value.output_disposition.value}'
+            for value in request.expected_outputs)
+        routes=(f'/v1/models/{harness.value}','/v1/job-artifacts','/v1/telemetry',
+            *(('/v1/public-http',) if request.network_origins else ()))
+        token_budget=max(1,int(request.budget_requirements.get('model_tokens',
+            self.settings.model_token_budget)))
+        _,parent=self.authority.issue_turn(TurnGrantRequest(thread_id=context.job.thread_id,
+            turn_id=context.job.origin_turn_id,sandbox_id=sandbox_id,harness=harness,
+            model=str(request.parameters.get('model','')),routes=routes,network_access=(
+                'public' if request.network_origins else 'restricted'),
+            ttl_seconds=self.settings.capability_ttl_seconds,
+            max_requests=self.settings.capability_request_limit,
+            max_public_requests=self.settings.capability_public_request_limit,
+            token_budget=token_budget,artifact_ids=tuple(item.artifact_id for item in request.input_artifacts),
+            skill_ids=request.skill_ids,capability_ids=capability_ids,operation_ids=operation_ids,
+            child_profile_ids=(request.child_profile_id,),runtime_profile_ids=(request.runtime_profile_id,),
+            network_origins=request.network_origins,output_scopes=output_scopes,budget=request.budget_requirements))
+        operations=('model',*(('emit',) if request.expected_outputs else ()))
+        return self.authority.issue_job(parent,JobGrantRequest(group_id=context.job.group_id,
+            job_id=context.job.id,generation=context.generation,source_identity=sandbox_id,
+            descriptor_id=request.descriptor_id,descriptor_version=request.descriptor_version,
+            descriptor_digest=request.descriptor_digest,operations=operations,
+            artifact_ids=tuple(item.artifact_id for item in request.input_artifacts),
+            skill_ids=request.skill_ids,capability_ids=capability_ids,operation_ids=operation_ids,
+            child_profile_id=request.child_profile_id,runtime_profile_id=request.runtime_profile_id,
+            network_origins=request.network_origins,output_scopes=output_scopes,
+            parameter_digest=request.request_digest,budget=request.budget_requirements,routes=routes,
+            ttl_seconds=self.settings.capability_ttl_seconds,
+            max_requests=self.settings.capability_request_limit,
+            max_public_requests=self.settings.capability_public_request_limit,token_budget=token_budget))
 
 
 class HarnessJobAdapter(BaseJobAdapter):
@@ -81,6 +122,7 @@ class OpenSandboxChildBackend:
                  token_factory:Callable[[JobExecutionContext,Any,str],Awaitable[tuple[str,Any]]]):
         self.pool=pool;self.runtime=runtime;self.store=store;self.objects=objects
         self.settings=settings;self.token_factory=token_factory;self.sessions={}
+        self.collectors={}
 
     @staticmethod
     def _thread_id(job_id:str)->str:return 'child-job-'+job_id
@@ -131,15 +173,35 @@ class OpenSandboxChildBackend:
                     context.request.parameters.get('reasoning_effort','high')),
                 execution_id=execution_id,input_id=context.job.id)
             self.sessions[context.job.id]=sandbox
+            self._ensure_collector(context,sandbox,execution_id)
             return execution_id,{'sandbox_id':sandbox.id,'capability_nonce':claims.nonce,
                 'runtime_acceptance':accepted}
         except BaseException:
             await self.pool.release(sandbox,keep_attached=False)
             raise
 
+    def _ensure_collector(self,context:JobExecutionContext,sandbox,execution_id:str)->None:
+        existing=self.collectors.get(context.job.id)
+        if existing and not existing.done():return
+        self.collectors[context.job.id]=asyncio.create_task(
+            self._collect(context,sandbox,execution_id),name='child-activities-'+context.job.id)
+
+    async def _collect(self,context:JobExecutionContext,sandbox,execution_id:str)->None:
+        rows=await self.store.list_job_activities(context.job.id,0,1000)
+        cursor=rows[-1]['sequence'] if rows else 0
+        async for value in self.runtime.resume(sandbox,execution_id,cursor):
+            sequence=getattr(value,'runtime_sequence',0)
+            if not sequence:continue
+            if hasattr(value,'kind'):
+                kind=value.kind.value if hasattr(value.kind,'value') else str(value.kind)
+                status=('completed' if kind in {'step_finished','tool_finished'} else
+                    'failed' if kind=='error' else 'in_progress')
+                await self.store.append_job_activity(context.job.id,sequence,kind,value.payload,status=status)
+
     async def status(self,context:JobExecutionContext,external_execution_id:str,
                      receipt:dict[str,Any])->AdapterStatus:
         sandbox=await self._sandbox(context,receipt)
+        self._ensure_collector(context,sandbox,external_execution_id)
         value=await self.runtime.execution_status(sandbox,external_execution_id)
         if not value:return AdapterStatus(False)
         result=value.get('result')
@@ -158,6 +220,11 @@ class OpenSandboxChildBackend:
     async def cleanup(self,context:JobExecutionContext,external_execution_id:str,
                       receipt:dict[str,Any])->None:
         sandbox=await self._sandbox(context,receipt)
+        collector=self.collectors.pop(context.job.id,None)
+        if collector:
+            try:await asyncio.wait_for(asyncio.shield(collector),timeout=5)
+            except (asyncio.TimeoutError,Exception):
+                collector.cancel();await asyncio.gather(collector,return_exceptions=True)
         nonce=str(receipt.get('capability_nonce',''))
         if nonce:
             async with httpx.AsyncClient(timeout=10,trust_env=False) as client:

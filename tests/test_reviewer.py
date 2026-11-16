@@ -11,6 +11,9 @@ from sandbox_harness.job_coordinator import JobCoordinator
 from sandbox_harness.profiles import ProfileResolver
 from sandbox_harness.reviewer import (ReviewCandidate,ReviewRequest,ReviewerCoordinator,
     ReviewerJobAdapter,ReviewTrigger)
+from sandbox_harness.harness_job import JobGrantFactory
+from sandbox_harness.job_adapters import JobExecutionContext
+from sandbox_harness.config import Settings
 from sandbox_harness.store import Store
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -65,6 +68,15 @@ async def test_explicit_review_groups_candidates_into_one_read_only_harness_job(
         assert frozen.network_origins==() and frozen.expected_outputs==()
         assert frozen.resource_requirements['delegation_depth']==1
         assert 'node_id' not in frozen.resource_requirements and 'image_digest' in frozen.resource_requirements
+        job=prepared.jobs[0].model_copy(update={'generation':1})
+        context=JobExecutionContext(job=job,request=frozen,generation=1)
+        token,claims=await JobGrantFactory(Settings(backend='fake'))(context,
+            SimpleNamespace(harness='codex',runtime_profile_id=frozen.runtime_profile_id),
+            'reviewer-sandbox')
+        assert claims.skill_ids==['pdf'] and claims.artifact_ids==[value.id for value in artifacts]
+        assert claims.capability_ids==[] and claims.network_origins==[] and claims.output_scopes==[]
+        assert claims.operations==['model'] and claims.child_profile_id=='reviewer-readonly'
+        assert '/v1/public-http' not in claims.routes
     finally:await store.close()
 
 

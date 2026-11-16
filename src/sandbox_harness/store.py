@@ -789,6 +789,20 @@ class ResourceReservationRow(Base):
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class JobActivityRow(Base):
+    __tablename__ = "job_activities"
+    __table_args__ = (UniqueConstraint("job_id", "sequence"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(32), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(24))
+    summary: Mapped[str] = mapped_column(Text, default="", server_default="")
+    payload_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class Store:
     def __init__(self, database_url: str, redis_url: str = "", redis_prefix: str = "sandbox-harness:"):
         self.engine = create_async_engine(database_url)
@@ -1126,6 +1140,36 @@ class Store:
                 BudgetReservationRow.group_id == group_id).order_by(
                 BudgetReservationRow.budget_key))).scalars().all()
             return [self.budget_reservation_view(row) for row in rows]
+
+    @staticmethod
+    def job_activity_view(row: JobActivityRow)->dict:
+        return {'id':row.id,'job_id':row.job_id,'sequence':row.sequence,'kind':row.kind,
+            'status':row.status,'summary':row.summary,'payload':json.loads(row.payload_json),
+            'created_at':utc_datetime(row.created_at),'updated_at':utc_datetime(row.updated_at)}
+
+    async def append_job_activity(self, job_id: str, sequence: int, kind: str,
+                                  payload: dict, *, status: str = "in_progress") -> dict:
+        async with self.connections.begin() as db:
+            job=await db.get(JobRow,job_id)
+            if not job:raise KeyError('job_not_found')
+            row=(await db.execute(select(JobActivityRow).where(JobActivityRow.job_id==job_id,
+                JobActivityRow.sequence==sequence).with_for_update())).scalar_one_or_none()
+            timestamp=now();summary=str(payload.get('name') or payload.get('text') or kind)[:1000]
+            if row:
+                if row.kind!=kind or json.loads(row.payload_json)!=payload:
+                    raise RuntimeError('job_activity_sequence_conflict')
+                return self.job_activity_view(row)
+            row=JobActivityRow(id=identifier(),job_id=job_id,sequence=sequence,kind=kind,
+                status=status,summary=summary,payload_json=canonical_json(payload),
+                created_at=timestamp,updated_at=timestamp);db.add(row);await db.flush()
+            return self.job_activity_view(row)
+
+    async def list_job_activities(self,job_id:str,after:int=0,limit:int=500)->list[dict]:
+        async with self.connections() as db:
+            rows=(await db.execute(select(JobActivityRow).where(JobActivityRow.job_id==job_id,
+                JobActivityRow.sequence>after).order_by(JobActivityRow.sequence).limit(
+                min(max(limit,1),1000)))).scalars().all()
+            return [self.job_activity_view(row) for row in rows]
 
     async def create_job_group_draft(self, owner_id: str,
                                      value: JobGroupDraftCreate) -> tuple[JobGroupDraftView, bool]:

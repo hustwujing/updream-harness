@@ -31,6 +31,7 @@ from .job_catalog import JobCatalog
 from .profiles import ProfileResolver
 from .job_coordinator import JobCoordinator, JobGroupDraftUpdate
 from .job_continuation import ContinuationDispatcher
+from .execution_graph import ExecutionGraphProjector
 from .job_contracts import JobGroupCreate
 from .config import Settings, load_settings, validate_service_settings
 from .observability import RequestLoggingMiddleware, telemetry, event
@@ -201,6 +202,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     job_coordinator = JobCoordinator(store, job_catalog, profile_resolver=profile_resolver,
         draft_ttl_seconds=settings.media_draft_ttl_seconds)
     continuation_dispatcher = ContinuationDispatcher(store, broker)
+    execution_graph = ExecutionGraphProjector(store)
     sessions = Sessions(settings.session_signing_key)
     account_auth = AccountAuth(store, settings.auth_session_ttl_seconds)
     inspector = SandboxInspector(settings, store, objects, pool, broker.runtime, broker)
@@ -322,6 +324,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.inspector = inspector
     app.state.job_coordinator = job_coordinator
     app.state.continuation_dispatcher = continuation_dispatcher
+    app.state.execution_graph = execution_graph
 
     def cookie_path(request: Request) -> str:
         prefix = request.headers.get("x-forwarded-prefix", "").rstrip("/")
@@ -954,6 +957,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not await store.get_thread(thread_id, request.state.owner_id):
             raise HTTPException(404, "Thread not found")
         return await store.items_after(thread_id, after, min(max(limit, 1), 500), request.state.owner_id)
+
+    @app.get("/api/threads/{thread_id}/execution-graph")
+    async def thread_execution_graph(thread_id: str, request: Request, cursor: str = "",
+                                     include_history: bool = False):
+        try:
+            return await execution_graph.snapshot(thread_id, request.state.owner_id,
+                cursor=cursor, include_history=include_history)
+        except KeyError:
+            raise HTTPException(404, "Thread not found")
+
+    @app.get("/api/jobs/{job_id}/activities")
+    async def job_activities(job_id: str, request: Request, after: int = 0, limit: int = 500):
+        job = await store.get_job_for_owner(job_id, request.state.owner_id)
+        if not job:
+            raise HTTPException(404, "Job not found")
+        return await store.list_job_activities(job_id, after, limit)
 
     @app.get("/api/threads/{thread_id}/project-files")
     async def list_project_files(thread_id: str, request: Request):
