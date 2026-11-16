@@ -3,20 +3,27 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from fractions import Fraction
+import io
 from datetime import datetime,timezone
 import json
 import mimetypes
 from pathlib import Path
 import statistics
+import subprocess
+import tempfile
 import time
 import uuid
 
 import httpx
+from PIL import Image
 
 
 ROOT=Path(__file__).resolve().parents[1]
 TERMINAL={"COMPLETED","FAILED","CANCELLED","WAITING_USER"}
 DEFECT_CLASSES={"program_failure","optimizable_prompt"}
+MEDIA_SUFFIXES={"video":{'.mp4','.mov','.mkv','.webm'},"audio":{'.wav','.mp3','.m4a','.aac','.flac','.ogg'},
+    "image":{'.png','.jpg','.jpeg','.webp','.gif','.bmp','.tiff'}}
 INTERVENTIONS={
     "intervention_rename":"把交付文件名改为 revised-output.png，其余要求不变。",
     "intervention_resize_format":"把最终尺寸改为256×128，并同时交付PNG和WebP。",
@@ -64,6 +71,102 @@ def classify(final,artifacts,media_jobs=None):
             "budget_exhausted","content_policy_rejected","no_target_found"}:
         return "non_program_failure",code
     return "program_failure",code or state.lower() or "unknown_failure"
+
+
+def artifact_kind(name,mime):
+    prefix=(mime or "").split("/",1)[0]
+    if prefix in MEDIA_SUFFIXES:return prefix
+    suffix=Path(name).suffix.lower()
+    return next((kind for kind,values in MEDIA_SUFFIXES.items() if suffix in values),
+        "text" if prefix=="text" or suffix in {'.txt','.srt','.json','.csv','.md'} else "other")
+
+
+def probe_file(path):
+    value=json.loads(subprocess.check_output(["ffprobe","-v","error","-show_streams",
+        "-show_format","-of","json",str(path)],text=True))
+    streams=value.get("streams",[]);video=next((row for row in streams if row.get("codec_type")=="video"),{})
+    audio=next((row for row in streams if row.get("codec_type")=="audio"),{})
+    duration=float(value.get("format",{}).get("duration") or video.get("duration")
+        or audio.get("duration") or 0)
+    rate=video.get("avg_frame_rate") or "0/1"
+    try:fps=float(Fraction(rate))
+    except (ValueError,ZeroDivisionError):fps=0
+    return {"duration":duration,"width":int(video.get("width") or 0),
+        "height":int(video.get("height") or 0),"fps":fps,"audio":bool(audio),
+        "channels":int(audio.get("channels") or 0),"sample_rate":int(audio.get("sample_rate") or 0)}
+
+
+async def validate_artifacts(client,case,artifacts):
+    expected=case.get("expect",{});records=[]
+    temp_root=ROOT/".data/evidence/real-campaign/validation";temp_root.mkdir(parents=True,exist_ok=True)
+    for item in artifacts:
+        payload=item.get("payload") or {};identity=payload.get("artifact_id","")
+        name=item.get("summary","");mime=payload.get("mime","")
+        if not identity:
+            records.append({"name":name,"kind":"other","error":"missing_artifact_id"});continue
+        response=await client.get(f"api/artifacts/{identity}");response.raise_for_status();data=response.content
+        record={"name":name,"kind":artifact_kind(name,mime),"mime":mime,"size":len(data)}
+        try:
+            if record["kind"]=="image":
+                with Image.open(io.BytesIO(data)) as image:
+                    record.update(width=image.width,height=image.height,
+                        alpha="A" in image.getbands())
+            elif record["kind"] in {"video","audio"}:
+                suffix=Path(name).suffix or (".mp4" if record["kind"]=="video" else ".wav")
+                with tempfile.NamedTemporaryFile(dir=temp_root,suffix=suffix) as handle:
+                    handle.write(data);handle.flush();record.update(probe_file(Path(handle.name)))
+                    if expected.get("audio_silent") and record["kind"]=="video":
+                        measured=subprocess.run(["ffmpeg","-hide_banner","-nostats","-i",handle.name,
+                            "-map","0:a:0","-af","volumedetect","-f","null","-"],
+                            stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True,check=False).stderr
+                        record["audio_silent"]=("max_volume: -inf dB" in measured)
+            elif record["kind"]=="text":record["text"]=data.decode("utf-8","replace")
+        except Exception as exc:record["error"]=type(exc).__name__+":"+str(exc)[:200]
+        records.append(record)
+    errors=[]
+    if any(row.get("error") for row in records):
+        errors.extend(row["name"]+":"+row["error"] for row in records if row.get("error"))
+    kind=expected.get("kind");primary_kind="video" if kind=="video_variants" else kind
+    primary=[row for row in records if row["kind"]==primary_kind]
+    if kind and not primary:errors.append("missing_"+primary_kind)
+    if expected.get("min_images",0)>sum(row["kind"]=="image" for row in records):errors.append("min_images")
+    if expected.get("min_audio",0)>sum(row["kind"]=="audio" for row in records):errors.append("min_audio")
+    extensions={Path(row["name"]).suffix.lower() for row in records}
+    for extension in ([expected["extension"]] if expected.get("extension") else expected.get("extensions",[])):
+        if extension.lower() not in extensions:errors.append("missing_extension:"+extension)
+    if expected.get("extra_extension") and expected["extra_extension"].lower() not in extensions:
+        errors.append("missing_extra_extension:"+expected["extra_extension"])
+    combined="\n".join(row.get("text","") for row in records).casefold()
+    for term in expected.get("terms",[]):
+        if str(term).casefold() not in combined:errors.append("missing_term:"+str(term))
+    if primary:
+        dimensions={(row.get("width"),row.get("height")) for row in primary}
+        if expected.get("width") and (expected["width"],expected["height"]) not in dimensions:
+            errors.append("dimensions:"+str(sorted(dimensions)))
+        tolerance=float(expected.get("duration_tolerance",.5))
+        if expected.get("duration") is not None and not any(
+                abs(row.get("duration",-999)-expected["duration"])<=tolerance for row in primary):
+            errors.append("duration:"+str([round(row.get('duration',0),3) for row in primary]))
+        if expected.get("fps") and not any(abs(row.get("fps",0)-expected["fps"])<.1 for row in primary):
+            errors.append("fps:"+str([row.get('fps',0) for row in primary]))
+        if "audio" in expected and not any(row.get("audio")==expected["audio"] for row in primary):
+            errors.append("audio_track")
+        if expected.get("audio_silent") and not any(row.get("audio_silent") for row in primary):
+            errors.append("audio_not_silent")
+        if expected.get("alpha") and not any(row.get("alpha") for row in primary):errors.append("alpha")
+        if expected.get("channels") and not any(row.get("channels")==expected["channels"] for row in primary):
+            errors.append("channels")
+        if expected.get("sample_rate") and not any(row.get("sample_rate")==expected["sample_rate"] for row in primary):
+            errors.append("sample_rate")
+    if expected.get("sizes"):
+        actual={(row.get("width"),row.get("height")) for row in primary}
+        for size in expected["sizes"]:
+            if tuple(size) not in actual:errors.append("missing_size:"+"x".join(map(str,size)))
+    for key,kind_name in (("extra_alpha","image"),("extra_text","text"),
+            ("extra_audio","audio"),("extra_image","image")):
+        if expected.get(key) and not any(row["kind"]==kind_name and (
+                row.get("alpha") if key=="extra_alpha" else True) for row in records):errors.append(key)
+    return errors,[{key:value for key,value in row.items() if key!="text"} for row in records]
 
 
 async def wait_turn(client,turn_id,running,identity,timeout):
@@ -160,9 +263,13 @@ async def primary_case(client,case,args,running):
     response=await client.get(f"api/threads/{thread['id']}/items");response.raise_for_status()
     items=response.json();artifacts=[row for row in items if row.get("type")=="artifact"]
     classification,reason=classify(final,artifacts,media_jobs)
+    validation_errors,validation=await validate_artifacts(client,case,artifacts) if artifacts else ([],[])
+    if classification=="success" and validation_errors:
+        classification,reason="program_failure","artifact_contract:"+",".join(validation_errors[:12])
     return {"classification":classification,"reason":reason,"thread_id":thread["id"],
         "turn_id":turn["id"],"state":final["state"],"error_code":final.get("error_code",""),
-        "artifact_count":len(artifacts),"artifact_names":[row.get("summary","") for row in artifacts]}
+        "artifact_count":len(artifacts),"artifact_names":[row.get("summary","") for row in artifacts],
+        "artifact_validation":validation,"validation_errors":validation_errors}
 
 
 async def protocol_case(case,args,running):

@@ -1,8 +1,10 @@
 import ast
 import importlib.util
+import io
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -39,7 +41,7 @@ def campaign_module():
 
 
 class Response:
-    def __init__(self,value):self.value=value;self.status_code=200
+    def __init__(self,value):self.value=value;self.content=value if isinstance(value,bytes) else b"";self.status_code=200
     def json(self):return self.value
     def raise_for_status(self):pass
 
@@ -72,6 +74,11 @@ class MediaClient:
         self.confirmed=True;return Response({"id":"job-1","status":"created"})
 
 
+class ArtifactClient:
+    def __init__(self,values):self.values=values
+    async def get(self,path):return Response(self.values[path.rsplit("/",1)[-1]])
+
+
 @pytest.mark.asyncio
 async def test_media_campaign_confirms_waits_for_job_and_continuation(monkeypatch):
     campaign=campaign_module();client=MediaClient()
@@ -93,3 +100,17 @@ def test_media_provider_failure_is_not_prompt_failure():
     assert campaign.classify({"state":"COMPLETED"},[],[{
         "status":"failed","error_code":"artifact_registration_failed"}]) == (
             "program_failure","artifact_registration_failed")
+
+
+@pytest.mark.asyncio
+async def test_artifact_validator_checks_image_dimensions_and_text_contract():
+    campaign=campaign_module();image=io.BytesIO();Image.new("RGBA",(32,24),(1,2,3,0)).save(image,"PNG")
+    client=ArtifactClient({"image-1":image.getvalue(),"text-1":b"Blue square final video"})
+    artifacts=[{"summary":"result.png","payload":{"artifact_id":"image-1","mime":"image/png"}},
+        {"summary":"report.txt","payload":{"artifact_id":"text-1","mime":"text/plain"}}]
+    errors,evidence=await campaign.validate_artifacts(client,{"expect":{"kind":"image","width":32,
+        "height":24,"alpha":True,"extra_text":True}},artifacts)
+    assert errors==[] and evidence[0]["alpha"] is True
+    errors,_=await campaign.validate_artifacts(client,{"expect":{"kind":"image","width":64,
+        "height":24,"terms":["missing"]}},artifacts)
+    assert "missing_term:missing" in errors and any(row.startswith("dimensions:") for row in errors)
