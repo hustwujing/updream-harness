@@ -7,4 +7,5 @@ __pycache__/
 .env
 runtime/vendor/*.deb
 runtime/vendor/npm-prefix/
+runtime/vendor/faster-whisper-small/
 .runtime.env

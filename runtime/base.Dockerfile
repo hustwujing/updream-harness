@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends libcairo2-dev l
     apt-get purge -y libcairo2-dev libpango1.0-dev && \
     apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 COPY runtime/requirements-runtime.txt /opt/bootstrap/requirements-runtime.txt
+COPY runtime/vendor/faster-whisper-small/ /opt/models/faster-whisper-small/
 ARG SANDBOX_USERNAME=updream
 COPY src/sandbox_bootstrap /opt/bootstrap/sandbox_bootstrap
 COPY runtime/bundle_public_key.pem /opt/bootstrap/bundle_public_key.pem
@@ -17,6 +18,7 @@ RUN python runtime/toolchain_probe.py --verify runtime/toolchain.lock.json && \
     python runtime/media_probe.py && \
     install -m 0755 runtime/apply_patch.py /usr/local/bin/apply_patch && \
     install -m 0755 runtime/manim_smoke.py /usr/local/bin/sandbox-manim-smoke && \
+    install -m 0755 runtime/asr_cli.py /usr/local/bin/sandbox-transcribe && \
     install -m 0755 runtime/skill_smoke.py /usr/local/bin/sandbox-skill-smoke && \
     install -m 0755 runtime/browser_render.mjs /usr/local/bin/sandbox-browser-render && \
     install -m 0644 runtime/proxy_bridge.cjs /usr/local/lib/sandbox-proxy-bridge.cjs && \
@@ -29,6 +31,9 @@ RUN python runtime/toolchain_probe.py --verify runtime/toolchain.lock.json && \
     done && \
     install -m 0755 runtime/browser_screenshot.mjs /usr/local/bin/sandbox-browser-screenshot && \
     chmod -R a+rX runtime /opt/bootstrap && \
+    chmod -R a+rX /opt/models/faster-whisper-small && \
+    python runtime/asr_probe.py --model /opt/models/faster-whisper-small \
+      --audio runtime/asr-smoke.wav --expect "blue square" && \
     echo "${SANDBOX_USERNAME}" | grep -Eq '^[a-z_][a-z0-9_-]{1,31}$' && \
     groupadd --gid 10001 "${SANDBOX_USERNAME}" && \
     useradd --uid 10001 --gid 10001 --home-dir /workspace/state/home --no-create-home \
@@ -40,6 +45,7 @@ ENV LOGNAME=${SANDBOX_USERNAME}
 ENV PYTHONPATH=/opt/bootstrap
 ARG RELEASE=unknown
 ENV SANDBOX_HARNESS_RELEASE=${RELEASE}
+ENV SANDBOX_WHISPER_MODEL=/opt/models/faster-whisper-small
 USER 10001:10001
 EXPOSE 8080
 ENTRYPOINT ["python", "-m", "sandbox_bootstrap.main"]

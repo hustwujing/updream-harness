@@ -5,7 +5,7 @@ import importlib
 
 
 MODULES = (
-    "anthropic", "av", "bs4", "cairosvg", "cv2", "defusedxml", "ffmpeg", "filelock",
+    "anthropic", "av", "bs4", "cairosvg", "ctranslate2", "cv2", "defusedxml", "faster_whisper", "ffmpeg", "filelock",
     "imagehash", "imageio", "jsonschema", "librosa", "lxml", "markitdown", "matplotlib", "mcp",
     "manim", "manimpango", "moviepy", "mutagen", "networkx", "numpy", "onnxruntime", "openai", "openpyxl", "pandas",
     "pdf2image", "pdfplumber", "piexif", "PIL", "playwright", "pptx", "psd_tools", "psutil",

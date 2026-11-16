@@ -22,6 +22,7 @@ click==8.5.1
 cloudpickle==3.1.2
 colorama==0.4.6 ; sys_platform == 'win32'
 contourpy==1.4.0
+ctranslate2==4.9.0
 cryptography==50.0.2
 cssselect2==0.10.1
 cycler==0.12.1
@@ -33,14 +34,18 @@ et-xmlfile==2.0.0
 fastapi==0.162.2
 ffmpeg-python==0.2.0
 filelock==3.32.7
+faster-whisper==1.2.1
 flatbuffers==25.12.19
 fonttools==4.68.0
 future==1.0.0
+fsspec==2026.9.0
 googleapis-common-protos==1.76.0
 greenlet==3.5.6
 h11==0.16.0
 httpcore==1.0.9
 httptools==0.9.0
+huggingface-hub==0.36.0
+hf-xet==1.2.0
 httpx==0.28.1
 httpx-sse==0.4.3
 idna==3.20
@@ -153,6 +158,7 @@ sympy==1.14.0
 threadpoolctl==3.8.0
 tifffile==2026.11.8
 tinycss2==1.5.1
+tokenizers==0.22.2
 tqdm==4.70.1
 trimesh==4.12.2
 typing-extensions==4.16.0
