@@ -56,6 +56,13 @@ def test_portrait_intervention_grades_the_post_intervention_contract():
     assert case['expect']=={'kind':'video','width':360,'height':640,'duration':8}
 
 
+def test_vertical_replan_grades_the_post_intervention_contract():
+    catalog=__import__('json').loads((ROOT/'tests/real_cases/cases.json').read_text())
+    case=next(row for row in catalog['cases'] if row['id']=='R13')
+    assert case['dynamic_hook']=='intervention_pause_replan'
+    assert case['expect']=={'kind':'image','width':64,'height':128}
+
+
 def campaign_module():
     path=Path(__file__).with_name("run_real_campaign.py")
     spec=importlib.util.spec_from_file_location("real_campaign_runner",path)
