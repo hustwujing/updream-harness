@@ -38,6 +38,7 @@ class RuntimeDependencyProfile(BaseModel):
     id: str = Field(min_length=1, max_length=100)
     supported_harnesses: tuple[str, ...] = Field(min_length=1)
     image_digests: dict[str, str]
+    image_refs: dict[str, str] = Field(default_factory=dict)
     commands: tuple[str, ...] = ()
     python_modules: tuple[str, ...] = ()
     node_modules: tuple[str, ...] = ()
@@ -50,9 +51,14 @@ class RuntimeDependencyProfile(BaseModel):
     def exact_images(self):
         if set(self.image_digests) != set(self.supported_harnesses):
             raise ValueError("image_digests must exactly cover supported_harnesses")
+        if self.image_refs and set(self.image_refs) != set(self.supported_harnesses):
+            raise ValueError("image_refs must exactly cover supported_harnesses")
         if any(len(value) != 64 or any(character not in "0123456789abcdef" for character in value)
                for value in self.image_digests.values()):
             raise ValueError("Runtime image digest must be a 64-character SHA-256")
+        if any(not self.image_refs[harness].endswith('@sha256:'+self.image_digests[harness])
+               for harness in self.image_refs):
+            raise ValueError("Runtime image reference does not match image digest")
         return self
 
 

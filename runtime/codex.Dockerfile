@@ -1,8 +1,8 @@
 ARG CODEX_VERSION=0.153.4
 ARG CODEX_SOURCE_IMAGE=127.0.0.1:25001/sandbox-harness/codex@sha256:ca0d1754d7d4449af2e02b374c3968ea0d5875cf3a69dd5327e14a7029b9b5d4
-ARG BASE_IMAGE=sandbox-harness-runtime-base:build
+ARG PROFILE_IMAGE=sandbox-harness-parallel-profile:build
 FROM ${CODEX_SOURCE_IMAGE} AS harness_source
-FROM ${BASE_IMAGE}
+FROM ${PROFILE_IMAGE}
 USER root
 ARG CODEX_VERSION
 COPY --from=harness_source /usr/local/lib/node_modules/@openai/codex /usr/local/lib/node_modules/@openai/codex

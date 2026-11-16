@@ -1,5 +1,5 @@
-ARG BASE_IMAGE=sandbox-harness-runtime-base:build
-FROM ${BASE_IMAGE}
+ARG PROFILE_IMAGE=sandbox-harness-parallel-profile:build
+FROM ${PROFILE_IMAGE}
 USER root
 ARG PYPI_INDEX=http://mirrors.cloud.aliyuncs.com/pypi/simple/
 ARG DEEPSEEK_HARNESS_VERSION=0.2.1rc2
