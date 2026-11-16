@@ -234,7 +234,11 @@ class OpenSandboxChildBackend:
 
     async def status(self,context:JobExecutionContext,external_execution_id:str,
                      receipt:dict[str,Any])->AdapterStatus:
-        sandbox=await self._sandbox(context,receipt)
+        try:sandbox=await self._sandbox(context,receipt)
+        except RuntimeError as exc:
+            if str(exc)!='child_sandbox_unavailable':raise
+            return AdapterStatus(True,JobState.FAILED,{
+                'error_code':'child_sandbox_lost','sandbox_id':str(receipt.get('sandbox_id',''))})
         self._ensure_collector(context,sandbox,external_execution_id)
         value=await self.runtime.execution_status(sandbox,external_execution_id)
         if not value:
