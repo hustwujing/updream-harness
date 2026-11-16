@@ -25,6 +25,7 @@ def test_intervention_cases_use_messages_not_product_keyword_rules():
     assert "re.compile" not in source and "regex" not in source.lower()
     assert 'INTERVENTION_ASSETS={"intervention_replace_source":["poster.png"]}' in source
     assert '"attachments":intervention_attachments' in source
+    assert 'AFTER_ARTIFACT_INTERVENTIONS' in source and "intervention_artifact_timeout" in source
 
 
 def test_parallel_protocol_runner_never_fakes_unimplemented_success():

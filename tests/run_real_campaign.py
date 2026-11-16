@@ -45,6 +45,8 @@ INTERVENTIONS={
     "intervention_scope_successor":"基于已交付和原素材，追加32×24 successor 图片。",
 }
 INTERVENTION_ASSETS={"intervention_replace_source":["poster.png"]}
+AFTER_ARTIFACT_INTERVENTIONS={"intervention_thumbnail","intervention_new_goal",
+    "intervention_chain","intervention_scope_successor"}
 
 
 def now():return datetime.now(timezone.utc).isoformat()
@@ -278,7 +280,15 @@ async def primary_case(client,case,args,running):
     intervention=case.get("dynamic_hook")
     async def send_intervention():
         if not intervention:return
-        await asyncio.sleep(args.intervention_delay)
+        if intervention in AFTER_ARTIFACT_INTERVENTIONS:
+            deadline=time.monotonic()+args.timeout
+            while time.monotonic()<deadline:
+                current=await client.get(f"api/threads/{thread['id']}/items")
+                current.raise_for_status()
+                if any(row.get('type')=='artifact' for row in current.json()):break
+                await asyncio.sleep(1)
+            else:raise TimeoutError('intervention_artifact_timeout')
+        else:await asyncio.sleep(args.intervention_delay)
         message=INTERVENTIONS.get(intervention)
         if not message:return
         intervention_attachments=[await upload(client,ROOT/"tests/real_cases/assets"/name)
