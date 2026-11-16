@@ -15,6 +15,7 @@ RUN sed -i -e "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}/debian|g" \
     chown -R 10001:10001 /workspace /run/harness
 COPY src/sandbox_bootstrap /opt/bootstrap/sandbox_bootstrap
 COPY runtime/bundle_public_key.pem /opt/bootstrap/bundle_public_key.pem
+COPY runtime/requirements-runtime.txt /opt/bootstrap/requirements-runtime.txt
 COPY runtime/bootstrap_entrypoint.sh /usr/local/bin/sandbox-harness-runtime
 COPY runtime/runtime_cli_dispatch.sh /usr/local/bin/sandbox-runtime-cli
 RUN chmod 0755 /usr/local/bin/sandbox-harness-runtime /usr/local/bin/sandbox-runtime-cli && \

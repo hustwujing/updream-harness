@@ -84,6 +84,7 @@ def test_parallel_runtime_uses_four_stable_layers_and_domestic_mirrors():
     assert "ARG DEBIAN_MIRROR=http://mirrors.aliyun.com" in bootstrap
     assert "USER 10001:10001" in bootstrap and 'ENTRYPOINT ["/usr/bin/tini"' in bootstrap
     assert "HEALTHCHECK" in bootstrap
+    assert "runtime/requirements-runtime.txt /opt/bootstrap/requirements-runtime.txt" in bootstrap
     assert "skills" not in bootstrap.lower() and "ANTHROPIC_API_KEY" not in bootstrap
     assert "ARG NODE_MIRROR=https://npmmirror.com/mirrors/node" in common
     assert "ARG PYPI_INDEX=http://mirrors.cloud.aliyuncs.com/pypi/simple/" in common
