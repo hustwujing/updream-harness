@@ -21,3 +21,9 @@ def test_runtime_image_declares_offline_faster_whisper_contract():
     assert "COPY runtime/asr-smoke.wav /opt/platform/runtime/asr-smoke.wav" in dockerfile
     assert "python runtime/asr_probe.py" in dockerfile and "sandbox-transcribe" in dockerfile
     assert '"faster_whisper"' in probe and '"ctranslate2"' in probe
+
+
+def test_runtime_guidance_directs_agents_to_offline_transcription():
+    instructions=(ROOT/"src/sandbox_runtime/instructions.py").read_text()
+    assert "sandbox-transcribe SOURCE --output-dir DIRECTORY" in instructions
+    assert "do not probe for or install Whisper" in instructions
