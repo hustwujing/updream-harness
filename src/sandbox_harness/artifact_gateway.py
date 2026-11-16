@@ -10,6 +10,8 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import AsyncIterable
 
+from defusedxml import ElementTree
+
 from .job_contracts import OutputDisposition
 
 
@@ -52,8 +54,12 @@ class MimeRegistry:
         else:
             try:
                 text = path.read_text(encoding="utf-8")
-                detected = ("text/plain" if all(character in "\n\r\t" or ord(character) >= 32
-                    for character in text) else "application/octet-stream")
+                if all(character in "\n\r\t" or ord(character) >= 32 for character in text):
+                    try:root=ElementTree.fromstring(text)
+                    except (ElementTree.ParseError,ValueError):root=None
+                    detected=("image/svg+xml" if root is not None and
+                        root.tag in {"svg","{http://www.w3.org/2000/svg}svg"} else "text/plain")
+                else:detected="application/octet-stream"
             except (OSError, UnicodeDecodeError):
                 detected = "application/octet-stream"
         normalized = cls.normalize(declared)

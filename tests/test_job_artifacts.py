@@ -112,6 +112,12 @@ def test_mime_registry_sniffs_aliases_and_unknowns(tmp_path):
     assert MimeRegistry.detect(unknown)=="application/octet-stream"
     with pytest.raises(ValueError,match='does not match'):
         MimeRegistry.detect(pdf,'image/png')
+    svg=tmp_path/'shape.svg';svg.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>')
+    assert MimeRegistry.detect(svg,'image/svg+xml')=='image/svg+xml'
+    invalid=tmp_path/'invalid.svg';invalid.write_text('<svg>')
+    with pytest.raises(ValueError,match='does not match'):
+        MimeRegistry.detect(invalid,'image/svg+xml')
 
 
 async def test_collection_rejects_cardinality_order_and_aggregate_limits(tmp_path):
