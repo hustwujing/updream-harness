@@ -38,7 +38,10 @@ setfacl -R -m u:sandbox-harness:rX "$root/runtime"
 setfacl -m u:sandbox-harness:rx "$root/deploy"
 setfacl -m u:sandbox-harness:r "$root/deploy/job-catalog.example.json"
 find "$root/src" -type d -exec setfacl -m d:u:sandbox-harness:rX {} +
+find "$root/.venv" -type d -exec setfacl -m d:u:sandbox-harness:rX {} +
 setfacl -m d:u:sandbox-harness:rX "$root/web/dist"
+runuser -u sandbox-harness -- "$root/.venv/bin/python" -c \
+  "import sandbox_harness.main; import defusedxml.ElementTree"
 chmod 0755 "$root/deploy/network-rule.sh"
 install -m 0644 "$root"/deploy/systemd/*.service /etc/systemd/system/
 python3 "$root/deploy/record-release.py" --env-file "$env_file"

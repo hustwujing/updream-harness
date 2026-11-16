@@ -84,6 +84,8 @@ def test_service_account_can_read_descriptors_and_schema_startup_is_serialized()
     assert '"$root/runtime"' in installer
     assert 'u:sandbox-harness:rx "$root/deploy"' in installer
     assert '"$root/deploy/job-catalog.example.json"' in installer
+    assert 'find "$root/.venv" -type d -exec setfacl -m d:u:sandbox-harness:rX' in installer
+    assert 'import sandbox_harness.main; import defusedxml.ElementTree' in installer
     store=(ROOT/"src/sandbox_harness/store.py").read_text()
     assert "pg_advisory_xact_lock" in store
     assert "SCHEMA_INITIALIZATION_LOCK_ID" in store
