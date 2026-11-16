@@ -140,7 +140,7 @@ async def main():
     parser.add_argument("--concurrency",type=int,default=8);parser.add_argument("--timeout",type=int,default=7200)
     parser.add_argument("--progress-interval",type=int,default=120);parser.add_argument("--intervention-delay",type=int,default=10)
     parser.add_argument("--harness",default="codex");parser.add_argument("--model",default="gpt-5.6-sol")
-    parser.add_argument("--reasoning",default="high");args=parser.parse_args()
+    parser.add_argument("--reasoning",default="deep");args=parser.parse_args()
     catalog=json.loads(args.catalog.read_text());explicit=set(args.case)|set(args.affected_case)
     selected=[row for row in catalog["cases"] if not explicit or row["id"] in explicit]
     prior={}

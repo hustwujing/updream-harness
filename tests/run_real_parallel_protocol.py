@@ -10,6 +10,13 @@ import uuid
 import httpx
 
 
+def require(response:httpx.Response)->httpx.Response:
+    if response.is_error:
+        raise RuntimeError(f'HTTP {response.status_code} {response.request.method} '
+            f'{response.request.url.path}: {response.text[:1000]}')
+    return response
+
+
 def provider_job(index:int)->dict:
     return {'local_job_id':f'image-{index}','kind':'provider','adapter':'image.generate',
         'descriptor_id':'image.generate','descriptor_version':'1','descriptor_digest':'c'*64,
@@ -22,10 +29,10 @@ def provider_job(index:int)->dict:
 
 async def origin(client,args,identity):
     response=await client.post('api/threads',json={'harness':args.harness,'model':args.model,
-        'reasoning_level':args.reasoning,'title':'Protocol '+identity});response.raise_for_status();thread=response.json()
+        'reasoning_level':args.reasoning,'title':'Protocol '+identity});require(response);thread=response.json()
     response=await client.post(f"api/threads/{thread['id']}/turns",json={'message':'请简短回复已就绪。',
         'attachments':[],'idempotency_key':'protocol-origin-'+identity+'-'+uuid.uuid4().hex,
-        'delivery_mode':'start'});response.raise_for_status();return thread,response.json()
+        'delivery_mode':'start'});require(response);return thread,response.json()
 
 
 async def prepare(client,thread,turn,jobs,identity):
@@ -103,7 +110,7 @@ async def main():
     parser=argparse.ArgumentParser();parser.add_argument('--base-url',default='http://127.0.0.1:24766/')
     parser.add_argument('--case',required=True,choices=[f'P{value:02d}' for value in range(1,21)])
     parser.add_argument('--report',type=Path,required=True);parser.add_argument('--harness',default='codex')
-    parser.add_argument('--model',default='gpt-5.6-sol');parser.add_argument('--reasoning',default='high')
+    parser.add_argument('--model',default='gpt-5.6-sol');parser.add_argument('--reasoning',default='deep')
     args=parser.parse_args();value={}
     try:
         handler=HANDLERS.get(args.case)

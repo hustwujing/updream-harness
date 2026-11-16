@@ -11,6 +11,7 @@ def test_campaign_runner_has_bounded_parallel_stop_and_resume_protocol():
             "defect.set()","progress-interval","average_seconds","running","--affected-case"):
         assert value in source
     assert "min(8,args.concurrency)" in source
+    assert 'default="deep"' in source
     assert "program_failure" in source and "non_program_failure" in source
 
 
