@@ -154,40 +154,26 @@ async def test_thread_archive_filters_blocks_active_work_and_can_restore(tmp_pat
         await store.close()
 
 
-async def test_initialize_adds_archived_at_to_existing_database(tmp_path):
+async def test_initialize_does_not_migrate_stale_existing_database(tmp_path):
     import sqlite3
-    database = tmp_path / "archive-migration.db"
+    database = tmp_path / "stale-schema.db"
     store = Store("sqlite+aiosqlite:///" + str(database));await store.initialize();await store.close()
     with sqlite3.connect(database) as connection:
         connection.execute("ALTER TABLE threads DROP COLUMN archived_at")
-    upgraded = Store("sqlite+aiosqlite:///" + str(database))
-    await upgraded.initialize()
-    try:
-        async with upgraded.engine.connect() as connection:
-            from sqlalchemy import inspect
-            columns = await connection.run_sync(lambda value: {column["name"] for column in inspect(value).get_columns("threads")})
-        assert "archived_at" in columns
-    finally:
-        await upgraded.close()
-
-
-async def test_initialize_adds_restricted_network_access_to_existing_turns(tmp_path):
-    import sqlite3
-    database = tmp_path / "network-access-migration.db"
-    store = Store("sqlite+aiosqlite:///" + str(database));await store.initialize()
-    catalog = HarnessCatalog();profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
-    thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
-        reasoning_level="standard", title="Migration"), profile, "a" * 64)
-    turn,_,_=await store.create_turn(thread.id,TurnCreate(message="hello",idempotency_key="migration-turn"),
-        profile,"a" * 64)
-    await store.close()
-    with sqlite3.connect(database) as connection:
         connection.execute("ALTER TABLE turns DROP COLUMN network_access")
-    upgraded=Store("sqlite+aiosqlite:///"+str(database));await upgraded.initialize()
+    reopened = Store("sqlite+aiosqlite:///" + str(database))
+    await reopened.initialize()
     try:
-        restored=await upgraded.get_turn(turn.id)
-        assert restored.network_access == "restricted"
-    finally:await upgraded.close()
+        async with reopened.engine.connect() as connection:
+            from sqlalchemy import inspect
+            thread_columns = await connection.run_sync(
+                lambda value: {column["name"] for column in inspect(value).get_columns("threads")})
+            turn_columns = await connection.run_sync(
+                lambda value: {column["name"] for column in inspect(value).get_columns("turns")})
+        assert "archived_at" not in thread_columns
+        assert "network_access" not in turn_columns
+    finally:
+        await reopened.close()
 
 
 async def test_turn_lease_generation_fences_stale_broker_writes(tmp_path):

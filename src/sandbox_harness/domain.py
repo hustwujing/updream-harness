@@ -8,6 +8,8 @@ from uuid import uuid4
 from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .job_contracts import JobGroupDraftState, JobGroupState, JobKind, JobState
+
 
 def now() -> datetime:
     return datetime.now(timezone.utc)

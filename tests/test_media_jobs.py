@@ -280,7 +280,7 @@ def test_media_draft_rejects_malformed_turn_id():
             idempotency_key="media-key-bad-turn", turn_id="not-a-turn")
 
 
-def test_initialize_adds_media_generation_mode_and_reference_snapshots(tmp_path):
+def test_initialize_does_not_migrate_media_reference_columns(tmp_path):
     import asyncio
     import sqlite3
     database=tmp_path/"media-reference-migration.db";url="sqlite+aiosqlite:///"+str(database)
@@ -295,4 +295,4 @@ def test_initialize_adds_media_generation_mode_and_reference_snapshots(tmp_path)
     with sqlite3.connect(database) as connection:
         for table in ("media_drafts","media_jobs"):
             columns={row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
-            assert {"generation_mode","references_json"} <= columns
+            assert not {"generation_mode","references_json"} & columns

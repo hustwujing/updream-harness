@@ -249,7 +249,8 @@ The platform atomically validates the whole batch before acceptance:
 The platform chooses nodes, images, Sandboxes, and exact GPU devices. Harnesses never invent these
 infrastructure identities.
 
-An editable JobGroupDraft has state `DRAFT`, `AWAITING_CONFIRMATION`, `REJECTED`, or `EXPIRED`.
+An editable JobGroupDraft starts in `DRAFT` or `AWAITING_CONFIRMATION`; its immutable terminal
+states are `CONFIRMED`, `REJECTED`, and `EXPIRED`.
 Confirmation atomically creates an immutable Group and all member Jobs. The Group projection moves
 through `COMMITTED`, `RUNNING`, `TERMINAL`, and `CONTINUED`; `TERMINAL` is derived only when every
 member is terminal. Draft replay, edit, confirm, reject, and expiry use immutable request digests and

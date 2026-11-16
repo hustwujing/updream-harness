@@ -137,24 +137,22 @@ def test_direct_registration_waits_for_active_anonymous_work(tmp_path):
         assert blocked.status_code==409 and blocked.json()['detail']=='active_work_prevents_registration'
 
 
-def test_initialize_adds_avatar_fields_to_existing_users(tmp_path):
+def test_initialize_does_not_migrate_missing_avatar_fields(tmp_path):
     import sqlite3
     database=tmp_path/'avatar-migration.db';url='sqlite+aiosqlite:///'+str(database)
     async def seed():
-        store=Store(url);await store.initialize()
-        try:await store.create_user('avatar.user',PasswordHasher().hash('avatar password'))
-        finally:await store.close()
+        store=Store(url);await store.initialize();await store.close()
     asyncio.run(seed())
     with sqlite3.connect(database) as connection:
         for column in ('avatar_object_ref','avatar_mime','avatar_version'):
             connection.execute(f'ALTER TABLE users DROP COLUMN {column}')
-    async def upgrade():
+    async def reopen():
         store=Store(url);await store.initialize()
-        try:
-            user=(await store.get_user_by_username('avatar.user'))[0]
-            assert user.avatar_version==0 and await store.get_user_avatar(user.id) is None
-        finally:await store.close()
-    asyncio.run(upgrade())
+        await store.close()
+    asyncio.run(reopen())
+    with sqlite3.connect(database) as connection:
+        columns={row[1] for row in connection.execute('PRAGMA table_info(users)')}
+    assert not {'avatar_object_ref','avatar_mime','avatar_version'} & columns
 
 
 def test_login_rate_limit_is_scoped_to_source_and_username(tmp_path):

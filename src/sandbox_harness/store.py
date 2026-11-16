@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 
-from sqlalchemy import case, or_, Boolean, DateTime, Integer, String, Text, UniqueConstraint, delete, func, inspect, select, text, update
+from sqlalchemy import case, or_, Boolean, DateTime, Integer, String, Text, UniqueConstraint, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -18,6 +18,11 @@ from .domain import AccountView, RuntimeEvent, Artifact, Event, EventKind, Harne
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
 from .media_errors import media_error_guidance
+from .job_contracts import (
+    JobAttemptReceipt, JobGroupCreate, JobGroupDraftCreate, JobGroupDraftState,
+    JobGroupDraftView, JobGroupState, JobGroupView, JobKind, JobOutboxView,
+    JobState, JobView, TERMINAL_JOB_STATES,
+)
 
 
 class Base(DeclarativeBase):
@@ -33,6 +38,20 @@ def valid_project_file_path(path: str, source_type: str) -> bool:
 
 def utc_datetime(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def canonical_json(value) -> str:
+    return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def canonical_digest(value) -> str:
+    return hashlib.sha256(canonical_json(value).encode()).hexdigest()
+
+
+JOB_DATABASE_LOCK_ORDER = (
+    "authorization_snapshot", "budget_reservation", "job_group_draft", "job_group",
+    "job", "job_attempt", "job_lease", "job_artifact", "job_outbox",
+)
 
 
 class ThreadRow(Base):
@@ -533,6 +552,189 @@ class AuthSessionRow(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class JobGroupDraftRow(Base):
+    __tablename__ = "job_group_drafts"
+    __table_args__ = (UniqueConstraint("thread_id", "idempotency_key"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    origin_turn_id: Mapped[str] = mapped_column(String(32), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(160))
+    request_digest: Mapped[str] = mapped_column(String(64))
+    request_json: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(String(32), index=True)
+    requires_confirmation: Mapped[bool] = mapped_column(Boolean)
+    authorization_gaps_json: Mapped[str] = mapped_column(Text, default="[]")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    confirmed_group_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AuthorizationSnapshotRow(Base):
+    __tablename__ = "authorization_snapshots"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    origin_turn_id: Mapped[str] = mapped_column(String(32))
+    scope: Mapped[str] = mapped_column(String(24))
+    version: Mapped[int] = mapped_column(Integer)
+    snapshot_digest: Mapped[str] = mapped_column(String(64))
+    snapshot_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class JobGroupRow(Base):
+    __tablename__ = "job_groups"
+    __table_args__ = (
+        UniqueConstraint("thread_id", "idempotency_key"),
+        UniqueConstraint("draft_id"),
+    )
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    origin_turn_id: Mapped[str] = mapped_column(String(32), index=True)
+    draft_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(160))
+    request_digest: Mapped[str] = mapped_column(String(64))
+    authorization_snapshot_id: Mapped[str] = mapped_column(String(32))
+    state: Mapped[str] = mapped_column(String(32), index=True)
+    member_count: Mapped[int] = mapped_column(Integer)
+    suppress_continuation: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    continued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class JobRow(Base):
+    __tablename__ = "jobs"
+    __table_args__ = (
+        UniqueConstraint("group_id", "local_job_id"),
+        UniqueConstraint("thread_id", "idempotency_key"),
+    )
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    group_id: Mapped[str] = mapped_column(String(32), index=True)
+    local_job_id: Mapped[str] = mapped_column(String(100))
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    origin_turn_id: Mapped[str] = mapped_column(String(32), index=True)
+    kind: Mapped[str] = mapped_column(String(24), index=True)
+    adapter: Mapped[str] = mapped_column(String(160), index=True)
+    descriptor_id: Mapped[str] = mapped_column(String(160))
+    descriptor_version: Mapped[str] = mapped_column(String(64))
+    descriptor_digest: Mapped[str] = mapped_column(String(64))
+    idempotency_key: Mapped[str] = mapped_column(String(160))
+    request_digest: Mapped[str] = mapped_column(String(64))
+    request_json: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(String(32), index=True)
+    generation: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    replaces_job_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    reconciles_job_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    result_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    result_digest: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class JobAttemptRow(Base):
+    __tablename__ = "job_attempts"
+    __table_args__ = (UniqueConstraint("job_id", "generation"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(32), index=True)
+    generation: Mapped[int] = mapped_column(Integer)
+    worker_id: Mapped[str] = mapped_column(String(64), index=True)
+    node_id: Mapped[str] = mapped_column(String(160), default="", server_default="")
+    executor_kind: Mapped[str] = mapped_column(String(32))
+    retry_kind: Mapped[str] = mapped_column(String(32), default="initial", server_default="initial")
+    request_digest: Mapped[str] = mapped_column(String(64))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    acceptance_receipt_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    external_execution_id: Mapped[str] = mapped_column(Text, default="", server_default="")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    outcome: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    error_code: Mapped[str] = mapped_column(String(160), default="", server_default="")
+    error_detail: Mapped[str] = mapped_column(Text, default="", server_default="")
+
+
+class JobLeaseRow(Base):
+    __tablename__ = "job_leases"
+    job_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    attempt_id: Mapped[str] = mapped_column(String(32), unique=True)
+    worker_id: Mapped[str] = mapped_column(String(64), index=True)
+    generation: Mapped[int] = mapped_column(Integer)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class JobArtifactRow(Base):
+    __tablename__ = "job_artifacts"
+    __table_args__ = (UniqueConstraint("job_id", "artifact_role", "item_key"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(32), index=True)
+    artifact_id: Mapped[str] = mapped_column(String(32), unique=True)
+    artifact_role: Mapped[str] = mapped_column(String(100))
+    item_key: Mapped[str] = mapped_column(String(160))
+    position: Mapped[int] = mapped_column(Integer)
+    output_disposition: Mapped[str] = mapped_column(String(24))
+    sha256: Mapped[str] = mapped_column(String(64))
+    size: Mapped[int] = mapped_column(Integer)
+    mime: Mapped[str] = mapped_column(String(200))
+    object_ref: Mapped[str] = mapped_column(Text)
+    validation_receipts_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    review_receipts_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    state: Mapped[str] = mapped_column(String(24), default="committed", server_default="committed")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class JobOutboxRow(Base):
+    __tablename__ = "job_outbox"
+    __table_args__ = (UniqueConstraint("group_id"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    group_id: Mapped[str] = mapped_column(String(32), index=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    state: Mapped[str] = mapped_column(String(24), index=True)
+    result_digest: Mapped[str] = mapped_column(String(64))
+    result_json: Mapped[str] = mapped_column(Text)
+    claim_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    continuation_turn_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class BudgetReservationRow(Base):
+    __tablename__ = "budget_reservations"
+    __table_args__ = (UniqueConstraint("group_id", "budget_key"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    group_id: Mapped[str] = mapped_column(String(32), index=True)
+    authorization_snapshot_id: Mapped[str] = mapped_column(String(32), index=True)
+    budget_key: Mapped[str] = mapped_column(String(160))
+    reserved: Mapped[int] = mapped_column(Integer)
+    consumed: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    released: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    state: Mapped[str] = mapped_column(String(24), default="reserved", server_default="reserved")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class BudgetLedgerRow(Base):
+    __tablename__ = "budget_ledger"
+    __table_args__ = (UniqueConstraint("reservation_id", "idempotency_key"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    reservation_id: Mapped[str] = mapped_column(String(32), index=True)
+    group_id: Mapped[str] = mapped_column(String(32), index=True)
+    job_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    action: Mapped[str] = mapped_column(String(24))
+    amount: Mapped[int] = mapped_column(Integer)
+    idempotency_key: Mapped[str] = mapped_column(String(160))
+    detail_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class Store:
     def __init__(self, database_url: str, redis_url: str = "", redis_prefix: str = "sandbox-harness:"):
         self.engine = create_async_engine(database_url)
@@ -541,6 +743,9 @@ class Store:
         self.event_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.event_lock_users: dict[str, int] = defaultdict(int)
         self.event_lock_guard = asyncio.Lock()
+        self.job_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.job_lock_users: dict[str, int] = defaultdict(int)
+        self.job_lock_guard = asyncio.Lock()
 
     @asynccontextmanager
     async def event_lock(self, turn_id: str):
@@ -557,116 +762,433 @@ class Store:
                     self.event_lock_users.pop(turn_id, None)
                     self.event_locks.pop(turn_id, None)
 
+    @asynccontextmanager
+    async def job_lock(self, identity: str):
+        """Serialize one identity locally; database row locks fence other processes."""
+        async with self.job_lock_guard:
+            lock = self.job_locks[identity]
+            self.job_lock_users[identity] += 1
+        try:
+            async with lock:
+                yield
+        finally:
+            async with self.job_lock_guard:
+                self.job_lock_users[identity] -= 1
+                if self.job_lock_users[identity] == 0:
+                    self.job_lock_users.pop(identity, None)
+                    self.job_locks.pop(identity, None)
+
     async def initialize(self) -> None:
         if self.events:
             await self.events.initialize()
         async with self.engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
-            columns = await connection.run_sync(lambda value: {column["name"] for column in inspect(value).get_columns("threads")})
-            if "owner_id" not in columns:
-                await connection.execute(text("ALTER TABLE threads ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT 'legacy-unowned'"))
-            if "last_read_turn_id" not in columns:
-                await connection.execute(text("ALTER TABLE threads ADD COLUMN last_read_turn_id VARCHAR(32) NOT NULL DEFAULT ''"))
-            if "next_item_sequence" not in columns:
-                await connection.execute(text("ALTER TABLE threads ADD COLUMN next_item_sequence INTEGER NOT NULL DEFAULT 0"))
-                await connection.execute(text("UPDATE threads SET next_item_sequence = COALESCE((SELECT MAX(items.sequence) FROM items WHERE items.thread_id = threads.id), 0)"))
-            if "archived_at" not in columns:
-                definition = "TIMESTAMP WITH TIME ZONE NULL" if connection.dialect.name == "postgresql" else "DATETIME NULL"
-                await connection.execute(text(f"ALTER TABLE threads ADD COLUMN archived_at {definition}"))
-            await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_threads_owner_id ON threads (owner_id)"))
-            input_columns = await connection.run_sync(lambda value: {column["name"] for column in inspect(value).get_columns("turn_inputs")})
-            if "delivery_mode" not in input_columns:
-                await connection.execute(text("ALTER TABLE turn_inputs ADD COLUMN delivery_mode VARCHAR(30) NOT NULL DEFAULT 'pending'"))
-            inspected_turn_columns = await connection.run_sync(lambda value: inspect(value).get_columns("turns"))
-            turn_columns = {column["name"] for column in inspected_turn_columns}
-            additions = {
-                "network_access": "VARCHAR(20) NOT NULL DEFAULT 'restricted'",
-                "internal": "BOOLEAN NOT NULL DEFAULT FALSE",
-                "lease_owner": "VARCHAR(64) NOT NULL DEFAULT ''",
-                "lease_expires_at": "TIMESTAMP WITH TIME ZONE NULL",
-                "recovery_generation": "INTEGER NOT NULL DEFAULT 0",
-                "runtime_sequence": "INTEGER NOT NULL DEFAULT 0",
-                "runtime_execution_id": "VARCHAR(160) NOT NULL DEFAULT ''",
-                "runtime_image_digest": "TEXT NOT NULL DEFAULT ''",
-                "runtime_code_bundle_digest": "VARCHAR(64) NOT NULL DEFAULT ''",
-                "runtime_bundle_digest": "VARCHAR(64) NOT NULL DEFAULT ''",
-                "capability_nonce": "VARCHAR(64) NOT NULL DEFAULT ''",
-                "pending_final_state": "VARCHAR(24) NOT NULL DEFAULT ''",
-                "project_files_frozen": "BOOLEAN NOT NULL DEFAULT FALSE",
-                "cancel_requested": "BOOLEAN NOT NULL DEFAULT FALSE",
-                "submit_traceparent": "VARCHAR(128) NOT NULL DEFAULT ''",
-                "last_traceparent": "VARCHAR(128) NOT NULL DEFAULT ''",
-            }
-            for name, definition in additions.items():
-                if name not in turn_columns:
-                    await connection.execute(text(f"ALTER TABLE turns ADD COLUMN {name} {definition}"))
-            lease_column = next((column for column in inspected_turn_columns
-                if column["name"] == "lease_expires_at"), None)
-            if (connection.dialect.name == "postgresql" and lease_column is not None
-                    and not getattr(lease_column["type"], "timezone", False)):
-                await connection.execute(text(
-                    "ALTER TABLE turns ALTER COLUMN lease_expires_at TYPE TIMESTAMP WITH TIME ZONE "
-                    "USING lease_expires_at AT TIME ZONE current_setting('TIMEZONE')"
-                ))
-            event_columns = await connection.run_sync(lambda value: {column["name"] for column in inspect(value).get_columns("events")})
-            if "source_execution_id" not in event_columns:
-                await connection.execute(text("ALTER TABLE events ADD COLUMN source_execution_id VARCHAR(160) NOT NULL DEFAULT ''"))
-            if "source_sequence" not in event_columns:
-                await connection.execute(text("ALTER TABLE events ADD COLUMN source_sequence INTEGER NOT NULL DEFAULT 0"))
-            project_columns = await connection.run_sync(lambda value: {column["name"] for column in inspect(value).get_columns("project_files")})
-            if "deleted" not in project_columns:
-                await connection.execute(text("ALTER TABLE project_files ADD COLUMN deleted BOOLEAN NOT NULL DEFAULT FALSE"))
-            interaction_columns = await connection.run_sync(
-                lambda value: {column["name"] for column in inspect(value).get_columns("interactions")})
-            if "response_owner" not in interaction_columns:
-                await connection.execute(text(
-                    "ALTER TABLE interactions ADD COLUMN response_owner VARCHAR(64) NOT NULL DEFAULT ''"))
-            if "response_expires_at" not in interaction_columns:
-                await connection.execute(text(
-                    "ALTER TABLE interactions ADD COLUMN response_expires_at TIMESTAMP WITH TIME ZONE NULL"))
-            for table in ("media_drafts", "media_jobs"):
-                media_columns = await connection.run_sync(
-                    lambda value, table=table: {column["name"] for column in inspect(value).get_columns(table)})
-                if "output_role" not in media_columns:
-                    await connection.execute(text(
-                        f"ALTER TABLE {table} ADD COLUMN output_role VARCHAR(20) NOT NULL DEFAULT 'candidate'"))
-                if "generation_mode" not in media_columns:
-                    await connection.execute(text(
-                        f"ALTER TABLE {table} ADD COLUMN generation_mode VARCHAR(40) NOT NULL DEFAULT ''"))
-                if "references_json" not in media_columns:
-                    await connection.execute(text(
-                        f"ALTER TABLE {table} ADD COLUMN references_json TEXT NOT NULL DEFAULT '[]'"))
-                if table == "media_jobs" and "finished_at" not in media_columns:
-                    definition = "TIMESTAMP WITH TIME ZONE NULL" if connection.dialect.name == "postgresql" else "DATETIME NULL"
-                    await connection.execute(text(f"ALTER TABLE media_jobs ADD COLUMN finished_at {definition}"))
-                    await connection.execute(text(
-                        "UPDATE media_jobs SET finished_at = updated_at "
-                        "WHERE status IN ('succeeded', 'failed', 'cancelled', 'unknown')"))
-                if table == "media_jobs" and "credits_consumed" not in media_columns:
-                    await connection.execute(text(
-                        "ALTER TABLE media_jobs ADD COLUMN credits_consumed VARCHAR(40) NOT NULL DEFAULT ''"))
-                if table == "media_jobs" and "provider_started_at" not in media_columns:
-                    definition = "TIMESTAMP WITH TIME ZONE NULL" if connection.dialect.name == "postgresql" else "DATETIME NULL"
-                    await connection.execute(text(
-                        f"ALTER TABLE media_jobs ADD COLUMN provider_started_at {definition}"))
-                    await connection.execute(text(
-                        "UPDATE media_jobs SET provider_started_at = updated_at "
-                        "WHERE provider_job_id != '' AND provider_started_at IS NULL"))
-            user_columns = await connection.run_sync(
-                lambda value: {column["name"] for column in inspect(value).get_columns("users")})
-            user_additions = {
-                "avatar_object_ref": "TEXT NOT NULL DEFAULT ''",
-                "avatar_mime": "VARCHAR(100) NOT NULL DEFAULT ''",
-                "avatar_version": "INTEGER NOT NULL DEFAULT 0",
-            }
-            for name, definition in user_additions.items():
-                if name not in user_columns:
-                    await connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))
 
     async def close(self) -> None:
         if self.events:
             await self.events.close()
         await self.engine.dispose()
+
+    @staticmethod
+    def job_group_draft_view(row: JobGroupDraftRow) -> JobGroupDraftView:
+        return JobGroupDraftView(
+            id=row.id, owner_id=row.owner_id, thread_id=row.thread_id,
+            origin_turn_id=row.origin_turn_id, idempotency_key=row.idempotency_key,
+            request_digest=row.request_digest, state=JobGroupDraftState(row.state),
+            requires_confirmation=row.requires_confirmation,
+            authorization_gaps=tuple(json.loads(row.authorization_gaps_json)),
+            expires_at=utc_datetime(row.expires_at), confirmed_group_id=row.confirmed_group_id,
+            created_at=utc_datetime(row.created_at), updated_at=utc_datetime(row.updated_at),
+        )
+
+    @staticmethod
+    def job_group_view(row: JobGroupRow) -> JobGroupView:
+        return JobGroupView(
+            id=row.id, owner_id=row.owner_id, thread_id=row.thread_id,
+            origin_turn_id=row.origin_turn_id, draft_id=row.draft_id or "",
+            idempotency_key=row.idempotency_key, request_digest=row.request_digest,
+            state=JobGroupState(row.state), member_count=row.member_count,
+            suppress_continuation=row.suppress_continuation,
+            terminal_at=utc_datetime(row.terminal_at) if row.terminal_at else None,
+            continued_at=utc_datetime(row.continued_at) if row.continued_at else None,
+            created_at=utc_datetime(row.created_at), updated_at=utc_datetime(row.updated_at),
+        )
+
+    @staticmethod
+    def job_view(row: JobRow) -> JobView:
+        return JobView(
+            id=row.id, group_id=row.group_id, local_job_id=row.local_job_id,
+            owner_id=row.owner_id, thread_id=row.thread_id, origin_turn_id=row.origin_turn_id,
+            kind=JobKind(row.kind), adapter=row.adapter, idempotency_key=row.idempotency_key,
+            request_digest=row.request_digest, state=JobState(row.state), generation=row.generation,
+            cancel_requested=row.cancel_requested, replaces_job_id=row.replaces_job_id,
+            reconciles_job_id=row.reconciles_job_id, result=json.loads(row.result_json),
+            terminal_at=utc_datetime(row.terminal_at) if row.terminal_at else None,
+            created_at=utc_datetime(row.created_at), updated_at=utc_datetime(row.updated_at),
+        )
+
+    @staticmethod
+    def job_attempt_view(row: JobAttemptRow) -> JobAttemptReceipt:
+        return JobAttemptReceipt(
+            id=row.id, job_id=row.job_id, generation=row.generation, worker_id=row.worker_id,
+            node_id=row.node_id, executor_kind=row.executor_kind,
+            request_digest=row.request_digest,
+            accepted_at=utc_datetime(row.accepted_at) if row.accepted_at else None,
+            external_execution_id=row.external_execution_id,
+            acceptance_receipt=json.loads(row.acceptance_receipt_json),
+            started_at=utc_datetime(row.started_at),
+            finished_at=utc_datetime(row.finished_at) if row.finished_at else None,
+            outcome=row.outcome, error_code=row.error_code, error_detail=row.error_detail,
+        )
+
+    @staticmethod
+    def job_outbox_view(row: JobOutboxRow) -> JobOutboxView:
+        return JobOutboxView(
+            id=row.id, group_id=row.group_id, thread_id=row.thread_id, state=row.state,
+            result_digest=row.result_digest, continuation_turn_id=row.continuation_turn_id,
+            created_at=utc_datetime(row.created_at), updated_at=utc_datetime(row.updated_at),
+        )
+
+    async def create_job_group_draft(self, owner_id: str,
+                                     value: JobGroupDraftCreate) -> tuple[JobGroupDraftView, bool]:
+        value.validate_member_limit()
+        lock_identity = f"draft-create:{value.thread_id}:{value.idempotency_key}"
+        async with self.job_lock(lock_identity):
+            async with self.connections.begin() as db:
+                existing = (await db.execute(select(JobGroupDraftRow).where(
+                    JobGroupDraftRow.thread_id == value.thread_id,
+                    JobGroupDraftRow.idempotency_key == value.idempotency_key,
+                ).with_for_update())).scalar_one_or_none()
+                if existing:
+                    if existing.owner_id != owner_id or existing.request_digest != value.request_digest:
+                        raise RuntimeError("idempotency_conflict")
+                    return self.job_group_draft_view(existing), False
+                timestamp = now()
+                row = JobGroupDraftRow(
+                    id=identifier(), owner_id=owner_id, thread_id=value.thread_id,
+                    origin_turn_id=value.origin_turn_id, idempotency_key=value.idempotency_key,
+                    request_digest=value.request_digest, request_json=value.model_dump_json(),
+                    state=(JobGroupDraftState.AWAITING_CONFIRMATION.value
+                        if value.requires_confirmation else JobGroupDraftState.DRAFT.value),
+                    requires_confirmation=value.requires_confirmation,
+                    authorization_gaps_json=canonical_json(value.authorization_gaps),
+                    expires_at=value.expires_at, confirmed_group_id="",
+                    created_at=timestamp, updated_at=timestamp,
+                )
+                db.add(row)
+                await db.flush()
+                return self.job_group_draft_view(row), True
+
+    async def get_job_group_draft(self, draft_id: str,
+                                  owner_id: str | None = None) -> JobGroupDraftView | None:
+        async with self.connections() as db:
+            query = select(JobGroupDraftRow).where(JobGroupDraftRow.id == draft_id)
+            if owner_id is not None:
+                query = query.where(JobGroupDraftRow.owner_id == owner_id)
+            row = (await db.execute(query)).scalar_one_or_none()
+            return self.job_group_draft_view(row) if row else None
+
+    async def reject_job_group_draft(self, draft_id: str, owner_id: str) -> JobGroupDraftView:
+        async with self.job_lock(f"draft:{draft_id}"):
+            async with self.connections.begin() as db:
+                row = (await db.execute(select(JobGroupDraftRow).where(
+                    JobGroupDraftRow.id == draft_id, JobGroupDraftRow.owner_id == owner_id,
+                ).with_for_update())).scalar_one_or_none()
+                if not row:
+                    raise KeyError("job_group_draft_not_found")
+                if row.state not in {JobGroupDraftState.DRAFT.value,
+                                     JobGroupDraftState.AWAITING_CONFIRMATION.value}:
+                    raise RuntimeError("draft_not_editable")
+                row.state = JobGroupDraftState.REJECTED.value
+                row.updated_at = now()
+                await db.flush()
+                return self.job_group_draft_view(row)
+
+    async def expire_job_group_drafts(self) -> int:
+        async with self.connections.begin() as db:
+            result = await db.execute(update(JobGroupDraftRow).where(
+                JobGroupDraftRow.state.in_([
+                    JobGroupDraftState.DRAFT.value,
+                    JobGroupDraftState.AWAITING_CONFIRMATION.value,
+                ]),
+                JobGroupDraftRow.expires_at < now(),
+            ).values(state=JobGroupDraftState.EXPIRED.value, updated_at=now()))
+            return result.rowcount or 0
+
+    async def _create_job_group_locked(self, db: AsyncSession, owner_id: str,
+                                       value: JobGroupCreate, *, draft_id: str | None = None
+                                       ) -> tuple[JobGroupRow, list[JobRow]]:
+        value.validate_member_limit()
+        existing = (await db.execute(select(JobGroupRow).where(
+            JobGroupRow.thread_id == value.thread_id,
+            JobGroupRow.idempotency_key == value.idempotency_key,
+        ).with_for_update())).scalar_one_or_none()
+        if existing:
+            if existing.owner_id != owner_id or existing.request_digest != value.request_digest:
+                raise RuntimeError("idempotency_conflict")
+            jobs = (await db.execute(select(JobRow).where(
+                JobRow.group_id == existing.id).order_by(JobRow.created_at, JobRow.local_job_id))).scalars().all()
+            return existing, list(jobs)
+        timestamp = now()
+        snapshot_json = canonical_json(value.authorization_snapshot)
+        snapshot = AuthorizationSnapshotRow(
+            id=identifier(), owner_id=owner_id, thread_id=value.thread_id,
+            origin_turn_id=value.origin_turn_id, scope="job_group",
+            version=int(value.authorization_snapshot.get("version", 0)),
+            snapshot_digest=canonical_digest(value.authorization_snapshot),
+            snapshot_json=snapshot_json, created_at=timestamp,
+        )
+        group = JobGroupRow(
+            id=identifier(), owner_id=owner_id, thread_id=value.thread_id,
+            origin_turn_id=value.origin_turn_id, draft_id=draft_id,
+            idempotency_key=value.idempotency_key, request_digest=value.request_digest,
+            authorization_snapshot_id=snapshot.id, state=JobGroupState.COMMITTED.value,
+            member_count=len(value.jobs), suppress_continuation=value.suppress_continuation,
+            terminal_at=None, continued_at=None, created_at=timestamp, updated_at=timestamp,
+        )
+        db.add_all([snapshot, group])
+        rows: list[JobRow] = []
+        for request in value.jobs:
+            row = JobRow(
+                id=identifier(), group_id=group.id, local_job_id=request.local_job_id,
+                owner_id=owner_id, thread_id=value.thread_id, origin_turn_id=value.origin_turn_id,
+                kind=request.kind.value, adapter=request.adapter,
+                descriptor_id=request.descriptor_id, descriptor_version=request.descriptor_version,
+                descriptor_digest=request.descriptor_digest, idempotency_key=request.idempotency_key,
+                request_digest=request.request_digest, request_json=request.model_dump_json(),
+                state=JobState.CREATED.value, generation=0, cancel_requested=False,
+                replaces_job_id=request.replaces_job_id, reconciles_job_id=request.reconciles_job_id,
+                result_json="{}", result_digest="", terminal_at=None,
+                created_at=timestamp, updated_at=timestamp,
+            )
+            db.add(row)
+            rows.append(row)
+        await db.flush()
+        return group, rows
+
+    async def create_job_group(self, owner_id: str,
+                               value: JobGroupCreate) -> tuple[JobGroupView, list[JobView]]:
+        lock_identity = f"group-create:{value.thread_id}:{value.idempotency_key}"
+        async with self.job_lock(lock_identity):
+            async with self.connections.begin() as db:
+                group, jobs = await self._create_job_group_locked(db, owner_id, value)
+                return self.job_group_view(group), [self.job_view(job) for job in jobs]
+
+    async def confirm_job_group_draft(self, draft_id: str,
+                                      owner_id: str) -> tuple[JobGroupView, list[JobView]]:
+        expired = False
+        async with self.job_lock(f"draft:{draft_id}"):
+            async with self.connections.begin() as db:
+                draft = (await db.execute(select(JobGroupDraftRow).where(
+                    JobGroupDraftRow.id == draft_id,
+                    JobGroupDraftRow.owner_id == owner_id,
+                ).with_for_update())).scalar_one_or_none()
+                if not draft:
+                    raise KeyError("job_group_draft_not_found")
+                if draft.confirmed_group_id:
+                    group = await db.get(JobGroupRow, draft.confirmed_group_id)
+                    jobs = (await db.execute(select(JobRow).where(JobRow.group_id == group.id)
+                        .order_by(JobRow.created_at, JobRow.local_job_id))).scalars().all()
+                    return self.job_group_view(group), [self.job_view(job) for job in jobs]
+                if draft.state not in {JobGroupDraftState.DRAFT.value,
+                                       JobGroupDraftState.AWAITING_CONFIRMATION.value}:
+                    raise RuntimeError("draft_not_editable")
+                if utc_datetime(draft.expires_at) <= now():
+                    draft.state = JobGroupDraftState.EXPIRED.value
+                    draft.updated_at = now()
+                    expired = True
+                else:
+                    draft_value = JobGroupDraftCreate.model_validate_json(draft.request_json)
+                    group_value = JobGroupCreate.model_validate(draft_value.model_dump(exclude={
+                        "expires_at", "requires_confirmation", "authorization_gaps",
+                    }))
+                    group, jobs = await self._create_job_group_locked(
+                        db, owner_id, group_value, draft_id=draft.id)
+                    draft.state = JobGroupDraftState.CONFIRMED.value
+                    draft.confirmed_group_id = group.id
+                    draft.updated_at = now()
+                    await db.flush()
+                    return self.job_group_view(group), [self.job_view(job) for job in jobs]
+        if expired:
+            raise RuntimeError("draft_expired")
+        raise RuntimeError("draft_confirmation_failed")
+
+    async def get_job_group(self, group_id: str) -> JobGroupView | None:
+        async with self.connections() as db:
+            row = await db.get(JobGroupRow, group_id)
+            return self.job_group_view(row) if row else None
+
+    async def get_job(self, job_id: str) -> JobView | None:
+        async with self.connections() as db:
+            row = await db.get(JobRow, job_id)
+            return self.job_view(row) if row else None
+
+    async def list_jobs_for_thread(self, thread_id: str) -> list[JobView]:
+        async with self.connections() as db:
+            rows = (await db.execute(select(JobRow).where(JobRow.thread_id == thread_id)
+                .order_by(JobRow.created_at, JobRow.local_job_id))).scalars().all()
+            return [self.job_view(row) for row in rows]
+
+    async def claim_job(self, job_id: str, worker_id: str, node_id: str,
+                        lease_seconds: int, *, retry_kind: str = "initial") -> JobAttemptReceipt:
+        async with self.connections() as lookup:
+            group_id = (await lookup.execute(select(JobRow.group_id).where(
+                JobRow.id == job_id))).scalar_one_or_none()
+        if not group_id:
+            raise KeyError("job_not_found")
+        async with self.job_lock(f"group:{group_id}"):
+            async with self.connections.begin() as db:
+                group = await db.get(JobGroupRow, group_id, with_for_update=True)
+                job = (await db.execute(select(JobRow).where(
+                    JobRow.id == job_id).with_for_update())).scalar_one_or_none()
+                if not job:
+                    raise KeyError("job_not_found")
+                if JobState(job.state) in TERMINAL_JOB_STATES:
+                    raise RuntimeError("job_terminal")
+                job.generation += 1
+                job.state = JobState.RUNNING.value
+                job.updated_at = now()
+                if group.state == JobGroupState.COMMITTED.value:
+                    group.state = JobGroupState.RUNNING.value
+                    group.updated_at = now()
+                attempt = JobAttemptRow(
+                    id=identifier(), job_id=job.id, generation=job.generation,
+                    worker_id=worker_id, node_id=node_id, executor_kind=job.kind,
+                    retry_kind=retry_kind, request_digest=job.request_digest,
+                    accepted_at=None, acceptance_receipt_json="{}", external_execution_id="",
+                    started_at=now(), finished_at=None, outcome="", error_code="", error_detail="",
+                )
+                db.add(attempt)
+                await db.flush()
+                lease = await db.get(JobLeaseRow, job_id, with_for_update=True)
+                if lease and utc_datetime(lease.expires_at) > now() and lease.worker_id != worker_id:
+                    raise RuntimeError("job_already_leased")
+                if lease:
+                    lease.attempt_id = attempt.id
+                    lease.worker_id = worker_id
+                    lease.generation = job.generation
+                    lease.expires_at = now() + timedelta(seconds=lease_seconds)
+                    lease.updated_at = now()
+                else:
+                    lease = JobLeaseRow(
+                        job_id=job.id, attempt_id=attempt.id, worker_id=worker_id,
+                        generation=job.generation,
+                        expires_at=now() + timedelta(seconds=lease_seconds), updated_at=now(),
+                    )
+                    db.add(lease)
+                await db.flush()
+                return self.job_attempt_view(attempt)
+
+    async def release_job_lease(self, job_id: str, worker_id: str, generation: int) -> bool:
+        async with self.connections.begin() as db:
+            result = await db.execute(delete(JobLeaseRow).where(
+                JobLeaseRow.job_id == job_id, JobLeaseRow.worker_id == worker_id,
+                JobLeaseRow.generation == generation,
+            ))
+            return bool(result.rowcount)
+
+    async def record_job_acceptance(self, job_id: str, worker_id: str, generation: int, *,
+                                    external_execution_id: str, receipt: dict) -> JobAttemptReceipt:
+        async with self.job_lock(f"job:{job_id}"):
+            async with self.connections.begin() as db:
+                job = await db.get(JobRow, job_id, with_for_update=True)
+                attempt = (await db.execute(select(JobAttemptRow).where(
+                    JobAttemptRow.job_id == job_id,
+                    JobAttemptRow.generation == generation,
+                ).with_for_update())).scalar_one_or_none()
+                lease = await db.get(JobLeaseRow, job_id, with_for_update=True)
+                if (not job or not attempt or not lease or lease.worker_id != worker_id
+                        or lease.generation != generation or job.generation != generation):
+                    raise RuntimeError("stale_job_generation")
+                encoded = canonical_json(receipt)
+                if attempt.accepted_at:
+                    if (attempt.external_execution_id != external_execution_id
+                            or attempt.acceptance_receipt_json != encoded):
+                        raise RuntimeError("acceptance_receipt_conflict")
+                    return self.job_attempt_view(attempt)
+                attempt.accepted_at = now()
+                attempt.external_execution_id = external_execution_id
+                attempt.acceptance_receipt_json = encoded
+                job.state = JobState.WAITING_EXTERNAL.value
+                job.updated_at = now()
+                await db.flush()
+                return self.job_attempt_view(attempt)
+
+    async def transition_job(self, job_id: str, state: JobState, *, expected_generation: int,
+                             result: dict | None = None) -> JobView:
+        async with self.connections() as lookup:
+            group_id = (await lookup.execute(select(JobRow.group_id).where(
+                JobRow.id == job_id))).scalar_one_or_none()
+        if not group_id:
+            raise KeyError("job_not_found")
+        async with self.job_lock(f"group:{group_id}"):
+            async with self.connections.begin() as db:
+                group = await db.get(JobGroupRow, group_id, with_for_update=True)
+                job = await db.get(JobRow, job_id, with_for_update=True)
+                if job.generation != expected_generation:
+                    raise RuntimeError("stale_job_generation")
+                result_value = result or {}
+                encoded = canonical_json(result_value)
+                digest = hashlib.sha256(encoded.encode()).hexdigest()
+                if JobState(job.state) in TERMINAL_JOB_STATES:
+                    if job.state == state.value and job.result_digest == digest:
+                        return self.job_view(job)
+                    raise RuntimeError("job_already_terminal")
+                job.state = state.value
+                job.result_json = encoded
+                job.result_digest = digest
+                job.updated_at = now()
+                if state in TERMINAL_JOB_STATES:
+                    job.terminal_at = now()
+                    attempt = (await db.execute(select(JobAttemptRow).where(
+                        JobAttemptRow.job_id == job.id,
+                        JobAttemptRow.generation == job.generation,
+                    ).with_for_update())).scalar_one_or_none()
+                    if attempt:
+                        attempt.finished_at = now()
+                        attempt.outcome = state.value
+                    await db.execute(delete(JobLeaseRow).where(JobLeaseRow.job_id == job.id))
+                if group.state == JobGroupState.COMMITTED.value:
+                    group.state = JobGroupState.RUNNING.value
+                    group.updated_at = now()
+                jobs = (await db.execute(select(JobRow).where(JobRow.group_id == group.id)
+                    .order_by(JobRow.local_job_id).with_for_update())).scalars().all()
+                if all(JobState(member.state) in TERMINAL_JOB_STATES for member in jobs):
+                    terminal_payload = [{
+                        "job_id": member.id,
+                        "local_job_id": member.local_job_id,
+                        "state": member.state,
+                        "result_digest": member.result_digest,
+                    } for member in jobs]
+                    result_json = canonical_json(terminal_payload)
+                    result_digest = hashlib.sha256(result_json.encode()).hexdigest()
+                    group.state = JobGroupState.TERMINAL.value
+                    group.terminal_at = group.terminal_at or now()
+                    group.updated_at = now()
+                    outbox = (await db.execute(select(JobOutboxRow).where(
+                        JobOutboxRow.group_id == group.id).with_for_update())).scalar_one_or_none()
+                    if not outbox:
+                        db.add(JobOutboxRow(
+                            id=identifier(), group_id=group.id, thread_id=group.thread_id,
+                            state="suppressed" if group.suppress_continuation else "ready",
+                            result_digest=result_digest, result_json=result_json,
+                            claim_owner="", claim_expires_at=None, continuation_turn_id="",
+                            created_at=now(), updated_at=now(),
+                        ))
+                await db.flush()
+                return self.job_view(job)
+
+    async def get_job_outbox(self, group_id: str) -> JobOutboxView | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(JobOutboxRow).where(
+                JobOutboxRow.group_id == group_id))).scalar_one_or_none()
+            return self.job_outbox_view(row) if row else None
+
+    async def list_job_outboxes(self) -> list[JobOutboxView]:
+        async with self.connections() as db:
+            rows = (await db.execute(select(JobOutboxRow).order_by(
+                JobOutboxRow.created_at, JobOutboxRow.id))).scalars().all()
+            return [self.job_outbox_view(row) for row in rows]
 
     @staticmethod
     def thread_view(row: ThreadRow) -> ThreadView:
