@@ -239,7 +239,6 @@ class OpenSandboxChildBackend:
             if str(exc)!='child_sandbox_unavailable':raise
             return AdapterStatus(True,JobState.FAILED,{
                 'error_code':'child_sandbox_lost','sandbox_id':str(receipt.get('sandbox_id',''))})
-        self._ensure_collector(context,sandbox,external_execution_id)
         value=await self.runtime.execution_status(sandbox,external_execution_id)
         if not value:
             try:await self.pool.backend.get(sandbox.id)
@@ -248,6 +247,7 @@ class OpenSandboxChildBackend:
                 return AdapterStatus(True,JobState.FAILED,{
                     'error_code':'child_sandbox_lost','sandbox_id':sandbox.id})
             return AdapterStatus(False)
+        self._ensure_collector(context,sandbox,external_execution_id)
         result=value.get('result')
         if result is None:return AdapterStatus(False)
         status=result.get('status')
