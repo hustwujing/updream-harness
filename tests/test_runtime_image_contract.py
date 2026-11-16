@@ -112,6 +112,7 @@ def test_parallel_profiles_are_dependency_only_and_cover_declared_catalog():
     assert "ffmpeg" in (ROOT/"runtime/profiles/media-cpu.Dockerfile").read_text()
     assert "libreoffice" in (ROOT/"runtime/profiles/office.Dockerfile").read_text()
     assert "playwright install chromium" in (ROOT/"runtime/profiles/web-browser.Dockerfile").read_text()
+    assert "npm install -g --force" in (ROOT/"runtime/profiles/primary-full-cpu.Dockerfile").read_text()
     assert "sqlglot" in (ROOT/"runtime/requirements-data.txt").read_text()
     assert all("sandbox-review" in (ROOT/"runtime/profiles"/f"{name}.Dockerfile").read_text()
         for name in expected)

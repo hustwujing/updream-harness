@@ -18,7 +18,7 @@ COPY runtime/requirements-runtime.txt /tmp/requirements-profile.txt
 RUN pip install --no-cache-dir --trusted-host mirrors.cloud.aliyuncs.com \
       --index-url ${PYPI_INDEX} -r /tmp/requirements-profile.txt && rm /tmp/requirements-profile.txt && \
     apt-get purge -y libcairo2-dev libpango1.0-dev && apt-get autoremove -y && \
-    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g --registry="${NPM_REGISTRY}" \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g --force --registry="${NPM_REGISTRY}" \
       playwright@1.65.0 three@0.187.0 esbuild@0.28.2 react@19.3.1 react-dom@19.3.1 \
       react-icons@5.7.0 typescript@7.0.2 pnpm@12.18.0 docx@9.15.3 \
       pptxgenjs@4.0.1 sharp@0.35.5 && \
