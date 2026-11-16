@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import mimetypes
@@ -19,6 +20,8 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 import uuid
 from urllib.parse import quote, urlsplit
+
+import httpx
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -61,6 +64,56 @@ class Configure(BaseModel):
     runtime_profile_id: str = Field(default="", max_length=100)
     skill_ids: list[str] = Field(default_factory=list, max_length=64)
     skill_digests: dict[str, str] = Field(default_factory=dict)
+
+
+class JobArtifactStage(BaseModel):
+    job_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    generation: int = Field(ge=1)
+    path: str = Field(min_length=1, max_length=2000)
+    artifact_role: str = Field(pattern=r"^[a-z][a-z0-9_-]*$")
+    item_key: str = Field(min_length=1, max_length=160)
+    position: int = Field(ge=0)
+    filename: str = Field(min_length=1, max_length=255)
+    output_disposition: str = Field(pattern=r"^(candidate|workspace|delivery)$")
+    mime: str = Field(default="application/octet-stream", max_length=200)
+
+
+def stage_regular_file(source: Path, staging_root: Path, maximum: int, after_copy=None) -> Path:
+    initial = source.lstat()
+    if source.is_symlink() or not stat.S_ISREG(initial.st_mode):
+        raise ValueError("Artifact source must be a regular file")
+    resolved = source.resolve(strict=True)
+    output_root = OUTPUTS.resolve()
+    if resolved != output_root and output_root not in resolved.parents:
+        raise ValueError("Artifact source must be inside /workspace/outputs")
+    descriptor = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    staging_root.mkdir(parents=True, exist_ok=True)
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError("Artifact source must be a regular file")
+        if before.st_size > maximum:
+            raise ValueError("Artifact exceeds byte limit")
+        with NamedTemporaryFile(dir=staging_root, prefix=".artifact-stage-", delete=False) as target:
+            staged = Path(target.name);copied = 0
+            while True:
+                chunk = os.read(descriptor, min(1024 * 1024, maximum + 1 - copied))
+                if not chunk:break
+                copied += len(chunk)
+                if copied > maximum:raise ValueError("Artifact exceeds byte limit")
+                target.write(chunk)
+            target.flush();os.fsync(target.fileno())
+        if after_copy:after_copy()
+        after = os.fstat(descriptor)
+        current = source.stat(follow_symlinks=False)
+        identity = lambda value:(value.st_dev,value.st_ino,value.st_size,value.st_mtime_ns)
+        if identity(before) != identity(after) or identity(after) != identity(current) or copied != before.st_size:
+            staged.unlink(missing_ok=True)
+            raise RuntimeError("Artifact source changed during staging")
+        os.chmod(staged,0o600)
+        return staged
+    finally:
+        os.close(descriptor)
 
 
 class TurnRequest(BaseModel):
@@ -834,6 +887,63 @@ def create_app() -> FastAPI:
                 bundle_version=skills["bundle_version"], skill_count=skills["skill_count"])
         load_jobs()
         return {"restored": True}
+
+    @app.post("/v1/job-artifacts/stage")
+    async def stage_job_artifact(value: JobArtifactStage):
+        token_path = Path(os.environ.get("HARNESS_CAPABILITY_TOKEN_FILE", RUN / "capability-token"))
+        gateway_url = os.environ.get("HARNESS_GATEWAY_URL", "").rstrip("/")
+        if not token_path.is_file() or not gateway_url:
+            raise HTTPException(409, "Job capability is not configured")
+        token = token_path.read_text().strip()
+        try:
+            encoded = token.split(".", 1)[0]
+            claims = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise HTTPException(409, "Job capability token is malformed") from exc
+        if (claims.get("scope") != "job" or claims.get("job_id") != value.job_id
+                or int(claims.get("generation") or 0) != value.generation):
+            raise HTTPException(403, "Artifact identity is outside Job capability")
+        try:
+            staged = await asyncio.to_thread(stage_regular_file, Path(value.path),
+                RUN / "artifact-stage", 2 * 1024 * 1024 * 1024)
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        headers = {
+            "Authorization": "Bearer " + token,
+            "X-Updream-Thread-Id": str(claims.get("thread_id", "")),
+            "X-Updream-Turn-Id": str(claims.get("turn_id", "")),
+            "X-Updream-Group-Id": str(claims.get("group_id", "")),
+            "X-Updream-Job-Id": value.job_id,
+            "X-Updream-Job-Generation": str(value.generation),
+            "X-Updream-Source-Sandbox": str(claims.get("source_identity", "")),
+            "X-Updream-Descriptor-Id": str(claims.get("descriptor_id", "")),
+            "X-Updream-Descriptor-Version": str(claims.get("descriptor_version", "")),
+            "X-Updream-Descriptor-Digest": str(claims.get("descriptor_digest", "")),
+            "X-Updream-Operation": "emit",
+            "X-Updream-Artifact-Ids": json.dumps(claims.get("artifact_ids", [])),
+            "X-Updream-Skill-Ids": json.dumps(claims.get("skill_ids", [])),
+            "X-Updream-Capability-Id": str((claims.get("capability_ids") or [""])[0]),
+            "X-Updream-Operation-Id": str((claims.get("operation_ids") or [""])[0]),
+            "X-Updream-Output-Scope": f"{value.artifact_role}:{value.output_disposition}",
+            "X-Updream-Child-Profile-Id": str(claims.get("child_profile_id", "")),
+            "X-Updream-Runtime-Profile-Id": str(claims.get("runtime_profile_id", "")),
+        }
+        async def content():
+            with staged.open("rb") as stream:
+                while chunk := await asyncio.to_thread(stream.read, 1024 * 1024):
+                    yield chunk
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(3600, connect=10), trust_env=False) as client:
+                response = await client.post(gateway_url + "/v1/job-artifacts/emit", headers=headers,
+                    params={"artifact_role":value.artifact_role,"item_key":value.item_key,
+                        "position":value.position,"filename":value.filename,
+                        "output_disposition":value.output_disposition,"mime":value.mime},
+                    content=content())
+            if not response.is_success:
+                raise HTTPException(response.status_code, response.text[:2000])
+            return response.json()
+        finally:
+            staged.unlink(missing_ok=True)
 
     @app.put("/v1/attachments/file")
     async def put_attachment(request: Request, name: str):

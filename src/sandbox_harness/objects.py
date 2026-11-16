@@ -5,6 +5,7 @@ from .observability import observed_sync
 import hashlib
 import os
 import re
+import shutil
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
@@ -46,6 +47,21 @@ class ObjectStore:
             with NamedTemporaryFile(dir=target.parent, delete=False) as stream:
                 stream.write(data)
                 temporary = Path(stream.name)
+            os.chmod(temporary, 0o600)
+            temporary.replace(target)
+        return "sha256:" + digest, digest
+
+    @observed_sync("object.put_file")
+    def put_file(self, source: Path, *, digest: str, size: int) -> tuple[str, str]:
+        if not re.fullmatch(r"[0-9a-f]{64}", digest) or source.stat().st_size != size:
+            raise ValueError("Invalid staged object identity")
+        target = self._path(digest)
+        if not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with NamedTemporaryFile(dir=target.parent, delete=False) as stream:
+                temporary = Path(stream.name)
+                with source.open("rb") as incoming:
+                    shutil.copyfileobj(incoming, stream, length=1024 * 1024)
             os.chmod(temporary, 0o600)
             temporary.replace(target)
         return "sha256:" + digest, digest
@@ -159,6 +175,21 @@ class S3ObjectStore:
             status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
             if status not in (409, 412):
                 raise
+        return "sha256:" + digest, digest
+
+    @observed_sync("object.put_file")
+    def put_file(self, source: Path, *, digest: str, size: int) -> tuple[str, str]:
+        if not re.fullmatch(r"[0-9a-f]{64}", digest) or source.stat().st_size != size:
+            raise ValueError("Invalid staged object identity")
+        try:
+            self.client.head_object(Bucket=self.bucket, Key=self._key(digest))
+        except Exception as exc:
+            response = getattr(exc, "response", {})
+            status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if status not in (404,):
+                raise
+            with source.open("rb") as stream:
+                self.client.upload_fileobj(stream, self.bucket, self._key(digest))
         return "sha256:" + digest, digest
 
     @observed_sync("object.get")

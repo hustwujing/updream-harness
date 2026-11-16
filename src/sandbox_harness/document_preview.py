@@ -6,6 +6,8 @@ import subprocess
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 
+from .artifact_gateway import MimeRegistry
+
 
 PRESENTATION_MIMES = {
     "application/vnd.ms-powerpoint",
@@ -14,7 +16,8 @@ PRESENTATION_MIMES = {
 
 
 def is_presentation(filename: str, mime: str) -> bool:
-    return Path(filename).suffix.lower() in {".ppt", ".pptx"} or mime.lower() in PRESENTATION_MIMES
+    return (Path(filename).suffix.lower() in {".ppt", ".pptx"}
+        or MimeRegistry.normalize(mime) in PRESENTATION_MIMES)
 
 
 def presentation_pdf(data: bytes, *, filename: str, mime: str, digest: str,

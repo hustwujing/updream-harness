@@ -22,7 +22,7 @@ from .job_contracts import (
     JobAttemptReceipt, JobGroupCreate, JobGroupDraftCreate, JobGroupDraftState,
     JobGroupDraftView, JobGroupState, JobGroupView, JobKind, JobOutboxView,
     JobState, JobView, JobRequest, TERMINAL_JOB_STATES, BudgetAccountView, BudgetLedgerView,
-    BudgetReservationView,
+    BudgetReservationView, JobArtifactOutput, OutputDisposition,
 )
 
 
@@ -679,7 +679,9 @@ class JobArtifactRow(Base):
     artifact_id: Mapped[str] = mapped_column(String(32), unique=True)
     artifact_role: Mapped[str] = mapped_column(String(100))
     item_key: Mapped[str] = mapped_column(String(160))
+    filename: Mapped[str] = mapped_column(String(255))
     position: Mapped[int] = mapped_column(Integer)
+    requested_disposition: Mapped[str] = mapped_column(String(24))
     output_disposition: Mapped[str] = mapped_column(String(24))
     sha256: Mapped[str] = mapped_column(String(64))
     size: Mapped[int] = mapped_column(Integer)
@@ -1697,6 +1699,158 @@ class Store:
             rows = (await db.execute(select(JobOutboxRow).order_by(
                 JobOutboxRow.created_at, JobOutboxRow.id))).scalars().all()
             return [self.job_outbox_view(row) for row in rows]
+
+    @staticmethod
+    def job_artifact_view(row: JobArtifactRow) -> JobArtifactOutput:
+        return JobArtifactOutput(
+            artifact_id=row.artifact_id, artifact_role=row.artifact_role,
+            item_key=row.item_key, filename=row.filename, position=row.position,
+            output_disposition=OutputDisposition(row.output_disposition), sha256=row.sha256,
+            size=row.size, mime=row.mime, object_ref=row.object_ref,
+        )
+
+    async def bind_job_artifact(self, value, *, sha256: str, size: int,
+                                mime: str, object_ref: str) -> JobArtifactOutput:
+        async with self.connections() as lookup:
+            group_id = (await lookup.execute(select(JobRow.group_id).where(
+                JobRow.id == value.job_id))).scalar_one_or_none()
+        if not group_id:
+            raise KeyError("job_not_found")
+        async with self.job_lock(f"group:{group_id}"):
+            async with self.connections.begin() as db:
+                await db.get(JobGroupRow, group_id, with_for_update=True)
+                job = await db.get(JobRow, value.job_id, with_for_update=True)
+                if job.generation != value.generation or JobState(job.state) in TERMINAL_JOB_STATES:
+                    raise RuntimeError("stale_job_generation")
+                request = JobRequest.model_validate_json(job.request_json)
+                contract = next((item for item in request.expected_outputs
+                    if item.artifact_role == value.artifact_role), None)
+                if not contract:
+                    raise RuntimeError("artifact_role_not_granted")
+                if value.output_disposition != contract.output_disposition:
+                    raise RuntimeError("artifact_disposition_not_granted")
+                if size > contract.max_item_bytes:
+                    raise ValueError("artifact_item_too_large")
+                from .artifact_gateway import MimeRegistry
+                if not MimeRegistry.matches(mime, contract.mime_patterns):
+                    raise ValueError("artifact_mime_not_allowed")
+                existing = (await db.execute(select(JobArtifactRow).where(
+                    JobArtifactRow.job_id == job.id,
+                    JobArtifactRow.artifact_role == value.artifact_role,
+                    JobArtifactRow.item_key == value.item_key,
+                ).with_for_update())).scalar_one_or_none()
+                if existing:
+                    identity = (existing.position, existing.filename, existing.requested_disposition,
+                        existing.sha256, existing.size, existing.mime, existing.object_ref)
+                    expected = (value.position, value.filename, value.output_disposition.value,
+                        sha256, size, mime, object_ref)
+                    if identity != expected:
+                        raise RuntimeError("artifact_item_key_conflict")
+                    return self.job_artifact_view(existing)
+                position_conflict = (await db.execute(select(JobArtifactRow.id).where(
+                    JobArtifactRow.job_id == job.id,
+                    JobArtifactRow.artifact_role == value.artifact_role,
+                    JobArtifactRow.position == value.position,
+                ))).scalar_one_or_none()
+                if position_conflict:
+                    raise RuntimeError("artifact_position_conflict")
+                artifact_id = identifier()
+                timestamp = now()
+                db.add(ArtifactRow(
+                    id=artifact_id, turn_id=job.origin_turn_id,
+                    path=f"jobs/{job.id}/{value.filename}", sha256=sha256, size=size,
+                    mime=mime, object_ref=object_ref, created_at=timestamp,
+                ))
+                row = JobArtifactRow(
+                    id=identifier(), job_id=job.id, artifact_id=artifact_id,
+                    artifact_role=value.artifact_role, item_key=value.item_key,
+                    filename=value.filename, position=value.position,
+                    requested_disposition=value.output_disposition.value,
+                    output_disposition=OutputDisposition.CANDIDATE.value,
+                    sha256=sha256, size=size, mime=mime, object_ref=object_ref,
+                    validation_receipts_json="[]", review_receipts_json="[]",
+                    state="committed", created_at=timestamp,
+                )
+                db.add(row)
+                await db.flush()
+                return self.job_artifact_view(row)
+
+    async def list_job_artifacts(self, job_id: str,
+                                 artifact_role: str | None = None) -> list[JobArtifactOutput]:
+        async with self.connections() as db:
+            query = select(JobArtifactRow).where(JobArtifactRow.job_id == job_id)
+            if artifact_role:
+                query = query.where(JobArtifactRow.artifact_role == artifact_role)
+            rows = (await db.execute(query.order_by(
+                JobArtifactRow.artifact_role, JobArtifactRow.position))).scalars().all()
+            return [self.job_artifact_view(row) for row in rows]
+
+    async def finalize_job_artifact_collection(self, job_id: str, generation: int,
+                                               artifact_role: str, *,
+                                               validation_receipts: list[dict] | None = None,
+                                               review_receipt: dict | None = None) -> dict:
+        async with self.connections() as lookup:
+            group_id = (await lookup.execute(select(JobRow.group_id).where(
+                JobRow.id == job_id))).scalar_one_or_none()
+        if not group_id:
+            raise KeyError("job_not_found")
+        async with self.job_lock(f"group:{group_id}"):
+            async with self.connections.begin() as db:
+                await db.get(JobGroupRow, group_id, with_for_update=True)
+                job = await db.get(JobRow, job_id, with_for_update=True)
+                if job.generation != generation or JobState(job.state) in TERMINAL_JOB_STATES:
+                    raise RuntimeError("stale_job_generation")
+                request = JobRequest.model_validate_json(job.request_json)
+                contract = next((item for item in request.expected_outputs
+                    if item.artifact_role == artifact_role), None)
+                if not contract:
+                    raise RuntimeError("artifact_role_not_granted")
+                rows = list((await db.execute(select(JobArtifactRow).where(
+                    JobArtifactRow.job_id == job_id,
+                    JobArtifactRow.artifact_role == artifact_role,
+                ).order_by(JobArtifactRow.position).with_for_update())).scalars().all())
+                if not contract.min_items <= len(rows) <= contract.max_items:
+                    raise RuntimeError("artifact_collection_cardinality_invalid")
+                if [row.position for row in rows] != list(range(len(rows))):
+                    raise RuntimeError("artifact_collection_order_invalid")
+                if sum(row.size for row in rows) > contract.max_total_bytes:
+                    raise ValueError("artifact_collection_too_large")
+                receipts = validation_receipts or []
+                by_validator = {str(item.get("validator")): item for item in receipts}
+                if any(name not in by_validator or by_validator[name].get("status") != "pass"
+                       for name in contract.validators):
+                    raise RuntimeError("artifact_validation_required")
+                digests = [row.sha256 for row in rows]
+                if any(item.get("artifact_digests") not in (None, digests) for item in receipts):
+                    raise RuntimeError("artifact_validation_digest_mismatch")
+                if (contract.requires_review and review_receipt
+                        and review_receipt.get("artifact_digests") != digests):
+                    raise RuntimeError("artifact_review_digest_mismatch")
+                review_passed = (not contract.requires_review or bool(review_receipt)
+                    and review_receipt.get("verdict") == "PASS")
+                for row in rows:
+                    row.validation_receipts_json = canonical_json(receipts)
+                    row.review_receipts_json = canonical_json([review_receipt] if review_receipt else [])
+                if not review_passed:
+                    return {"artifact_role": artifact_role, "state": "awaiting_review",
+                        "output_disposition": "candidate", "items": [
+                            self.job_artifact_view(row).model_dump(mode="json") for row in rows]}
+                for row in rows:
+                    row.output_disposition = row.requested_disposition
+                    if row.output_disposition in {OutputDisposition.WORKSPACE.value,
+                                                  OutputDisposition.DELIVERY.value}:
+                        project_path = f"artifacts/jobs/{job.id}/{row.filename}"
+                        await self._register_project_file_locked(db, job.thread_id,
+                            path=project_path, source_type="artifact", source_turn_id=job.origin_turn_id,
+                            sha256=row.sha256, size=row.size, mime=row.mime, object_ref=row.object_ref)
+                await db.flush()
+                return {"artifact_role": artifact_role, "state": "published",
+                    "output_disposition": contract.output_disposition.value,
+                    "manifest": {"count": len(rows), "total_bytes": sum(row.size for row in rows),
+                        "items": [{"item_key": row.item_key, "position": row.position,
+                            "filename": row.filename, "sha256": row.sha256,
+                            "size": row.size, "mime": row.mime} for row in rows]},
+                    "items": [self.job_artifact_view(row).model_dump(mode="json") for row in rows]}
 
     @staticmethod
     def thread_view(row: ThreadRow) -> ThreadView:

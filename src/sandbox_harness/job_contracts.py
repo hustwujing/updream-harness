@@ -77,6 +77,10 @@ class JobExpectedOutput(BaseModel):
     min_items: int = Field(default=0, ge=0, le=1000)
     max_items: int = Field(default=1, ge=1, le=1000)
     mime_patterns: tuple[str, ...] = ()
+    max_item_bytes: int = Field(default=512 * 1024 * 1024, ge=1)
+    max_total_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=1)
+    validators: tuple[str, ...] = ()
+    requires_review: bool = False
 
     @model_validator(mode="after")
     def valid_cardinality(self):
@@ -189,6 +193,7 @@ class JobArtifactOutput(BaseModel):
     artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     artifact_role: str = Field(min_length=1, max_length=100, pattern=r"^[a-z][a-z0-9_-]*$")
     item_key: str = Field(min_length=1, max_length=160)
+    filename: str = Field(default="artifact.bin", min_length=1, max_length=255)
     position: int = Field(ge=0)
     output_disposition: OutputDisposition
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")

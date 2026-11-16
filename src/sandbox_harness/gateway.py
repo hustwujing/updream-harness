@@ -21,6 +21,8 @@ import uvicorn
 from .observability import configure, RequestLoggingMiddleware, event, enrich, add_link, telemetry, operation, carrier
 from .capability import CapabilityCodec
 from .grants import GrantAuthority
+from .artifact_gateway import ArtifactEmission, ArtifactGateway
+from .job_contracts import OutputDisposition
 from .job_catalog import JobCatalog
 from .job_coordinator import JobCoordinator, JobGroupDraftUpdate
 from .job_contracts import JobGroupCreate
@@ -108,6 +110,8 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     job_coordinator = JobCoordinator(activity_store, job_catalog,
         draft_ttl_seconds=settings.media_draft_ttl_seconds)
     objects = object_store(settings)
+    artifact_gateway = ArtifactGateway(activity_store, objects,
+        settings.data_root / "tmp" / "job-artifacts", maximum_bytes=settings.max_artifact_bytes)
     media_catalog = MediaCatalog(settings.media_catalog_json,
         ark_assets_configured=bool(settings.ark_access_key and settings.ark_secret_key
             and settings.ark_asset_group_id and settings.ark_project_name),
@@ -227,7 +231,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         if rejected:result.partial_success.error_message="Telemetry queue capacity exceeded"
         return Response(content=result.SerializeToString(),status_code=503 if rows and rejected==len(rows) else 200,media_type="application/x-protobuf")
 
-    async def authorize_runtime_request(request: Request, route: str):
+    async def authorize_runtime_request(request: Request, route: str, *, streaming_body: bool = False):
         try:
             claims = codec.verify(token_from(request), route=route)
         except ValueError as exc:
@@ -258,19 +262,24 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
                     if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
                         raise ValueError("Invalid Job grant header: " + name)
                     return set(parsed)
-                body = await request.body()
-                if len(body) > 16 * 1024 * 1024:
-                    raise ValueError("Job call body exceeds grant validation limit")
-                if body:
-                    try:
-                        body_value = json.loads(body)
-                    except (ValueError, TypeError):
-                        body_value = {"sha256": hashlib.sha256(body).hexdigest(), "size": len(body)}
-                else:
-                    body_value = None
-                parameter_digest = hashlib.sha256(json.dumps({
-                    "query": sorted(request.query_params.multi_items()), "body": body_value,
-                }, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+                operation_name = required("x-updream-operation")
+                parameter_digest = claims.parameter_digest
+                if operation_name == "submit":
+                    if streaming_body:
+                        raise ValueError("Submit parameter validation cannot use an unbounded streaming body")
+                    body = await request.body()
+                    if len(body) > 16 * 1024 * 1024:
+                        raise ValueError("Job call body exceeds grant validation limit")
+                    if body:
+                        try:
+                            body_value = json.loads(body)
+                        except (ValueError, TypeError):
+                            body_value = {"sha256": hashlib.sha256(body).hexdigest(), "size": len(body)}
+                    else:
+                        body_value = None
+                    parameter_digest = hashlib.sha256(json.dumps({
+                        "query": sorted(request.query_params.multi_items()), "body": body_value,
+                    }, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
                 grant_authority.verify_call(
                     token_from(request), route=route,
                     thread_id=required("x-updream-thread-id"),
@@ -283,7 +292,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
                     descriptor_id=required("x-updream-descriptor-id"),
                     descriptor_version=required("x-updream-descriptor-version"),
                     descriptor_digest=required("x-updream-descriptor-digest"),
-                    operation=required("x-updream-operation"),
+                    operation=operation_name,
                     artifact_ids=values("x-updream-artifact-ids"),
                     skill_ids=values("x-updream-skill-ids"),
                     capability_id=request.headers.get("x-updream-capability-id", ""),
@@ -305,6 +314,27 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         if not value:
             raise HTTPException(404, "Media job not found")
         return value
+
+    @app.post("/v1/job-artifacts/emit")
+    async def runtime_emit_job_artifact(request: Request, artifact_role: str, item_key: str,
+                                        position: int, filename: str,
+                                        output_disposition: OutputDisposition,
+                                        mime: str = "application/octet-stream"):
+        claims = await authorize_runtime_request(request, "/v1/job-artifacts/emit",
+            streaming_body=True)
+        value = ArtifactEmission(
+            job_id=claims.job_id, generation=claims.generation,
+            artifact_role=artifact_role, item_key=item_key, position=position,
+            filename=filename, output_disposition=output_disposition, declared_mime=mime,
+        )
+        try:
+            return await artifact_gateway.emit(value, request.stream())
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     @app.post("/v1/job-group-drafts")
     async def runtime_prepare_job_group(value: JobGroupCreate, request: Request):
