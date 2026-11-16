@@ -41,7 +41,9 @@ class RuntimeClient:
     async def inject(self, sandbox: Sandbox, *, capability_token: str, gateway_url: str, proxy_url: str, harness: str, model: str,
                      model_start_timeout_seconds: float = 150, event_idle_timeout_seconds: float = 900,
                      defer_skill_install: bool = False, runtime_bundle_digest: str = "",
-                     runtime_code_bundle_digest: str = "") -> None:
+                     runtime_code_bundle_digest: str = "", runtime_profile_id: str = "",
+                     skill_ids: list[str] | None = None, skill_digests: dict[str, str] | None = None,
+                     child_mode: bool = False, delegation_depth: int = 0) -> None:
         bundle_digest = runtime_bundle_digest or self.default_bundle_digest
         code_digest = runtime_code_bundle_digest or self.default_code_bundle_digest
         payload = {"capability_token": capability_token, "gateway_url": gateway_url,
@@ -50,6 +52,9 @@ class RuntimeClient:
             "event_idle_timeout_seconds": event_idle_timeout_seconds,
             "defer_skill_install": defer_skill_install,
             "runtime_bundle_digest": bundle_digest,
+            "runtime_profile_id":runtime_profile_id,"skill_ids":skill_ids or [],
+            "skill_digests":skill_digests or {},"child_mode":child_mode,
+            "delegation_depth":delegation_depth,
             "thread_id":sandbox.thread_id or sandbox.metadata.get("sandbox-harness.io/thread", ""),
             "turn_id":sandbox.turn_id or sandbox.metadata.get("sandbox-harness.io/turn", ""),"sandbox_id":sandbox.id}
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()}, timeout=20,
@@ -154,6 +159,19 @@ class RuntimeClient:
                 "execution_id": execution_id, "input_id": input_id, "after_sequence": after_sequence}
         async for value in self._execution_stream(sandbox, execution_id, after_sequence, body=body):
             yield value
+
+    async def start_execution(self, sandbox: Sandbox, *, message: str,
+                              attachments: list[Attachment], native_thread_id: str,
+                              reasoning_effort: str, execution_id: str,
+                              input_id: str = "initial") -> dict:
+        body = {"message":message,"attachments":[item.model_dump(mode="json") for item in attachments],
+            "native_thread_id":native_thread_id,"reasoning_effort":reasoning_effort,
+            "execution_id":execution_id,"input_id":input_id,"after_sequence":0}
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url,
+            headers={**sandbox.runtime_headers,**carrier()},timeout=30,trust_env=False,
+            transport=self.transport) as client:
+            response=await client.post("/v1/executions/start",json=body)
+            response.raise_for_status();return response.json()
 
     async def _execution_stream(self, sandbox: Sandbox, execution_id: str, after_sequence: int,
                                 *, body: dict | None = None):

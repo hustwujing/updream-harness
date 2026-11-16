@@ -198,7 +198,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         skill_manifest=skill_manifest)
     catalog.job_catalog = job_catalog
     catalog.profile_resolver = profile_resolver
-    job_coordinator = JobCoordinator(store, job_catalog,
+    job_coordinator = JobCoordinator(store, job_catalog, profile_resolver=profile_resolver,
         draft_ttl_seconds=settings.media_draft_ttl_seconds)
     continuation_dispatcher = ContinuationDispatcher(store, broker)
     sessions = Sessions(settings.session_signing_key)

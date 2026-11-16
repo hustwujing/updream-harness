@@ -672,6 +672,8 @@ class Broker:
                         turn.id, claims.nonce, self.instance_id, generation,
                     )
                     await self._state(turn.id, TurnState.STARTING, sandbox_id=sandbox.id)
+                    primary_skills = sorted(skill.id for skill in self.catalog.profile_resolver.skills.values()
+                        if turn.harness.value in skill.supported_harnesses) if self.catalog.profile_resolver else []
                     await self.runtime.inject(
                         sandbox,
                         capability_token=token,
@@ -685,6 +687,9 @@ class Broker:
                         runtime_bundle_digest=turn.runtime_bundle_digest or self.settings.runtime_bundle_digest,
                         runtime_code_bundle_digest=(turn.runtime_code_bundle_digest
                             or self.settings.runtime_code_bundle_digest),
+                        runtime_profile_id="primary-full-cpu", skill_ids=primary_skills,
+                        skill_digests={identity:self.catalog.profile_resolver.skills[identity].digest
+                            for identity in primary_skills} if self.catalog.profile_resolver else {},
                     )
                     if thread.checkpoint_ref and not sandbox.reused:
                         archive = await asyncio.to_thread(self.objects.get, thread.checkpoint_ref, maximum=self.settings.max_checkpoint_bytes)

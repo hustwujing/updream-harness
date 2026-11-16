@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .domain import now
 from .job_catalog import JobCatalog
+from .profiles import ProfileRequirements, ProfileResolver
 from .job_contracts import (
     JobGroupCreate, JobGroupDraftCreate, JobGroupDraftView, JobGroupView,
     JobKind, JobRequest, JobView,
@@ -33,10 +34,33 @@ class ConfirmedGroup(BaseModel):
 
 
 class JobCoordinator:
-    def __init__(self, store, catalog: JobCatalog, *, draft_ttl_seconds: int = 86400):
+    def __init__(self, store, catalog: JobCatalog, *, profile_resolver: ProfileResolver | None = None,
+                 draft_ttl_seconds: int = 86400):
         self.store = store
         self.catalog = catalog
+        self.profile_resolver = profile_resolver
         self.draft_ttl_seconds = draft_ttl_seconds
+
+    def _normalize(self, value: JobGroupCreate) -> JobGroupCreate:
+        jobs=[]
+        for request in value.jobs:
+            if request.kind!=JobKind.HARNESS:
+                jobs.append(request);continue
+            if not self.profile_resolver:
+                raise ValueError("Harness delegation ProfileResolver is unavailable")
+            harness=str(request.parameters.get("harness", ""))
+            resources=request.resource_requirements
+            resolved=self.profile_resolver.resolve(harness,request.child_profile_id,request.skill_ids,
+                ProfileRequirements(required_capability_ids=tuple(resources.get("required_capability_ids",())),
+                    network_origins=request.network_origins,
+                    requires_gpu=bool(resources.get("requires_gpu",False))))
+            sanitized={key:int(resources[key]) for key in ("cpu","memory_mb","disk_mb") if key in resources}
+            sanitized.update({"harness":harness,"image_digest":resolved.runtime_profile.image_digests[harness],
+                "delegation_depth":1,"required_bundle_digests":list(resources.get("required_bundle_digests",()))})
+            parameters={**request.parameters,"skill_digests":resolved.skill_digests}
+            jobs.append(JobRequest.model_validate({**request.model_dump(),"parameters":parameters,
+                "runtime_profile_id":resolved.runtime_profile.id,"resource_requirements":sanitized}))
+        return JobGroupCreate.model_validate({**value.model_dump(),"jobs":[job.model_dump() for job in jobs]})
 
     def _validate(self, requests: tuple[JobRequest, ...]) -> tuple[str, ...]:
         sensitive: list[str] = []
@@ -53,11 +77,17 @@ class JobCoordinator:
                     request.descriptor_id, request.descriptor_version, request.descriptor_digest)
                 if descriptor.billable or descriptor.side_effects:
                     sensitive.append(request.local_job_id)
+            elif request.kind == JobKind.HARNESS:
+                if not request.child_profile_id or not request.runtime_profile_id:
+                    raise ValueError("Harness Job requires resolved execution Profiles")
+                if any(value>0 for value in request.budget_requirements.values()):
+                    sensitive.append(request.local_job_id)
             else:
                 raise ValueError(f"Job kind {request.kind.value} requires a registered specialized coordinator")
         return tuple(sensitive)
 
     async def prepare_group(self, owner_id: str, value: JobGroupCreate) -> PreparedGroup:
+        value=self._normalize(value)
         value.validate_member_limit()
         sensitive = self._validate(value.jobs)
         if not sensitive:
@@ -77,12 +107,17 @@ class JobCoordinator:
         current = await self.store.get_job_group_draft_request(draft_id, owner_id)
         if not current:
             raise KeyError("job_group_draft_not_found")
-        sensitive = self._validate(value.jobs)
+        normalized_group=self._normalize(JobGroupCreate.model_validate({
+            "thread_id":current.thread_id,"origin_turn_id":current.origin_turn_id,
+            "idempotency_key":current.idempotency_key,"jobs":[job.model_dump() for job in value.jobs],
+            "authorization_snapshot":(value.authorization_snapshot
+                if value.authorization_snapshot is not None else current.authorization_snapshot),
+            "suppress_continuation":current.suppress_continuation}))
+        sensitive = self._validate(normalized_group.jobs)
         updated = JobGroupDraftCreate.model_validate({
             **current.model_dump(),
-            "jobs": [job.model_dump() for job in value.jobs],
-            "authorization_snapshot": (value.authorization_snapshot
-                if value.authorization_snapshot is not None else current.authorization_snapshot),
+            "jobs": [job.model_dump() for job in normalized_group.jobs],
+            "authorization_snapshot": normalized_group.authorization_snapshot,
             "requires_confirmation": True,
             "authorization_gaps": ["confirmation_required:" + identity for identity in sensitive],
         })
@@ -93,6 +128,8 @@ class JobCoordinator:
         current = await self.store.get_job_group_draft_request(draft_id, owner_id)
         if not current:
             raise KeyError("job_group_draft_not_found")
+        current=self._normalize(JobGroupCreate.model_validate(current.model_dump(exclude={
+            "expires_at","requires_confirmation","authorization_gaps"})))
         self._validate(current.jobs)
         group, jobs = await self.store.confirm_job_group_draft(draft_id, owner_id)
         return ConfirmedGroup(group=group, jobs=jobs)

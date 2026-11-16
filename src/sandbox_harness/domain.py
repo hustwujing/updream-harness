@@ -341,12 +341,14 @@ class RuntimeEvent(BaseModel):
 
 
 class RuntimeResult(BaseModel):
-    status: Literal["completed", "waiting_user", "failed", "cancelled"]
+    status: Literal["completed", "waiting_user", "failed", "cancelled", "blocked"]
     native_thread_id: str = ""
     error_code: str = ""
     error_detail: str = ""
     input_ids: list[str] = Field(default_factory=list)
     runtime_sequence: int = Field(default=0, ge=0)
+    missing_fields: list[str] = Field(default_factory=list)
+    questions: list[str] = Field(default_factory=list)
 
 
 class CapabilityClaims(BaseModel):

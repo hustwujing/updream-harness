@@ -755,6 +755,40 @@ class BudgetLedgerRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class NodeRow(Base):
+    __tablename__ = "nodes"
+    id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    generation: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(24), index=True)
+    inventory_json: Mapped[str] = mapped_column(Text)
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ResourceReservationRow(Base):
+    __tablename__ = "resource_reservations"
+    __table_args__ = (UniqueConstraint("job_id", "job_generation"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(32), index=True)
+    job_generation: Mapped[int] = mapped_column(Integer)
+    node_id: Mapped[str] = mapped_column(String(160), index=True)
+    node_generation: Mapped[int] = mapped_column(Integer)
+    child_profile_id: Mapped[str] = mapped_column(String(100))
+    runtime_profile_id: Mapped[str] = mapped_column(String(100))
+    harness: Mapped[str] = mapped_column(String(24))
+    image_digest: Mapped[str] = mapped_column(String(64))
+    image_ref: Mapped[str] = mapped_column(Text, default="", server_default="")
+    cpu: Mapped[int] = mapped_column(Integer)
+    memory_mb: Mapped[int] = mapped_column(Integer)
+    disk_mb: Mapped[int] = mapped_column(Integer)
+    gpu_ids_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    state: Mapped[str] = mapped_column(String(24), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class Store:
     def __init__(self, database_url: str, redis_url: str = "", redis_prefix: str = "sandbox-harness:"):
         self.engine = create_async_engine(database_url)

@@ -64,6 +64,8 @@ class Configure(BaseModel):
     runtime_profile_id: str = Field(default="", max_length=100)
     skill_ids: list[str] = Field(default_factory=list, max_length=64)
     skill_digests: dict[str, str] = Field(default_factory=dict)
+    child_mode: bool = False
+    delegation_depth: int = Field(default=0, ge=0, le=4)
 
 
 class JobArtifactStage(BaseModel):
@@ -286,6 +288,8 @@ def create_app() -> FastAPI:
     app.state.skill_ids = []
     app.state.skill_digests = {}
     app.state.capability_change_frame = None
+    app.state.child_mode = False
+    app.state.delegation_depth = 0
     app.state.stream_heartbeat_seconds = 15.0
     jobs_root = WORKSPACE / "state" / "background-jobs"
     jobs_root.mkdir(parents=True, exist_ok=True)
@@ -821,6 +825,8 @@ def create_app() -> FastAPI:
         app.state.runtime_profile_id = value.runtime_profile_id
         app.state.skill_ids = list(value.skill_ids)
         app.state.skill_digests = dict(value.skill_digests)
+        app.state.child_mode = value.child_mode
+        app.state.delegation_depth = value.delegation_depth
         runtime_home = WORKSPACE / "state" / "home"
         runtime_home.mkdir(parents=True, exist_ok=True)
         os.environ["HOME"] = str(runtime_home)
@@ -1139,41 +1145,53 @@ def create_app() -> FastAPI:
                 shutil.rmtree(path)
         (OUTPUTS / ".sandbox-output-batch").write_text(batch_id)
 
+    async def start_execution_locked(value: TurnRequest) -> tuple[Execution, bool, bool]:
+        execution = app.state.execution
+        if execution is not None and execution.id != value.execution_id and execution.result is None:
+            raise HTTPException(409, "Another Harness execution is already running")
+        created = execution is None or execution.id != value.execution_id
+        harness = os.environ.get("HARNESS_KIND", "claude")
+        if created:
+            reset_outputs(value.execution_id.split(":", 1)[0])
+            model = os.environ.get("HARNESS_MODEL", "default")
+            os.environ["HARNESS_REASONING_EFFORT"] = value.reasoning_effort
+            selected = command(harness, model, value.native_thread_id)
+            environment = {**os.environ, **selected.environment, "HOME": "/workspace/state/home", "PWD": "/workspace/project"}
+            Path(environment["HOME"]).mkdir(parents=True, exist_ok=True)
+            process = await asyncio.create_subprocess_exec(*selected.argv, cwd=WORKSPACE / "project", env=environment,
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True, limit=HARNESS_JSONL_LIMIT)
+            execution = Execution(id=value.execution_id, process=process, selected=selected,
+                native_thread_id=value.native_thread_id,
+                project_output_snapshot=project_output_snapshot())
+            app.state.execution = execution
+            app.state.process = process
+            app.state.process_command = selected
+        try:
+            submitted = await submit_input(execution, value, initial=created)
+        except Exception:
+            if created:
+                await abort_execution(execution)
+                await finish_execution(execution, {"status": "failed", "error_code": "input_delivery_failed",
+                    "error_detail": "Initial input could not be delivered", "input_ids": list(execution.pending_input_ids)})
+            raise
+        if created:
+            execution.reader_task = asyncio.create_task(read_execution(execution, harness),
+                name="harness-reader-" + value.execution_id)
+        return execution, created, submitted
+
+    @app.post("/v1/executions/start")
+    async def start_execution(value: TurnRequest):
+        async with app.state.execution_lock:
+            execution, created, submitted = await start_execution_locked(value)
+            return {"execution_id":execution.id,"accepted":True,"created":created,
+                "replayed":not submitted,"input_id":value.input_id,
+                "native_thread_id":execution.native_thread_id}
+
     @app.post("/v1/turns")
     async def run_turn(value: TurnRequest):
         async with app.state.execution_lock:
-            execution = app.state.execution
-            if execution is not None and execution.id != value.execution_id and execution.result is None:
-                raise HTTPException(409, "Another Harness execution is already running")
-            created = execution is None or execution.id != value.execution_id
-            if created:
-                reset_outputs(value.execution_id.split(":", 1)[0])
-                harness = os.environ.get("HARNESS_KIND", "claude")
-                model = os.environ.get("HARNESS_MODEL", "default")
-                os.environ["HARNESS_REASONING_EFFORT"] = value.reasoning_effort
-                selected = command(harness, model, value.native_thread_id)
-                environment = {**os.environ, **selected.environment, "HOME": "/workspace/state/home", "PWD": "/workspace/project"}
-                Path(environment["HOME"]).mkdir(parents=True, exist_ok=True)
-                process = await asyncio.create_subprocess_exec(*selected.argv, cwd=WORKSPACE / "project", env=environment,
-                    stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-                    start_new_session=True, limit=HARNESS_JSONL_LIMIT)
-                execution = Execution(id=value.execution_id, process=process, selected=selected,
-                    native_thread_id=value.native_thread_id,
-                    project_output_snapshot=project_output_snapshot())
-                app.state.execution = execution
-                app.state.process = process
-                app.state.process_command = selected
-            try:
-                await submit_input(execution, value, initial=created)
-            except Exception:
-                if created:
-                    await abort_execution(execution)
-                    await finish_execution(execution, {"status": "failed", "error_code": "input_delivery_failed",
-                        "error_detail": "Initial input could not be delivered", "input_ids": list(execution.pending_input_ids)})
-                raise
-            if created:
-                execution.reader_task = asyncio.create_task(read_execution(execution, harness),
-                    name="harness-reader-" + value.execution_id)
+            execution, _, _ = await start_execution_locked(value)
             return StreamingResponse(stream_execution(execution, value.after_sequence), media_type="application/x-ndjson")
 
     @app.get("/v1/executions/{execution_id}")
@@ -1193,6 +1211,8 @@ def create_app() -> FastAPI:
 
     @app.post("/v1/inputs")
     async def append_input(value: TurnRequest):
+        if app.state.child_mode:
+            raise HTTPException(409, "Child Harness does not accept steer input")
         async with app.state.execution_lock:
             execution = app.state.execution
             if not execution or execution.id != value.execution_id:
@@ -1241,6 +1261,16 @@ def create_app() -> FastAPI:
         execution = app.state.execution
         if execution is None or execution.result is not None or not execution.accepting_inputs:
             raise HTTPException(409, "No active Harness execution")
+        if app.state.child_mode:
+            await finish_execution(execution, {"status":"blocked",
+                "native_thread_id":execution.native_thread_id,
+                "error_code":"child_requires_parent_input",
+                "error_detail":value.prompt,
+                "missing_fields":[question.get("id","") for question in value.questions],
+                "questions":[question.get("question",question.get("text","")) for question in value.questions],
+                "input_ids":list(execution.pending_input_ids)})
+            await abort_execution(execution)
+            return {"interaction_id":"","action":"blocked","blocked":True}
         identity = "runtime-" + uuid.uuid4().hex
         waiter = asyncio.get_running_loop().create_future()
         app.state.interaction_waiters[identity] = waiter

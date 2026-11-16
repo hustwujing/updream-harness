@@ -10,6 +10,7 @@ import json
 import hashlib
 import logging
 import re
+from pathlib import Path
 from pydantic import ValidationError
 
 import httpx
@@ -26,6 +27,7 @@ from .job_contracts import OutputDisposition
 from .job_catalog import JobCatalog
 from .job_coordinator import JobCoordinator, JobGroupDraftUpdate
 from .job_contracts import JobGroupCreate
+from .profiles import ProfileResolver
 from .config import Settings, load_settings, validate_service_settings
 from .domain import Harness, MediaDraftCreate, now
 from .model_routes import ModelRoutes
@@ -107,7 +109,12 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     job_catalog_raw = settings.job_catalog_path.read_text()
     job_catalog = JobCatalog.from_json(job_catalog_raw,
         expected_digest=(settings.job_catalog_digest or hashlib.sha256(job_catalog_raw.encode()).hexdigest()))
-    job_coordinator = JobCoordinator(activity_store, job_catalog,
+    profile_raw=settings.profile_catalog_path.read_text()
+    skill_manifest=json.loads((Path(__file__).resolve().parents[2]/'runtime/skills/manifest.json').read_text())
+    profile_resolver=ProfileResolver.from_json(profile_raw,
+        expected_digest=(settings.profile_catalog_digest or hashlib.sha256(profile_raw.encode()).hexdigest()),
+        skill_manifest=skill_manifest)
+    job_coordinator = JobCoordinator(activity_store, job_catalog, profile_resolver=profile_resolver,
         draft_ttl_seconds=settings.media_draft_ttl_seconds)
     objects = object_store(settings)
     artifact_gateway = ArtifactGateway(activity_store, objects,
@@ -250,6 +257,10 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         if count > claims.max_requests:
             raise HTTPException(429, "Capability request limit reached")
         if claims.scope == "job":
+            if route.startswith("/v1/models/"):
+                if "model" not in claims.operations:
+                    raise HTTPException(403, "Model call is outside Job grant scope")
+                return claims
             try:
                 def required(name: str) -> str:
                     value = request.headers.get(name, "")

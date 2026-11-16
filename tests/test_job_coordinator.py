@@ -113,3 +113,30 @@ async def test_reject_expire_and_cancel_scopes_are_truthful(tmp_path):
         group_jobs=await coordinator.cancel_group(committed.group.id,"owner")
         assert all(value.cancel_requested for value in group_jobs)
     finally:await store.close()
+
+
+async def test_harness_infrastructure_fields_are_resolved_by_host_not_manager(tmp_path):
+    import hashlib,json
+    from pathlib import Path
+    from sandbox_harness.profiles import ProfileResolver
+    root=Path(__file__).resolve().parents[1]
+    raw=(root/'deploy/profile-catalog.example.json').read_text()
+    resolver=ProfileResolver.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest(),
+        skill_manifest=json.loads((root/'runtime/skills/manifest.json').read_text()))
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'harness-coordinator.db'));await store.initialize()
+    coordinator=JobCoordinator(store,catalog(),profile_resolver=resolver)
+    try:
+        child=JobRequest(local_job_id='child',kind=JobKind.HARNESS,adapter='child-harness',
+            descriptor_id='delegate.harness',descriptor_version='1',descriptor_digest='d'*64,
+            idempotency_key='child-coordinator-key',parameters={'harness':'codex','objective':'write plan'},
+            child_profile_id='child-general',runtime_profile_id='manager-invented',
+            skill_ids=('writing-plans',),resource_requirements={'harness':'codex','cpu':1,
+                'node_id':'manager-node','gpu_ids':['gpu-9'],'image_digest':'e'*64})
+        prepared=await coordinator.prepare_group('owner',JobGroupCreate(thread_id='a'*32,
+            origin_turn_id='b'*32,idempotency_key='child-coordinator-group',jobs=[child]))
+        frozen=await store.get_job_request(prepared.jobs[0].id)
+        assert frozen.runtime_profile_id=='general-cpu'
+        assert frozen.resource_requirements['image_digest']=='1'*64
+        assert 'node_id' not in frozen.resource_requirements and 'gpu_ids' not in frozen.resource_requirements
+        assert frozen.resource_requirements['delegation_depth']==1
+    finally:await store.close()

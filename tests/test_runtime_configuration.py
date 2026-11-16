@@ -91,6 +91,33 @@ print(json.dumps({'type':'result','session_id':'native','usage':{}}),flush=True)
     assert text.index('platform_capability_change') < text.index('USER_PAYLOAD')
 
 
+def test_child_execution_start_receipt_is_non_streaming_and_child_cannot_steer_or_ask_user(tmp_path,monkeypatch):
+    monkeypatch.setattr(runtime_app,'RUN',tmp_path/'run');monkeypatch.setattr(runtime_app,'WORKSPACE',tmp_path/'workspace')
+    monkeypatch.setattr(runtime_app,'OUTPUTS',tmp_path/'workspace/outputs');monkeypatch.setattr(runtime_app,'PERSISTENT',('project','state'))
+    runner=tmp_path/'child.py';runner.write_text("import sys,time\nsys.stdin.readline();time.sleep(10)\n")
+    monkeypatch.setenv('HARNESS_COMMAND_JSON',json.dumps({name:[sys.executable,str(runner)]
+        for name in ('codex','claude','deepseek')}))
+    app=runtime_app.create_app()
+    with TestClient(app) as client:
+        configured=client.post('/v1/configure',json={'capability_token':'x'*32,'gateway_url':'http://gateway:28600',
+            'harness':'claude','model':'model','proxy_url':'http://172.31.0.1:28601','child_mode':True,
+            'delegation_depth':1})
+        started=client.post('/v1/executions/start',json={'message':'child objective','execution_id':'child-execution',
+            'input_id':'child-input','reasoning_effort':'high'})
+        assert configured.status_code==200 and started.status_code==200
+        assert started.json()['accepted'] and started.json()['execution_id']=='child-execution'
+        steer=client.post('/v1/inputs',json={'message':'change','execution_id':'child-execution',
+            'input_id':'steer','reasoning_effort':'high'})
+        assert steer.status_code==409 and 'does not accept steer' in steer.json()['detail']
+        interaction=client.post('/v1/native-interactions',json={'kind':'question','prompt':'Need brand',
+            'questions':[{'id':'brand_name','question':'Brand?'}]})
+        assert interaction.status_code==200 and interaction.json()['blocked'] is True
+        status=client.get('/v1/executions/child-execution').json()
+        assert status['result']['status']=='blocked'
+        assert status['result']['error_code']=='child_requires_parent_input'
+        assert status['result']['missing_fields']==['brand_name']
+
+
 def test_harness_commands_preload_the_playwright_proxy_bridge(monkeypatch, tmp_path):
     token=tmp_path/'token';token.write_text('x'*32)
     monkeypatch.setenv('HARNESS_GATEWAY_URL','http://gateway:28600')

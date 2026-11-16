@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from dataclasses import replace
 
 from .job_adapters import (
     AdapterStatus, JobAdapter, JobExecutionContext, PreAcceptFailure,
@@ -128,6 +129,8 @@ class JobWorker:
                 external_id = submission.external_execution_id
                 await self.store.record_job_acceptance(job.id, self.worker_id, attempt.generation,
                     external_execution_id=external_id, receipt=submission.acceptance_receipt)
+                context = replace(context, previous_external_execution_id=external_id,
+                    previous_acceptance_receipt=submission.acceptance_receipt)
                 if submission.completed:
                     await self.store.transition_job(job.id, JobState.SUCCEEDED,
                         expected_generation=attempt.generation, result=submission.result)

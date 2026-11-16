@@ -1,0 +1,71 @@
+import pytest
+
+from sandbox_harness.scheduler import NodeInventory,ResourceRequest,Scheduler
+from sandbox_harness.store import Store
+
+
+def node(node_id='node-a',generation=1,load=.2,warm=1,gpus=()):
+    return NodeInventory(node_id=node_id,generation=generation,cpu_total=8,memory_mb_total=16000,
+        disk_mb_total=100000,load=load,profiles=[{'runtime_profile_id':'media-cpu','harness':'codex',
+            'image_digest':'a'*64,'warm_slots':warm}],gpus=gpus,cached_bundle_digests=('b'*64,))
+
+
+def request(**updates):
+    value=dict(child_profile_id='child-general',runtime_profile_id='media-cpu',harness='codex',
+        image_digest='a'*64,cpu=2,memory_mb=2000,disk_mb=1000,required_bundle_digests=('b'*64,))
+    value.update(updates);return ResourceRequest(**value)
+
+
+async def setup(tmp_path):
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'scheduler.db'));await store.initialize()
+    return store,Scheduler(store)
+
+
+async def test_scheduler_hard_filters_profile_image_and_capacity_then_scores_warm_cache_load(tmp_path):
+    store,scheduler=await setup(tmp_path)
+    try:
+        await scheduler.register_node(node('cold',load=.1,warm=0))
+        await scheduler.register_node(node('warm',load=.8,warm=1))
+        selected=await scheduler.reserve('1'*32,1,request())
+        assert selected.node_id=='warm'
+        with pytest.raises(RuntimeError,match='no_compatible'):
+            await scheduler.reserve('2'*32,1,request(image_digest='c'*64))
+        with pytest.raises(RuntimeError,match='no_compatible'):
+            await scheduler.reserve('3'*32,1,request(cpu=20))
+    finally:await store.close()
+
+
+async def test_scheduler_allocates_exact_gpu_count_type_mode_memory_without_double_booking(tmp_path):
+    store,scheduler=await setup(tmp_path)
+    try:
+        gpus=[{'id':'gpu-0','type':'A100','memory_mb':40960,'mode':'exclusive'},
+            {'id':'gpu-1','type':'A100','memory_mb':40960,'mode':'exclusive'},
+            {'id':'mig-0','type':'A100','memory_mb':10000,'mode':'mig'}]
+        await scheduler.register_node(node(gpus=gpus))
+        first=await scheduler.reserve('1'*32,1,request(gpu_count=2,gpu_type='A100',
+            gpu_mode='exclusive',gpu_memory_mb=20000))
+        assert first.gpu_ids==('gpu-0','gpu-1')
+        with pytest.raises(RuntimeError,match='no_compatible'):
+            await scheduler.reserve('2'*32,1,request(gpu_count=1,gpu_type='A100',
+                gpu_mode='exclusive',gpu_memory_mb=20000))
+        assert await scheduler.release(first.id,first.node_id,first.node_generation)
+        second=await scheduler.reserve('2'*32,1,request(gpu_count=1,gpu_type='A100',
+            gpu_mode='exclusive',gpu_memory_mb=20000))
+        assert second.gpu_ids==('gpu-0',)
+    finally:await store.close()
+
+
+async def test_scheduler_fences_stale_node_generation_and_reservation_release(tmp_path):
+    store,scheduler=await setup(tmp_path)
+    try:
+        await scheduler.register_node(node(generation=2))
+        with pytest.raises(RuntimeError,match='stale_node_generation'):
+            await scheduler.register_node(node(generation=1))
+        reservation=await scheduler.reserve('1'*32,1,request())
+        with pytest.raises(RuntimeError,match='stale_resource'):
+            await scheduler.mark_running(reservation.id,reservation.node_id,1)
+        running=await scheduler.mark_running(reservation.id,reservation.node_id,2)
+        assert running.state=='running'
+        assert await scheduler.release(running.id,running.node_id,2)
+        assert not await scheduler.release(running.id,running.node_id,2)
+    finally:await store.close()
