@@ -68,6 +68,41 @@ async def test_external_handle_is_resumed_without_duplicate_submit(tmp_path):
     finally:await store.close()
 
 
+async def test_service_polling_holds_one_generation_and_releases_on_stop(tmp_path):
+    store,_,job=await setup(tmp_path,request())
+    adapter=FakeAdapter([AdapterSubmission('external-1',{'provider_id':'external-1'})],[
+        AdapterStatus(False),AdapterStatus(False),AdapterStatus(True,JobState.SUCCEEDED,{'asset':'done'})])
+    worker=JobWorker(store,{'fake':adapter},node_id='node',concurrency=1,
+        worker_id='worker',poll_seconds=.01)
+    try:
+        task=__import__('asyncio').create_task(worker.run())
+        for _ in range(200):
+            if (await store.get_job(job.id)).state==JobState.SUCCEEDED:break
+            await __import__('asyncio').sleep(.01)
+        else:raise AssertionError('continuous polling did not finish')
+        worker.stop_event.set();await task
+        value=await store.get_job(job.id)
+        assert value.generation==1 and adapter.submit_calls==1 and adapter.status_calls==3
+    finally:await store.close()
+
+
+async def test_service_stop_releases_continuous_poll_lease_for_takeover(tmp_path):
+    store,_,job=await setup(tmp_path,request())
+    adapter=FakeAdapter([AdapterSubmission('external-1',{'provider_id':'external-1'})],
+        [AdapterStatus(False)]*20)
+    worker=JobWorker(store,{'fake':adapter},node_id='node',concurrency=1,
+        worker_id='worker-a',poll_seconds=.01)
+    try:
+        task=__import__('asyncio').create_task(worker.run())
+        for _ in range(200):
+            if (await store.get_job(job.id)).state==JobState.RUNNING:break
+            await __import__('asyncio').sleep(.01)
+        worker.stop_event.set();await task
+        claimed=await store.claim_job(job.id,'worker-b','node',30,retry_kind='recovery')
+        assert claimed.generation==2
+    finally:await store.close()
+
+
 async def test_unknown_submission_without_handle_is_terminal_and_consumes_acceptance_budget(tmp_path):
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'unknown.db'));await store.initialize()
     try:

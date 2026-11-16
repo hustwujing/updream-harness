@@ -1639,6 +1639,15 @@ class Store:
             ))
             return bool(result.rowcount)
 
+    async def renew_job_lease(self, job_id: str, worker_id: str, generation: int,
+                              lease_seconds: int) -> bool:
+        async with self.connections.begin() as db:
+            result = await db.execute(update(JobLeaseRow).where(
+                JobLeaseRow.job_id == job_id, JobLeaseRow.worker_id == worker_id,
+                JobLeaseRow.generation == generation,
+            ).values(expires_at=now()+timedelta(seconds=lease_seconds),updated_at=now()))
+            return bool(result.rowcount)
+
     async def record_job_acceptance(self, job_id: str, worker_id: str, generation: int, *,
                                     external_execution_id: str, receipt: dict) -> JobAttemptReceipt:
         async with self.connections() as lookup:

@@ -14,13 +14,15 @@ from .observability import event
 
 class JobWorker:
     def __init__(self, store, adapters: dict[str, JobAdapter], *, node_id: str,
-                 concurrency: int = 4, lease_seconds: int = 60, worker_id: str = ""):
+                 concurrency: int = 4, lease_seconds: int = 60, worker_id: str = "",
+                 poll_seconds: float = 1.0):
         self.store = store
         self.adapters = dict(adapters)
         self.node_id = node_id
         self.concurrency = concurrency
         self.lease_seconds = lease_seconds
         self.worker_id = worker_id or "job-worker-" + uuid.uuid4().hex
+        self.poll_seconds = poll_seconds
         self.stop_event = asyncio.Event()
 
     async def run_once(self) -> int:
@@ -33,16 +35,24 @@ class JobWorker:
         return len(attempts)
 
     async def run(self) -> None:
+        tasks: set[asyncio.Task] = set()
         while not self.stop_event.is_set():
-            count = await self.run_once()
-            if count:
-                continue
-            try:
-                await asyncio.wait_for(self.stop_event.wait(), timeout=0.5)
-            except asyncio.TimeoutError:
-                pass
+            completed={task for task in tasks if task.done()}
+            for task in completed:await task
+            tasks-=completed
+            capacity=max(0,self.concurrency-len(tasks));attempts=[]
+            if capacity:
+                attempts=await self.store.claim_available_jobs(
+                    self.worker_id,self.node_id,self.lease_seconds,limit=capacity,
+                    adapters=set(self.adapters))
+                tasks.update(asyncio.create_task(self.process(attempt,continuous=True),
+                    name='job-'+attempt.job_id) for attempt in attempts)
+            if not attempts:
+                try:await asyncio.wait_for(self.stop_event.wait(),timeout=0.5)
+                except asyncio.TimeoutError:pass
+        await asyncio.gather(*tasks)
 
-    async def process(self, attempt) -> None:
+    async def process(self, attempt, *, continuous: bool = False) -> None:
         job = await self.store.get_job(attempt.job_id)
         request = await self.store.get_job_request(attempt.job_id)
         if not job or not request:
@@ -74,10 +84,7 @@ class JobWorker:
                         result={"cancelled_before_acceptance": True})
                     return
                 status = await adapter.cancel(context, external_id)
-                if not status.terminal:
-                    await self.store.defer_accepted_job(job.id, self.worker_id, attempt.generation)
-                    return
-                await self._finish(adapter, context, external_id, status)
+                await self._finish_or_defer(adapter,context,external_id,status,continuous)
                 return
             if request.reconciles_job_id:
                 status = await adapter.reconcile(context, external_id)
@@ -85,10 +92,7 @@ class JobWorker:
                     "external_execution_id": external_id}
                 await self.store.record_job_acceptance(job.id, self.worker_id, attempt.generation,
                     external_execution_id=external_id, receipt=receipt)
-                if not status.terminal:
-                    await self.store.defer_accepted_job(job.id, self.worker_id, attempt.generation)
-                    return
-                await self._finish(adapter, context, external_id, status)
+                await self._finish_or_defer(adapter,context,external_id,status,continuous)
                 return
             if not accepted:
                 try:
@@ -104,7 +108,11 @@ class JobWorker:
                         external_execution_id=exc.external_execution_id,
                         receipt=exc.acceptance_receipt)
                     if exc.external_execution_id:
-                        await self.store.defer_accepted_job(job.id, self.worker_id, attempt.generation)
+                        context=replace(context,previous_external_execution_id=exc.external_execution_id,
+                            previous_acceptance_receipt=exc.acceptance_receipt)
+                        status=await adapter.status(context,exc.external_execution_id)
+                        await self._finish_or_defer(adapter,context,exc.external_execution_id,
+                            status,continuous)
                     else:
                         await self.store.transition_job(job.id, JobState.UNKNOWN,
                             expected_generation=attempt.generation,
@@ -139,16 +147,37 @@ class JobWorker:
                     await self._cleanup(adapter, context, external_id)
                     return
             status = await adapter.status(context, external_id)
-            if not status.terminal:
-                await self.store.defer_accepted_job(job.id, self.worker_id, attempt.generation)
-                return
-            await self._finish(adapter, context, external_id, status)
+            await self._finish_or_defer(adapter,context,external_id,status,continuous)
         except RuntimeError as exc:
             if str(exc) == "stale_job_generation":
                 event("job.worker.stale_generation", level=30, job_id=job.id,
                     generation=attempt.generation)
                 return
             raise
+
+    async def _finish_or_defer(self,adapter:JobAdapter,context:JobExecutionContext,
+                               external_id:str,status:AdapterStatus,continuous:bool)->None:
+        while not status.terminal:
+            if not continuous:
+                await self.store.defer_accepted_job(context.job.id,self.worker_id,context.generation)
+                return
+            if self.stop_event.is_set():
+                await self.store.release_job_lease(context.job.id,self.worker_id,context.generation)
+                return
+            if not await self.store.renew_job_lease(context.job.id,self.worker_id,
+                    context.generation,self.lease_seconds):
+                event('job.worker.stale_generation',level=30,job_id=context.job.id,
+                    generation=context.generation)
+                return
+            try:await asyncio.wait_for(self.stop_event.wait(),timeout=self.poll_seconds)
+            except asyncio.TimeoutError:pass
+            if self.stop_event.is_set():
+                await self.store.release_job_lease(context.job.id,self.worker_id,context.generation)
+                return
+            current=await self.store.get_job(context.job.id)
+            status=(await adapter.cancel(context,external_id) if current and current.cancel_requested
+                else await adapter.status(context,external_id))
+        await self._finish(adapter,context,external_id,status)
 
     async def _finish(self, adapter: JobAdapter, context: JobExecutionContext,
                       external_id: str, status: AdapterStatus) -> None:
