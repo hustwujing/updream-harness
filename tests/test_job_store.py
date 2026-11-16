@@ -107,6 +107,27 @@ async def test_active_child_sandbox_is_preserved_only_while_job_is_nonterminal(t
     finally:await store.close()
 
 
+async def test_terminal_group_releases_unconsumed_budget_idempotently(tmp_path):
+    store=await make_store(tmp_path)
+    try:
+        account=await store.configure_budget('owner','a'*32,'provider.submissions',limit=1)
+        value=request('budget').model_copy(update={'budget_requirements':{'provider.submissions':1}})
+        group,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id='a'*32,
+            origin_turn_id='b'*32,idempotency_key='terminal-budget-group',jobs=[value],
+            authorization_snapshot={'budget_reservations':[{'account_id':account.id,'amount':1}]},
+            suppress_continuation=True))
+        result={'cancelled':True}
+        await store.transition_job(jobs[0].id,JobState.CANCELLED,expected_generation=0,result=result)
+        await store.transition_job(jobs[0].id,JobState.CANCELLED,expected_generation=0,result=result)
+        budget=await store.get_budget_account(account.id)
+        assert budget.reserved==0 and budget.consumed==0
+        reservation=(await store.get_budget_reservations_for_group(group.id))[0]
+        assert reservation.released==1
+        ledger=await store.list_budget_ledger(reservation.id)
+        assert [(row.action,row.amount) for row in ledger]==[('reserve',1),('release',1)]
+    finally:await store.close()
+
+
 async def test_confirming_expired_draft_persists_expired_state(tmp_path):
     store = await make_store(tmp_path)
     try:

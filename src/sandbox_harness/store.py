@@ -1082,6 +1082,11 @@ class Store:
                     return self.budget_reservation_view(row)
                 amount = row.reserved - row.consumed - row.released
                 timestamp = now()
+                if amount==0:
+                    row.state = "released" if row.consumed == 0 else "closed"
+                    row.updated_at = timestamp
+                    await db.flush()
+                    return self.budget_reservation_view(row)
                 row.released += amount
                 row.state = "released" if row.consumed == 0 else "closed"
                 row.updated_at = timestamp
@@ -1726,64 +1731,71 @@ class Store:
                 JobRow.id == job_id))).scalar_one_or_none()
         if not group_id:
             raise KeyError("job_not_found")
+        encoded = canonical_json(result or {})
+        digest = hashlib.sha256(encoded.encode()).hexdigest()
+        release_group_budget=False;view=None
         async with self.job_lock(f"group:{group_id}"):
             async with self.connections.begin() as db:
                 group = await db.get(JobGroupRow, group_id, with_for_update=True)
                 job = await db.get(JobRow, job_id, with_for_update=True)
                 if job.generation != expected_generation:
                     raise RuntimeError("stale_job_generation")
-                result_value = result or {}
-                encoded = canonical_json(result_value)
-                digest = hashlib.sha256(encoded.encode()).hexdigest()
                 if JobState(job.state) in TERMINAL_JOB_STATES:
                     if job.state == state.value and job.result_digest == digest:
-                        return self.job_view(job)
-                    raise RuntimeError("job_already_terminal")
-                job.state = state.value
-                job.result_json = encoded
-                job.result_digest = digest
-                job.updated_at = now()
-                if state in TERMINAL_JOB_STATES:
-                    job.terminal_at = now()
-                    attempt = (await db.execute(select(JobAttemptRow).where(
-                        JobAttemptRow.job_id == job.id,
-                        JobAttemptRow.generation == job.generation,
-                    ).with_for_update())).scalar_one_or_none()
-                    if attempt:
-                        attempt.finished_at = now()
-                        attempt.outcome = state.value
-                    await db.execute(delete(JobLeaseRow).where(JobLeaseRow.job_id == job.id))
-                if group.state == JobGroupState.COMMITTED.value:
-                    group.state = JobGroupState.RUNNING.value
-                    group.updated_at = now()
-                jobs = (await db.execute(select(JobRow).where(JobRow.group_id == group.id)
-                    .order_by(JobRow.local_job_id).with_for_update())).scalars().all()
-                if all(JobState(member.state) in TERMINAL_JOB_STATES for member in jobs):
-                    terminal_payload = [{
-                        "job_id": member.id,
-                        "local_job_id": member.local_job_id,
-                        "state": member.state,
-                        "result_digest": member.result_digest,
-                    } for member in jobs]
-                    result_json = canonical_json(terminal_payload)
-                    result_digest = hashlib.sha256(result_json.encode()).hexdigest()
-                    group.state = JobGroupState.TERMINAL.value
-                    group.terminal_at = group.terminal_at or now()
-                    group.updated_at = now()
-                    all_cancelled = all(member.state == JobState.CANCELLED.value for member in jobs)
-                    outbox = (await db.execute(select(JobOutboxRow).where(
-                        JobOutboxRow.group_id == group.id).with_for_update())).scalar_one_or_none()
-                    if not outbox:
-                        db.add(JobOutboxRow(
-                            id=identifier(), group_id=group.id, thread_id=group.thread_id,
-                            state="suppressed" if group.suppress_continuation or all_cancelled else "ready",
-                            result_digest=result_digest, result_json=result_json,
-                            claim_owner="", claim_batch_digest="", claim_expires_at=None,
-                            continuation_turn_id="",
-                            created_at=now(), updated_at=now(),
-                        ))
-                await db.flush()
-                return self.job_view(job)
+                        view=self.job_view(job);release_group_budget=(group.state in {
+                            JobGroupState.TERMINAL.value,JobGroupState.CONTINUED.value})
+                    else:raise RuntimeError("job_already_terminal")
+                else:
+                    job.state = state.value
+                    job.result_json = encoded
+                    job.result_digest = digest
+                    job.updated_at = now()
+                    if state in TERMINAL_JOB_STATES:
+                        job.terminal_at = now()
+                        attempt = (await db.execute(select(JobAttemptRow).where(
+                            JobAttemptRow.job_id == job.id,
+                            JobAttemptRow.generation == job.generation,
+                        ).with_for_update())).scalar_one_or_none()
+                        if attempt:
+                            attempt.finished_at = now()
+                            attempt.outcome = state.value
+                        await db.execute(delete(JobLeaseRow).where(JobLeaseRow.job_id == job.id))
+                    if group.state == JobGroupState.COMMITTED.value:
+                        group.state = JobGroupState.RUNNING.value
+                        group.updated_at = now()
+                    jobs = (await db.execute(select(JobRow).where(JobRow.group_id == group.id)
+                        .order_by(JobRow.local_job_id).with_for_update())).scalars().all()
+                    if all(JobState(member.state) in TERMINAL_JOB_STATES for member in jobs):
+                        terminal_payload = [{
+                            "job_id": member.id,
+                            "local_job_id": member.local_job_id,
+                            "state": member.state,
+                            "result_digest": member.result_digest,
+                        } for member in jobs]
+                        result_json = canonical_json(terminal_payload)
+                        result_digest = hashlib.sha256(result_json.encode()).hexdigest()
+                        group.state = JobGroupState.TERMINAL.value
+                        group.terminal_at = group.terminal_at or now()
+                        group.updated_at = now();release_group_budget=True
+                        all_cancelled = all(member.state == JobState.CANCELLED.value for member in jobs)
+                        outbox = (await db.execute(select(JobOutboxRow).where(
+                            JobOutboxRow.group_id == group.id).with_for_update())).scalar_one_or_none()
+                        if not outbox:
+                            db.add(JobOutboxRow(
+                                id=identifier(), group_id=group.id, thread_id=group.thread_id,
+                                state="suppressed" if group.suppress_continuation or all_cancelled else "ready",
+                                result_digest=result_digest, result_json=result_json,
+                                claim_owner="", claim_batch_digest="", claim_expires_at=None,
+                                continuation_turn_id="",
+                                created_at=now(), updated_at=now(),
+                            ))
+                    await db.flush()
+                    view=self.job_view(job)
+        if release_group_budget:
+            for reservation in await self.get_budget_reservations_for_group(group_id):
+                await self.release_budget(reservation.id,
+                    idempotency_key=f'group-terminal:{group_id}:{reservation.budget_key}')
+        return view
 
     async def get_job_outbox(self, group_id: str) -> JobOutboxView | None:
         async with self.connections() as db:
