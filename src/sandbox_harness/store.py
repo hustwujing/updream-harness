@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 
-from sqlalchemy import and_, case, or_, Boolean, DateTime, Integer, String, Text, UniqueConstraint, delete, func, select, update
+from sqlalchemy import and_, case, or_, Boolean, DateTime, Integer, String, Text, UniqueConstraint, delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -53,6 +53,7 @@ JOB_DATABASE_LOCK_ORDER = (
     "job_group_draft", "authorization_snapshot", "budget_account", "budget_reservation", "job_group",
     "job", "job_attempt", "job_lease", "job_artifact", "job_outbox",
 )
+SCHEMA_INITIALIZATION_LOCK_ID = 0x5348504152414C4C
 
 
 class ThreadRow(Base):
@@ -850,6 +851,9 @@ class Store:
         if self.events:
             await self.events.initialize()
         async with self.engine.begin() as connection:
+            if connection.dialect.name == "postgresql":
+                await connection.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"),
+                    {"lock_id": SCHEMA_INITIALIZATION_LOCK_ID})
             await connection.run_sync(Base.metadata.create_all)
 
     async def close(self) -> None:

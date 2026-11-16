@@ -79,6 +79,15 @@ def test_configure_local_rejects_collision_and_non_data2_storage():
     assert "os.path.commonpath" in source
 
 
+def test_service_account_can_read_descriptors_and_schema_startup_is_serialized():
+    installer=(ROOT/"deploy/install-units.sh").read_text()
+    assert '"$root/runtime"' in installer
+    assert '"$root/deploy/job-catalog.example.json"' in installer
+    store=(ROOT/"src/sandbox_harness/store.py").read_text()
+    assert "pg_advisory_xact_lock" in store
+    assert "SCHEMA_INITIALIZATION_LOCK_ID" in store
+
+
 def test_configure_local_inherits_provider_configuration_but_not_storage_identity():
     module=load_configure_local()
     route_key="CUSTOM_MODEL_ROUTE_KEY"
