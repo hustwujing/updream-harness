@@ -33,6 +33,14 @@ def test_parallel_protocol_runner_never_fakes_unimplemented_success():
     assert "classification':'program_failure'" in source
 
 
+def test_dynamic_resize_case_grades_the_post_intervention_contract():
+    catalog=__import__('json').loads((ROOT/'tests/real_cases/cases.json').read_text())
+    case=next(row for row in catalog['cases'] if row['id']=='R02')
+    assert case['dynamic_hook']=='intervention_resize_format'
+    assert case['expect']=={'kind':'image','width':256,'height':128,
+        'extensions':['.png','.webp'],'min_images':2}
+
+
 def campaign_module():
     path=Path(__file__).with_name("run_real_campaign.py")
     spec=importlib.util.spec_from_file_location("real_campaign_runner",path)
