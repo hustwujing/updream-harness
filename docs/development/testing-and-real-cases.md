@@ -31,6 +31,8 @@ revision's report as evidence for current code.
 | Observability | `test_observability.py` plus affected lifecycle tests |
 | Frontend | production build plus the affected `tests/browser_*.cjs` scripts |
 | Runtime image | `test_runtime_image_contract.py`, image build and real sandbox smoke |
+| Durable Jobs / delegation | coordinator, worker, scheduler, continuation, Reviewer and PostgreSQL race tests |
+| Deployment | `test_deployment_isolation.py`, `test_ingress_config.py`, service-kill recovery and browser ingress |
 
 ## Iteration and release
 

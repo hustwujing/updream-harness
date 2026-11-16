@@ -29,8 +29,8 @@ object storage as part of this product's release.
 5. Confirm no active Turn would be interrupted.
 6. Run `deploy/check-service-access.sh`.
 7. Use `deploy/record-release.py` to pin Git revision and `PYTHONPATH`.
-8. Restart only affected services and verify API/Gateway health plus Media
-   Worker systemd state. API and Media Worker are independent failure domains.
+8. Restart only affected services and verify API/Gateway health plus Job,
+   Media and Site Worker systemd state. They are independent failure domains.
 9. Run a focused deployed case and confirm state, logs and cleanup.
 
 `record-release.py` refuses staged or unstaged changes to tracked files in the
@@ -42,10 +42,11 @@ window's partial edits merely to make a release command pass.
 
 ## Database and service changes
 
-`Store.initialize` currently performs `create_all` and explicit additive ALTERs;
-there is no external migration runner. Follow [database migration
-guidance](database-migration.md). `install-units.sh` installs units but does not
-start them. `init-postgresql.sh` targets only the dedicated cluster.
+This project is not online and intentionally has no migration framework.
+`Store.initialize` creates the current schema in the fresh dedicated database;
+do not add compatibility ALTERs or reuse either predecessor database.
+`install-units.sh` installs units but does not start them.
+`init-postgresql.sh` targets only the dedicated `127.0.0.1:28432` cluster.
 
 Never delete production data or reset the database unless the user explicitly
 authorizes that exact environment. Never rely on graceful shutdown for

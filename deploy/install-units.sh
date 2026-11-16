@@ -23,7 +23,7 @@ if ! getent passwd sandbox-harness-db >/dev/null; then
   useradd --system --home-dir "$root/.data/postgresql" --shell /usr/sbin/nologin sandbox-harness-db
 fi
 install -d -o sandbox-harness -g sandbox-harness -m 0700 "$root/.data"
-install -d -o sandbox-harness -g sandbox-harness -m 0700 "$root/.data"/{cache,npm-cache,pip-cache,playwright-browsers,service-logs,tmp,uv-cache}
+install -d -o sandbox-harness -g sandbox-harness -m 0700 "$root/.data"/{cache,npm-cache,objects,pip-cache,playwright-browsers,preview-cache,runtime-bundles,runtime-code-bundles,service-logs,tmp,uv-cache}
 chmod 1777 "$root/.data/tmp"
 install -d -o root -g sandbox-harness -m 0750 "$root/.data/config"
 install -d -o sandbox-harness-db -g sandbox-harness-db -m 0700 "$root/.data/postgresql"
@@ -31,10 +31,6 @@ install -d -o sandbox-harness-db -g sandbox-harness-db -m 0700 "$root/.data/post
 setfacl -m u:sandbox-harness:rx /data2/wujing03 "$root"
 setfacl -m u:sandbox-harness-db:rx /data2/wujing03 "$root"
 setfacl -m u:sandbox-harness-db:x "$root/.data"
-setfacl -m u:sandbox-harness:rx /data/wujing03 /data/wujing03/miniforge3 /data/wujing03/miniforge3/bin
-setfacl -m u:sandbox-harness:rx /data/wujing03/miniforge3/bin/python3.13
-setfacl -m u:sandbox-harness:rx /data/wujing03/miniforge3/lib
-setfacl -R -m u:sandbox-harness:rX /data/wujing03/miniforge3/lib/python3.13
 setfacl -m u:sandbox-harness:rx "$root/web"
 setfacl -m d:u:sandbox-harness:rX "$root/web"
 setfacl -R -m u:sandbox-harness:rX "$root/.venv" "$root/src" "$root/web/dist"
@@ -44,5 +40,5 @@ chmod 0755 "$root/deploy/network-rule.sh"
 install -m 0644 "$root"/deploy/systemd/*.service /etc/systemd/system/
 python3 "$root/deploy/record-release.py" --env-file "$env_file"
 systemctl daemon-reload
-systemctl enable sandbox-harness-parallel-postgresql.service sandbox-harness-parallel-network.service sandbox-harness-parallel-gateway.service sandbox-harness-parallel-api.service sandbox-harness-parallel-media-worker.service sandbox-harness-parallel-site-worker.service
+systemctl enable sandbox-harness-parallel-postgresql.service sandbox-harness-parallel-network.service sandbox-harness-parallel-gateway.service sandbox-harness-parallel-job-worker.service sandbox-harness-parallel-api.service sandbox-harness-parallel-media-worker.service sandbox-harness-parallel-site-worker.service
 echo "units installed but not started"

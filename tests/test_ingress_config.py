@@ -4,12 +4,31 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 
 
-def test_direct_and_frpc_nginx_ingress_are_explicit_and_separate():
-    direct=(ROOT/'deploy/nginx.conf').read_text()
-    frpc=(ROOT/'deploy/nginx-frpc.conf').read_text()
-    assert 'X-Updream-Ingress direct' in direct
-    assert 'listen 127.0.0.1:18091 proxy_protocol' in frpc
-    assert 'X-Updream-Ingress frpc' in frpc
-    assert 'X-Real-IP $proxy_protocol_addr' in frpc
-    assert 'X-Forwarded-For $proxy_protocol_addr' in frpc
-    assert 'proxy_pass http://127.0.0.1:24766/' in frpc
+def test_direct_nginx_preserves_streams_websockets_uploads_and_prefix():
+    source=(ROOT/"deploy/nginx.conf").read_text()
+    assert "location ^~ /sandbox-harness-platform-parallel/" in source
+    assert "proxy_pass http://127.0.0.1:24766/;" in source
+    assert "X-Forwarded-Prefix /sandbox-harness-platform-parallel" in source
+    assert "X-Updream-Ingress direct" in source
+    assert "proxy_http_version 1.1" in source
+    assert "Upgrade $http_upgrade" in source
+    assert "proxy_buffering off" in source and "proxy_request_buffering off" in source
+    assert "client_max_body_size 512m" in source
+
+
+def test_frpc_ingress_is_private_login_only_and_has_no_registration_route_override():
+    source=(ROOT/"deploy/nginx-frpc.conf").read_text()
+    assert "listen 127.0.0.1:18091 proxy_protocol" in source
+    assert "X-Updream-Ingress frpc" in source
+    assert "proxy_pass http://127.0.0.1:24766/;" in source
+    assert "proxy_buffering off" in source and "Upgrade $http_upgrade" in source
+    assert "location / {" in source and "return 404" in source
+    app=(ROOT/"src/sandbox_harness/app.py").read_text()
+    assert 'request.state.ingress == "frpc"' in app
+    assert 'registration_not_available' in app
+
+
+def test_ingress_does_not_expose_gateway_or_database_ports():
+    source=(ROOT/"deploy/nginx.conf").read_text()+(ROOT/"deploy/nginx-frpc.conf").read_text()
+    for value in ("28432","29880","29881","6379"):
+        assert value not in source

@@ -49,6 +49,7 @@ def test_parallel_deployment_files_cannot_target_predecessor_state():
     expected = {
         "sandbox-harness-parallel-api.service",
         "sandbox-harness-parallel-gateway.service",
+        "sandbox-harness-parallel-job-worker.service",
         "sandbox-harness-parallel-media-worker.service",
         "sandbox-harness-parallel-network.service",
         "sandbox-harness-parallel-postgresql.service",

@@ -63,16 +63,19 @@ capability contract.
 
 Use the narrowest layer that satisfies the runtime contract:
 
-- **Foundation:** shared OS/browser/rendering packages, runtime libraries,
-  fonts and codecs. Keep credentials and project source out of this layer.
-- **Base:** shared Python/media packages and project-owned helper commands.
-  Install native build headers temporarily in the same build layer when a
-  Python package must compile them, then remove the headers and package cache.
-- **Harness image:** only the native Codex, Claude or DeepSeek client. Do not
-  install shared media libraries three times.
-- **Optional image:** use when a large dependency is not needed by every
-  Harness. The routing/profile must select it explicitly; otherwise the Skill
-  stays unavailable instead of silently falling back.
+- **L1 Bootstrap:** minimal verifier/supervisor, non-root identity, health and
+  process lifecycle. It contains no Skill, task code or credential.
+- **L2 Common:** shared Runtime dependencies and generic CLI dispatch only.
+- **L3 RuntimeDependencyProfile:** one registered immutable toolchain such as
+  `general-cpu`, `media-cpu`, `office`, `web-browser`, `data-analysis` or
+  `primary-full-cpu`. The Resolver selects the smallest authorized profile
+  satisfying the selected Skills' declared dependencies.
+- **L4 Harness:** exactly one native Codex, Claude or DeepSeek client. Final
+  manifests form a digest-pinned `Profile x Harness` matrix while OCI reuses
+  L1-L3 bytes.
+
+Runtime Python/CLI changes use the signed Runtime Code Bundle. Skill content
+uses the signed Skill Bundle. Neither is copied into an image layer.
 
 For every image dependency:
 

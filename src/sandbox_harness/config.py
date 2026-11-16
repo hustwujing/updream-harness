@@ -91,6 +91,12 @@ class Settings(BaseSettings):
     capability_request_limit: int = Field(default=200, ge=1, le=10000)
     capability_public_request_limit: int = Field(default=5000, ge=1, le=100000)
     model_token_budget: int = Field(default=2_000_000, ge=1)
+    job_node_id: str = Field(default="local-opensandbox",pattern=r"^[A-Za-z0-9._-]{1,160}$")
+    job_node_cpu_limit: int = Field(default=8,ge=1,le=1024)
+    job_node_memory_mb_limit: int = Field(default=32768,ge=128)
+    job_node_heartbeat_seconds: float = Field(default=10,ge=1,le=60)
+    job_worker_concurrency: int = Field(default=8,ge=1,le=128)
+    job_lease_seconds: int = Field(default=60,ge=15,le=600)
     upstream_codex: str = ""
     upstream_claude: str = ""
     upstream_deepseek: str = ""

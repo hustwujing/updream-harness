@@ -20,6 +20,10 @@ the summary.
 | `site_bundle.py` / `site_worker.py` | bounded static-site packages, durable deployment Jobs and atomic immutable version activation |
 | `sessions.py` | Signed anonymous browser identity cookie; owner ID is its hash |
 | `events.py` | Redis Streams wake-up/bounded replay aid; PostgreSQL remains authoritative |
+| `job_coordinator.py` / `job_worker.py` | immutable JobGroup preflight and generic accepted-handle execution/recovery |
+| `scheduler.py` / `node_agent.py` | registered Profile/resource inventory and fenced reservations |
+| `harness_job.py` / `job_service.py` | Child/Reviewer OpenSandbox execution and production worker lifecycle |
+| `job_continuation.py` | all-terminal outbox batching back into the Primary Harness Session |
 
 ## Gateway
 
