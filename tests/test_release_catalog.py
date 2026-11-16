@@ -33,6 +33,22 @@ def signed_catalog(tmp_path):
     return catalog,public_path
 
 
+def complete_signed_catalog(tmp_path):
+    catalog,public=signed_catalog(tmp_path)
+    value=json.loads(catalog.read_text())
+    digests={"codex":"b"*64,"claude":"c"*64,"deepseek":"d"*64}
+    value["runtime_dependency_profiles"].append({"id":"primary-full-cpu",
+        "supported_harnesses":list(digests),"image_digests":digests,
+        "image_refs":{key:"registry/primary-"+key+"@sha256:"+digest
+            for key,digest in digests.items()}})
+    catalog.write_text(json.dumps(value,sort_keys=True,separators=(",",":"))+"\n")
+    private=tmp_path/"private.pem"
+    catalog.with_suffix(".json.sig").write_bytes(subprocess.run(
+        ["openssl","pkeyutl","-sign","-rawin","-inkey",str(private),"-in",str(catalog)],
+        check=True,stdout=subprocess.PIPE).stdout)
+    return catalog,public
+
+
 def test_release_publishes_verified_complete_profile_catalog(tmp_path):
     catalog,public=signed_catalog(tmp_path)
     target,digest,signature_digest=release_module().publish_profile_catalog(
@@ -56,3 +72,11 @@ def test_release_rejects_tampered_profile_catalog(tmp_path):
     catalog,public=signed_catalog(tmp_path);catalog.write_text(catalog.read_text()+" ")
     with pytest.raises(subprocess.CalledProcessError):
         release_module().publish_profile_catalog(catalog,tmp_path/"published",public)
+
+
+def test_release_derives_primary_runtime_images_from_signed_catalog(tmp_path):
+    catalog,public=complete_signed_catalog(tmp_path)
+    target,_,_=release_module().publish_profile_catalog(catalog,tmp_path/"published",public)
+    images=release_module().primary_runtime_images(target)
+    assert set(images)=={"codex","claude","deepseek"}
+    assert all("primary-" in value and "@sha256:" in value for value in images.values())

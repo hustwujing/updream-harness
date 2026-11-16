@@ -45,6 +45,18 @@ def publish_profile_catalog(source: Path, destination_root: Path, public_key: Pa
     return target,digest,signature_digest
 
 
+def primary_runtime_images(catalog: Path) -> dict[str,str]:
+    value=json.loads(catalog.read_bytes())
+    profiles={profile.get('id'):profile for profile in value.get('runtime_dependency_profiles',[])}
+    primary=profiles.get('primary-full-cpu')
+    if not primary:raise ValueError('Profile Catalog has no primary-full-cpu Runtime Profile')
+    references=primary.get('image_refs',{})
+    required={'codex','claude','deepseek'}
+    if set(references)!=required or any('@sha256:' not in references[harness] for harness in required):
+        raise ValueError('Primary Runtime image matrix is incomplete')
+    return references
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--env-file',default='/data2/wujing03/sandbox-harness-platform-parallel/.data/config/platform.env')
@@ -78,6 +90,7 @@ def main():
     profile_source=args.profile_catalog or Path(configured.get('SANDBOX_HARNESS_PROFILE_CATALOG_PATH',''))
     profile_catalog_path,profile_catalog_digest,profile_signature_digest=publish_profile_catalog(
         profile_source,root/'.data'/'profile-catalogs',code_root/'runtime'/'bundle_public_key.pem')
+    images=primary_runtime_images(profile_catalog_path)
     for key,value in {'SANDBOX_HARNESS_RELEASE':revision[:12],'PYTHONPATH':str(code_root/'src'),
             'SANDBOX_HARNESS_RUNTIME_BUNDLE_DIR':str(bundle_dir),
             'SANDBOX_HARNESS_RUNTIME_BUNDLE_DIGEST':bundle['sha256'],
@@ -85,7 +98,10 @@ def main():
             'SANDBOX_HARNESS_RUNTIME_CODE_BUNDLE_DIGEST':code_bundle['sha256'],
             'SANDBOX_HARNESS_JOB_CATALOG_DIGEST':job_catalog_digest,
             'SANDBOX_HARNESS_PROFILE_CATALOG_PATH':str(profile_catalog_path),
-            'SANDBOX_HARNESS_PROFILE_CATALOG_DIGEST':profile_catalog_digest}.items():
+            'SANDBOX_HARNESS_PROFILE_CATALOG_DIGEST':profile_catalog_digest,
+            'SANDBOX_HARNESS_RUNTIME_IMAGE_CODEX':images['codex'],
+            'SANDBOX_HARNESS_RUNTIME_IMAGE_CLAUDE':images['claude'],
+            'SANDBOX_HARNESS_RUNTIME_IMAGE_DEEPSEEK':images['deepseek']}.items():
         line=key+'='+value
         source=re.sub('^'+key+'=.*$',lambda match:line,source,flags=re.M) if re.search('^'+key+'=',source,re.M) else source.rstrip()+'\n'+line+'\n'
     with tempfile.NamedTemporaryFile(mode='w',dir=target.parent,delete=False) as out:
