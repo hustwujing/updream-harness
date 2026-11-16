@@ -12,7 +12,7 @@ const assert=require('node:assert/strict');
   if(path.endsWith('/session'))body={ready:true};else if(path.endsWith('/catalog/harnesses'))body=[{id:'codex',label:'Codex',default_model:'gpt-5.6',models:[{id:'gpt-5.6',label:'GPT',reasoning:[{id:'standard',label:'标准'}]}]}];else if(path.endsWith('/threads'))body=[thread];else if(path.endsWith('/turns'))body=[turn];else if(path.endsWith('/items'))body=items;
   return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
  });
- await page.goto('http://127.0.0.1:22892/?thread=groups');await page.waitForSelector('.activity-group.running');
+ await page.goto((process.env.TEST_BASE_URL||'http://127.0.0.1:22892/')+'?thread=groups');await page.waitForSelector('.activity-group.running');
  assert.ok(await page.getByText('正在执行 8 · 已记录 16',{exact:true}).isVisible());
  assert.equal(await page.locator('.activity-group.running > .activity-row:visible').count(),5);
  assert.ok(await page.getByText('另有 3 个正在执行',{exact:true}).isVisible());

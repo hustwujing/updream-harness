@@ -1,0 +1,15 @@
+1
+00:00:00,000 --> 00:00:06,000
+One. The blue square moves from left to right.
+
+2
+00:00:07,000 --> 00:00:13,000
+Two. The green circle stays on the right.
+
+3
+00:00:14,000 --> 00:00:21,000
+Three. Keep the logo in the top right corner.
+
+4
+00:00:22,000 --> 00:00:29,000
+Four. The final video should end smoothly.

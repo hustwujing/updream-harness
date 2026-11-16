@@ -1,0 +1,1 @@
+One. The blue square moves from left to right.

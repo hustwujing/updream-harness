@@ -21,7 +21,7 @@ const {chromium}=require('playwright');const assert=require('node:assert/strict'
    await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
   });
   const refreshCatalog=()=>page.evaluate(()=>catalogTicks.forEach(fn=>fn()));
-  await page.goto('http://127.0.0.1:22892/');await page.getByLabel('模型',{exact:true}).selectOption('gpt-6-astra');await page.getByLabel('推理强度').selectOption('maximum');
+  await page.goto(process.env.TEST_BASE_URL||'http://127.0.0.1:22892/');await page.getByLabel('模型',{exact:true}).selectOption('gpt-6-astra');await page.getByLabel('推理强度').selectOption('maximum');
   phase='busy';await refreshCatalog();await page.waitForSelector('.model-health-note');
   assert.equal(await page.getByLabel('模型',{exact:true}).inputValue(),'gpt-6-astra');
   assert.equal(await page.getByLabel('推理强度').inputValue(),'maximum');

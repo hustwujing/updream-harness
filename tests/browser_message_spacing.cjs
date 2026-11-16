@@ -11,7 +11,7 @@ const assert=require('node:assert/strict');
   if(path.endsWith('/session'))body={ready:true};else if(path.endsWith('/catalog/harnesses'))body=[{id:'codex',label:'Codex',default_model:'gpt-5.6',models:[{id:'gpt-5.6',label:'GPT',reasoning:[{id:'standard',label:'标准'}]}]}];else if(path.endsWith('/threads'))body=[thread];else if(path.endsWith('/turns'))body=[{id:'turn-1',thread_id:'spacing',harness:'codex',model:'gpt-5.6',state:'COMPLETED',updated_at:now},{id:'turn-2',thread_id:'spacing',harness:'codex',model:'gpt-5.6',state:'COMPLETED',updated_at:now}];else if(path.endsWith('/items'))body=items;
   return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
  });
- await page.goto('http://127.0.0.1:22892/?thread=spacing');await page.waitForSelector('.turn:nth-of-type(2)');
+ await page.goto((process.env.TEST_BASE_URL||'http://127.0.0.1:22892/')+'?thread=spacing');await page.waitForSelector('.turn:nth-of-type(2)');
  const boxes=await page.locator('.turn').evaluateAll(turns=>turns.map(turn=>({users:[...turn.querySelectorAll('.user-message')].map(node=>node.getBoundingClientRect().toJSON()),agents:[...turn.querySelectorAll('.agent-message')].map(node=>node.getBoundingClientRect().toJSON())})));
  const userGap=boxes[0].users[1].y-(boxes[0].users[0].y+boxes[0].users[0].height),userAgentGap=boxes[0].agents[0].y-(boxes[0].users[1].y+boxes[0].users[1].height),agentGap=boxes[0].agents[1].y-(boxes[0].agents[0].y+boxes[0].agents[0].height),turnGap=boxes[1].users[0].y-(boxes[0].agents[1].y+boxes[0].agents[1].height);
  assert.ok(Math.abs(userGap-agentGap)<1&&Math.abs(userAgentGap-agentGap)<1,JSON.stringify({userGap,userAgentGap,agentGap}));

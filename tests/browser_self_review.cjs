@@ -19,7 +19,7 @@ const assert=require('node:assert/strict');
    else if(path.endsWith('/interactions'))value=[{id:'question',turn_id:'turn',kind:'approval',status:'responding',request:{prompt:'Allow?'},response:{action:'approve',answers:{}}}];
    await route.fulfill({status,contentType:'application/json',body:JSON.stringify(value)});
   });
-  await page.goto('http://127.0.0.1:22892/?thread=review-thread');
+  await page.goto((process.env.TEST_BASE_URL||'http://127.0.0.1:22892/')+'?thread=review-thread');
   await page.waitForSelector('.user-message');
   assert.match(await page.locator('.input-status').innerText(),/未能确认/);
   assert(await page.getByRole('button',{name:'允许',exact:true}).isVisible());

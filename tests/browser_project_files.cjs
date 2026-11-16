@@ -15,7 +15,7 @@ const fs=require('node:fs');
    if(viewport.name==='mobile'){await page.locator('.topbar .mobile-only').click();await page.waitForSelector('.sidebar.open');}
    const target=page.locator('.thread-list button').filter({hasText:'Workspace visual fixture'});
    await target.click();await page.waitForTimeout(150);
-   await page.getByRole('button',{name:'Workspace',exact:true}).click();await page.waitForSelector('.inspector.open');
+   await page.getByTitle('Workspace 与 Sandbox').click();await page.waitForSelector('.inspector.open');
    const files=page.locator('.project-file');await files.first().waitFor();
    assert.equal(await files.count(),3);
    assert.ok(await page.getByText('项目素材',{exact:true}).isVisible());

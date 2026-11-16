@@ -1,0 +1,112 @@
+{
+  "scope": "Real processing of public sample photos, generated motion videos and Flite speech; no simulated provider results",
+  "photo_source": "https://scikit-image.org/docs/stable/api/skimage.data.html",
+  "astronaut_source": "NASA, public-domain sample distributed by scikit-image",
+  "rocket_source": "SpaceX DSCOVR launch sample distributed by scikit-image; see data documentation",
+  "speech_text": [
+    "One. The blue square moves from left to right.",
+    "Two. The green circle stays on the right.",
+    "Three. Keep the logo in the top right corner.",
+    "Four. The final video should end smoothly."
+  ],
+  "files": [
+    {
+      "name": "portrait.png",
+      "bytes": 791555,
+      "sha256": "88431cd9653ccd539741b555fb0a46b61558b301d4110412b5bc28b5e3ea6cb5"
+    },
+    {
+      "name": "rocket.png",
+      "bytes": 312845,
+      "sha256": "9f0197f9f9346f866c6a737f32fcba8dc222e20acc5b3ecf4888e47ebcb29477"
+    },
+    {
+      "name": "card_skew.png",
+      "bytes": 32980,
+      "sha256": "e1d7e0ad4cf0c1b968a6c95f140eee3681d8cd10395b5c18519cdf45636f5477"
+    },
+    {
+      "name": "speech_noisy.wav",
+      "bytes": 960078,
+      "sha256": "095d83800b13eca9934eafa27665626fab2d339e3aae7a8ea8a8300fc9140562"
+    },
+    {
+      "name": "logo_rgba.png",
+      "bytes": 3480,
+      "sha256": "59db33a13a488641fad10091f94a9138b51300b3263c1feab8d87f0a05276348"
+    },
+    {
+      "name": "logo_white.png",
+      "bytes": 3595,
+      "sha256": "25ac919f0ddca629b484fd5123088a1eb731c69f6bb24b921b26a68e0be935c3"
+    },
+    {
+      "name": "mask.png",
+      "bytes": 2297,
+      "sha256": "94243df1e4c022a927816c0525d702d170f0d924c1571df59eae2dc0a83126ff"
+    },
+    {
+      "name": "poster.png",
+      "bytes": 27722,
+      "sha256": "defcf57aef1e3fcae48fc93f3cd6696c7527d1557aa3a58603eb84062c228836"
+    },
+    {
+      "name": "color_grid.png",
+      "bytes": 1497,
+      "sha256": "46a6770fa279c576922a47fd1debac5050c968fe9994949fd87f7dd0d1dcaae4"
+    },
+    {
+      "name": "speech.wav",
+      "bytes": 960078,
+      "sha256": "425da6fbbb5dc1e830bdbec8c3bb55fd3a0d05a5dd9fe8eca99cb6447abf9e4a"
+    },
+    {
+      "name": "stereo.wav",
+      "bytes": 5760078,
+      "sha256": "c61a931d7cd1359dd691c02faa3ad2de0e9f29beee9a0e3099a9806f2c1658be"
+    },
+    {
+      "name": "clip_a.mp4",
+      "bytes": 1373823,
+      "sha256": "131737bbeeb2ab1e8d332d32f7031aa34507f75cd073a6c508aaa4f4300ec4cf"
+    },
+    {
+      "name": "clip_b.mp4",
+      "bytes": 504631,
+      "sha256": "3c0c04617d6a3cd55d7b531f8c75fc675fe3cb07b66519852338480fbc087c3c"
+    },
+    {
+      "name": "portrait_clip.mp4",
+      "bytes": 523742,
+      "sha256": "a009d59bafa649ba17610ef585903a1e364ac3df6b0d027bd851256ec05395f1"
+    },
+    {
+      "name": "captions.srt",
+      "bytes": 309,
+      "sha256": "afe9c991523d355da1828426058a225bb13a1bb7cac6856d3dc405360b45bbae"
+    },
+    {
+      "name": "music.wav",
+      "bytes": 2880044,
+      "sha256": "1f725acb08916984adebcdfbee11cd1c1ac8f5271a91e1bf0b48acb6d280a4a3"
+    },
+    {
+      "name": "reference_tone.wav",
+      "bytes": 2880078,
+      "sha256": "58a14c1c700cff2c15d2d16322b4519afda6943d2513effa4fac363e663a33fa"
+    },
+    {
+      "name": "motion_reference.mp4",
+      "bytes": 5657,
+      "sha256": "8210597d6f0a8c012d1c70f25ce37a2d7f46e6fa7f90e999ad5b8f2cc02c387b"
+    },
+    {
+      "name": "approved_subject.png",
+      "bytes": 500628,
+      "sha256": "ee97ce0c2d55bfcc92de3484e0d4ce493d8beb90994f8cf65e4cfc33bfcddcdd"
+    }
+  ],
+  "audio_notes": "music.wav is an original deterministic plucked arpeggio; reference_tone.wav and the right channel in clip_a retain a 440Hz calibration tone. Speech is Flite synthesis of the recorded text.",
+  "noise_seed": 42,
+  "audio_fixture_finalized_before_first_audio_case": true
+}
