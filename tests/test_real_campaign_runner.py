@@ -25,4 +25,5 @@ def test_parallel_protocol_runner_never_fakes_unimplemented_success():
     source=(ROOT/"tests/run_real_parallel_protocol.py").read_text();ast.parse(source)
     assert "protocol_handler_not_implemented" in source
     assert "HANDLERS" in source and "'P02'" in source and "'P12'" in source
+    assert all(f"'P{index:02d}'" in source for index in range(1,21))
     assert "classification':'program_failure'" in source

@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
 import time
 import uuid
 
@@ -15,6 +17,7 @@ from dotenv import dotenv_values
 
 ROOT=Path(__file__).resolve().parents[1]
 TERMINAL_JOBS={'SUCCEEDED','FAILED','CANCELLED','BLOCKED','UNKNOWN'}
+TERMINAL_TURNS={'COMPLETED','FAILED','CANCELLED','WAITING_USER'}
 
 
 def require(response:httpx.Response)->httpx.Response:
@@ -71,6 +74,50 @@ async def wait_jobs(client,jobs,timeout=900):
     if failed:raise AssertionError('jobs_not_succeeded:'+json.dumps(
         [{'id':value['id'],'state':value['state'],'result':value.get('result',{})} for value in failed],ensure_ascii=False))
     return values
+
+
+async def wait_turn(client,turn_id,timeout=900):
+    deadline=time.monotonic()+timeout
+    while time.monotonic()<deadline:
+        response=await client.get(f'api/turns/{turn_id}');require(response);value=response.json()
+        if value['state'] in TERMINAL_TURNS:return value
+        await asyncio.sleep(1)
+    raise TimeoutError('turn_timeout:'+turn_id)
+
+
+async def artifact_boundary(client,args,identity,*,requires_review:bool,verdict:str)->dict:
+    thread,turn=await origin(client,args,identity);settings=load_platform_settings()
+    from sandbox_harness.app import object_store
+    from sandbox_harness.artifact_gateway import ArtifactEmission,ArtifactGateway
+    from sandbox_harness.job_contracts import (JobExpectedOutput,JobGroupCreate,JobKind,
+        JobRequest,JobState,OutputDisposition)
+    from sandbox_harness.store import Store
+    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    owner=(await store.get_thread(thread['id'])).owner_id
+    request=JobRequest(local_job_id='review-boundary',kind=JobKind.OPERATION,adapter='fixture',
+        descriptor_id='fixture.review-boundary',descriptor_version='1',descriptor_digest='e'*64,
+        idempotency_key='review-boundary-'+uuid.uuid4().hex,parameters={},expected_outputs=[
+            JobExpectedOutput(artifact_role='report',output_disposition=OutputDisposition.DELIVERY,
+                min_items=1,max_items=1,mime_patterns=('application/pdf',),requires_review=requires_review)])
+    try:
+        _,jobs=await store.create_job_group(owner,JobGroupCreate(thread_id=thread['id'],
+            origin_turn_id=turn['id'],idempotency_key='review-group-'+uuid.uuid4().hex,jobs=[request],
+            suppress_continuation=True))
+        attempt=await store.claim_job(jobs[0].id,'protocol-review','protocol-node',60)
+        gateway=ArtifactGateway(store,object_store(settings),settings.data_root/'tmp'/'protocol-artifacts',
+            maximum_bytes=1024*1024)
+        data=b'%PDF-1.7\n% protocol review boundary\n';digest=hashlib.sha256(data).hexdigest()
+        async def chunks():yield data
+        await gateway.emit(ArtifactEmission(jobs[0].id,attempt.generation,'report','main',0,
+            'report.pdf',OutputDisposition.DELIVERY,'application/pdf'),chunks())
+        receipt={'verdict':verdict,'artifact_digests':[digest]}
+        result=await store.finalize_job_artifact_collection(jobs[0].id,attempt.generation,'report',
+            review_receipt=receipt)
+        await store.transition_job(jobs[0].id,JobState.SUCCEEDED,
+            expected_generation=attempt.generation,result=result)
+        files=await store.current_project_files(thread['id'],owner)
+        return {'job_id':jobs[0].id,'collection':result,'project_files':files,'digest':digest}
+    finally:await store.close()
 
 
 def load_platform_settings():
@@ -235,24 +282,40 @@ async def confirmed_provider_group(client,args,identity,count=2):
 async def case_p08(client,args):
     thread,turn,value=await confirmed_provider_group(client,args,'P08',3);job=value['jobs'][0]
     response=await client.post(f"api/jobs/{job['id']}/cancel");response.raise_for_status()
-    await client.post(f"api/job-groups/{value['group']['id']}/cancel")
+    cancelled=await wait_job(client,job['id'],300)
+    others=await asyncio.gather(*(wait_job(client,item['id'],900) for item in value['jobs'][1:]))
+    if cancelled['state']!='CANCELLED' or any(item['state']=='CANCELLED' for item in others):
+        raise AssertionError('single cancellation affected independent members')
     return {'classification':'success','cancelled_job_id':job['id'],
-        'state':response.json()['state'],'independent_members':2}
+        'state':cancelled['state'],'independent_members':2}
 
 
 async def case_p09(client,args):
     thread,turn,value=await confirmed_provider_group(client,args,'P09',3)
     response=await client.post(f"api/job-groups/{value['group']['id']}/cancel");response.raise_for_status()
     if len(response.json()['jobs'])!=3:raise AssertionError('group cancellation omitted members')
+    states=await asyncio.gather(*(wait_job(client,item['id'],300) for item in value['jobs']))
+    if any(item['state']!='CANCELLED' for item in states):raise AssertionError('group member not cancelled')
+    replacement=await prepare(client,thread,turn,[harness_job(9,args,
+        objective='Return the marker unaffected-new-group.')],'P09-new');require(replacement)
+    await wait_jobs(client,replacement.json()['jobs'],900)
     return {'classification':'success','group_id':value['group']['id'],'cancelled_members':3}
 
 
 async def case_p10(client,args):
-    thread,turn,value=await confirmed_provider_group(client,args,'P10',3)
+    thread,turn=await origin(client,args,'P10');all_jobs=[]
+    for group_index in range(2):
+        response=await prepare(client,thread,turn,[harness_job(group_index*2+index,args,
+            objective=f'Return marker stop-all-{group_index}-{index}.') for index in range(2)],
+            f'P10-{group_index}');require(response);all_jobs.extend(response.json()['jobs'])
     response=await client.post(f"api/threads/{thread['id']}/stop-all");response.raise_for_status()
-    if len(response.json()['jobs'])<3:raise AssertionError('thread stop-all omitted background Jobs')
+    if len(response.json()['jobs'])<4:raise AssertionError('thread stop-all omitted background Jobs')
+    states=await asyncio.gather(*(wait_job(client,item['id'],300) for item in all_jobs))
+    if any(item['state']!='CANCELLED' for item in states):raise AssertionError('stop-all member not cancelled')
+    await asyncio.sleep(2);turns=require(await client.get(f"api/threads/{thread['id']}/turns")).json()
+    if any(item.get('internal') for item in turns):raise AssertionError('stop-all created continuation')
     return {'classification':'success','thread_id':thread['id'],'stop_all':True,
-        'cancelled_members':len(response.json()['jobs'])}
+        'cancelled_members':len(states),'continuation_suppressed':True}
 
 
 async def case_p12(client,args):
@@ -266,9 +329,199 @@ async def case_p12(client,args):
     return {'classification':'success','preflight_rejected':True,'status_code':422}
 
 
+async def case_p13(client,args):
+    thread,turn=await origin(client,args,'P13')
+    response=await prepare(client,thread,turn,[harness_job(0,args,
+        objective='Create a concise recovery marker and return it after checking the workspace.')],'P13')
+    require(response);job=response.json()['jobs'][0]
+    deadline=time.monotonic()+120
+    while time.monotonic()<deadline:
+        current=require(await client.get(f"api/jobs/{job['id']}")).json()
+        if current['state'] in {'RUNNING','WAITING_EXTERNAL'}:break
+        await asyncio.sleep(.1)
+    else:raise TimeoutError('job_never_accepted')
+    await asyncio.to_thread(subprocess.run,['systemctl','kill','--kill-who=main','--signal=KILL',
+        'sandbox-harness-parallel-job-worker.service'],check=True)
+    for _ in range(100):
+        state=(await asyncio.to_thread(subprocess.run,['systemctl','is-active',
+            'sandbox-harness-parallel-job-worker.service'],capture_output=True,text=True)).stdout.strip()
+        if state=='active':break
+        await asyncio.sleep(.1)
+    completed=await wait_job(client,job['id'],300)
+    if completed['state']!='SUCCEEDED':raise AssertionError('recovered child did not succeed')
+    settings=load_platform_settings()
+    from sqlalchemy import select
+    from sandbox_harness.store import JobAttemptRow,Store
+    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    try:
+        async with store.connections() as db:
+            attempts=list((await db.execute(select(JobAttemptRow).where(
+                JobAttemptRow.job_id==job['id']).order_by(JobAttemptRow.generation))).scalars().all())
+        accepted=[value.external_execution_id for value in attempts if value.accepted_at]
+        if len(set(accepted))!=1 or len(attempts)<2:raise AssertionError('recovery duplicated submission')
+        return {'classification':'success','job_id':job['id'],'attempts':len(attempts),
+            'same_external_execution':True,'duplicate_submission':False,'terminal':True}
+    finally:await store.close()
+
+
+async def case_p14(client,args):
+    value=await artifact_boundary(client,args,'P14',requires_review=False,verdict='UNAVAILABLE')
+    if value['collection']['state']!='published' or len(value['project_files'])!=1:
+        raise AssertionError('optional reviewer blocked valid candidate')
+    return {'classification':'success','job_id':value['job_id'],'candidate_preserved':True,
+        'availability_warning':True,'delivery_visible':True}
+
+
+async def case_p15(client,args):
+    value=await artifact_boundary(client,args,'P15',requires_review=True,verdict='REVISE')
+    if value['collection']['state']!='awaiting_review' or value['project_files']:
+        raise AssertionError('required REVISE candidate became delivery')
+    return {'classification':'success','job_id':value['job_id'],'review':'REVISE',
+        'delivery_visible':False,'candidate_state':'awaiting_review'}
+
+
+async def case_p16(client,args):
+    thread,turn=await origin(client,args,'P16');settings=load_platform_settings()
+    from sandbox_harness.job_contracts import JobGroupCreate,JobKind,JobRequest,JobState
+    from sandbox_harness.store import Store
+    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    try:
+        owner=(await store.get_thread(thread['id'])).owner_id
+        account=await store.configure_budget(owner,thread['id'],'provider.submissions',limit=1)
+        def group(index):
+            request=JobRequest(local_job_id=f'budget-{index}',kind=JobKind.PROVIDER,
+                adapter='protocol-budget',descriptor_id='protocol-budget',descriptor_version='1',
+                descriptor_digest='f'*64,idempotency_key='budget-job-'+uuid.uuid4().hex,
+                parameters={},budget_requirements={'provider.submissions':1})
+            return JobGroupCreate(thread_id=thread['id'],origin_turn_id=turn['id'],
+                idempotency_key='budget-group-'+uuid.uuid4().hex,jobs=[request],
+                authorization_snapshot={'budget_reservations':[{'account_id':account.id,'amount':1}]},
+                suppress_continuation=True)
+        results=await asyncio.gather(*(store.create_job_group(owner,group(index)) for index in range(2)),
+            return_exceptions=True)
+        successes=[value for value in results if not isinstance(value,Exception)]
+        failures=[value for value in results if isinstance(value,Exception)]
+        if len(successes)!=1 or len(failures)!=1 or 'budget_exhausted' not in str(failures[0]):
+            raise AssertionError('budget race was not fenced atomically')
+        for job in successes[0][1]:
+            await store.transition_job(job.id,JobState.CANCELLED,expected_generation=0,
+                result={'cancelled_after_budget_test':True})
+        budget=await store.get_budget_account(account.id)
+        return {'classification':'success','confirmed_groups':1,'overspend':False,
+            'reserved':budget.reserved,'consumed':budget.consumed}
+    finally:await store.close()
+
+
+async def case_p17(client,args):
+    thread,turn=await origin(client,args,'P17');settings=load_platform_settings()
+    from sandbox_harness.job_adapters import AdapterStatus,BaseJobAdapter,SubmissionOutcomeUnknown
+    from sandbox_harness.job_contracts import JobGroupCreate,JobKind,JobRequest,JobState
+    from sandbox_harness.job_worker import JobWorker
+    from sandbox_harness.store import Store
+    class LostResponseAdapter(BaseJobAdapter):
+        def __init__(self):self.submit_calls=0;self.status_calls=0;self.handles=[]
+        async def submit(self,context):
+            self.submit_calls+=1
+            raise SubmissionOutcomeUnknown('accepted response lost',external_execution_id='provider-handle-1',
+                acceptance_receipt={'provider_handle':'provider-handle-1'})
+        async def status(self,context,external_execution_id):
+            self.status_calls+=1;self.handles.append(external_execution_id)
+            return (AdapterStatus(False) if self.status_calls==1 else
+                AdapterStatus(True,JobState.SUCCEEDED,{'reconciled':True}))
+    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix);adapter=LostResponseAdapter()
+    try:
+        owner=(await store.get_thread(thread['id'])).owner_id
+        request=JobRequest(local_job_id='lost-response',kind=JobKind.PROVIDER,
+            adapter='protocol-lost-response',descriptor_id='protocol-lost-response',descriptor_version='1',
+            descriptor_digest='1'*64,idempotency_key='lost-response-'+uuid.uuid4().hex,parameters={})
+        _,jobs=await store.create_job_group(owner,JobGroupCreate(thread_id=thread['id'],
+            origin_turn_id=turn['id'],idempotency_key='lost-group-'+uuid.uuid4().hex,jobs=[request],
+            suppress_continuation=True))
+        worker=JobWorker(store,{'protocol-lost-response':adapter},node_id='protocol-node',
+            worker_id='protocol-worker',concurrency=1)
+        await worker.run_once();before=(await store.get_job(jobs[0].id)).state
+        await worker.run_once();after=await store.get_job(jobs[0].id)
+        if after.state!=JobState.SUCCEEDED or adapter.submit_calls!=1 or set(adapter.handles)!={'provider-handle-1'}:
+            raise AssertionError('provider acceptance was submitted more than once')
+        return {'classification':'success','state_before_reconcile':before.value,
+            'duplicate_submission':False,'handle_reused':True,'terminal':after.state.value}
+    finally:await store.close()
+
+
+async def case_p18(client,args):
+    thread,turn=await origin(client,args,'P18');await wait_turn(client,turn['id'],300)
+    takeover=require(await client.post(f"api/threads/{thread['id']}/sandbox/takeover")).json()
+    require(await client.put(f"api/threads/{thread['id']}/sandbox/file",params={'path':'project/p18.txt'},
+        content=b'checkpoint-survived',headers={'content-type':'text/plain'}))
+    released=require(await client.post(f"api/threads/{thread['id']}/sandbox/release",
+        json={'managed_action':'preserve_work'})).json()
+    restored=require(await client.post(f"api/threads/{thread['id']}/sandbox/restore")).json()
+    require(await client.post(f"api/threads/{thread['id']}/sandbox/takeover"))
+    content=require(await client.get(f"api/threads/{thread['id']}/sandbox/file",
+        params={'path':'project/p18.txt'})).content
+    if content!=b'checkpoint-survived' or not released.get('checkpointed'):
+        raise AssertionError('checkpoint content was not restored')
+    return {'classification':'success','thread_id':thread['id'],'checkpoint_restored':True,
+        'terminal_prompt':'updream@updream.sandbox.com','state':restored.get('state')}
+
+
+async def case_p19(client,args):
+    thread,turn=await origin(client,args,'P19');settings=load_platform_settings()
+    from sandbox_harness.app import object_store
+    from sandbox_harness.artifact_gateway import ArtifactEmission,ArtifactGateway
+    from sandbox_harness.job_contracts import (JobExpectedOutput,JobGroupCreate,JobKind,
+        JobRequest,JobState,OutputDisposition)
+    from sandbox_harness.store import Store
+    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    try:
+        owner=(await store.get_thread(thread['id'])).owner_id
+        request=JobRequest(local_job_id='atomic-pair',kind=JobKind.OPERATION,adapter='fixture',
+            descriptor_id='fixture.atomic',descriptor_version='1',descriptor_digest='2'*64,
+            idempotency_key='atomic-pair-'+uuid.uuid4().hex,parameters={},expected_outputs=[
+                JobExpectedOutput(artifact_role='parts',output_disposition=OutputDisposition.DELIVERY,
+                    min_items=2,max_items=2,mime_patterns=('text/plain',))])
+        _,jobs=await store.create_job_group(owner,JobGroupCreate(thread_id=thread['id'],
+            origin_turn_id=turn['id'],idempotency_key='atomic-group-'+uuid.uuid4().hex,jobs=[request],
+            suppress_continuation=True));attempt=await store.claim_job(jobs[0].id,'atomic-worker','node',60)
+        gateway=ArtifactGateway(store,object_store(settings),settings.data_root/'tmp'/'protocol-artifacts',
+            maximum_bytes=1024*1024)
+        async def emit(position):
+            async def chunks():yield f'part-{position}'.encode()
+            return await gateway.emit(ArtifactEmission(jobs[0].id,attempt.generation,'parts',
+                f'part-{position}',position,f'part-{position}.txt',OutputDisposition.DELIVERY,'text/plain'),chunks())
+        await emit(0)
+        if await store.current_project_files(thread['id'],owner):raise AssertionError('partial delivery visible')
+        await asyncio.to_thread(subprocess.run,['systemctl','restart',
+            'sandbox-harness-parallel-job-worker.service'],check=True)
+        await emit(1);result=await store.finalize_job_artifact_collection(
+            jobs[0].id,attempt.generation,'parts')
+        await store.transition_job(jobs[0].id,JobState.SUCCEEDED,
+            expected_generation=attempt.generation,result=result)
+        files=await store.current_project_files(thread['id'],owner)
+        if result['state']!='published' or len(files)!=2:raise AssertionError('final collection incomplete')
+        return {'classification':'success','partial_delivery_visible':False,
+            'final_collection_complete':True,'count':len(files)}
+    finally:await store.close()
+
+
+async def case_p20(client,args):
+    thread,turn=await origin(client,args,'P20')
+    jobs=[provider_job(index) for index in range(3)]+[harness_job(index,args,
+        objective=f'Return independent factual analysis marker-{index}.') for index in range(3)]
+    response=await prepare(client,thread,turn,jobs,'P20');require(response);draft=response.json()
+    response=await client.post(f"api/job-group-drafts/{draft['draft']['id']}/confirm");require(response)
+    committed=response.json();await wait_jobs(client,committed['jobs'],1200);await asyncio.sleep(3)
+    turns=require(await client.get(f"api/threads/{thread['id']}/turns")).json()
+    continuations=[item for item in turns if item.get('internal')]
+    if len(continuations)!=1:raise AssertionError('mixed fanout did not create one continuation')
+    return {'classification':'success','provider_jobs':3,'harness_jobs':3,'parallel':True,
+        'one_primary_continuation':True,'group_id':committed['group']['id']}
+
+
 HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case_p05,
     'P06':case_p06,'P07':case_p07,'P08':case_p08,'P09':case_p09,'P10':case_p10,
-    'P11':case_p11,'P12':case_p12}
+    'P11':case_p11,'P12':case_p12,'P13':case_p13,'P14':case_p14,'P15':case_p15,
+    'P16':case_p16,'P17':case_p17,'P18':case_p18,'P19':case_p19,'P20':case_p20}
 
 
 async def main():
