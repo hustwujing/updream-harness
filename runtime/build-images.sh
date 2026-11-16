@@ -49,14 +49,17 @@ for profile in $profiles; do
   profile_hash=$(sha256sum "$dockerfile" "$requirement" | sha256sum | cut -c1-12)
   profile_image="sandbox-harness-parallel-$profile:$profile_hash"
   if ! "$docker" image inspect "$profile_image" >/dev/null 2>&1; then
-    build_context=()
     if [[ "$profile" == primary-full-cpu ]]; then
       test -f "$drawio_vendor/drawio-amd64-32.6.10.deb"
+      mkdir -p "$root/runtime/vendor"
+      if [[ ! -f "$root/runtime/vendor/drawio-amd64-32.6.10.deb" ]]; then
+        ln "$drawio_vendor/drawio-amd64-32.6.10.deb" \
+          "$root/runtime/vendor/drawio-amd64-32.6.10.deb"
+      fi
       printf '%s  %s\n' fc96faafe68cb4e06c0b7116779891592b20fce2cde7907adec504f23c5af83c \
-        "$drawio_vendor/drawio-amd64-32.6.10.deb" | sha256sum -c -
-      build_context=(--build-context "drawio_vendor=$drawio_vendor")
+        "$root/runtime/vendor/drawio-amd64-32.6.10.deb" | sha256sum -c -
     fi
-    "$docker" build --network host "${build_context[@]}" -f "$dockerfile" \
+    "$docker" build --network host -f "$dockerfile" \
       --build-arg "COMMON_IMAGE=$common" -t "$profile_image" "$root"
   fi
   for harness in $harnesses; do

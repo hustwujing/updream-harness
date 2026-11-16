@@ -6,7 +6,7 @@ ARG NPM_REGISTRY=https://registry.npmmirror.com
 ARG PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright
 ARG DRAWIO_VERSION=32.6.10
 ARG DRAWIO_SHA256=fc96faafe68cb4e06c0b7116779891592b20fce2cde7907adec504f23c5af83c
-COPY --from=drawio_vendor drawio-amd64-${DRAWIO_VERSION}.deb /tmp/drawio.deb
+COPY runtime/vendor/drawio-amd64-${DRAWIO_VERSION}.deb /tmp/drawio.deb
 RUN apt-get update && apt-get install -y --no-install-recommends chromium dvisvgm ffmpeg graphviz \
       imagemagick libcairo2-dev libpango1.0-dev libreoffice-calc libreoffice-core \
       libreoffice-impress libreoffice-writer pandoc poppler-utils qpdf tesseract-ocr \

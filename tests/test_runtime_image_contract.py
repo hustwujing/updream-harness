@@ -131,7 +131,7 @@ def test_selective_build_keeps_state_under_data2_and_reuses_original_vendor():
     source=(ROOT/"runtime/build-images.sh").read_text()
     assert 'output_root="$root/.data/image-build/$tag"' in source
     assert "/data2/wujing03/sandbox-harness-platform/runtime/vendor" in source
-    assert '--build-context "drawio_vendor=$drawio_vendor"' in source
+    assert 'ln "$drawio_vendor/drawio-amd64-32.6.10.deb"' in source
     assert "partial development matrix" in source
     assert "BUILD_PROFILES" in source and "BUILD_HARNESSES" in source
 
