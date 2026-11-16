@@ -350,6 +350,9 @@ class Broker:
             runtime_image_digest=self.settings.image_for(resolved.harness.value),
             runtime_code_bundle_digest=self.settings.runtime_code_bundle_digest,
             runtime_bundle_digest=self.settings.runtime_bundle_digest)
+        if created and not internal:
+            if await self.store.attach_suppressed_job_context(turn.id):
+                turn = await self.store.get_turn(turn.id)
         event("turn.accepted",thread_id=thread_id,turn_id=turn.id,harness=turn.harness,model=turn.model,reasoning_effort=turn.reasoning_effort,reused=not created,state=turn.state)
         if created and start_now:
             self._schedule(turn.id)
@@ -698,7 +701,8 @@ class Broker:
                     await self._state(turn.id, TurnState.RUNNING, sandbox_id=sandbox.id)
                 enrich(sandbox_id=sandbox.id,image_digest=sandbox.image.rsplit("@",1)[-1])
                 self.active_sandboxes[turn.id] = sandbox
-                message, attachments, native_thread_id = turn.message, turn.attachments, thread.native_thread_id
+                message = turn.runtime_message or turn.message
+                attachments, native_thread_id = turn.attachments, thread.native_thread_id
                 result, current_input_id = None, None
                 while True:
                     if recovered_result is not None:

@@ -492,7 +492,7 @@ async def test_legacy_unsafe_attachment_name_remains_readable_but_cannot_be_subm
                 reasoning_level="standard", reasoning_effort="medium", title="Legacy",
                 next_item_sequence=0, created_at=timestamp, updated_at=timestamp))
             db.add(TurnRow(id=turn_id, thread_id=thread_id, idempotency_key="legacy-unsafe-key",
-                message="old", attachments_json=json.dumps(unsafe), harness="codex", model="gpt-5.6",
+                message="old", public_message="old", attachments_json=json.dumps(unsafe), harness="codex", model="gpt-5.6",
                 reasoning_level="standard", reasoning_effort="medium", delivery_mode="start",
                 state=TurnState.COMPLETED.value, created_at=timestamp, updated_at=timestamp))
         assert (await store.get_turn(turn_id)).attachments[0].name == ".."

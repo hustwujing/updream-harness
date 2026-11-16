@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 
-from sqlalchemy import case, or_, Boolean, DateTime, Integer, String, Text, UniqueConstraint, delete, func, select, update
+from sqlalchemy import and_, case, or_, Boolean, DateTime, Integer, String, Text, UniqueConstraint, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -81,6 +81,7 @@ class TurnRow(Base):
     thread_id: Mapped[str] = mapped_column(String(32), index=True)
     idempotency_key: Mapped[str] = mapped_column(String(160))
     message: Mapped[str] = mapped_column(Text)
+    public_message: Mapped[str] = mapped_column(Text)
     attachments_json: Mapped[str] = mapped_column(Text, default="[]")
     harness: Mapped[str] = mapped_column(String(20))
     model: Mapped[str] = mapped_column(String(160))
@@ -703,6 +704,7 @@ class JobOutboxRow(Base):
     result_digest: Mapped[str] = mapped_column(String(64))
     result_json: Mapped[str] = mapped_column(Text)
     claim_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    claim_batch_digest: Mapped[str] = mapped_column(String(64), default="", server_default="")
     claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     continuation_turn_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -1483,6 +1485,8 @@ class Store:
                 ).with_for_update())).scalar_one_or_none()
                 if not group:
                     raise KeyError("job_group_not_found")
+                group.suppress_continuation = True
+                group.updated_at = now()
                 rows = (await db.execute(select(JobRow).where(
                     JobRow.group_id == group_id).order_by(
                     JobRow.created_at, JobRow.local_job_id).with_for_update())).scalars().all()
@@ -1675,14 +1679,16 @@ class Store:
                     group.state = JobGroupState.TERMINAL.value
                     group.terminal_at = group.terminal_at or now()
                     group.updated_at = now()
+                    all_cancelled = all(member.state == JobState.CANCELLED.value for member in jobs)
                     outbox = (await db.execute(select(JobOutboxRow).where(
                         JobOutboxRow.group_id == group.id).with_for_update())).scalar_one_or_none()
                     if not outbox:
                         db.add(JobOutboxRow(
                             id=identifier(), group_id=group.id, thread_id=group.thread_id,
-                            state="suppressed" if group.suppress_continuation else "ready",
+                            state="suppressed" if group.suppress_continuation or all_cancelled else "ready",
                             result_digest=result_digest, result_json=result_json,
-                            claim_owner="", claim_expires_at=None, continuation_turn_id="",
+                            claim_owner="", claim_batch_digest="", claim_expires_at=None,
+                            continuation_turn_id="",
                             created_at=now(), updated_at=now(),
                         ))
                 await db.flush()
@@ -1699,6 +1705,133 @@ class Store:
             rows = (await db.execute(select(JobOutboxRow).order_by(
                 JobOutboxRow.created_at, JobOutboxRow.id))).scalars().all()
             return [self.job_outbox_view(row) for row in rows]
+
+    async def claim_job_outbox_batch(self, owner: str, *, lease_seconds: int = 60,
+                                     max_groups: int = 32, max_jobs: int = 100,
+                                     max_bytes: int = 1024 * 1024) -> list[dict]:
+        async with self.connections.begin() as db:
+            candidates = list((await db.execute(select(JobOutboxRow).where(
+                or_(JobOutboxRow.state == "ready", and_(
+                    JobOutboxRow.state == "claimed", JobOutboxRow.claim_expires_at < now())),
+            ).order_by(JobOutboxRow.created_at, JobOutboxRow.id).limit(max_groups * 4)
+                .with_for_update(skip_locked=True))).scalars().all())
+            if not candidates:
+                return []
+            thread_id = candidates[0].thread_id
+            selected = []
+            total_jobs = total_bytes = 0
+            frozen_digest = candidates[0].claim_batch_digest
+            source = ([row for row in candidates if row.claim_batch_digest == frozen_digest]
+                if frozen_digest else candidates)
+            for row in source:
+                if row.thread_id != thread_id:
+                    continue
+                result = json.loads(row.result_json)
+                encoded_bytes = len(row.result_json.encode())
+                if (selected and (len(selected) >= max_groups
+                        or total_jobs + len(result) > max_jobs
+                        or total_bytes + encoded_bytes > max_bytes)):
+                    break
+                if len(result) > max_jobs or encoded_bytes > max_bytes:
+                    row.state = "suppressed"
+                    row.updated_at = now()
+                    continue
+                selected.append((row, result))
+                total_jobs += len(result); total_bytes += encoded_bytes
+            batch_digest = (frozen_digest or hashlib.sha256("\n".join(sorted(
+                row.id for row, _ in selected)).encode()).hexdigest())
+            expires_at = now() + timedelta(seconds=lease_seconds)
+            for row, _ in selected:
+                row.state = "claimed"; row.claim_owner = owner
+                row.claim_batch_digest = batch_digest
+                row.claim_expires_at = expires_at; row.updated_at = now()
+            return [{"outbox_id": row.id, "group_id": row.group_id,
+                "thread_id": row.thread_id, "result_digest": row.result_digest,
+                "batch_digest": batch_digest, "results": result} for row, result in selected]
+
+    async def finish_job_outbox_batch(self, outbox_ids: list[str], owner: str, *,
+                                      continuation_turn_id: str, delivered: bool,
+                                      error: str = "") -> None:
+        if not outbox_ids:
+            return
+        async with self.connections.begin() as db:
+            rows = list((await db.execute(select(JobOutboxRow).where(
+                JobOutboxRow.id.in_(outbox_ids)).order_by(JobOutboxRow.id)
+                .with_for_update())).scalars().all())
+            if len(rows) != len(set(outbox_ids)) or any(row.claim_owner != owner for row in rows):
+                raise RuntimeError("stale_job_outbox_claim")
+            timestamp = now()
+            if delivered:
+                for row in rows:
+                    row.state = "delivered"; row.continuation_turn_id = continuation_turn_id
+                    row.claim_owner = ""; row.claim_expires_at = None; row.updated_at = timestamp
+                    group = await db.get(JobGroupRow, row.group_id, with_for_update=True)
+                    group.state = JobGroupState.CONTINUED.value
+                    group.continued_at = timestamp; group.updated_at = timestamp
+            else:
+                for row in rows:
+                    row.state = "ready"; row.claim_owner = ""; row.claim_expires_at = None
+                    row.updated_at = timestamp
+
+    async def stop_all_jobs(self, thread_id: str, owner_id: str) -> list[JobView]:
+        async with self.job_lock(f"thread-jobs:{thread_id}"):
+            async with self.connections.begin() as db:
+                thread = (await db.execute(select(ThreadRow).where(
+                    ThreadRow.id == thread_id, ThreadRow.owner_id == owner_id,
+                ).with_for_update())).scalar_one_or_none()
+                if not thread:
+                    raise KeyError("thread_not_found")
+                groups = list((await db.execute(select(JobGroupRow).where(
+                    JobGroupRow.thread_id == thread_id,
+                    JobGroupRow.state.in_([JobGroupState.COMMITTED.value,
+                        JobGroupState.RUNNING.value, JobGroupState.TERMINAL.value]),
+                ).with_for_update())).scalars().all())
+                group_ids = [group.id for group in groups]
+                rows = list((await db.execute(select(JobRow).where(
+                    JobRow.group_id.in_(group_ids or [""])).with_for_update())).scalars().all())
+                timestamp = now()
+                for group in groups:
+                    group.suppress_continuation = True; group.updated_at = timestamp
+                for row in rows:
+                    if JobState(row.state) not in TERMINAL_JOB_STATES:
+                        row.cancel_requested = True; row.state = JobState.CANCELLING.value
+                        row.updated_at = timestamp
+                await db.execute(update(JobOutboxRow).where(
+                    JobOutboxRow.thread_id == thread_id,
+                    JobOutboxRow.state.in_(["ready", "claimed"]),
+                ).values(state="suppressed", claim_owner="", claim_expires_at=None,
+                    updated_at=timestamp))
+                await db.flush()
+                return [self.job_view(row) for row in rows]
+
+    async def attach_suppressed_job_context(self, turn_id: str) -> int:
+        async with self.connections.begin() as db:
+            turn = await db.get(TurnRow, turn_id, with_for_update=True)
+            if not turn or turn.internal:
+                return 0
+            rows = list((await db.execute(select(JobOutboxRow).where(
+                JobOutboxRow.thread_id == turn.thread_id,
+                JobOutboxRow.state == "suppressed",
+                JobOutboxRow.continuation_turn_id == "",
+            ).order_by(JobOutboxRow.created_at, JobOutboxRow.id).limit(32)
+                .with_for_update())).scalars().all())
+            if not rows:
+                return 0
+            facts = [{"group_id": row.group_id, "result_digest": row.result_digest,
+                "results": json.loads(row.result_json)} for row in rows]
+            encoded = canonical_json(facts)
+            if len(encoded.encode()) > 1024 * 1024:
+                raise RuntimeError("suppressed_job_context_too_large")
+            turn.message = ("[suppressed_job_results] Factual results from stopped background groups; "
+                "use them only if relevant to the current user request. " + encoded
+                + "\n\n[current_user_message]\n" + turn.message)
+            timestamp = now()
+            for row in rows:
+                row.state = "delivered"; row.continuation_turn_id = turn.id; row.updated_at = timestamp
+                group = await db.get(JobGroupRow, row.group_id, with_for_update=True)
+                group.state = JobGroupState.CONTINUED.value
+                group.continued_at = timestamp; group.updated_at = timestamp
+            return len(rows)
 
     @staticmethod
     def job_artifact_view(row: JobArtifactRow) -> JobArtifactOutput:
@@ -2030,7 +2163,9 @@ class Store:
     @staticmethod
     def turn_view(row: TurnRow) -> TurnView:
         return TurnView.model_validate({
-            **{key: getattr(row, key) for key in TurnView.model_fields if key != "attachments"},
+            **{key: (row.public_message if key == "message" else row.message
+                if key == "runtime_message" else getattr(row, key))
+                for key in TurnView.model_fields if key != "attachments"},
             "attachments": json.loads(row.attachments_json),
         })
 
@@ -2368,7 +2503,7 @@ class Store:
             existing = (await db.execute(select(TurnRow).where(TurnRow.thread_id == thread_id, TurnRow.idempotency_key == value.idempotency_key))).scalar_one_or_none()
             if existing:
                 attachments = [item.model_dump(mode="json") for item in value.attachments]
-                if (existing.message != value.message or json.loads(existing.attachments_json) != attachments
+                if (existing.public_message != value.message or json.loads(existing.attachments_json) != attachments
                         or existing.harness != resolved.harness.value or existing.model != resolved.model
                         or existing.reasoning_level != resolved.reasoning_level
                         or existing.delivery_mode != value.delivery_mode
@@ -2394,7 +2529,8 @@ class Store:
             timestamp = now()
             row = TurnRow(
                 id=identifier(), thread_id=thread_id, idempotency_key=value.idempotency_key,
-                message=value.message, attachments_json=json.dumps([a.model_dump(mode="json") for a in value.attachments]),
+                message=value.message, public_message=value.message,
+                attachments_json=json.dumps([a.model_dump(mode="json") for a in value.attachments]),
                 harness=resolved.harness.value, model=resolved.model, reasoning_level=resolved.reasoning_level,
                 reasoning_effort=resolved.reasoning_effort, delivery_mode=value.delivery_mode,
                 network_access=network_access, internal=internal,

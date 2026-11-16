@@ -60,6 +60,7 @@ export const getTurn=id=>api(`turns/${id}`);
 export const createTurn=(id,value)=>api(`threads/${id}/turns`,{method:'POST',body:JSON.stringify(value)});
 export const appendTurnInput=(id,value)=>api(`turns/${id}/inputs`,{method:'POST',body:JSON.stringify(value)});
 export const interruptTurn=id=>api(`turns/${id}/cancel`,{method:'POST'});
+export const stopAllThread=id=>api(`threads/${id}/stop-all`,{method:'POST'});
 export const getSandbox=id=>api(`threads/${id}/sandbox`);
 export const restoreSandbox=id=>api(`threads/${id}/sandbox/restore`,{method:'POST'});
 export const listSandboxFiles=(id,path='project',depth=2)=>api(`threads/${id}/sandbox/files?path=${encodeURIComponent(path)}&depth=${depth}`);

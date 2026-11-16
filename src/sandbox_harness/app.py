@@ -30,10 +30,11 @@ from .catalog import HarnessCatalog
 from .job_catalog import JobCatalog
 from .profiles import ProfileResolver
 from .job_coordinator import JobCoordinator, JobGroupDraftUpdate
+from .job_continuation import ContinuationDispatcher
 from .job_contracts import JobGroupCreate
 from .config import Settings, load_settings, validate_service_settings
 from .observability import RequestLoggingMiddleware, telemetry, event
-from .domain import Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, RegisterRequest, UpdateAccountRequest, MediaDraftCreate, MediaDraftUpdate, MediaReferenceUploadCreate, ProjectFileRename, SandboxReleaseRequest, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, valid_attachment_name, now
+from .domain import Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, RegisterRequest, UpdateAccountRequest, MediaDraftCreate, MediaDraftUpdate, MediaReferenceUploadCreate, ProjectFileRename, SandboxReleaseRequest, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, TERMINAL, valid_attachment_name, now
 from .document_preview import is_presentation, presentation_pdf
 from .model_discovery import ModelDiscovery
 from .media_catalog import MediaCatalog
@@ -199,6 +200,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     catalog.profile_resolver = profile_resolver
     job_coordinator = JobCoordinator(store, job_catalog,
         draft_ttl_seconds=settings.media_draft_ttl_seconds)
+    continuation_dispatcher = ContinuationDispatcher(store, broker)
     sessions = Sessions(settings.session_signing_key)
     account_auth = AccountAuth(store, settings.auth_session_ttl_seconds)
     inspector = SandboxInspector(settings, store, objects, pool, broker.runtime, broker)
@@ -209,6 +211,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await store.initialize()
         await broker.start()
         await inspector.start()
+        continuation_task = asyncio.create_task(continuation_dispatcher.run(),
+            name="job-continuation-dispatcher")
         media_outbox_stop = asyncio.Event()
         media_outbox_owner = "media-outbox-" + uuid.uuid4().hex
         async def continue_media(batch: dict):
@@ -299,6 +303,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await pool_task
         media_outbox_stop.set()
         await media_outbox_task
+        continuation_dispatcher.stop_event.set()
+        await continuation_task
         await inspector.close()
         preserve_sandbox_ids = await broker.close()
         await pool.close(preserve_sandbox_ids=(preserve_sandbox_ids
@@ -315,6 +321,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.account_auth = account_auth
     app.state.inspector = inspector
     app.state.job_coordinator = job_coordinator
+    app.state.continuation_dispatcher = continuation_dispatcher
 
     def cookie_path(request: Request) -> str:
         prefix = request.headers.get("x-forwarded-prefix", "").rstrip("/")
@@ -1024,6 +1031,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except RuntimeError as exc:
             raise HTTPException(409, str(exc))
         return {"accepted": True}
+
+    @app.post("/api/threads/{thread_id}/stop-all")
+    async def stop_all_thread_work(thread_id: str, request: Request):
+        thread = await store.get_thread(thread_id, request.state.owner_id)
+        if not thread:
+            raise HTTPException(404, "Thread not found")
+        jobs = await store.stop_all_jobs(thread_id, request.state.owner_id)
+        if thread.active_turn_id:
+            active = await store.get_turn(thread.active_turn_id)
+            if active and active.state not in TERMINAL:
+                try:
+                    await broker.cancel(active.id)
+                except RuntimeError:
+                    pass
+        return {"accepted": True, "jobs": jobs}
 
     @app.post("/api/turns/{turn_id}/inputs")
     async def append_turn_input(turn_id: str, value: TurnInputCreate, request: Request):

@@ -103,3 +103,20 @@ def test_sandbox_cli_and_gateway_cannot_confirm_user_authorized_group(tmp_path):
     assert '/v1/job-group-drafts/{draft_id}/reject' not in gateway_paths
     assert '/api/job-group-drafts/{draft_id}/confirm' in api_paths
     assert '/api/job-group-drafts/{draft_id}/reject' in api_paths
+
+
+def test_thread_stop_all_cancels_current_turn_and_every_nonterminal_job(tmp_path):
+    app=create_app(settings(tmp_path))
+    with TestClient(app) as client:
+        thread=client.post('/api/threads',json={'harness':'codex','model':'gpt-5.6',
+            'reasoning_level':'standard','title':'Stop all'}).json()
+        app.state.broker._schedule=lambda turn_id:None
+        turn=client.post(f"/api/threads/{thread['id']}/turns",json={
+            'message':'run in parallel','idempotency_key':'stop-all-origin'}).json()
+        request_value=request('long','operation','media.render','b'*64,{'recipe':{}})
+        prepared=client.post('/api/job-group-drafts',json={'thread_id':thread['id'],
+            'origin_turn_id':turn['id'],'idempotency_key':'stop-all-group-key','jobs':[request_value]}).json()
+        confirmed=client.post(f"/api/job-group-drafts/{prepared['draft']['id']}/confirm").json()
+        response=client.post(f"/api/threads/{thread['id']}/stop-all")
+        assert response.status_code==200 and response.json()['accepted']
+        assert response.json()['jobs'][0]['state']=='CANCELLING'

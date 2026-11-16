@@ -223,6 +223,7 @@ class TurnView(BaseModel):
     thread_id: str
     idempotency_key: str
     message: str
+    runtime_message: str = Field(default="", exclude=True)
     attachments: list[Attachment]
     harness: Harness
     model: str
