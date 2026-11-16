@@ -102,6 +102,13 @@ def test_media_provider_failure_is_not_prompt_failure():
             "program_failure","artifact_registration_failed")
 
 
+def test_silence_gate_accepts_codec_floor_but_rejects_audible_signal():
+    campaign=campaign_module()
+    assert campaign.volume_is_silent("mean_volume: -91.0 dB\nmax_volume: -91.0 dB")
+    assert campaign.volume_is_silent("max_volume: -inf dB")
+    assert not campaign.volume_is_silent("max_volume: -42.3 dB")
+
+
 @pytest.mark.asyncio
 async def test_artifact_validator_checks_image_dimensions_and_text_contract():
     campaign=campaign_module();image=io.BytesIO();Image.new("RGBA",(32,24),(1,2,3,0)).save(image,"PNG")

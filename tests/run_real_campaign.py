@@ -9,6 +9,7 @@ from datetime import datetime,timezone
 import json
 import mimetypes
 from pathlib import Path
+import re
 import statistics
 import subprocess
 import tempfile
@@ -96,6 +97,11 @@ def probe_file(path):
         "channels":int(audio.get("channels") or 0),"sample_rate":int(audio.get("sample_rate") or 0)}
 
 
+def volume_is_silent(report,threshold_db=-80.0):
+    match=re.search(r"max_volume:\s+(-inf|[-+]?\d+(?:\.\d+)?)\s+dB",report)
+    return bool(match and (match.group(1)=="-inf" or float(match.group(1))<=threshold_db))
+
+
 async def validate_artifacts(client,case,artifacts):
     expected=case.get("expect",{});records=[]
     temp_root=ROOT/".data/evidence/real-campaign/validation";temp_root.mkdir(parents=True,exist_ok=True)
@@ -119,7 +125,7 @@ async def validate_artifacts(client,case,artifacts):
                         measured=subprocess.run(["ffmpeg","-hide_banner","-nostats","-i",handle.name,
                             "-map","0:a:0","-af","volumedetect","-f","null","-"],
                             stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True,check=False).stderr
-                        record["audio_silent"]=("max_volume: -inf dB" in measured)
+                        record["audio_silent"]=volume_is_silent(measured)
             elif record["kind"]=="text":record["text"]=data.decode("utf-8","replace")
         except Exception as exc:record["error"]=type(exc).__name__+":"+str(exc)[:200]
         records.append(record)
