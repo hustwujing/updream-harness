@@ -17,6 +17,7 @@ harnesses=${BUILD_HARNESSES:-"codex claude deepseek"}
 all_profiles="primary-full-cpu general-cpu media-cpu office web-browser data-analysis"
 all_harnesses="codex claude deepseek"
 drawio_vendor=${SANDBOX_HARNESS_DRAWIO_VENDOR:-/data2/wujing03/sandbox-harness-platform/runtime/vendor}
+asr_source_image=${SANDBOX_HARNESS_ASR_SOURCE_IMAGE:-sandbox-harness-runtime-base:0027ec835f16}
 output_root="$root/.data/image-build/$tag"
 mkdir -p "$output_root"
 [[ "$output_root" == /data2/wujing03/sandbox-harness-platform-parallel/.data/* ]]
@@ -38,11 +39,14 @@ if ! "$docker" image inspect "$bootstrap" >/dev/null 2>&1; then
 fi
 common_hash=$(content_hash "$bootstrap_hash" "$root/runtime/common.Dockerfile" \
   "$root/runtime/requirements-common.txt" "$root/runtime/proxy_bridge.cjs" \
-  "$root/runtime/playwright_proxy_patch.cjs" "$root/runtime/apply_patch.py")
+  "$root/runtime/playwright_proxy_patch.cjs" "$root/runtime/apply_patch.py" \
+  "$root/runtime/asr_cli.py" "$root/runtime/asr_probe.py")
 common="sandbox-harness-parallel-common:$common_hash"
 if ! "$docker" image inspect "$common" >/dev/null 2>&1; then
+  "$docker" image inspect "$asr_source_image" >/dev/null
   "$docker" build --network host -f "$root/runtime/common.Dockerfile" \
-    --build-arg "BOOTSTRAP_IMAGE=$bootstrap" -t "$common" "$root"
+    --build-arg "BOOTSTRAP_IMAGE=$bootstrap" --build-arg "ASR_SOURCE_IMAGE=$asr_source_image" \
+    -t "$common" "$root"
 fi
 
 : >"$output_root/images.tsv"
