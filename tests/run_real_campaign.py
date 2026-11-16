@@ -188,9 +188,9 @@ async def wait_turn(client,turn_id,running,identity,timeout):
 
 async def settle_media_workflow(client,thread_id,initial_final,running,identity,timeout,
                                 *,allow_external):
-    """Drive real confirmation cards and wait for every media continuation Turn."""
+    """Drive confirmation cards and wait for every durable continuation Turn."""
     deadline=time.monotonic()+timeout
-    final=initial_final;media_jobs=[];continuation_after=None
+    final=initial_final;media_jobs=[];continuation_after=None;stable_signature=None;stable_count=0
     while time.monotonic()<deadline:
         response=await client.get(f"api/threads/{thread_id}/turns");response.raise_for_status()
         turns=response.json()
@@ -200,6 +200,16 @@ async def settle_media_workflow(client,thread_id,initial_final,running,identity,
                     max(1,deadline-time.monotonic()))
             elif turn["id"]==turns[-1]["id"]:
                 final=turn
+
+        response=await client.get(f"api/threads/{thread_id}/job-group-drafts");response.raise_for_status()
+        job_drafts=response.json();awaiting_jobs=[row for row in job_drafts
+            if row["state"]=="AWAITING_CONFIRMATION"]
+        if awaiting_jobs:
+            if not allow_external:return final,media_jobs
+            for draft in awaiting_jobs:
+                response=await client.post(f"api/job-group-drafts/{draft['id']}/confirm")
+                response.raise_for_status()
+            running[identity]["state"]="WAITING_JOB_CONFIRMATION";stable_count=0;continue
 
         response=await client.get(f"api/threads/{thread_id}/media/drafts");response.raise_for_status()
         drafts=response.json();awaiting=[row for row in drafts if row["status"]=="awaiting_confirmation"]
@@ -235,7 +245,23 @@ async def settle_media_workflow(client,thread_id,initial_final,running,identity,
                 else:final=turn
             continuation_after=None
             continue
-        return final,media_jobs
+        response=await client.get(f"api/threads/{thread_id}/execution-graph",
+            params={"include_history":"true"});response.raise_for_status()
+        graph=response.json();groups=[row for row in graph.get("nodes",[]) if row.get("type")=="job_group"]
+        active_groups=[row for row in groups if row.get("state") in {"COMMITTED","RUNNING"}]
+        active_jobs=[row for row in graph.get("nodes",[]) if row.get("type")=="job"
+            and row.get("state") in {"CREATED","QUEUED","RUNNING","WAITING_EXTERNAL","CANCELLING"}]
+        if active_groups or active_jobs:
+            running[identity]["state"]="JOB_GROUP_RUNNING";stable_count=0
+            await asyncio.sleep(1);continue
+        signature=(tuple((turn["id"],turn["state"]) for turn in turns),
+            tuple((row["id"],row["state"]) for row in groups),
+            tuple((row["id"],row["status"]) for row in drafts),
+            tuple((row["id"],row["status"]) for row in media_jobs))
+        stable_count=stable_count+1 if signature==stable_signature else 1;stable_signature=signature
+        if stable_count>=3:return final,media_jobs
+        running[identity]["state"]="WAITING_CONTINUATION_QUIESCENCE"
+        await asyncio.sleep(1)
     raise TimeoutError("media_workflow_timeout")
 
 

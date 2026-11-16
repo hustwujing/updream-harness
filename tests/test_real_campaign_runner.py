@@ -50,7 +50,7 @@ class MediaClient:
     def __init__(self):
         self.confirmed=False;self.job_polls=0;self.continuation_polls=0
 
-    async def get(self,path):
+    async def get(self,path,params=None):
         if path.endswith("/turns"):
             if self.confirmed and self.job_polls>=2:
                 self.continuation_polls+=1
@@ -65,6 +65,8 @@ class MediaClient:
             self.job_polls+=1
             return Response([{"id":"job-1","status":"succeeded" if self.job_polls>=2 else "running",
                 "phase":"provider_running","error_code":""}])
+        if path.endswith("/job-group-drafts"):return Response([])
+        if path.endswith("/execution-graph"):return Response({"nodes":[]})
         if path=="api/turns/turn-2":
             return Response({"id":"turn-2","state":"COMPLETED"})
         raise AssertionError(path)
@@ -79,6 +81,21 @@ class ArtifactClient:
     async def get(self,path):return Response(self.values[path.rsplit("/",1)[-1]])
 
 
+class JobGroupClient:
+    def __init__(self):self.graph_polls=0
+    async def get(self,path,params=None):
+        if path.endswith('/turns'):
+            turns=[{'id':'turn-1','state':'COMPLETED'}]
+            if self.graph_polls>=3:turns.append({'id':'turn-2','state':'COMPLETED'})
+            return Response(turns)
+        if path.endswith('/job-group-drafts') or path.endswith('/media/drafts') or path.endswith('/media/jobs'):
+            return Response([])
+        if path.endswith('/execution-graph'):
+            self.graph_polls+=1;state='RUNNING' if self.graph_polls<3 else 'CONTINUED'
+            return Response({'nodes':[{'id':'group-1','type':'job_group','state':state}]})
+        raise AssertionError(path)
+
+
 @pytest.mark.asyncio
 async def test_media_campaign_confirms_waits_for_job_and_continuation(monkeypatch):
     campaign=campaign_module();client=MediaClient()
@@ -90,6 +107,17 @@ async def test_media_campaign_confirms_waits_for_job_and_continuation(monkeypatc
     assert client.confirmed and client.job_polls>=2 and client.continuation_polls>=2
     assert final=={"id":"turn-2","state":"COMPLETED"}
     assert jobs[0]["status"]=="succeeded"
+
+
+@pytest.mark.asyncio
+async def test_campaign_waits_for_job_group_continuation_and_quiescence(monkeypatch):
+    campaign=campaign_module();client=JobGroupClient()
+    async def no_sleep(_):pass
+    monkeypatch.setattr(campaign.asyncio,'sleep',no_sleep)
+    running={'C16':{'state':'RUNNING'}}
+    final,jobs=await campaign.settle_media_workflow(client,'thread-1',
+        {'id':'turn-1','state':'COMPLETED'},running,'C16',10,allow_external=True)
+    assert client.graph_polls>=5 and final=={'id':'turn-2','state':'COMPLETED'} and jobs==[]
 
 
 def test_media_provider_failure_is_not_prompt_failure():
