@@ -12,14 +12,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends chromium libgbm
     PLAYWRIGHT_DOWNLOAD_HOST="${PLAYWRIGHT_DOWNLOAD_HOST}" PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
       playwright install chromium && chmod -R a+rX /ms-playwright && npm cache clean --force
 COPY runtime/requirements-web.txt /tmp/requirements-profile.txt
+RUN pip install --no-cache-dir --trusted-host mirrors.cloud.aliyuncs.com \
+      --index-url http://mirrors.cloud.aliyuncs.com/pypi/simple/ -r /tmp/requirements-profile.txt && \
+    rm /tmp/requirements-profile.txt && \
+    for command in sandbox-job sandbox-artifact sandbox-review sandbox-background sandbox-interact; do \
+      ln -s /usr/local/bin/sandbox-runtime-cli "/usr/local/bin/$command"; done
 COPY runtime/browser_screenshot.mjs /usr/local/bin/sandbox-browser-screenshot
 COPY runtime/browser_render.mjs /usr/local/bin/sandbox-browser-render
 COPY runtime/chromium_proxy.cjs /usr/local/bin/chromium
-RUN pip install --no-cache-dir --trusted-host mirrors.cloud.aliyuncs.com \
-      --index-url http://mirrors.cloud.aliyuncs.com/pypi/simple/ -r /tmp/requirements-profile.txt && \
-    rm /tmp/requirements-profile.txt && chmod 0755 /usr/local/bin/sandbox-browser-screenshot \
-      /usr/local/bin/sandbox-browser-render /usr/local/bin/chromium && \
-    for command in sandbox-job sandbox-artifact sandbox-review sandbox-background sandbox-interact; do \
-      ln -s /usr/local/bin/sandbox-runtime-cli "/usr/local/bin/$command"; done
+RUN chmod 0755 /usr/local/bin/sandbox-browser-screenshot /usr/local/bin/sandbox-browser-render \
+      /usr/local/bin/chromium
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright CHROME_PATH=/usr/bin/chromium
 USER 10001:10001

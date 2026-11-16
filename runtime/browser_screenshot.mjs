@@ -7,7 +7,6 @@ import {fileURLToPath} from 'node:url';
 import {existsSync} from 'node:fs';
 
 const require = createRequire(import.meta.url);
-const {chromium} = require('playwright');
 const localBridge = path.join(path.dirname(fileURLToPath(import.meta.url)), 'proxy_bridge.cjs');
 const {createProxyBridge} = require(existsSync('/usr/local/lib/sandbox-proxy-bridge.cjs')
   ? '/usr/local/lib/sandbox-proxy-bridge.cjs' : localBridge);
@@ -32,12 +31,18 @@ function options(argv) {
   return result;
 }
 
-const value = options(process.argv.slice(2));
-if (!value || ['--help', '-h'].includes(value.url)) {
+const rawArguments = process.argv.slice(2);
+if (rawArguments.length === 1 && ['--help', '-h'].includes(rawArguments[0])) {
   usage();
-  process.exit(value ? 0 : 2);
+  process.exit(0);
+}
+const value = options(rawArguments);
+if (!value) {
+  usage();
+  process.exit(2);
 }
 if (!/^https?:\/\//i.test(value.url)) throw new Error('URL must use HTTP or HTTPS');
+const {chromium} = require('playwright');
 
 const width = integer(value.width, 1440, 16, 8192);
 const height = integer(value.height, 1000, 16, 8192);

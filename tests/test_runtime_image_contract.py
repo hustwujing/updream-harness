@@ -53,6 +53,7 @@ def test_runtime_installs_supported_public_browser_helper():
     assert "runtime/proxy_bridge.cjs /usr/local/lib/sandbox-proxy-bridge.cjs" in source
     assert helper.is_file()
     text = helper.read_text()
+    assert "rawArguments.length === 1" in text and "process.exit(0)" in text
     assert "proxy: proxyBridge.value" in text
     bridge = (ROOT / "runtime/proxy_bridge.cjs").read_text()
     assert "HTTPS_PROXY" in bridge
