@@ -47,9 +47,17 @@ async def upload(client,path):
     response.raise_for_status();return response.json()
 
 
-def classify(final,artifacts):
+def classify(final,artifacts,media_jobs=None):
     state=final.get("state","");code=final.get("error_code","") or ""
     if state=="COMPLETED" and artifacts:return "success",""
+    failed_media=next((job for job in (media_jobs or [])
+        if job.get("status") in {"failed","unknown","cancelled"}),None)
+    if failed_media:
+        code=failed_media.get("error_code","") or failed_media.get("status","")
+        if code.startswith(("provider_","model_","upstream_")) or code in {
+                "budget_exhausted","content_policy_rejected","no_target_found"}:
+            return "non_program_failure",code
+        return "program_failure",code or "media_job_failed"
     if state=="COMPLETED":return "optimizable_prompt","completed_without_artifact"
     if state=="WAITING_USER":return "optimizable_prompt",final.get("error_detail") or "unclear_user_intervention"
     if code.startswith(("provider_","model_","upstream_")) or code in {
@@ -67,6 +75,59 @@ async def wait_turn(client,turn_id,running,identity,timeout):
             if value["state"] in TERMINAL:return value
         await asyncio.sleep(1)
     raise TimeoutError("turn_timeout")
+
+
+async def settle_media_workflow(client,thread_id,initial_final,running,identity,timeout,
+                                *,allow_external):
+    """Drive real confirmation cards and wait for every media continuation Turn."""
+    deadline=time.monotonic()+timeout
+    final=initial_final;media_jobs=[];continuation_after=None
+    while time.monotonic()<deadline:
+        response=await client.get(f"api/threads/{thread_id}/turns");response.raise_for_status()
+        turns=response.json()
+        for turn in turns:
+            if turn["state"] not in TERMINAL:
+                final=await wait_turn(client,turn["id"],running,identity,
+                    max(1,deadline-time.monotonic()))
+            elif turn["id"]==turns[-1]["id"]:
+                final=turn
+
+        response=await client.get(f"api/threads/{thread_id}/media/drafts");response.raise_for_status()
+        drafts=response.json();awaiting=[row for row in drafts if row["status"]=="awaiting_confirmation"]
+        if awaiting:
+            if not allow_external:
+                return final,media_jobs
+            continuation_after=len(turns)
+            for draft in awaiting:
+                response=await client.post(f"api/media/drafts/{draft['id']}/confirm")
+                response.raise_for_status()
+            running[identity]["state"]="WAITING_MEDIA"
+            continue
+
+        response=await client.get(f"api/threads/{thread_id}/media/jobs");response.raise_for_status()
+        media_jobs=response.json()
+        active=[row for row in media_jobs if row["status"] not in {
+            "succeeded","failed","cancelled","unknown"}]
+        if active:
+            phases=sorted({row.get("phase") or row["status"] for row in active})
+            running[identity]["state"]="MEDIA_"+"_".join(phases).upper()
+            await asyncio.sleep(1);continue
+
+        if continuation_after is not None:
+            response=await client.get(f"api/threads/{thread_id}/turns");response.raise_for_status()
+            turns=response.json()
+            if len(turns)<=continuation_after:
+                running[identity]["state"]="WAITING_CONTINUATION"
+                await asyncio.sleep(1);continue
+            for turn in turns[continuation_after:]:
+                if turn["state"] not in TERMINAL:
+                    final=await wait_turn(client,turn["id"],running,identity,
+                        max(1,deadline-time.monotonic()))
+                else:final=turn
+            continuation_after=None
+            continue
+        return final,media_jobs
+    raise TimeoutError("media_workflow_timeout")
 
 
 async def primary_case(client,case,args,running):
@@ -94,9 +155,11 @@ async def primary_case(client,case,args,running):
     intervention_turn=await intervention_task
     if intervention_turn:
         final=await wait_turn(client,intervention_turn,running,case["id"],args.timeout)
+    final,media_jobs=await settle_media_workflow(client,thread["id"],final,running,case["id"],
+        args.timeout,allow_external=bool(case.get("allowed_external_operations")))
     response=await client.get(f"api/threads/{thread['id']}/items");response.raise_for_status()
     items=response.json();artifacts=[row for row in items if row.get("type")=="artifact"]
-    classification,reason=classify(final,artifacts)
+    classification,reason=classify(final,artifacts,media_jobs)
     return {"classification":classification,"reason":reason,"thread_id":thread["id"],
         "turn_id":turn["id"],"state":final["state"],"error_code":final.get("error_code",""),
         "artifact_count":len(artifacts),"artifact_names":[row.get("summary","") for row in artifacts]}
