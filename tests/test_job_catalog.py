@@ -1,10 +1,12 @@
 import hashlib
 import json
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.job_catalog import JobCatalog, OperationDescriptor
 
 
@@ -78,5 +80,14 @@ def test_review_policy_is_structured_and_default_off():
 def test_example_job_catalog_is_parseable_and_digest_verified():
     raw=(ROOT/'deploy/job-catalog.example.json').read_text()
     value=JobCatalog.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest())
-    assert {row.id for row in value.payload.operations}=={'artifact.inspect','media.render'}
+    assert {row.id for row in value.payload.operations}=={'artifact.inspect','media.render','audio.process'}
     assert {row.id for row in value.payload.capabilities}=={'image.generate'}
+    audio=value.operation('audio.process','1','d'*64)
+    recipe=audio.parameter_schema['properties']['recipe']
+    assert audio.runtime_profile_id=='media-cpu' and set(audio.output_roles)=={
+        'processed_audio','measurement_report'}
+    assert recipe['properties']['target_lufs']['minimum']==-40
+    public=HarnessCatalog(
+        job_catalog=value,profile_resolver=SimpleNamespace(skills={},children={})).public_execution_metadata()
+    exposed=next(row for row in public['operations'] if row['id']=='audio.process')
+    assert exposed['parameter_schema']==audio.parameter_schema

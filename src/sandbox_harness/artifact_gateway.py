@@ -55,9 +55,11 @@ class MimeRegistry:
             try:
                 text = path.read_text(encoding="utf-8")
                 if all(character in "\n\r\t" or ord(character) >= 32 for character in text):
+                    try:is_json=isinstance(json.loads(text),(dict,list))
+                    except (json.JSONDecodeError,ValueError):is_json=False
                     try:root=ElementTree.fromstring(text)
                     except (ElementTree.ParseError,ValueError):root=None
-                    detected=("image/svg+xml" if root is not None and
+                    detected=("application/json" if is_json else "image/svg+xml" if root is not None and
                         root.tag in {"svg","{http://www.w3.org/2000/svg}svg"} else "text/plain")
                 else:detected="application/octet-stream"
             except (OSError, UnicodeDecodeError):

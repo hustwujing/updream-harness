@@ -79,7 +79,8 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
         store=store,objects=objects,settings=settings,token_factory=JobGrantFactory(settings))
     worker=JobWorker(store,{"child-harness":harness_adapter,
         "reviewer-harness":ReviewerJobAdapter(harness_adapter),
-        "image.generate":media_adapter,"media.render":render_adapter},node_id=settings.job_node_id,
+        "image.generate":media_adapter,"media.render":render_adapter,
+        "audio.process":render_adapter},node_id=settings.job_node_id,
         concurrency=settings.job_worker_concurrency,lease_seconds=settings.job_lease_seconds)
     profiles=resolved_node_profiles(profile_resolver(settings))
     cpu_total=max(1,min(os.cpu_count() or 1,settings.job_node_cpu_limit))

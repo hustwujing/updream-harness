@@ -294,6 +294,11 @@ async def test_project_files_keep_versions_and_return_only_the_current_content(t
             lease_owner="snapshot-worker", recovery_generation=claimed.recovery_generation)
         assert [(item.path, item.version, item.sha256) for item in snapshot] == [
             ("assets/renamed.png", 3, "2" * 64)]
+        inputs=await store.turn_input_artifacts(turn.id,owner)
+        assert [(item['project_path'],item['artifact'].sha256) for item in inputs]==[
+            ("assets/renamed.png","2"*64)]
+        assert not [item for item in await store.items_after(thread.id)
+            if item.type==ItemType.ARTIFACT]
         newer, _ = await store.register_project_file(thread.id, path="assets/renamed.png",
             source_type="upload", source_turn_id="five", sha256="5" * 64, size=50,
             mime="image/png", object_ref="sha256:fifth")

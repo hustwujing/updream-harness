@@ -70,12 +70,20 @@ class Configure(BaseModel):
 
 
 class MediaRenderOperation(BaseModel):
-    operation: Literal["image.resize","video.transcode"]
+    operation: Literal["image.resize","video.transcode","audio.process"]
     input_path: str = Field(min_length=1,max_length=2000)
     output_filename: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
-    width: int = Field(ge=1,le=8192)
-    height: int = Field(ge=1,le=8192)
+    width: int = Field(default=0,ge=0,le=8192)
+    height: int = Field(default=0,ge=0,le=8192)
     fps: int = Field(default=24,ge=1,le=120)
+    format: Literal["wav","mp3","m4a"] = "wav"
+    gain_db: float = Field(default=0,ge=-60,le=24)
+    target_lufs: float | None = Field(default=None,ge=-40,le=-5)
+    true_peak_db: float = Field(default=-1.5,ge=-9,le=0)
+    fade_in: float = Field(default=0,ge=0,le=30)
+    fade_out: float = Field(default=0,ge=0,le=30)
+    highpass_hz: float = Field(default=0,ge=0,le=300)
+    denoise: bool = False
 
 
 class JobArtifactStage(BaseModel):
@@ -1372,15 +1380,61 @@ def create_app() -> FastAPI:
                 raise ValueError
         except (OSError,ValueError):raise HTTPException(404,"Operation input is unavailable")
         target=OUTPUTS/value.output_filename;target.unlink(missing_ok=True)
+        if value.operation in {"image.resize","video.transcode"} and (not value.width or not value.height):
+            raise HTTPException(422,"Image and video Operations require non-zero dimensions")
         if value.operation=="image.resize":
             argv=["ffmpeg","-hide_banner","-loglevel","error","-y","-i",str(source),
                 "-vf",f"scale={value.width}:{value.height}:force_original_aspect_ratio=decrease,"
                 f"pad={value.width}:{value.height}:(ow-iw)/2:(oh-ih)/2:color=black@0","-frames:v","1",str(target)]
-        else:
+        elif value.operation=="video.transcode":
             argv=["ffmpeg","-hide_banner","-loglevel","error","-y","-i",str(source),
                 "-vf",f"scale={value.width}:{value.height}:force_original_aspect_ratio=decrease,"
                 f"pad={value.width}:{value.height}:(ow-iw)/2:(oh-ih)/2,setsar=1","-r",str(value.fps),
                 "-c:v","libx264","-pix_fmt","yuv420p","-c:a","aac",str(target)]
+        else:
+            if target.suffix.lower()!="."+value.format:
+                raise HTTPException(422,"Audio output filename must match format")
+            probe=await asyncio.create_subprocess_exec("ffprobe","-v","error","-select_streams","a:0",
+                "-show_entries","format=duration:stream=sample_rate,channels,channel_layout",
+                "-of","json",str(source),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            probe_out,probe_err=await probe.communicate()
+            if probe.returncode:raise HTTPException(422,"Audio input probe failed")
+            source_probe=json.loads(probe_out);stream=(source_probe.get("streams") or [None])[0]
+            if not stream:raise HTTPException(422,"Audio input has no audio stream")
+            metadata={"duration":float((source_probe.get("format") or {}).get("duration") or 0),
+                "sample_rate":int(stream["sample_rate"]),"channels":int(stream["channels"]),
+                "channel_layout":stream.get("channel_layout") or ""}
+            filters=[]
+            if value.highpass_hz:filters.append(f"highpass=f={value.highpass_hz:g}")
+            if value.denoise:filters.append("afftdn=nf=-25")
+            if value.gain_db:filters.append(f"volume={value.gain_db:g}dB")
+            if value.fade_in:filters.append(f"afade=t=in:st=0:d={min(metadata['duration'],value.fade_in):g}")
+            if value.fade_out:filters.append(f"afade=t=out:st={max(0,metadata['duration']-value.fade_out):g}:d={min(metadata['duration'],value.fade_out):g}")
+            measurement=None
+            if value.target_lufs is not None:
+                first=",".join([*filters,
+                    f"loudnorm=I={value.target_lufs:g}:TP={value.true_peak_db:g}:LRA=11:print_format=json"])
+                measured=await asyncio.create_subprocess_exec("ffmpeg","-nostdin","-hide_banner","-v","info",
+                    "-i",str(source),"-map","0:a:0","-af",first,"-f","null","-",
+                    stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+                _,measured_err=await asyncio.wait_for(measured.communicate(),timeout=1800)
+                matches=re.findall(rb"\{[^{}]+\}",measured_err,re.S)
+                if measured.returncode or not matches:raise HTTPException(422,"Loudness measurement failed")
+                measurement=json.loads(matches[-1]);required=("input_i","input_tp","input_lra",
+                    "input_thresh","target_offset")
+                if not all(key in measurement for key in required):
+                    raise HTTPException(422,"Loudness measurement is incomplete")
+                filters.append(f"loudnorm=I={value.target_lufs:g}:TP={value.true_peak_db:g}:LRA=11:"
+                    f"measured_I={measurement['input_i']}:measured_TP={measurement['input_tp']}:"
+                    f"measured_LRA={measurement['input_lra']}:measured_thresh={measurement['input_thresh']}:"
+                    f"offset={measurement['target_offset']}:linear=true")
+                measurement={key:measurement[key] for key in required}
+            codec={"wav":["-c:a","pcm_s16le"],"mp3":["-c:a","libmp3lame","-b:a","192k"],
+                "m4a":["-c:a","aac","-b:a","192k"]}[value.format]
+            argv=["ffmpeg","-nostdin","-hide_banner","-loglevel","error","-y","-i",str(source),
+                "-map","0:a:0","-vn"]
+            if filters:argv += ["-af",",".join(filters)]
+            argv += codec+["-ar",str(metadata["sample_rate"]),"-ac",str(metadata["channels"]),str(target)]
         process=await asyncio.create_subprocess_exec(*argv,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
         try:output,_=await asyncio.wait_for(process.communicate(),timeout=7200)
         except asyncio.TimeoutError:
@@ -1389,6 +1443,29 @@ def create_app() -> FastAPI:
             event("runtime.operation.failed",operation=value.operation,returncode=process.returncode)
             raise HTTPException(422,"Controlled media Operation failed")
         with target.open("rb") as stream:digest=hashlib.file_digest(stream,"sha256").hexdigest()
+        if value.operation=="audio.process":
+            output_probe=await asyncio.create_subprocess_exec("ffprobe","-v","error","-select_streams","a:0",
+                "-show_entries","format=duration:stream=sample_rate,channels,channel_layout",
+                "-of","json",str(target),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            probe_out,_=await output_probe.communicate();result_probe=json.loads(probe_out)
+            result_stream=(result_probe.get("streams") or [None])[0]
+            output_metadata={"duration":float((result_probe.get("format") or {}).get("duration") or 0),
+                "sample_rate":int(result_stream["sample_rate"]),"channels":int(result_stream["channels"]),
+                "channel_layout":result_stream.get("channel_layout") or ""}
+            if abs(output_metadata["duration"]-metadata["duration"])>.2:
+                raise HTTPException(422,"Audio Operation changed duration")
+            report={"schema":1,"status":"succeeded","parameters":value.model_dump(exclude={"input_path"}),
+                "source":metadata,"filters":filters,"measurement":measurement,
+                "output":{**output_metadata,"name":target.name,"size":target.stat().st_size,"sha256":digest},
+                "normalization_applied":measurement is not None,"channel_policy":"preserve",
+                "sample_rate_policy":"preserve"}
+            report_path=OUTPUTS/"audio-process-report.json"
+            report_path.write_text(json.dumps(report,ensure_ascii=False,indent=2)+"\n")
+            with report_path.open("rb") as stream:report_digest=hashlib.file_digest(stream,"sha256").hexdigest()
+            return {"outputs":[{"role":"processed_audio","path":target.name,"size":target.stat().st_size,
+                "sha256":digest,"mime":mimetypes.guess_type(target.name)[0] or "application/octet-stream"},
+                {"role":"measurement_report","path":report_path.name,"size":report_path.stat().st_size,
+                "sha256":report_digest,"mime":"application/json"}]}
         return {"path":value.output_filename,"size":target.stat().st_size,"sha256":digest,
             "mime":mimetypes.guess_type(target.name)[0] or "application/octet-stream"}
 

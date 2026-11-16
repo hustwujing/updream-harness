@@ -6,6 +6,7 @@ import time
 import asyncio
 import io
 import tarfile
+import wave
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -90,6 +91,32 @@ def test_controlled_media_operation_runs_in_authorized_runtime_profile(tmp_path,
     assert configured.status_code==200 and response.status_code==200
     with Image.open(tmp_path/'workspace/outputs/resized.png') as image:
         assert image.size==(32,24)
+
+
+def test_controlled_audio_process_emits_audio_and_objective_report(tmp_path,monkeypatch):
+    monkeypatch.setattr(runtime_app,'RUN',tmp_path/'run')
+    monkeypatch.setattr(runtime_app,'WORKSPACE',tmp_path/'workspace')
+    monkeypatch.setattr(runtime_app,'OUTPUTS',tmp_path/'workspace/outputs')
+    monkeypatch.setattr(runtime_app,'PERSISTENT',('project','state'))
+    source=tmp_path/'workspace/project/assets/inputs/source.wav';source.parent.mkdir(parents=True)
+    with wave.open(str(source),'wb') as out:
+        out.setnchannels(1);out.setsampwidth(2);out.setframerate(16000)
+        out.writeframes((b'\x00\x10'*16000)+(b'\x00\x20'*16000))
+    app=runtime_app.create_app()
+    with TestClient(app) as client:
+        configured=client.post('/v1/configure',json={'thread_id':'a'*32,'turn_id':'b'*32,
+            'sandbox_id':'sandbox-operation','capability_token':'x'*32,
+            'gateway_url':'http://gateway:28600','harness':'codex','model':'operation-only',
+            'proxy_url':'http://172.31.0.1:28601','runtime_profile_id':'media-cpu','child_mode':True})
+        response=client.post('/v1/operations/media-render',json={'operation':'audio.process',
+            'input_path':'assets/inputs/source.wav','input_role':'source','output_filename':'processed.wav',
+            'format':'wav','target_lufs':-16,'true_peak_db':-1.5,'fade_in':.1,'fade_out':.1,
+            'highpass_hz':0,'denoise':False,'gain_db':0})
+    assert configured.status_code==200 and response.status_code==200,response.text
+    value=response.json();assert {row['role'] for row in value['outputs']}=={
+        'processed_audio','measurement_report'}
+    report=json.loads((tmp_path/'workspace/outputs/audio-process-report.json').read_text())
+    assert report['normalization_applied'] and abs(report['output']['duration']-2)<.05
 
 
 def test_controlled_media_operation_rejects_primary_or_unmanaged_paths(tmp_path,monkeypatch):

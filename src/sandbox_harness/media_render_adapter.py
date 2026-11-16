@@ -84,19 +84,26 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
                       status:AdapterStatus)->dict[str,Any]:
         if status.state!=JobState.SUCCEEDED:return status.result
         sandbox=await self._sandbox(context,context.previous_acceptance_receipt)
-        if len(context.request.expected_outputs)!=1:
-            raise RuntimeError('media_render_output_contract_requires_one_role')
-        contract=context.request.expected_outputs[0];path=str(status.result.get('path',''))
-        data=await self.runtime.artifact(sandbox,path)
-        async def chunks():yield data
-        artifact=await self.artifacts.emit(ArtifactEmission(job_id=context.job.id,generation=context.generation,
-            artifact_role=contract.artifact_role,item_key='primary',position=0,filename=Path(path).name,
-            output_disposition=contract.output_disposition,
-            declared_mime=str(status.result.get('mime','application/octet-stream'))),chunks())
-        collection=await self.store.finalize_job_artifact_collection(context.job.id,context.generation,
-            contract.artifact_role)
+        contracts={value.artifact_role:value for value in context.request.expected_outputs}
+        values=status.result.get('outputs') or ([{"role":next(iter(contracts),""),
+            "path":status.result.get('path',''),"mime":status.result.get('mime','application/octet-stream')}]
+            if status.result.get('path') else [])
+        if not contracts or {str(value.get('role','')) for value in values}!=set(contracts):
+            raise RuntimeError('operation_output_roles_mismatch')
+        artifacts=[];collections=[]
+        for value in values:
+            role=str(value['role']);contract=contracts[role];path=str(value.get('path',''))
+            data=await self.runtime.artifact(sandbox,path)
+            async def chunks(data=data):yield data
+            artifact=await self.artifacts.emit(ArtifactEmission(job_id=context.job.id,
+                generation=context.generation,artifact_role=role,item_key='primary',position=0,
+                filename=Path(path).name,output_disposition=contract.output_disposition,
+                declared_mime=str(value.get('mime','application/octet-stream'))),chunks())
+            artifacts.append(artifact.model_dump(mode='json'))
+            collections.append(await self.store.finalize_job_artifact_collection(
+                context.job.id,context.generation,role))
         return {'operation':context.request.parameters['recipe']['operation'],
-            'artifacts':[artifact.model_dump(mode='json')],'collections':[collection]}
+            'artifacts':artifacts,'collections':collections}
 
     async def cleanup(self,context:JobExecutionContext,external_execution_id:str)->None:
         receipt=context.previous_acceptance_receipt;sandbox=await self._sandbox(context,receipt)

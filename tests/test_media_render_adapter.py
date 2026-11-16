@@ -74,3 +74,40 @@ async def test_media_render_adapter_reserves_profile_injects_frozen_input_and_bi
         assert result['collections'][0]['state']=='published'
         assert (await store.list_job_artifacts(job.id))[0].output_disposition==OutputDisposition.DELIVERY
     finally:await store.close()
+
+
+async def test_media_render_adapter_collects_role_addressed_operation_outputs(tmp_path):
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'multi-output.db'));await store.initialize()
+    try:
+        profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level='standard',title='Audio Operation'),profile,'owner')
+        turn,_,_=await store.create_turn(thread.id,TurnCreate(message='audio',
+            idempotency_key='audio-operation-turn'),profile,'owner')
+        request=JobRequest(local_job_id='audio',kind=JobKind.OPERATION,adapter='audio.process',
+            descriptor_id='audio.process',descriptor_version='1',descriptor_digest='d'*64,
+            idempotency_key='audio-operation-job',parameters={'recipe':{'operation':'audio.process'}},
+            expected_outputs=(
+                JobExpectedOutput(artifact_role='processed_audio',output_disposition='delivery',min_items=1),
+                JobExpectedOutput(artifact_role='measurement_report',output_disposition='workspace',min_items=1)))
+        _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id=thread.id,
+            origin_turn_id=turn.id,idempotency_key='audio-operation-group',jobs=[request]))
+        attempt=(await store.claim_available_jobs('worker','node',60,limit=1,
+            adapters={'audio.process'}))[0]
+        job=await store.get_job(jobs[0].id);objects=ObjectStore(tmp_path/'objects')
+        outputs={'processed.wav':b'RIFF\x04\x00\x00\x00WAVE','audio-process-report.json':b'{"status":"succeeded"}'}
+        class Runtime:
+            async def artifact(self,sandbox,path):return outputs[path]
+        class Pool:
+            async def get_attached(self,*args):return SimpleNamespace(id='sandbox')
+        adapter=MediaRenderOperationAdapter(scheduler=None,pool=Pool(),runtime=Runtime(),store=store,
+            objects=objects,settings=Settings(backend='fake',data_root=tmp_path),token_factory=None)
+        context=JobExecutionContext(job=job,request=request,generation=attempt.generation,
+            previous_acceptance_receipt={'sandbox_id':'sandbox'})
+        result=await adapter.collect(context,'operation:'+job.id,AdapterStatus(True,JobState.SUCCEEDED,{
+            'outputs':[{'role':'processed_audio','path':'processed.wav','mime':'audio/wav'},
+                {'role':'measurement_report','path':'audio-process-report.json','mime':'application/json'}]}))
+        assert {row['artifact_role'] for row in result['artifacts']}=={
+            'processed_audio','measurement_report'}
+        assert {row['state'] for row in result['collections']}=={'published'}
+    finally:await store.close()

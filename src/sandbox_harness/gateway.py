@@ -368,8 +368,15 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/v1/execution/catalog")
     async def runtime_execution_catalog(request:Request):
-        await authorize_runtime_request(request,"/v1/execution/catalog")
-        return {**execution_catalog.public_execution_metadata(),"media_models":media_catalog.public()}
+        claims=await authorize_runtime_request(request,"/v1/execution/catalog")
+        owner_id=await activity_store.owner_id_for_thread(claims.thread_id)
+        inputs=await activity_store.turn_input_artifacts(claims.turn_id,owner_id)
+        return {**execution_catalog.public_execution_metadata(),
+            "job_group_schema":JobGroupCreate.model_json_schema(),"input_artifacts":[{
+            "artifact_id":item["artifact"].id,"project_file_id":item["project_file_id"],
+            "project_path":item["project_path"],"source_type":item["source_type"],
+            "sha256":item["artifact"].sha256,"size":item["artifact"].size,
+            "mime":item["artifact"].mime} for item in inputs],"media_models":media_catalog.public()}
 
     @app.post("/v1/reviews")
     async def runtime_prepare_review(value:ReviewSubmission,request:Request):

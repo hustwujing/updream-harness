@@ -115,6 +115,8 @@ def test_mime_registry_sniffs_aliases_and_unknowns(tmp_path):
     svg=tmp_path/'shape.svg';svg.write_text(
         '<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>')
     assert MimeRegistry.detect(svg,'image/svg+xml')=='image/svg+xml'
+    document=tmp_path/'report.json';document.write_text('{"status":"succeeded"}\n')
+    assert MimeRegistry.detect(document,'application/json')=='application/json'
     invalid=tmp_path/'invalid.svg';invalid.write_text('<svg>')
     with pytest.raises(ValueError,match='does not match'):
         MimeRegistry.detect(invalid,'image/svg+xml')

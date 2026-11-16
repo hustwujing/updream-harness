@@ -3478,6 +3478,9 @@ class Store:
                     sha256=source.sha256, size=source.size, mime=source.mime,
                     object_ref=source.object_ref, created_at=timestamp)
                 db.add(snapshot); snapshots.append(snapshot)
+                db.add(ArtifactRow(id=identifier(),turn_id=turn_id,path="input/"+source.path,
+                    sha256=source.sha256,size=source.size,mime=source.mime,
+                    object_ref=source.object_ref,created_at=timestamp))
             turn.project_files_frozen = True
         return [self.turn_project_file_view(row) for row in snapshots]
 
@@ -3490,6 +3493,21 @@ class Store:
                 query = query.where(ThreadRow.owner_id == owner_id)
             rows = (await db.execute(query.order_by(TurnProjectFileRow.path))).scalars().all()
         return [self.turn_project_file_view(row) for row in rows]
+
+    async def turn_input_artifacts(self,turn_id:str,owner_id:str|None=None)->list[dict]:
+        async with self.connections() as db:
+            query=select(TurnProjectFileRow).join(TurnRow,
+                TurnRow.id==TurnProjectFileRow.turn_id).join(ThreadRow,
+                ThreadRow.id==TurnRow.thread_id).where(TurnProjectFileRow.turn_id==turn_id)
+            if owner_id is not None:query=query.where(ThreadRow.owner_id==owner_id)
+            snapshots=(await db.execute(query.order_by(TurnProjectFileRow.path))).scalars().all()
+            artifacts=(await db.execute(select(ArtifactRow).where(ArtifactRow.turn_id==turn_id,
+                ArtifactRow.path.like("input/%")))).scalars().all()
+        by_path={row.path.removeprefix("input/"):row for row in artifacts}
+        return [{"artifact":Artifact.model_validate({key:getattr(by_path[row.path],key)
+                    for key in Artifact.model_fields}),"project_file_id":row.project_file_id,
+                "project_path":row.path,"source_type":row.source_type}
+            for row in snapshots if row.path in by_path]
 
     async def project_file_history(self, thread_id: str, path: str, owner_id: str) -> list[ProjectFile]:
         async with self.connections() as db:

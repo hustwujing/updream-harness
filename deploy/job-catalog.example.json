@@ -40,6 +40,27 @@
       "reconciliation_policy": {"supported": false},
       "runtime_profile_id": "media-cpu",
       "runtime_harness": "codex"
+    },
+    {
+      "id": "audio.process",
+      "version": "1",
+      "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "execution_mode": "durable",
+      "timeout_seconds": 1800,
+      "parameter_schema": {"type": "object", "properties": {"recipe": {"type": "object", "properties": {"operation": {"const": "audio.process"}, "input_role": {"type": "string"}, "format": {"enum": ["wav", "mp3", "m4a"]}, "gain_db": {"type": "number", "minimum": -60, "maximum": 24}, "target_lufs": {"type": ["number", "null"], "minimum": -40, "maximum": -5}, "true_peak_db": {"type": "number", "minimum": -9, "maximum": 0}, "fade_in": {"type": "number", "minimum": 0, "maximum": 30}, "fade_out": {"type": "number", "minimum": 0, "maximum": 30}, "highpass_hz": {"type": "number", "minimum": 0, "maximum": 300}, "denoise": {"type": "boolean"}, "output_filename": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$"}}, "required": ["operation", "input_role", "format", "output_filename"], "additionalProperties": false}}, "required": ["recipe"], "additionalProperties": false},
+      "input_roles": ["source"],
+      "output_roles": ["processed_audio", "measurement_report"],
+      "required_capabilities": [],
+      "network_origins": [],
+      "resources": {"cpu": 2, "memory_mb": 2048, "gpu": 0},
+      "side_effects": false,
+      "billable": false,
+      "creates_artifacts": true,
+      "retry_policy": {"max_pre_accept_attempts": 2, "deterministic": true},
+      "cancellation_policy": {"supported": false},
+      "reconciliation_policy": {"supported": false},
+      "runtime_profile_id": "media-cpu",
+      "runtime_harness": "codex"
     }
   ],
   "capabilities": [
