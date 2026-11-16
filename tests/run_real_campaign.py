@@ -44,6 +44,7 @@ INTERVENTIONS={
     "intervention_chain":"将当前版本作为V1，再生成亮度1.1的V2和灰度V3。",
     "intervention_scope_successor":"基于已交付和原素材，追加32×24 successor 图片。",
 }
+INTERVENTION_ASSETS={"intervention_replace_source":["poster.png"]}
 
 
 def now():return datetime.now(timezone.utc).isoformat()
@@ -280,8 +281,11 @@ async def primary_case(client,case,args,running):
         await asyncio.sleep(args.intervention_delay)
         message=INTERVENTIONS.get(intervention)
         if not message:return
+        intervention_attachments=[await upload(client,ROOT/"tests/real_cases/assets"/name)
+            for name in INTERVENTION_ASSETS.get(intervention,[])]
         value=await client.post(f"api/threads/{thread['id']}/turns",json={"message":message,
-            "attachments":attachments,"idempotency_key":"campaign-intervention-"+case["id"]+"-"+uuid.uuid4().hex,
+            "attachments":intervention_attachments,
+            "idempotency_key":"campaign-intervention-"+case["id"]+"-"+uuid.uuid4().hex,
             "delivery_mode":"queue"})
         value.raise_for_status();identity=value.json()["id"]
         running[case["id"]]["intervention_turn_id"]=identity;return identity

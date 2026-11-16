@@ -23,6 +23,8 @@ def test_intervention_cases_use_messages_not_product_keyword_rules():
     source=(ROOT/"tests/run_real_campaign.py").read_text()
     assert "INTERVENTIONS" in source and "delivery_mode\":\"queue" in source
     assert "re.compile" not in source and "regex" not in source.lower()
+    assert 'INTERVENTION_ASSETS={"intervention_replace_source":["poster.png"]}' in source
+    assert '"attachments":intervention_attachments' in source
 
 
 def test_parallel_protocol_runner_never_fakes_unimplemented_success():
