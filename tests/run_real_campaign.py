@@ -33,7 +33,7 @@ INTERVENTIONS={
     "intervention_change_brightness":"只把portrait分支亮度改为1.2，保留其他已完成成果。",
     "intervention_replace_source":"只把左侧素材替换为poster.png，保留不受影响的成果。",
     "intervention_cover":"把封面改用rocket.png，不改变视频内容。",
-    "intervention_caption":"字幕改为白字黑描边、底部居中。",
+    "intervention_caption":"新增字幕：0–2秒显示“PORTRAIT”，2–4秒显示“ROCKET”；白字黑描边、底部居中。",
     "intervention_portrait":"最终改为360×640竖版、时长8秒。",
     "intervention_thumbnail":"在已完成交付之外追加320×180 JPEG缩略图。",
     "intervention_feedback":"当前候选的边缘有黑边，请只修复边缘后重新审查，不接受当前候选。",

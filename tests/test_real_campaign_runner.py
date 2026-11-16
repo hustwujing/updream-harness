@@ -43,6 +43,11 @@ def test_dynamic_resize_case_grades_the_post_intervention_contract():
         'extensions':['.png','.webp'],'min_images':2}
 
 
+def test_caption_intervention_contains_content_timing_and_style():
+    source=(ROOT/'tests/run_real_campaign.py').read_text()
+    assert '0–2秒显示“PORTRAIT”，2–4秒显示“ROCKET”' in source
+
+
 def campaign_module():
     path=Path(__file__).with_name("run_real_campaign.py")
     spec=importlib.util.spec_from_file_location("real_campaign_runner",path)
