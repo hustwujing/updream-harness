@@ -121,6 +121,9 @@ def test_parallel_profiles_are_dependency_only_and_cover_declared_catalog():
     for value in ("sandbox-browser-screenshot","sandbox-browser-render","chromium_proxy.cjs"):
         assert value in primary and value in web
     assert "drawio_wrapper.sh" in primary and "xvfb" in primary
+    drawio=(ROOT/"runtime/drawio_wrapper.sh").read_text()
+    assert 'Xvfb "$display"' in drawio and "xvfb-run" not in drawio
+    assert "trap cleanup EXIT INT TERM" in drawio
     assert "sqlglot" in (ROOT/"runtime/requirements-data.txt").read_text()
     assert all("sandbox-review" in (ROOT/"runtime/profiles"/f"{name}.Dockerfile").read_text()
         for name in expected)
