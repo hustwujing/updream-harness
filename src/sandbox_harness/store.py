@@ -21,7 +21,7 @@ from .media_errors import media_error_guidance
 from .job_contracts import (
     JobAttemptReceipt, JobGroupCreate, JobGroupDraftCreate, JobGroupDraftState,
     JobGroupDraftView, JobGroupState, JobGroupView, JobKind, JobOutboxView,
-    JobState, JobView, TERMINAL_JOB_STATES, BudgetAccountView, BudgetLedgerView,
+    JobState, JobView, JobRequest, TERMINAL_JOB_STATES, BudgetAccountView, BudgetLedgerView,
     BudgetReservationView,
 )
 
@@ -1082,6 +1082,13 @@ class Store:
                 BudgetLedgerRow.created_at, BudgetLedgerRow.id))).scalars().all()
             return [self.budget_ledger_view(row) for row in rows]
 
+    async def get_budget_reservations_for_group(self, group_id: str) -> list[BudgetReservationView]:
+        async with self.connections() as db:
+            rows = (await db.execute(select(BudgetReservationRow).where(
+                BudgetReservationRow.group_id == group_id).order_by(
+                BudgetReservationRow.budget_key))).scalars().all()
+            return [self.budget_reservation_view(row) for row in rows]
+
     async def create_job_group_draft(self, owner_id: str,
                                      value: JobGroupDraftCreate) -> tuple[JobGroupDraftView, bool]:
         value.validate_member_limit()
@@ -1367,6 +1374,90 @@ class Store:
                 .order_by(JobRow.created_at, JobRow.local_job_id))).scalars().all()
             return [self.job_view(row) for row in rows]
 
+    async def get_job_request(self, job_id: str) -> JobRequest | None:
+        async with self.connections() as db:
+            row = await db.get(JobRow, job_id)
+            if not row:
+                return None
+            return JobRequest.model_validate_json(row.request_json)
+
+    async def latest_job_acceptance(self, job_id: str) -> JobAttemptReceipt | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(JobAttemptRow).where(
+                JobAttemptRow.job_id == job_id,
+                JobAttemptRow.accepted_at.is_not(None),
+            ).order_by(JobAttemptRow.generation.desc()).limit(1))).scalar_one_or_none()
+            return self.job_attempt_view(row) if row else None
+
+    async def claim_available_jobs(self, worker_id: str, node_id: str, lease_seconds: int,
+                                   *, limit: int = 1,
+                                   adapters: set[str] | None = None) -> list[JobAttemptReceipt]:
+        timestamp = now()
+        async with self.connections() as db:
+            query = select(JobRow.id).outerjoin(JobLeaseRow, JobLeaseRow.job_id == JobRow.id).where(
+                JobRow.state.in_([JobState.CREATED.value, JobState.QUEUED.value,
+                    JobState.RUNNING.value, JobState.WAITING_EXTERNAL.value,
+                    JobState.CANCELLING.value]),
+                or_(JobLeaseRow.job_id.is_(None), JobLeaseRow.expires_at < timestamp),
+            )
+            if adapters:
+                query = query.where(JobRow.adapter.in_(adapters))
+            identities = (await db.execute(query.order_by(
+                JobRow.created_at, JobRow.id).limit(limit * 3))).scalars().all()
+        result = []
+        for identity in identities:
+            if len(result) >= limit:
+                break
+            try:
+                result.append(await self.claim_job(identity, worker_id, node_id, lease_seconds))
+            except RuntimeError as exc:
+                if str(exc) not in {"job_already_leased", "job_terminal"}:
+                    raise
+        return result
+
+    async def finish_pre_accept_attempt(self, job_id: str, worker_id: str, generation: int, *,
+                                        retry: bool, error_code: str, error_detail: str) -> JobView:
+        view = None
+        async with self.job_lock(f"job:{job_id}"):
+            async with self.connections.begin() as db:
+                job = await db.get(JobRow, job_id, with_for_update=True)
+                attempt = (await db.execute(select(JobAttemptRow).where(
+                    JobAttemptRow.job_id == job_id,
+                    JobAttemptRow.generation == generation,
+                ).with_for_update())).scalar_one_or_none()
+                lease = await db.get(JobLeaseRow, job_id, with_for_update=True)
+                if (not job or not attempt or not lease or job.generation != generation
+                        or lease.generation != generation or lease.worker_id != worker_id
+                        or attempt.accepted_at is not None):
+                    raise RuntimeError("stale_job_generation")
+                attempt.finished_at = now()
+                attempt.outcome = "PRE_ACCEPT_RETRY" if retry else JobState.FAILED.value
+                attempt.error_code = error_code
+                attempt.error_detail = error_detail
+                job.state = JobState.QUEUED.value if retry else JobState.RUNNING.value
+                job.updated_at = now()
+                await db.delete(lease)
+                await db.flush()
+                view = self.job_view(job)
+        if retry:
+            return view
+        return await self.transition_job(job_id, JobState.FAILED, expected_generation=generation,
+            result={"error_code": error_code, "error_detail": error_detail})
+
+    async def defer_accepted_job(self, job_id: str, worker_id: str, generation: int) -> JobView:
+        async with self.job_lock(f"job:{job_id}"):
+            async with self.connections.begin() as db:
+                job = await db.get(JobRow, job_id, with_for_update=True)
+                lease = await db.get(JobLeaseRow, job_id, with_for_update=True)
+                if (not job or not lease or job.generation != generation
+                        or lease.generation != generation or lease.worker_id != worker_id):
+                    raise RuntimeError("stale_job_generation")
+                job.state = JobState.WAITING_EXTERNAL.value
+                job.updated_at = now()
+                await db.delete(lease)
+                await db.flush()
+                return self.job_view(job)
+
     async def request_job_cancel(self, job_id: str, owner_id: str) -> JobView:
         async with self.job_lock(f"job:{job_id}"):
             async with self.connections.begin() as db:
@@ -1462,8 +1553,26 @@ class Store:
 
     async def record_job_acceptance(self, job_id: str, worker_id: str, generation: int, *,
                                     external_execution_id: str, receipt: dict) -> JobAttemptReceipt:
-        async with self.job_lock(f"job:{job_id}"):
+        async with self.connections() as lookup:
+            snapshot = await lookup.get(JobRow, job_id)
+            if not snapshot:
+                raise KeyError("job_not_found")
+            request = JobRequest.model_validate_json(snapshot.request_json)
+            reservations = (await lookup.execute(select(BudgetReservationRow).where(
+                BudgetReservationRow.group_id == snapshot.group_id,
+                BudgetReservationRow.budget_key.in_(list(request.budget_requirements) or [""]),
+            ))).scalars().all()
+            by_key = {row.budget_key: row for row in reservations}
+            if set(by_key) != set(request.budget_requirements):
+                raise RuntimeError("job_budget_reservation_missing")
+            account_ids = sorted({row.account_id for row in reservations})
+        async with self.job_lock(f"accept:{job_id}"):
             async with self.connections.begin() as db:
+                accounts = {identity: await db.get(BudgetAccountRow, identity, with_for_update=True)
+                    for identity in account_ids}
+                locked_reservations = {row.budget_key: await db.get(
+                    BudgetReservationRow, row.id, with_for_update=True)
+                    for row in sorted(reservations, key=lambda value: value.id)}
                 job = await db.get(JobRow, job_id, with_for_update=True)
                 attempt = (await db.execute(select(JobAttemptRow).where(
                     JobAttemptRow.job_id == job_id,
@@ -1479,6 +1588,32 @@ class Store:
                             or attempt.acceptance_receipt_json != encoded):
                         raise RuntimeError("acceptance_receipt_conflict")
                     return self.job_attempt_view(attempt)
+                for budget_key, amount in sorted(request.budget_requirements.items()):
+                    reservation = locked_reservations[budget_key]
+                    account = accounts[reservation.account_id]
+                    idempotency_key = f"accept:{job.id}:{job.request_digest}:{budget_key}"
+                    ledger = (await db.execute(select(BudgetLedgerRow).where(
+                        BudgetLedgerRow.reservation_id == reservation.id,
+                        BudgetLedgerRow.idempotency_key == idempotency_key,
+                    ))).scalar_one_or_none()
+                    if ledger:
+                        continue
+                    if reservation.consumed + reservation.released + amount > reservation.reserved:
+                        raise RuntimeError("job_budget_reservation_exhausted")
+                    reservation.consumed += amount
+                    reservation.state = ("consumed" if reservation.consumed + reservation.released
+                        == reservation.reserved else "partial")
+                    reservation.updated_at = now()
+                    account.reserved -= amount
+                    account.consumed += amount
+                    account.updated_at = now()
+                    db.add(BudgetLedgerRow(
+                        id=identifier(), reservation_id=reservation.id,
+                        group_id=reservation.group_id, job_id=job.id,
+                        action="consume", amount=amount, idempotency_key=idempotency_key,
+                        detail_json=canonical_json({"generation": generation,
+                            "request_digest": job.request_digest}), created_at=now(),
+                    ))
                 attempt.accepted_at = now()
                 attempt.external_execution_id = external_execution_id
                 attempt.acceptance_receipt_json = encoded

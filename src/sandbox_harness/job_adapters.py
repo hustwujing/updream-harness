@@ -1,0 +1,70 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+
+from .job_contracts import JobRequest, JobState, JobView
+
+
+@dataclass(frozen=True)
+class JobExecutionContext:
+    job: JobView
+    request: JobRequest
+    generation: int
+    previous_external_execution_id: str = ""
+    previous_acceptance_receipt: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class AdapterSubmission:
+    external_execution_id: str
+    acceptance_receipt: dict[str, Any]
+    completed: bool = False
+    result: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class AdapterStatus:
+    terminal: bool
+    state: JobState = JobState.WAITING_EXTERNAL
+    result: dict[str, Any] = field(default_factory=dict)
+
+
+class PreAcceptFailure(RuntimeError):
+    pass
+
+
+class SubmissionOutcomeUnknown(RuntimeError):
+    def __init__(self, message: str, *, external_execution_id: str = "",
+                 acceptance_receipt: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.external_execution_id = external_execution_id
+        self.acceptance_receipt = acceptance_receipt or {"outcome": "unknown"}
+
+
+class JobAdapter(Protocol):
+    async def submit(self, context: JobExecutionContext) -> AdapterSubmission: ...
+    async def status(self, context: JobExecutionContext, external_execution_id: str) -> AdapterStatus: ...
+    async def cancel(self, context: JobExecutionContext, external_execution_id: str) -> AdapterStatus: ...
+    async def collect(self, context: JobExecutionContext, external_execution_id: str,
+                      status: AdapterStatus) -> dict[str, Any]: ...
+    async def reconcile(self, context: JobExecutionContext, external_execution_id: str) -> AdapterStatus: ...
+    async def cleanup(self, context: JobExecutionContext, external_execution_id: str) -> None: ...
+
+
+class BaseJobAdapter:
+    async def status(self, context: JobExecutionContext, external_execution_id: str) -> AdapterStatus:
+        return AdapterStatus(terminal=False)
+
+    async def cancel(self, context: JobExecutionContext, external_execution_id: str) -> AdapterStatus:
+        return AdapterStatus(terminal=False, state=JobState.CANCELLING)
+
+    async def collect(self, context: JobExecutionContext, external_execution_id: str,
+                      status: AdapterStatus) -> dict[str, Any]:
+        return status.result
+
+    async def reconcile(self, context: JobExecutionContext, external_execution_id: str) -> AdapterStatus:
+        return await self.status(context, external_execution_id)
+
+    async def cleanup(self, context: JobExecutionContext, external_execution_id: str) -> None:
+        return None
