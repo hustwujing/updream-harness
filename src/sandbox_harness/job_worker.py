@@ -45,12 +45,26 @@ class JobWorker:
                 attempts=await self.store.claim_available_jobs(
                     self.worker_id,self.node_id,self.lease_seconds,limit=capacity,
                     adapters=set(self.adapters))
-                tasks.update(asyncio.create_task(self.process(attempt,continuous=True),
+                tasks.update(asyncio.create_task(self._process_isolated(attempt),
                     name='job-'+attempt.job_id) for attempt in attempts)
             if not attempts:
                 try:await asyncio.wait_for(self.stop_event.wait(),timeout=0.5)
                 except asyncio.TimeoutError:pass
         await asyncio.gather(*tasks)
+
+    async def _process_isolated(self,attempt)->None:
+        try:await self.process(attempt,continuous=True)
+        except Exception as exc:
+            event('job.worker.process_failed',level=40,job_id=attempt.job_id,
+                generation=attempt.generation,exception_type=type(exc).__name__)
+            job=await self.store.get_job(attempt.job_id)
+            if not job or job.state in TERMINAL_JOB_STATES:return
+            state=JobState.UNKNOWN if job.kind==JobKind.PROVIDER else JobState.FAILED
+            try:
+                await self.store.transition_job(job.id,state,expected_generation=attempt.generation,
+                    result={'error_code':'worker_internal_error','exception_type':type(exc).__name__})
+            except RuntimeError as stale:
+                if str(stale)!='stale_job_generation':raise
 
     async def process(self, attempt, *, continuous: bool = False) -> None:
         job = await self.store.get_job(attempt.job_id)

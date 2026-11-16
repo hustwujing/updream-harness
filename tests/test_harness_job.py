@@ -149,10 +149,19 @@ async def test_missing_child_sandbox_is_terminal_not_an_infinite_pending_status(
 
     class Pool:
         async def get_attached(self,*args):return None
-    async def empty_namespace():return []
-    Pool.backend=SimpleNamespace(list_namespace=empty_namespace)
+    async def missing(*args):raise SandboxNotFound('gone')
+    Pool.backend=SimpleNamespace(get=missing)
     uncached=OpenSandboxChildBackend(pool=Pool(),runtime=Runtime(),store=SimpleNamespace(),
         objects=SimpleNamespace(),settings=Settings(backend='fake',data_root=tmp_path),
         token_factory=lambda *args:None)
     value=await uncached.status(context,'execution',{'sandbox_id':sandbox.id})
     assert value.terminal and value.result['error_code']=='child_sandbox_lost'
+
+
+async def test_failed_child_result_does_not_reopen_missing_sandbox(tmp_path):
+    backend=OpenSandboxChildBackend(pool=SimpleNamespace(),runtime=SimpleNamespace(),
+        store=SimpleNamespace(),objects=SimpleNamespace(),
+        settings=Settings(backend='fake',data_root=tmp_path),token_factory=lambda *args:None)
+    result=await backend.collect(SimpleNamespace(), 'execution',
+        AdapterStatus(True,JobState.FAILED,{'error_code':'child_sandbox_lost'}),{})
+    assert result=={'error_code':'child_sandbox_lost'}

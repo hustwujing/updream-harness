@@ -168,9 +168,9 @@ class OpenSandboxChildBackend:
         attached=await self.pool.get_attached(self._thread_id(context.job.id))
         if attached and attached.id==identity:
             self.sessions[context.job.id]=attached;return attached
-        matches=[value for value in await self.pool.backend.list_namespace() if value.id==identity]
-        if len(matches)!=1:raise RuntimeError('child_sandbox_unavailable')
-        adopted=await self.pool.adopt(matches[0],thread_id=self._thread_id(context.job.id),turn_id=context.job.id)
+        try:candidate=await self.pool.backend.get(identity)
+        except SandboxNotFound as exc:raise RuntimeError('child_sandbox_unavailable') from exc
+        adopted=await self.pool.adopt(candidate,thread_id=self._thread_id(context.job.id),turn_id=context.job.id)
         self.sessions[context.job.id]=adopted;return adopted
 
     async def start(self,context:JobExecutionContext,reservation)->tuple[str,dict[str,Any]]:
@@ -263,7 +263,7 @@ class OpenSandboxChildBackend:
 
     async def collect(self,context:JobExecutionContext,external_execution_id:str,
                       status:AdapterStatus,receipt:dict[str,Any])->dict[str,Any]:
-        if status.state==JobState.BLOCKED:return status.result
+        if status.state!=JobState.SUCCEEDED:return status.result
         sandbox=await self._sandbox(context,receipt)
         items=await self.runtime.artifacts(sandbox,context.job.id)
         by_path={str(item['path']):item for item in items}

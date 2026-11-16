@@ -103,6 +103,24 @@ async def test_service_stop_releases_continuous_poll_lease_for_takeover(tmp_path
     finally:await store.close()
 
 
+async def test_one_job_exception_does_not_crash_service_worker(tmp_path):
+    store,_,job=await setup(tmp_path,request(kind=JobKind.HARNESS))
+    adapter=FakeAdapter([AdapterSubmission('external-1',{'accepted':True})],
+        [RuntimeError('broken status')])
+    worker=JobWorker(store,{'fake':adapter},node_id='node',concurrency=1,
+        worker_id='worker',poll_seconds=.01)
+    try:
+        task=__import__('asyncio').create_task(worker.run())
+        for _ in range(200):
+            if (await store.get_job(job.id)).state==JobState.FAILED:break
+            await __import__('asyncio').sleep(.01)
+        else:raise AssertionError('isolated failure was not recorded')
+        assert not task.done()
+        worker.stop_event.set();await task
+        assert (await store.get_job(job.id)).result['error_code']=='worker_internal_error'
+    finally:await store.close()
+
+
 async def test_unknown_submission_without_handle_is_terminal_and_consumes_acceptance_budget(tmp_path):
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'unknown.db'));await store.initialize()
     try:
