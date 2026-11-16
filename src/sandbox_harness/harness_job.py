@@ -80,7 +80,10 @@ class HarnessJobAdapter(BaseJobAdapter):
             return (objective+'\n\nYou are an independent read-only Reviewer. Inspect only the frozen input '
                 'Artifacts. Do not modify them, publish, delegate, call Providers, or ask the user. Write exactly one '
                 '/workspace/outputs/review-verdict.json object with keys verdict (PASS, REVISE, EVIDENCE_REQUIRED, or BLOCKED), '
-                'artifact_digests, summary, findings, and missing_evidence. artifact_digests must exactly equal: '
+                'artifact_digests, summary, findings, and missing_evidence. findings must be an array of JSON objects, never '
+                'strings; use objects shaped like {"code":"specific_code","severity":"info|warning|error",'
+                '"message":"specific finding","evidence":{}}. missing_evidence must be an array of strings. '
+                'artifact_digests must exactly equal: '
                 +json.dumps(context.get('artifact_digests',[]),sort_keys=True))
         contracts=[value.model_dump(mode='json') for value in request.expected_outputs]
         if not contracts:return objective

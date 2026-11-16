@@ -11,12 +11,20 @@ from sandbox_harness.job_coordinator import JobCoordinator
 from sandbox_harness.profiles import ProfileResolver
 from sandbox_harness.reviewer import (ReviewCandidate,ReviewRequest,ReviewerCoordinator,
     ReviewerJobAdapter,ReviewSubmission,ReviewTrigger)
-from sandbox_harness.harness_job import JobGrantFactory
+from sandbox_harness.harness_job import HarnessJobAdapter,JobGrantFactory
 from sandbox_harness.job_adapters import JobExecutionContext
 from sandbox_harness.config import Settings
 from sandbox_harness.store import Store
 
 ROOT=Path(__file__).resolve().parents[1]
+
+
+def test_reviewer_prompt_requires_object_findings_schema():
+    request=SimpleNamespace(adapter='reviewer-harness',parameters={'objective':'Review it.',
+        'review_context':{'artifact_digests':['a'*64]}})
+    prompt=HarnessJobAdapter.execution_prompt(request)
+    assert 'findings must be an array of JSON objects, never strings' in prompt
+    assert '"code":"specific_code"' in prompt
 
 async def setup(tmp_path):
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'review.db'));await store.initialize()
