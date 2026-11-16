@@ -28,7 +28,7 @@ def compatible_models(harness: Harness | str, identifiers: list[str]) -> list[st
             marker in value for marker in ("-audio", "-realtime", "-chat")
         )
     elif harness == Harness.CLAUDE:
-        allowed = lambda value: value.startswith("claude-")
+        allowed = lambda value: value.startswith(("claude-", "origin/claude-"))
     else:
         allowed = lambda value: value.startswith("deepseek-")
     return sorted(dict.fromkeys(value for value in identifiers if allowed(value)))

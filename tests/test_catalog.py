@@ -26,11 +26,20 @@ def test_unsupported_model_or_reasoning_level_is_rejected():
 
 
 def test_provider_catalog_is_filtered_by_native_harness_protocol():
-    mixed = ["claude-sonnet-5-5", "deepseek-v4.1-flash", "gpt-6-sol", "gpt-image-2", "text-embedding-v4"]
+    mixed = ["claude-sonnet-5-5", "origin/claude-opus-5-5", "deepseek-v4.1-flash",
+        "gpt-6-sol", "gpt-image-2", "text-embedding-v4"]
     assert compatible_models("codex", mixed) == ["gpt-6-sol"]
-    assert compatible_models("claude", mixed) == ["claude-sonnet-5-5"]
+    assert compatible_models("claude", mixed) == ["claude-sonnet-5-5", "origin/claude-opus-5-5"]
     assert compatible_models("deepseek", mixed) == ["deepseek-v4.1-flash"]
     assert parse_model_ids({"data": [{"id": "one"}, {"name": "two"}, {"invalid": True}]}) == ["one", "two"]
+
+
+def test_origin_claude_model_has_product_label_and_reasoning_mapping():
+    catalog=HarnessCatalog()
+    option=next(item for item in catalog.public() if item["id"]=="claude")
+    model=next(item for item in option["models"] if item["id"]=="origin/claude-opus-5-5")
+    assert model["label"]=="原厂claude-opus-5-5"
+    assert catalog.resolve("claude","origin/claude-opus-5-5","deep").reasoning_effort=="high"
 
 
 async def test_model_discovery_refreshes_catalog_and_persists_snapshot(tmp_path, monkeypatch):

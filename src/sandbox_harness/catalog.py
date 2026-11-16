@@ -27,6 +27,10 @@ DEFAULT_CATALOG = {
             {"id": "quick", "label": "快速", "native": "low"},
             {"id": "standard", "label": "标准", "native": "medium"},
             {"id": "deep", "label": "深入", "native": "high"},
+        ]}, {"id": "origin/claude-opus-5-5", "label": "原厂claude-opus-5-5", "reasoning": [
+            {"id": "quick", "label": "快速", "native": "low"},
+            {"id": "standard", "label": "标准", "native": "medium"},
+            {"id": "deep", "label": "深入", "native": "high"},
         ]}],
     },
     "deepseek": {

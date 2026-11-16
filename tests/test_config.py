@@ -32,6 +32,15 @@ def test_model_routes_allow_distinct_upstreams_and_credential_references(monkeyp
     assert routes.configured_models("codex") == ["gpt-6-sol"]
 
 
+def test_origin_claude_uses_its_model_specific_credential(monkeypatch):
+    monkeypatch.setenv("ORIGIN_CLAUDE_KEY","origin-secret")
+    settings=Settings(_env_file=None,upstream_claude="http://default.example/v1",
+        model_routes_json='{"claude/origin/claude-opus-5-5":{"base_url":'
+            '"http://default.example/v1","credential_env":"ORIGIN_CLAUDE_KEY"}}')
+    route=ModelRoutes(settings).resolve("claude","origin/claude-opus-5-5")
+    assert route.base_url=="http://default.example/v1" and route.credential=="origin-secret"
+
+
 def test_opensandbox_rejects_development_signing_secrets():
     with pytest.raises(ValueError, match="explicit signing"):
         validate_service_settings(Settings(_env_file=None, backend="opensandbox"))
