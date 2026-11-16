@@ -3446,9 +3446,9 @@
       "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png 制作4秒128×64、24fps、H.264 yuv420p无音轨视频；前2秒显示portrait，后2秒显示rocket，画面保持比例居中裁切。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。",
       "expect": {
         "kind": "video",
-        "width": 64,
-        "height": 96,
-        "duration": 2
+        "width": 360,
+        "height": 640,
+        "duration": 8
       },
       "content_checks": [
         "来源产物由真实执行器生成并通过验收",
