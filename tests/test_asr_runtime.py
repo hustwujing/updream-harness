@@ -18,5 +18,6 @@ def test_runtime_image_declares_offline_faster_whisper_contract():
     assert "faster-whisper==1.2.1" in requirements and "ctranslate2==4.9.0" in requirements
     assert "av==16.1.0" in requirements and "onnxruntime==1.31.1" in requirements
     assert "COPY runtime/vendor/faster-whisper-small/ /opt/models/faster-whisper-small/" in dockerfile
+    assert "COPY runtime/asr-smoke.wav /opt/platform/runtime/asr-smoke.wav" in dockerfile
     assert "python runtime/asr_probe.py" in dockerfile and "sandbox-transcribe" in dockerfile
     assert '"faster_whisper"' in probe and '"ctranslate2"' in probe

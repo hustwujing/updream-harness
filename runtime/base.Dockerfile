@@ -14,6 +14,7 @@ ARG SANDBOX_USERNAME=updream
 COPY src/sandbox_bootstrap /opt/bootstrap/sandbox_bootstrap
 COPY runtime/bundle_public_key.pem /opt/bootstrap/bundle_public_key.pem
 COPY runtime/*.py runtime/*.mjs runtime/*.cjs runtime/*.sh runtime/*.json /opt/platform/runtime/
+COPY runtime/asr-smoke.wav /opt/platform/runtime/asr-smoke.wav
 RUN python runtime/toolchain_probe.py --verify runtime/toolchain.lock.json && \
     python runtime/media_probe.py && \
     install -m 0755 runtime/apply_patch.py /usr/local/bin/apply_patch && \
