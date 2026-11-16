@@ -6,7 +6,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .job_adapters import AdapterStatus, AdapterSubmission, JobExecutionContext
-from .job_contracts import JobArtifactInput, JobGroupCreate, JobKind, JobRequest
+from .job_contracts import JobArtifactInput, JobGroupCreate, JobKind, JobRequest, JobState
 
 
 class ReviewTrigger(StrEnum):
@@ -75,6 +75,18 @@ class ReviewerCoordinator:
         return all(all(receipt.get('status')=='pass' for receipt in candidate.validation_receipts)
             for candidate in value.candidates)
 
+    @staticmethod
+    def _runtime_requirements(candidates:tuple[ReviewCandidate,...])->dict[str,list[str]]:
+        mimes={item.mime.split(';',1)[0].lower() for item in candidates};commands=set();modules=set()
+        if any(mime.startswith(('image/','audio/','video/')) for mime in mimes):
+            commands.update(('ffmpeg','ffprobe','python3'));modules.update(('PIL','numpy'))
+        if any(mime=='application/pdf' or 'officedocument' in mime for mime in mimes):
+            commands.update(('libreoffice','pandoc','pdftoppm','pdftotext','qpdf','python3'))
+            modules.update(('PIL','pdfplumber','pypdf'))
+        if any(mime in {'text/html','application/xhtml+xml'} for mime in mimes):
+            commands.update(('chromium','node','python3'));modules.add('playwright')
+        return {'commands':sorted(commands),'python_modules':sorted(modules)}
+
     async def prepare(self,owner_id:str,value:ReviewRequest):
         if value.trigger is None:
             return None
@@ -92,7 +104,8 @@ class ReviewerCoordinator:
                 artifact_role=candidate.artifact_role) for candidate in value.candidates),
             child_profile_id='reviewer-readonly',skill_ids=value.skill_ids,
             network_origins=(),resource_requirements={'harness':value.harness,'cpu':1,
-                'memory_mb':1024,'disk_mb':1024},budget_requirements={})
+                'memory_mb':1024,'disk_mb':1024,**self._runtime_requirements(value.candidates)},
+            budget_requirements={})
         return await self.job_coordinator.prepare_group(owner_id,JobGroupCreate(
             thread_id=value.thread_id,origin_turn_id=value.origin_turn_id,
             idempotency_key=value.idempotency_key,jobs=[request]))
@@ -124,6 +137,7 @@ class ReviewerJobAdapter:
         await self.delegate.cleanup(context,external_execution_id)
     async def collect(self,context:JobExecutionContext,external_execution_id:str,status:AdapterStatus)->dict:
         result=await self.delegate.collect(context,external_execution_id,status)
+        if status.state!=JobState.SUCCEEDED:return result
         verdict=ReviewVerdict.model_validate(result.get('review',result))
         expected=tuple(context.request.parameters['review_context']['artifact_digests'])
         if verdict.artifact_digests!=expected:raise ValueError('review_artifact_digest_mismatch')

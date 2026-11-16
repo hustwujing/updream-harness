@@ -12,7 +12,8 @@ from sandbox_harness.profiles import ProfileResolver
 from sandbox_harness.reviewer import (ReviewCandidate,ReviewRequest,ReviewerCoordinator,
     ReviewerJobAdapter,ReviewSubmission,ReviewTrigger)
 from sandbox_harness.harness_job import HarnessJobAdapter,JobGrantFactory
-from sandbox_harness.job_adapters import JobExecutionContext
+from sandbox_harness.job_adapters import AdapterStatus,JobExecutionContext
+from sandbox_harness.job_contracts import JobState
 from sandbox_harness.config import Settings
 from sandbox_harness.store import Store
 
@@ -25,6 +26,15 @@ def test_reviewer_prompt_requires_object_findings_schema():
     prompt=HarnessJobAdapter.execution_prompt(request)
     assert 'findings must be an array of JSON objects, never strings' in prompt
     assert '"code":"specific_code"' in prompt
+
+
+def test_reviewer_profile_requirements_follow_candidate_mime():
+    candidate=lambda mime:ReviewCandidate(artifact_id='a'*32,artifact_role='candidate',
+        sha256='b'*64,mime=mime)
+    media=ReviewerCoordinator._runtime_requirements((candidate('video/mp4'),))
+    assert {'ffmpeg','ffprobe'}<=set(media['commands']) and {'PIL','numpy'}<=set(media['python_modules'])
+    office=ReviewerCoordinator._runtime_requirements((candidate('application/pdf'),))
+    assert {'libreoffice','pdftotext','qpdf'}<=set(office['commands'])
 
 async def setup(tmp_path):
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'review.db'));await store.initialize()
@@ -107,9 +117,18 @@ async def test_reviewer_verdict_is_structured_and_digest_bound(verdict):
         async def collect(self,*args):return {'review':{'verdict':verdict,
             'artifact_digests':list(digests),'summary':'reviewed'}}
     request=SimpleNamespace(parameters={'review_context':{'artifact_digests':list(digests)}})
-    result=await ReviewerJobAdapter(Delegate()).collect(SimpleNamespace(request=request),'execution',None)
+    succeeded=AdapterStatus(True,JobState.SUCCEEDED,{})
+    result=await ReviewerJobAdapter(Delegate()).collect(SimpleNamespace(request=request),'execution',succeeded)
     assert result['review']['verdict']==verdict
     class Wrong:
         async def collect(self,*args):return {'review':{'verdict':'PASS','artifact_digests':['0'*64]}}
     with pytest.raises(ValueError,match='digest'):
-        await ReviewerJobAdapter(Wrong()).collect(SimpleNamespace(request=request),'execution',None)
+        await ReviewerJobAdapter(Wrong()).collect(SimpleNamespace(request=request),'execution',succeeded)
+
+
+async def test_cancelled_reviewer_preserves_cancelled_result_without_verdict_validation():
+    class Delegate:
+        async def collect(self,*args):return {'cancelled':True}
+    result=await ReviewerJobAdapter(Delegate()).collect(SimpleNamespace(request=None),'execution',
+        AdapterStatus(True,JobState.CANCELLED,{'cancelled':True}))
+    assert result=={'cancelled':True}

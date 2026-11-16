@@ -86,7 +86,10 @@ class JobCoordinator:
             harness=str(request.parameters.get("harness", ""))
             resources=request.resource_requirements
             resolved=self.profile_resolver.resolve(harness,request.child_profile_id,request.skill_ids,
-                ProfileRequirements(required_capability_ids=tuple(resources.get("required_capability_ids",())),
+                ProfileRequirements(commands=tuple(resources.get("commands",())),
+                    python_modules=tuple(resources.get("python_modules",())),
+                    node_modules=tuple(resources.get("node_modules",())),
+                    required_capability_ids=tuple(resources.get("required_capability_ids",())),
                     network_origins=request.network_origins,
                     requires_gpu=bool(resources.get("requires_gpu",False))))
             sanitized={key:int(resources[key]) for key in ("cpu","memory_mb","disk_mb") if key in resources}
