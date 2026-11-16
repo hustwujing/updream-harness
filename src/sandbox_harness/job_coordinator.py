@@ -4,6 +4,8 @@ from datetime import timedelta
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError
 
 from .domain import now
 from .job_catalog import JobCatalog
@@ -45,7 +47,40 @@ class JobCoordinator:
         jobs=[]
         for request in value.jobs:
             if request.kind!=JobKind.HARNESS:
-                jobs.append(request);continue
+                descriptor=(self.catalog.operation(request.descriptor_id,request.descriptor_version,
+                    request.descriptor_digest) if request.kind==JobKind.OPERATION else
+                    self.catalog.capability(request.descriptor_id,request.descriptor_version,
+                        request.descriptor_digest))
+                if request.kind==JobKind.OPERATION and descriptor.execution_mode=='inline':
+                    raise ValueError("inline Operation cannot be submitted as a Durable Job")
+                if request.adapter!=descriptor.id:raise ValueError('Job adapter must match Descriptor identity')
+                try:Draft202012Validator(descriptor.parameter_schema).validate(request.parameters)
+                except ValidationError as exc:
+                    path='.'.join(str(value) for value in exc.absolute_path)
+                    raise ValueError('Job parameter schema violation'+(' at '+path if path else '')) from exc
+                if not {item.artifact_role for item in request.input_artifacts}<=set(descriptor.input_roles):
+                    raise ValueError('Job input artifact role is outside Descriptor')
+                if not {item.artifact_role for item in request.expected_outputs}<=set(descriptor.output_roles):
+                    raise ValueError('Job output artifact role is outside Descriptor')
+                resources=dict(descriptor.resources)
+                resources['required_capability_ids']=(list(descriptor.required_capabilities)
+                    if request.kind==JobKind.OPERATION else [descriptor.id])
+                updates={}
+                if request.kind==JobKind.OPERATION and descriptor.runtime_profile_id:
+                    if not self.profile_resolver:raise ValueError('Operation Runtime ProfileResolver is unavailable')
+                    try:runtime=self.profile_resolver.runtimes[descriptor.runtime_profile_id]
+                    except KeyError as exc:raise ValueError('Operation Runtime Profile is unavailable') from exc
+                    if descriptor.runtime_harness not in runtime.supported_harnesses:
+                        raise ValueError('Operation Runtime Harness is unavailable')
+                    resources.update({'harness':descriptor.runtime_harness,
+                        'image_digest':runtime.image_digests[descriptor.runtime_harness],
+                        'delegation_depth':1})
+                    updates={'runtime_profile_id':runtime.id,'child_profile_id':'operation-controlled'}
+                jobs.append(JobRequest.model_validate({**request.model_dump(),
+                    'network_origins':list(descriptor.network_origins),'resource_requirements':resources,
+                    'retry_policy':descriptor.retry_policy,'cancellation_policy':descriptor.cancellation_policy,
+                    'reconciliation_policy':descriptor.reconciliation_policy,**updates}))
+                continue
             if not self.profile_resolver:
                 raise ValueError("Harness delegation ProfileResolver is unavailable")
             harness=str(request.parameters.get("harness", ""))

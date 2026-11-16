@@ -13,6 +13,9 @@ from .domain import Harness
 from .harness_job import HarnessJobAdapter, JobGrantFactory, OpenSandboxChildBackend
 from .job_worker import JobWorker
 from .node_agent import NodeAgent
+from .media_catalog import MediaCatalog
+from .media_job_adapter import MediaProviderJobAdapter
+from .media_render_adapter import MediaRenderOperationAdapter
 from .objects import object_store
 from .pool import SandboxPool
 from .profiles import ProfileResolver
@@ -67,8 +70,16 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
     child_backend=OpenSandboxChildBackend(pool=pool,runtime=runtime,store=store,objects=objects,
         settings=settings,token_factory=JobGrantFactory(settings))
     harness_adapter=HarnessJobAdapter(scheduler,child_backend)
+    media_catalog=MediaCatalog(settings.media_catalog_json,
+        ark_assets_configured=bool(settings.ark_access_key and settings.ark_secret_key
+            and settings.ark_asset_group_id and settings.ark_project_name),
+        tripo_configured=bool(settings.tripo_api_key))
+    media_adapter=MediaProviderJobAdapter(settings,store,objects,media_catalog)
+    render_adapter=MediaRenderOperationAdapter(scheduler=scheduler,pool=pool,runtime=runtime,
+        store=store,objects=objects,settings=settings,token_factory=JobGrantFactory(settings))
     worker=JobWorker(store,{"child-harness":harness_adapter,
-        "reviewer-harness":ReviewerJobAdapter(harness_adapter)},node_id=settings.job_node_id,
+        "reviewer-harness":ReviewerJobAdapter(harness_adapter),
+        "image.generate":media_adapter,"media.render":render_adapter},node_id=settings.job_node_id,
         concurrency=settings.job_worker_concurrency,lease_seconds=settings.job_lease_seconds)
     profiles=resolved_node_profiles(profile_resolver(settings))
     cpu_total=max(1,min(os.cpu_count() or 1,settings.job_node_cpu_limit))

@@ -13,11 +13,12 @@ import psutil
 import signal
 import shutil
 import stat
+import subprocess
 import tarfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from tempfile import NamedTemporaryFile
-from typing import Any
+from typing import Any,Literal
 import uuid
 from urllib.parse import quote, urlsplit
 
@@ -66,6 +67,15 @@ class Configure(BaseModel):
     skill_digests: dict[str, str] = Field(default_factory=dict)
     child_mode: bool = False
     delegation_depth: int = Field(default=0, ge=0, le=4)
+
+
+class MediaRenderOperation(BaseModel):
+    operation: Literal["image.resize","video.transcode"]
+    input_path: str = Field(min_length=1,max_length=2000)
+    output_filename: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
+    width: int = Field(ge=1,le=8192)
+    height: int = Field(ge=1,le=8192)
+    fps: int = Field(default=24,ge=1,le=120)
 
 
 class JobArtifactStage(BaseModel):
@@ -819,6 +829,11 @@ def create_app() -> FastAPI:
         os.environ["HARNESS_GATEWAY_URL"] = value.gateway_url
         os.environ["HARNESS_KIND"] = value.harness
         os.environ["HARNESS_MODEL"] = value.model
+        os.environ["HARNESS_THREAD_ID"] = value.thread_id
+        os.environ["HARNESS_TURN_ID"] = value.turn_id
+        os.environ["HARNESS_SANDBOX_ID"] = value.sandbox_id
+        os.environ["HARNESS_RUNTIME_PROFILE_ID"] = value.runtime_profile_id
+        os.environ["HARNESS_CHILD_MODE"] = "1" if value.child_mode else "0"
         app.state.harness = value.harness
         previous_profile = app.state.runtime_profile_id
         previous_skills = set(app.state.skill_ids)
@@ -1342,6 +1357,40 @@ def create_app() -> FastAPI:
                     "native_thread_id": execution.native_thread_id,
                     "input_ids": list(execution.pending_input_ids)})
             return {"cancelled": True}
+
+    @app.post("/v1/operations/media-render")
+    async def media_render_operation(value:MediaRenderOperation):
+        if not app.state.child_mode or app.state.runtime_profile_id not in {"media-cpu","primary-full-cpu"}:
+            raise HTTPException(403,"Controlled media Operation requires an authorized media Runtime Profile")
+        relative=safe_relative(value.input_path)
+        if len(relative.parts)<3 or relative.parts[:2]!=("assets","inputs"):
+            raise HTTPException(422,"Operation input must be a frozen Job Artifact")
+        source=WORKSPACE/"project"/relative
+        try:
+            if (not source.is_file() or source.is_symlink()
+                    or not source.resolve().is_relative_to((WORKSPACE/"project/assets/inputs").resolve())):
+                raise ValueError
+        except (OSError,ValueError):raise HTTPException(404,"Operation input is unavailable")
+        target=OUTPUTS/value.output_filename;target.unlink(missing_ok=True)
+        if value.operation=="image.resize":
+            argv=["ffmpeg","-hide_banner","-loglevel","error","-y","-i",str(source),
+                "-vf",f"scale={value.width}:{value.height}:force_original_aspect_ratio=decrease,"
+                f"pad={value.width}:{value.height}:(ow-iw)/2:(oh-ih)/2:color=black@0","-frames:v","1",str(target)]
+        else:
+            argv=["ffmpeg","-hide_banner","-loglevel","error","-y","-i",str(source),
+                "-vf",f"scale={value.width}:{value.height}:force_original_aspect_ratio=decrease,"
+                f"pad={value.width}:{value.height}:(ow-iw)/2:(oh-ih)/2,setsar=1","-r",str(value.fps),
+                "-c:v","libx264","-pix_fmt","yuv420p","-c:a","aac",str(target)]
+        process=await asyncio.create_subprocess_exec(*argv,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+        try:output,_=await asyncio.wait_for(process.communicate(),timeout=7200)
+        except asyncio.TimeoutError:
+            process.kill();await process.wait();raise HTTPException(504,"Controlled media Operation timed out")
+        if process.returncode or not target.is_file():
+            event("runtime.operation.failed",operation=value.operation,returncode=process.returncode)
+            raise HTTPException(422,"Controlled media Operation failed")
+        with target.open("rb") as stream:digest=hashlib.file_digest(stream,"sha256").hexdigest()
+        return {"path":value.output_filename,"size":target.stat().st_size,"sha256":digest,
+            "mime":mimetypes.guess_type(target.name)[0] or "application/octet-stream"}
 
     def artifact_path(value: str) -> Path:
         relative = safe_relative(value)

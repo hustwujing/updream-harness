@@ -12,6 +12,16 @@
       "fallback_profile_ids": ["primary-full-cpu"]
     },
     {
+      "id": "operation-controlled",
+      "supported_harnesses": ["codex"],
+      "allowed_skill_ids": [],
+      "allowed_capability_ids": [],
+      "allowed_operation_ids": ["media.render"],
+      "allowed_network_origins": [],
+      "max_delegation_depth": 1,
+      "fallback_profile_ids": []
+    },
+    {
       "id": "child-general",
       "supported_harnesses": ["codex", "claude", "deepseek"],
       "allowed_skill_ids": ["academy-guide", "algorithmic-art", "anatomy", "brainstorming", "brand-guidelines", "canvas-design", "claude-api", "codex-ppt", "data-quality-audit", "diagram-design", "discernment-nudge", "doc-and-modernize", "doc-coauthoring", "docx", "drawio-skill", "frontend-design", "image-to-editable-ppt", "internal-comms", "manim-video", "mcp-builder", "pdf", "pptx", "programmatic-eda", "query-validation", "skill-creator", "slack-gif-creator", "systematic-debugging", "theme-factory", "verification-before-completion", "web-artifacts-builder", "webapp-testing", "writing-plans", "xlsx"],

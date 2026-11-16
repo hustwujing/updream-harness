@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import httpx
+import json
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Protocol
 
 from .domain import Harness
 from .grants import GrantAuthority,JobGrantRequest,TurnGrantRequest
 from .job_adapters import AdapterStatus, AdapterSubmission, BaseJobAdapter, JobExecutionContext
 from .job_contracts import JobState
+from .artifact_gateway import ArtifactEmission,ArtifactGateway
 from .scheduler import ResourceRequest, Scheduler
 
 
@@ -19,6 +22,8 @@ class ChildExecutionBackend(Protocol):
                      receipt: dict[str, Any]) -> AdapterStatus: ...
     async def cleanup(self, context: JobExecutionContext, external_execution_id: str,
                       receipt: dict[str, Any]) -> None: ...
+    async def collect(self,context:JobExecutionContext,external_execution_id:str,
+                      status:AdapterStatus,receipt:dict[str,Any])->dict[str,Any]: ...
 
 
 class JobGrantFactory:
@@ -30,7 +35,8 @@ class JobGrantFactory:
             *request.resource_requirements.get('required_operation_ids',()))))
         output_scopes=tuple(f'{value.artifact_role}:{value.output_disposition.value}'
             for value in request.expected_outputs)
-        routes=(f'/v1/models/{harness.value}','/v1/job-artifacts','/v1/telemetry',
+        model_routes=((f'/v1/models/{harness.value}',) if request.kind.value=='harness' else ())
+        routes=(*model_routes,'/v1/job-artifacts','/v1/telemetry',
             *(('/v1/public-http',) if request.network_origins else ()))
         token_budget=max(1,int(request.budget_requirements.get('model_tokens',
             self.settings.model_token_budget)))
@@ -45,7 +51,8 @@ class JobGrantFactory:
             skill_ids=request.skill_ids,capability_ids=capability_ids,operation_ids=operation_ids,
             child_profile_ids=(request.child_profile_id,),runtime_profile_ids=(request.runtime_profile_id,),
             network_origins=request.network_origins,output_scopes=output_scopes,budget=request.budget_requirements))
-        operations=('model',*(('emit',) if request.expected_outputs else ()))
+        operations=(*(('model',) if request.kind.value=='harness' else ()),
+            *(('emit',) if request.expected_outputs else ()))
         return self.authority.issue_job(parent,JobGrantRequest(group_id=context.job.group_id,
             job_id=context.job.id,generation=context.generation,source_identity=sandbox_id,
             descriptor_id=request.descriptor_id,descriptor_version=request.descriptor_version,
@@ -63,6 +70,24 @@ class JobGrantFactory:
 class HarnessJobAdapter(BaseJobAdapter):
     def __init__(self, scheduler: Scheduler, backend: ChildExecutionBackend):
         self.scheduler=scheduler;self.backend=backend
+
+    @staticmethod
+    def execution_prompt(request)->str:
+        objective=str(request.parameters.get('objective',''))
+        if request.adapter=='reviewer-harness':
+            context=request.parameters.get('review_context',{})
+            return (objective+'\n\nYou are an independent read-only Reviewer. Inspect only the frozen input '
+                'Artifacts. Do not modify them, publish, delegate, call Providers, or ask the user. Write exactly one '
+                '/workspace/outputs/review-verdict.json object with keys verdict (PASS, REVISE, EVIDENCE_REQUIRED, or BLOCKED), '
+                'artifact_digests, summary, findings, and missing_evidence. artifact_digests must exactly equal: '
+                +json.dumps(context.get('artifact_digests',[]),sort_keys=True))
+        contracts=[value.model_dump(mode='json') for value in request.expected_outputs]
+        if not contracts:return objective
+        return (objective+'\n\nFrozen output contract: '+json.dumps(contracts,sort_keys=True)+
+            '\nPut final files under /workspace/outputs. When more than one artifact role exists, also write '
+            '/workspace/outputs/job-output-manifest.json as {"outputs":[{"path":"relative/file",'
+            '"artifact_role":"role","item_key":"stable-key","position":0}]}. Every output file except the manifest '
+            'must appear exactly once. For a single artifact role the platform maps files in lexical order automatically.')
 
     @staticmethod
     def _resources(context: JobExecutionContext) -> ResourceRequest:
@@ -112,9 +137,15 @@ class HarnessJobAdapter(BaseJobAdapter):
 
     async def collect(self,context:JobExecutionContext,external_execution_id:str,
                       status:AdapterStatus)->dict[str,Any]:
-        if status.state==JobState.BLOCKED:
+        collector=getattr(self.backend,'collect',None)
+        if collector:
+            result=await collector(context,external_execution_id,status,
+                context.previous_acceptance_receipt)
+        elif status.state==JobState.BLOCKED:
             return {'blocked':True,**status.result}
-        return status.result
+        else:result=status.result
+        if status.state==JobState.BLOCKED:return {'blocked':True,**result}
+        return result
 
 
 class OpenSandboxChildBackend:
@@ -123,6 +154,8 @@ class OpenSandboxChildBackend:
         self.pool=pool;self.runtime=runtime;self.store=store;self.objects=objects
         self.settings=settings;self.token_factory=token_factory;self.sessions={}
         self.collectors={}
+        self.artifact_gateway=ArtifactGateway(store,objects,
+            settings.data_root/'tmp'/'child-job-artifacts',maximum_bytes=settings.max_artifact_bytes)
 
     @staticmethod
     def _thread_id(job_id:str)->str:return 'child-job-'+job_id
@@ -166,9 +199,9 @@ class OpenSandboxChildBackend:
                     maximum=self.settings.max_artifact_bytes)
                 await self.runtime.put_project_file(sandbox,
                     f"assets/inputs/{item.artifact_role}-{artifact.id}",data,artifact.mime)
-            execution_id='child:'+context.job.id+':'+str(context.generation)
+            execution_id=context.job.id+':'+str(context.generation)
             accepted=await self.runtime.start_execution(sandbox,
-                message=str(context.request.parameters.get('objective','')),
+                message=HarnessJobAdapter.execution_prompt(context.request),
                 attachments=[],native_thread_id='',reasoning_effort=str(
                     context.request.parameters.get('reasoning_effort','high')),
                 execution_id=execution_id,input_id=context.job.id)
@@ -216,6 +249,56 @@ class OpenSandboxChildBackend:
                      receipt:dict[str,Any])->AdapterStatus:
         sandbox=await self._sandbox(context,receipt);await self.runtime.cancel(sandbox)
         return AdapterStatus(True,JobState.CANCELLED,{'cancelled':True})
+
+    async def collect(self,context:JobExecutionContext,external_execution_id:str,
+                      status:AdapterStatus,receipt:dict[str,Any])->dict[str,Any]:
+        if status.state==JobState.BLOCKED:return status.result
+        sandbox=await self._sandbox(context,receipt)
+        items=await self.runtime.artifacts(sandbox,context.job.id)
+        by_path={str(item['path']):item for item in items}
+        if context.request.adapter=='reviewer-harness':
+            if set(by_path)!={'review-verdict.json'}:raise ValueError('reviewer_output_contract_invalid')
+            data=await self.runtime.artifact(sandbox,'review-verdict.json')
+            if len(data)>1024*1024:raise ValueError('reviewer_verdict_too_large')
+            try:value=json.loads(data)
+            except (ValueError,TypeError) as exc:raise ValueError('reviewer_verdict_invalid') from exc
+            return {'review':value}
+        contracts={value.artifact_role:value for value in context.request.expected_outputs}
+        if not contracts:
+            if by_path:raise ValueError('unexpected_child_artifacts')
+            return status.result
+        manifest_path='job-output-manifest.json';manifest=None
+        if manifest_path in by_path:
+            raw=await self.runtime.artifact(sandbox,manifest_path)
+            if len(raw)>1024*1024:raise ValueError('job_output_manifest_too_large')
+            try:manifest=json.loads(raw).get('outputs')
+            except (ValueError,AttributeError,TypeError) as exc:raise ValueError('job_output_manifest_invalid') from exc
+            if not isinstance(manifest,list):raise ValueError('job_output_manifest_invalid')
+        artifact_paths=sorted(set(by_path)-{manifest_path})
+        if manifest is None:
+            if len(contracts)!=1:raise ValueError('job_output_manifest_required')
+            role=next(iter(contracts));manifest=[{'path':path,'artifact_role':role,
+                'item_key':path,'position':position} for position,path in enumerate(artifact_paths)]
+        if {str(row.get('path','')) for row in manifest}!=set(artifact_paths) or len(manifest)!=len(artifact_paths):
+            raise ValueError('job_output_manifest_mismatch')
+        emitted=[];roles=set()
+        for row in manifest:
+            path=str(row.get('path',''));role=str(row.get('artifact_role',''))
+            contract=contracts.get(role)
+            if not contract:raise ValueError('job_output_role_not_granted')
+            data=await self.runtime.artifact(sandbox,path);metadata=by_path[path]
+            async def chunks(payload=data):yield payload
+            output=await self.artifact_gateway.emit(ArtifactEmission(job_id=context.job.id,
+                generation=context.generation,artifact_role=role,item_key=str(row.get('item_key',path)),
+                position=int(row.get('position',0)),filename=str(row.get('filename') or Path(path).name),
+                output_disposition=contract.output_disposition,declared_mime=str(metadata.get('mime') or 'application/octet-stream')),
+                chunks())
+            emitted.append(output.model_dump(mode='json'));roles.add(role)
+        collections=[]
+        for role in sorted(roles):
+            collections.append(await self.store.finalize_job_artifact_collection(
+                context.job.id,context.generation,role))
+        return {**status.result,'artifacts':emitted,'collections':collections}
 
     async def cleanup(self,context:JobExecutionContext,external_execution_id:str,
                       receipt:dict[str,Any])->None:

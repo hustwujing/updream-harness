@@ -26,9 +26,9 @@ from .site_bundle import build_site_archive_from_files, normalize_site_slug
 
 
 ROUTES = {
-    Harness.CODEX: ["/v1/models/codex", "/v1/providers", "/v1/artifacts", "/v1/media", "/v1/sites", "/v1/job-group-drafts", "/v1/job-groups", "/v1/jobs", "/v1/job-artifacts", "/v1/public-http"],
-    Harness.CLAUDE: ["/v1/models/claude", "/v1/providers", "/v1/artifacts", "/v1/media", "/v1/sites", "/v1/job-group-drafts", "/v1/job-groups", "/v1/jobs", "/v1/job-artifacts", "/v1/public-http"],
-    Harness.DEEPSEEK: ["/v1/models/deepseek", "/v1/providers", "/v1/artifacts", "/v1/media", "/v1/sites", "/v1/job-group-drafts", "/v1/job-groups", "/v1/jobs", "/v1/job-artifacts", "/v1/public-http"],
+    Harness.CODEX: ["/v1/models/codex", "/v1/providers", "/v1/artifacts", "/v1/media", "/v1/sites", "/v1/job-group-drafts", "/v1/job-groups", "/v1/jobs", "/v1/job-artifacts", "/v1/execution/catalog", "/v1/reviews", "/v1/public-http"],
+    Harness.CLAUDE: ["/v1/models/claude", "/v1/providers", "/v1/artifacts", "/v1/media", "/v1/sites", "/v1/job-group-drafts", "/v1/job-groups", "/v1/jobs", "/v1/job-artifacts", "/v1/execution/catalog", "/v1/reviews", "/v1/public-http"],
+    Harness.DEEPSEEK: ["/v1/models/deepseek", "/v1/providers", "/v1/artifacts", "/v1/media", "/v1/sites", "/v1/job-group-drafts", "/v1/job-groups", "/v1/jobs", "/v1/job-artifacts", "/v1/execution/catalog", "/v1/reviews", "/v1/public-http"],
 }
 
 logger = logging.getLogger(__name__)

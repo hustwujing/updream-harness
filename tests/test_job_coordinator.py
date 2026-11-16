@@ -4,7 +4,8 @@ import pytest
 
 from sandbox_harness.domain import identifier, now
 from sandbox_harness.job_catalog import JobCatalog, JobCatalogPayload
-from sandbox_harness.job_contracts import JobGroupCreate, JobKind, JobRequest, JobState
+from sandbox_harness.job_contracts import (JobExpectedOutput,JobGroupCreate,JobKind,JobRequest,
+    JobState,OutputDisposition)
 from sandbox_harness.job_coordinator import JobCoordinator, JobGroupDraftUpdate
 from sandbox_harness.store import Store
 
@@ -74,6 +75,33 @@ async def test_one_paid_member_holds_complete_mixed_batch_until_single_confirmat
         confirmed=await coordinator.confirm_group(prepared.draft.id,"owner")
         assert confirmed.group.member_count==2
         assert {value.local_job_id for value in confirmed.jobs}=={"free","paid"}
+    finally:await store.close()
+
+
+async def test_descriptor_freezes_adapter_schema_roles_network_resources_and_retry(tmp_path):
+    store,coordinator=await setup(tmp_path)
+    try:
+        with pytest.raises(ValueError,match='parameter'):
+            await coordinator.prepare_group('owner',JobGroupCreate(thread_id='a'*32,
+                origin_turn_id='b'*32,idempotency_key='invalid-provider-parameters',jobs=[
+                    job('bad','image.generate').model_copy(update={'parameters':{'unknown':True}})]))
+        with pytest.raises(ValueError,match='adapter'):
+            await coordinator.prepare_group('owner',JobGroupCreate(thread_id='a'*32,
+                origin_turn_id='b'*32,idempotency_key='invalid-provider-adapter',jobs=[
+                    job('bad-adapter','image.generate').model_copy(update={'adapter':'other'})]))
+        output=JobExpectedOutput(artifact_role='images',output_disposition=OutputDisposition.DELIVERY)
+        proposed=job('paid','image.generate').model_copy(update={'expected_outputs':(output,),
+            'network_origins':('invented-network',),'resource_requirements':{'node_id':'invented'},
+            'retry_policy':{'max_pre_accept_attempts':99}})
+        prepared=await coordinator.prepare_group('owner',JobGroupCreate(thread_id='a'*32,
+            origin_turn_id='b'*32,idempotency_key='frozen-provider-policy',jobs=[proposed]))
+        frozen=(await store.get_job_group_draft_request(prepared.draft.id,'owner')).jobs[0]
+        assert frozen.adapter=='image.generate' and frozen.network_origins==('image-provider',)
+        assert frozen.resource_requirements=={'cpu':1,'memory_mb':128,'gpu':0,
+            'required_capability_ids':['image.generate']}
+        assert frozen.retry_policy=={'max_pre_accept_attempts':2}
+        assert frozen.cancellation_policy=={'supported':True}
+        assert frozen.reconciliation_policy=={'supported':True}
     finally:await store.close()
 
 

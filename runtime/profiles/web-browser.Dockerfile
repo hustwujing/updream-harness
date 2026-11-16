@@ -15,7 +15,7 @@ COPY runtime/requirements-web.txt /tmp/requirements-profile.txt
 RUN pip install --no-cache-dir --trusted-host mirrors.cloud.aliyuncs.com \
       --index-url http://mirrors.cloud.aliyuncs.com/pypi/simple/ -r /tmp/requirements-profile.txt && \
     rm /tmp/requirements-profile.txt && \
-    for command in sandbox-job sandbox-artifact sandbox-background sandbox-interact; do \
+    for command in sandbox-job sandbox-artifact sandbox-review sandbox-background sandbox-interact; do \
       ln -s /usr/local/bin/sandbox-runtime-cli "/usr/local/bin/$command"; done
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright CHROME_PATH=/usr/bin/chromium
 USER 10001:10001

@@ -46,6 +46,18 @@ class ReviewRequest(BaseModel):
     idempotency_key: str = Field(min_length=8, max_length=160)
 
 
+class ReviewSubmission(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    artifact_ids: tuple[str,...] = Field(min_length=1,max_length=100)
+    artifact_roles: dict[str,str] = Field(default_factory=dict)
+    required: bool = False
+    harness: str = Field(pattern=r"^(codex|claude|deepseek)$")
+    model: str = Field(min_length=1,max_length=160)
+    skill_ids: tuple[str,...] = ()
+    rubric: str = Field(min_length=1,max_length=20000)
+    idempotency_key: str = Field(min_length=8,max_length=160)
+
+
 class ReviewVerdict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     verdict: ReviewVerdictKind
@@ -84,6 +96,19 @@ class ReviewerCoordinator:
         return await self.job_coordinator.prepare_group(owner_id,JobGroupCreate(
             thread_id=value.thread_id,origin_turn_id=value.origin_turn_id,
             idempotency_key=value.idempotency_key,jobs=[request]))
+
+    async def prepare_submission(self,owner_id:str,thread_id:str,turn_id:str,value:ReviewSubmission):
+        candidates=[]
+        for identity in value.artifact_ids:
+            artifact=await self.job_coordinator.store.get_artifact(identity)
+            if not artifact:raise KeyError('review_artifact_not_found')
+            candidates.append(ReviewCandidate(artifact_id=artifact.id,
+                artifact_role=value.artifact_roles.get(identity,'candidate'),sha256=artifact.sha256,
+                mime=artifact.mime,validation_receipts=()))
+        return await self.prepare(owner_id,ReviewRequest(thread_id=thread_id,origin_turn_id=turn_id,
+            trigger=ReviewTrigger.PRIMARY,required=value.required,harness=value.harness,model=value.model,
+            skill_ids=value.skill_ids,candidates=tuple(candidates),rubric=value.rubric,
+            idempotency_key=value.idempotency_key))
 
 
 class ReviewerJobAdapter:

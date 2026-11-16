@@ -8,6 +8,7 @@ import io
 import tarfile
 
 from fastapi.testclient import TestClient
+from PIL import Image
 
 import sandbox_runtime.app as runtime_app
 from sandbox_runtime.adapters import HarnessCommand
@@ -44,21 +45,65 @@ def test_runtime_configuration_freezes_turn_harness_and_model(tmp_path, monkeypa
 
     with TestClient(app) as client:
         response = client.post("/v1/configure", json={
+            "thread_id":"a"*32,
+            "turn_id":"b"*32,
+            "sandbox_id":"sandbox-runtime-1",
             "capability_token": "x" * 32,
             "gateway_url": "http://gateway:28600",
             "harness": "deepseek",
             "model": "deepseek-v4.1",
             "proxy_url": "http://172.31.0.1:28601",
+            "runtime_profile_id":"primary-full-cpu",
+            "child_mode":False,
         })
 
     assert response.status_code == 200
     assert runtime_app.os.environ["HARNESS_KIND"] == "deepseek"
     assert runtime_app.os.environ["HARNESS_MODEL"] == "deepseek-v4.1"
+    assert runtime_app.os.environ["HARNESS_THREAD_ID"] == "a"*32
+    assert runtime_app.os.environ["HARNESS_TURN_ID"] == "b"*32
+    assert runtime_app.os.environ["HARNESS_SANDBOX_ID"] == "sandbox-runtime-1"
+    assert runtime_app.os.environ["HARNESS_RUNTIME_PROFILE_ID"] == "primary-full-cpu"
+    assert runtime_app.os.environ["HARNESS_CHILD_MODE"] == "0"
     assert runtime_app.os.environ["HOME"] == str(tmp_path / "workspace" / "state" / "home")
     assert runtime_app.os.environ["npm_config_registry"] == "https://registry.npmmirror.com"
     assert runtime_app.os.environ["HTTPS_PROXY"].startswith("http://" + "x" * 32 + ":@")
     assert "172.31.0.1" in runtime_app.os.environ["NO_PROXY"]
     assert (tmp_path / "run" / "capability-token").read_text() == "x" * 32
+
+
+def test_controlled_media_operation_runs_in_authorized_runtime_profile(tmp_path,monkeypatch):
+    monkeypatch.setattr(runtime_app,'RUN',tmp_path/'run')
+    monkeypatch.setattr(runtime_app,'WORKSPACE',tmp_path/'workspace')
+    monkeypatch.setattr(runtime_app,'OUTPUTS',tmp_path/'workspace/outputs')
+    monkeypatch.setattr(runtime_app,'PERSISTENT',('project','state'))
+    source=tmp_path/'workspace/project/assets/inputs/source.png';source.parent.mkdir(parents=True)
+    Image.new('RGB',(40,20),'blue').save(source)
+    app=runtime_app.create_app()
+    with TestClient(app) as client:
+        configured=client.post('/v1/configure',json={'thread_id':'a'*32,'turn_id':'b'*32,
+            'sandbox_id':'sandbox-operation','capability_token':'x'*32,
+            'gateway_url':'http://gateway:28600','harness':'codex','model':'operation-only',
+            'proxy_url':'http://172.31.0.1:28601','runtime_profile_id':'media-cpu','child_mode':True})
+        response=client.post('/v1/operations/media-render',json={'operation':'image.resize',
+            'input_path':'assets/inputs/source.png','output_filename':'resized.png','width':32,'height':24})
+    assert configured.status_code==200 and response.status_code==200
+    with Image.open(tmp_path/'workspace/outputs/resized.png') as image:
+        assert image.size==(32,24)
+
+
+def test_controlled_media_operation_rejects_primary_or_unmanaged_paths(tmp_path,monkeypatch):
+    monkeypatch.setattr(runtime_app,'RUN',tmp_path/'run')
+    monkeypatch.setattr(runtime_app,'WORKSPACE',tmp_path/'workspace')
+    monkeypatch.setattr(runtime_app,'OUTPUTS',tmp_path/'workspace/outputs')
+    app=runtime_app.create_app()
+    with TestClient(app) as client:
+        client.post('/v1/configure',json={'capability_token':'x'*32,'gateway_url':'http://gateway:28600',
+            'harness':'codex','model':'operation-only','proxy_url':'http://172.31.0.1:28601',
+            'runtime_profile_id':'primary-full-cpu','child_mode':False})
+        response=client.post('/v1/operations/media-render',json={'operation':'image.resize',
+            'input_path':'work/source.png','output_filename':'resized.png','width':32,'height':24})
+    assert response.status_code==403
 
 
 def test_capability_change_frame_precedes_next_native_input(tmp_path, monkeypatch):

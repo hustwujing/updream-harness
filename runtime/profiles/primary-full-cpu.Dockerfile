@@ -24,7 +24,7 @@ RUN pip install --no-cache-dir --trusted-host mirrors.cloud.aliyuncs.com \
       pptxgenjs@4.0.1 sharp@0.35.5 && \
     PLAYWRIGHT_DOWNLOAD_HOST="${PLAYWRIGHT_DOWNLOAD_HOST}" PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
       playwright install chromium && chmod -R a+rX /ms-playwright && npm cache clean --force && \
-    for command in sandbox-job sandbox-artifact sandbox-media sandbox-site sandbox-background sandbox-interact; do \
+    for command in sandbox-job sandbox-artifact sandbox-review sandbox-media sandbox-site sandbox-background sandbox-interact; do \
       ln -s /usr/local/bin/sandbox-runtime-cli "/usr/local/bin/$command"; done
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright CHROME_PATH=/usr/bin/chromium
 USER 10001:10001

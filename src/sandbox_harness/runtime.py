@@ -348,6 +348,13 @@ class RuntimeClient:
             response.raise_for_status()
             return response.content
 
+    async def media_render(self,sandbox:Sandbox,value:dict)->dict:
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url,
+            headers={**sandbox.runtime_headers,**carrier()},timeout=None,trust_env=False,
+            transport=self.transport) as client:
+            response=await client.post('/v1/operations/media-render',json=value)
+            response.raise_for_status();return response.json()
+
     async def diagnostics(self, sandbox: Sandbox, after: int = 0) -> dict:
         async with httpx.AsyncClient(base_url=sandbox.runtime_url,headers={**sandbox.runtime_headers,**carrier()},
             timeout=5,trust_env=False) as client:

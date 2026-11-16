@@ -10,7 +10,7 @@ from sandbox_harness.job_catalog import JobCatalog,JobCatalogPayload
 from sandbox_harness.job_coordinator import JobCoordinator
 from sandbox_harness.profiles import ProfileResolver
 from sandbox_harness.reviewer import (ReviewCandidate,ReviewRequest,ReviewerCoordinator,
-    ReviewerJobAdapter,ReviewTrigger)
+    ReviewerJobAdapter,ReviewSubmission,ReviewTrigger)
 from sandbox_harness.harness_job import JobGrantFactory
 from sandbox_harness.job_adapters import JobExecutionContext
 from sandbox_harness.config import Settings
@@ -77,6 +77,18 @@ async def test_explicit_review_groups_candidates_into_one_read_only_harness_job(
         assert claims.capability_ids==[] and claims.network_origins==[] and claims.output_scopes==[]
         assert claims.operations==['model'] and claims.child_profile_id=='reviewer-readonly'
         assert '/v1/public-http' not in claims.routes
+    finally:await store.close()
+
+
+async def test_review_submission_resolves_authoritative_artifact_metadata(tmp_path):
+    store,thread,turn,artifacts,reviewer=await setup(tmp_path)
+    try:
+        prepared=await reviewer.prepare_submission('owner',thread.id,turn.id,ReviewSubmission(
+            artifact_ids=tuple(value.id for value in artifacts),required=True,harness='codex',model='gpt-5.6',
+            skill_ids=('pdf',),rubric='Check both reports.',idempotency_key='review-submission-key'))
+        frozen=await store.get_job_request(prepared.jobs[0].id)
+        assert frozen.parameters['review_context']['artifact_digests']==[value.sha256 for value in artifacts]
+        assert [item.artifact_id for item in frozen.input_artifacts]==[value.id for value in artifacts]
     finally:await store.close()
 
 

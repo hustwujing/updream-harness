@@ -113,6 +113,8 @@ def test_parallel_profiles_are_dependency_only_and_cover_declared_catalog():
     assert "libreoffice" in (ROOT/"runtime/profiles/office.Dockerfile").read_text()
     assert "playwright install chromium" in (ROOT/"runtime/profiles/web-browser.Dockerfile").read_text()
     assert "sqlglot" in (ROOT/"runtime/requirements-data.txt").read_text()
+    assert all("sandbox-review" in (ROOT/"runtime/profiles"/f"{name}.Dockerfile").read_text()
+        for name in expected)
 
 
 @pytest.mark.parametrize("harness,marker",[("codex","@openai/codex"),

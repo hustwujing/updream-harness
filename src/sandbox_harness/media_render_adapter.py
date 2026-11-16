@@ -1,0 +1,114 @@
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path,PurePosixPath
+from typing import Any
+
+import httpx
+
+from .artifact_gateway import ArtifactEmission,ArtifactGateway
+from .domain import Harness
+from .harness_job import HarnessJobAdapter
+from .job_adapters import AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExecutionContext
+from .job_contracts import JobState
+
+
+class MediaRenderOperationAdapter(BaseJobAdapter):
+    def __init__(self,*,scheduler,pool,runtime,store,objects,settings,token_factory):
+        self.scheduler=scheduler;self.pool=pool;self.runtime=runtime;self.store=store
+        self.objects=objects;self.settings=settings;self.token_factory=token_factory;self.sessions={}
+        self.artifacts=ArtifactGateway(store,objects,settings.data_root/'tmp'/'operation-job-artifacts',
+            maximum_bytes=settings.max_artifact_bytes)
+
+    @staticmethod
+    def _thread_id(job_id):return 'operation-job-'+job_id
+
+    async def _sandbox(self,context,receipt):
+        identity=str(receipt.get('sandbox_id',''));cached=self.sessions.get(context.job.id)
+        if cached and cached.id==identity:return cached
+        attached=await self.pool.get_attached(self._thread_id(context.job.id))
+        if attached and attached.id==identity:self.sessions[context.job.id]=attached;return attached
+        matches=[value for value in await self.pool.backend.list_namespace() if value.id==identity]
+        if len(matches)!=1:raise RuntimeError('operation_sandbox_unavailable')
+        adopted=await self.pool.adopt(matches[0],thread_id=self._thread_id(context.job.id),turn_id=context.job.id)
+        self.sessions[context.job.id]=adopted;return adopted
+
+    async def submit(self,context:JobExecutionContext)->AdapterSubmission:
+        reservation=await self.scheduler.reserve(context.job.id,context.generation,
+            HarnessJobAdapter._resources(context));harness=Harness(reservation.harness)
+        image=reservation.image_ref or self.settings.image_for(harness.value)
+        if not image.endswith('@sha256:'+reservation.image_digest):
+            raise RuntimeError('operation_image_digest_mismatch')
+        sandbox=None;claims=None
+        try:
+            sandbox=await self.pool.acquire(thread_id=self._thread_id(context.job.id),turn_id=context.job.id,
+                harness=harness,environment={},image=image)
+            token,claims=await self.token_factory(context,reservation,sandbox.id)
+            await self.runtime.inject(sandbox,capability_token=token,gateway_url=self.settings.gateway_url,
+                proxy_url=self.settings.public_proxy_url,harness=harness.value,model='operation-only',
+                runtime_bundle_digest=self.settings.runtime_bundle_digest,
+                runtime_code_bundle_digest=self.settings.runtime_code_bundle_digest,
+                runtime_profile_id=reservation.runtime_profile_id,skill_ids=[],skill_digests={},
+                child_mode=True,delegation_depth=1)
+            inputs={}
+            for item in context.request.input_artifacts:
+                artifact=await self.store.get_artifact(item.artifact_id)
+                if not artifact:raise RuntimeError('operation_input_artifact_missing')
+                suffix=PurePosixPath(artifact.path).suffix
+                path=f'assets/inputs/{item.artifact_role}-{artifact.id}{suffix}'
+                data=await asyncio.to_thread(self.objects.get,artifact.object_ref,
+                    maximum=self.settings.max_artifact_bytes)
+                await self.runtime.put_project_file(sandbox,path,data,artifact.mime);inputs[item.artifact_role]=path
+            recipe=dict(context.request.parameters['recipe']);role=str(recipe.pop('input_role'))
+            if role not in inputs:raise ValueError('operation_input_role_missing')
+            value=await self.runtime.media_render(sandbox,{**recipe,'input_path':inputs[role]})
+            self.sessions[context.job.id]=sandbox
+            receipt={'sandbox_id':sandbox.id,'capability_nonce':claims.nonce,
+                'reservation_id':reservation.id,'node_id':reservation.node_id,
+                'node_generation':reservation.node_generation,'operation_completed':True,'output':value}
+            await self.scheduler.mark_running(reservation.id,reservation.node_id,reservation.node_generation)
+            return AdapterSubmission(external_execution_id='operation:'+context.job.id,
+                acceptance_receipt=receipt,completed=True,result=value)
+        except BaseException:
+            if sandbox:await self.pool.release(sandbox,keep_attached=False)
+            await self.scheduler.release(reservation.id,reservation.node_id,reservation.node_generation)
+            raise
+
+    async def status(self,context:JobExecutionContext,external_execution_id:str)->AdapterStatus:
+        receipt=context.previous_acceptance_receipt
+        if receipt.get('operation_completed'):
+            return AdapterStatus(True,JobState.SUCCEEDED,dict(receipt.get('output',{})))
+        return AdapterStatus(True,JobState.UNKNOWN,{'error_code':'operation_outcome_unknown'})
+
+    async def collect(self,context:JobExecutionContext,external_execution_id:str,
+                      status:AdapterStatus)->dict[str,Any]:
+        if status.state!=JobState.SUCCEEDED:return status.result
+        sandbox=await self._sandbox(context,context.previous_acceptance_receipt)
+        if len(context.request.expected_outputs)!=1:
+            raise RuntimeError('media_render_output_contract_requires_one_role')
+        contract=context.request.expected_outputs[0];path=str(status.result.get('path',''))
+        data=await self.runtime.artifact(sandbox,path)
+        async def chunks():yield data
+        artifact=await self.artifacts.emit(ArtifactEmission(job_id=context.job.id,generation=context.generation,
+            artifact_role=contract.artifact_role,item_key='primary',position=0,filename=Path(path).name,
+            output_disposition=contract.output_disposition,
+            declared_mime=str(status.result.get('mime','application/octet-stream'))),chunks())
+        collection=await self.store.finalize_job_artifact_collection(context.job.id,context.generation,
+            contract.artifact_role)
+        return {'operation':context.request.parameters['recipe']['operation'],
+            'artifacts':[artifact.model_dump(mode='json')],'collections':[collection]}
+
+    async def cleanup(self,context:JobExecutionContext,external_execution_id:str)->None:
+        receipt=context.previous_acceptance_receipt;sandbox=await self._sandbox(context,receipt)
+        nonce=str(receipt.get('capability_nonce',''))
+        if nonce:
+            async with httpx.AsyncClient(timeout=10,trust_env=False) as client:
+                response=await client.post(self.settings.gateway_url.rstrip('/')+'/internal/revoke/'+nonce,
+                    headers={'X-Sandbox-Harness-Control':self.settings.gateway_control_key,
+                        'X-Updream-Thread-Id':context.job.thread_id,
+                        'X-Updream-Turn-Id':context.job.origin_turn_id,
+                        'X-Updream-Sandbox-Id':sandbox.id})
+                response.raise_for_status()
+        await self.pool.release(sandbox,keep_attached=False);self.sessions.pop(context.job.id,None)
+        await self.scheduler.release(str(receipt['reservation_id']),str(receipt['node_id']),
+            int(receipt['node_generation']))

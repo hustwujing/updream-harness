@@ -30,6 +30,7 @@ def _value(raw: str) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sandbox-job")
     sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("catalog", help="Show registered Operations, Capabilities, Skills and Child Profiles")
     prepare = sub.add_parser("prepare", help="Validate and submit one complete parallel JobGroup")
     prepare.add_argument("--request", required=True, help="JSON object or path to a JSON file")
     edit = sub.add_parser("edit", help="Replace the editable members of one JobGroupDraft")
@@ -51,8 +52,15 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     headers = {"Authorization": "Bearer " + token_file.read_text().strip()}
     try:
-        if args.command == "prepare":
+        if args.command == "catalog":
+            response = httpx.get(base + "/v1/execution/catalog", headers=headers, timeout=20)
+        elif args.command == "prepare":
+            if os.environ.get("HARNESS_CHILD_MODE") == "1":
+                print(json.dumps({"error":"A Child Harness cannot delegate another JobGroup"}))
+                return 2
             payload = _value(args.request)
+            payload.setdefault("thread_id",os.environ.get("HARNESS_THREAD_ID",""))
+            payload.setdefault("origin_turn_id",os.environ.get("HARNESS_TURN_ID",""))
             JobGroupCreate.model_validate(payload)
             response = httpx.post(base + "/v1/job-group-drafts", headers=headers, json=payload, timeout=30)
         elif args.command == "edit":

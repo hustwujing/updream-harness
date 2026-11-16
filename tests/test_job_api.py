@@ -6,9 +6,12 @@ import pytest
 from sandbox_harness.app import create_app
 from sandbox_harness.config import Settings
 from sandbox_runtime import job_cli
+from sandbox_runtime import review_cli
 
 
 ROOT=Path(__file__).resolve().parents[1]
+IMAGE_PARAMETERS={'kind':'image','model':'seedream-5.0','generation_mode':'text_to_image',
+    'parameters':{'prompt':'one image'}}
 
 
 def settings(tmp_path):
@@ -32,8 +35,9 @@ def test_job_group_api_edits_confirms_once_and_enforces_owner(tmp_path):
         app.state.broker._schedule=lambda turn_id:None
         turn=client.post(f"/api/threads/{thread['id']}/turns",json={
             'message':'generate and render','idempotency_key':'job-api-origin-turn'}).json()
-        jobs=[request('generate','provider','image.generate','c'*64,{'prompt':'one image'}),
-            request('render','operation','media.render','b'*64,{'recipe':{'fps':24}})]
+        jobs=[request('generate','provider','image.generate','c'*64,IMAGE_PARAMETERS),
+            request('render','operation','media.render','b'*64,{'recipe':{'operation':'image.resize',
+                'input_role':'source','width':64,'height':64,'output_filename':'rendered.png'}})]
         prepared=client.post('/api/job-group-drafts',json={'thread_id':thread['id'],
             'origin_turn_id':turn['id'],'idempotency_key':'job-api-group-key','jobs':jobs})
         assert prepared.status_code==200 and prepared.json()['mode']=='draft'
@@ -84,11 +88,54 @@ def test_sandbox_job_cli_validates_complete_group_before_gateway_call(tmp_path,m
         is_success=True;text='{"mode":"draft"}'
     monkeypatch.setattr(job_cli.httpx,'post',lambda url,**kwargs:calls.append((url,kwargs)) or Result())
     payload={'thread_id':'a'*32,'origin_turn_id':'b'*32,'idempotency_key':'cli-group-key',
-        'jobs':[request('generate','provider','image.generate','c'*64,{'prompt':'one image'})]}
+        'jobs':[request('generate','provider','image.generate','c'*64,IMAGE_PARAMETERS)]}
     assert job_cli.main(['prepare','--request',__import__('json').dumps(payload)])==0
     assert calls[0][0]=='http://gateway.test/v1/job-group-drafts'
     assert calls[0][1]['json']==payload
     assert '"mode":"draft"' in capsys.readouterr().out
+
+
+def test_sandbox_job_cli_fills_frozen_identity_lists_catalog_and_blocks_child_delegation(tmp_path,monkeypatch,capsys):
+    token=tmp_path/'token';token.write_text('x'*32);calls=[]
+    monkeypatch.setenv('HARNESS_GATEWAY_URL','http://gateway.test')
+    monkeypatch.setenv('HARNESS_CAPABILITY_TOKEN_FILE',str(token))
+    monkeypatch.setenv('HARNESS_THREAD_ID','a'*32);monkeypatch.setenv('HARNESS_TURN_ID','b'*32)
+    class Result:
+        is_success=True;text='{"capabilities":[]}'
+    monkeypatch.setattr(job_cli.httpx,'get',lambda url,**kwargs:calls.append(('get',url,kwargs)) or Result())
+    monkeypatch.setattr(job_cli.httpx,'post',lambda url,**kwargs:calls.append(('post',url,kwargs)) or Result())
+    assert job_cli.main(['catalog'])==0 and calls[-1][1]=='http://gateway.test/v1/execution/catalog'
+    payload={'idempotency_key':'cli-auto-identity','jobs':[
+        request('generate','provider','image.generate','c'*64,IMAGE_PARAMETERS)]}
+    assert job_cli.main(['prepare','--request',__import__('json').dumps(payload)])==0
+    submitted=calls[-1][2]['json'];assert submitted['thread_id']=='a'*32 and submitted['origin_turn_id']=='b'*32
+    monkeypatch.setenv('HARNESS_CHILD_MODE','1')
+    assert job_cli.main(['prepare','--request',__import__('json').dumps(payload)])==2
+    assert 'cannot delegate' in capsys.readouterr().out
+
+
+def test_gateway_exposes_catalog_and_explicit_review_without_user_confirmation_routes(tmp_path):
+    from sandbox_harness.gateway import create_gateway
+    gateway_settings=settings(tmp_path/'gateway').model_copy(update={'redis_url':'redis://127.0.0.1:6379/15'})
+    paths={getattr(route,'path','') for route in create_gateway(gateway_settings).routes}
+    assert '/v1/execution/catalog' in paths and '/v1/reviews' in paths
+    assert '/v1/job-group-drafts/{draft_id}/confirm' not in paths
+
+
+def test_review_cli_uses_host_identity_and_refuses_child_mode(tmp_path,monkeypatch,capsys):
+    token=tmp_path/'token';token.write_text('x'*32);calls=[]
+    monkeypatch.setenv('HARNESS_GATEWAY_URL','http://gateway.test')
+    monkeypatch.setenv('HARNESS_CAPABILITY_TOKEN_FILE',str(token))
+    monkeypatch.setenv('HARNESS_KIND','codex');monkeypatch.setenv('HARNESS_MODEL','gpt-5.6')
+    class Result:is_success=True;text='{"mode":"committed"}'
+    monkeypatch.setattr(review_cli.httpx,'post',lambda url,**kwargs:calls.append((url,kwargs)) or Result())
+    payload={'artifact_ids':['a'*32],'rubric':'Check it','idempotency_key':'review-cli-key'}
+    assert review_cli.main(['--request',__import__('json').dumps(payload)])==0
+    assert calls[0][0]=='http://gateway.test/v1/reviews'
+    assert calls[0][1]['json']['harness']=='codex' and calls[0][1]['json']['model']=='gpt-5.6'
+    monkeypatch.setenv('HARNESS_CHILD_MODE','1')
+    assert review_cli.main(['--request',__import__('json').dumps(payload)])==2
+    assert 'cannot create' in capsys.readouterr().out
 
 
 def test_sandbox_cli_and_gateway_cannot_confirm_user_authorized_group(tmp_path):
@@ -113,7 +160,7 @@ def test_thread_stop_all_cancels_current_turn_and_every_nonterminal_job(tmp_path
         app.state.broker._schedule=lambda turn_id:None
         turn=client.post(f"/api/threads/{thread['id']}/turns",json={
             'message':'run in parallel','idempotency_key':'stop-all-origin'}).json()
-        request_value=request('long','operation','media.render','b'*64,{'recipe':{}})
+        request_value=request('long','provider','image.generate','c'*64,IMAGE_PARAMETERS)
         prepared=client.post('/api/job-group-drafts',json={'thread_id':thread['id'],
             'origin_turn_id':turn['id'],'idempotency_key':'stop-all-group-key','jobs':[request_value]}).json()
         confirmed=client.post(f"/api/job-group-drafts/{prepared['draft']['id']}/confirm").json()

@@ -132,8 +132,10 @@ class JobWorker:
                 context = replace(context, previous_external_execution_id=external_id,
                     previous_acceptance_receipt=submission.acceptance_receipt)
                 if submission.completed:
+                    result=await adapter.collect(context,external_id,AdapterStatus(
+                        True,JobState.SUCCEEDED,submission.result))
                     await self.store.transition_job(job.id, JobState.SUCCEEDED,
-                        expected_generation=attempt.generation, result=submission.result)
+                        expected_generation=attempt.generation, result=result)
                     await self._cleanup(adapter, context, external_id)
                     return
             status = await adapter.status(context, external_id)

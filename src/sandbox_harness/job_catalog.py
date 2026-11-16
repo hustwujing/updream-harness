@@ -48,6 +48,8 @@ class OperationDescriptor(BaseModel):
     cancellation_policy: dict[str, Any]
     reconciliation_policy: dict[str, Any]
     review_policy: Literal["disabled", "optional", "required"] = "disabled"
+    runtime_profile_id: str = ""
+    runtime_harness: Literal["codex","claude","deepseek"] = "codex"
 
     @model_validator(mode="after")
     def valid_execution_boundary(self):

@@ -29,7 +29,8 @@ MAX_CODE_FILES = 512
 MAX_CODE_FILE_BYTES = 2 * 1024 * 1024
 CLI_MODULES = {"sandbox-media": "sandbox_runtime.media_cli", "sandbox-site": "sandbox_runtime.site_cli",
     "sandbox-background": "sandbox_runtime.background_cli", "sandbox-interact": "sandbox_runtime.interaction_cli",
-    "editppt": "editppt.cli"}
+    "sandbox-job":"sandbox_runtime.job_cli","sandbox-artifact":"sandbox_runtime.artifact_cli",
+    "sandbox-review":"sandbox_runtime.review_cli","editppt": "editppt.cli"}
 
 
 def verify_signature(data: bytes, signature: bytes) -> None:

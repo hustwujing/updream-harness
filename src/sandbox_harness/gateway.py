@@ -28,6 +28,8 @@ from .job_catalog import JobCatalog
 from .job_coordinator import JobCoordinator, JobGroupDraftUpdate
 from .job_contracts import JobGroupCreate
 from .profiles import ProfileResolver
+from .catalog import HarnessCatalog
+from .reviewer import ReviewSubmission,ReviewerCoordinator
 from .config import Settings, load_settings, validate_service_settings
 from .domain import Harness, MediaDraftCreate, now
 from .model_routes import ModelRoutes
@@ -116,6 +118,8 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         skill_manifest=skill_manifest)
     job_coordinator = JobCoordinator(activity_store, job_catalog, profile_resolver=profile_resolver,
         draft_ttl_seconds=settings.media_draft_ttl_seconds)
+    execution_catalog=HarnessCatalog(job_catalog=job_catalog,profile_resolver=profile_resolver)
+    reviewer=ReviewerCoordinator(job_coordinator)
     objects = object_store(settings)
     artifact_gateway = ArtifactGateway(activity_store, objects,
         settings.data_root / "tmp" / "job-artifacts", maximum_bytes=settings.max_artifact_bytes)
@@ -361,6 +365,21 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(409, str(exc)) from exc
+
+    @app.get("/v1/execution/catalog")
+    async def runtime_execution_catalog(request:Request):
+        await authorize_runtime_request(request,"/v1/execution/catalog")
+        return {**execution_catalog.public_execution_metadata(),"media_models":media_catalog.public()}
+
+    @app.post("/v1/reviews")
+    async def runtime_prepare_review(value:ReviewSubmission,request:Request):
+        claims=await authorize_runtime_request(request,"/v1/reviews")
+        owner_id=await activity_store.owner_id_for_thread(claims.thread_id)
+        if not owner_id:raise HTTPException(404,"Thread not found")
+        try:return await reviewer.prepare_submission(owner_id,claims.thread_id,claims.turn_id,value)
+        except KeyError as exc:raise HTTPException(404,str(exc)) from exc
+        except ValueError as exc:raise HTTPException(422,str(exc)) from exc
+        except RuntimeError as exc:raise HTTPException(409,str(exc)) from exc
 
     async def runtime_draft_owner(draft_id: str, claims):
         value = await activity_store.get_job_group_draft(draft_id)
