@@ -16,6 +16,31 @@ async def test_concurrent_upload_registration_is_database_idempotent(tmp_path):
     finally:await store.close()
 
 
+async def test_unchanged_artifact_publication_is_idempotent_across_turns(tmp_path):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"artifact-replay.db"));await store.initialize()
+    try:
+        profile=HarnessCatalog().resolve('codex','gpt-5.6','standard');owner='a'*64
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level='standard',title='Artifact replay'),profile,owner)
+        first,_,_=await store.create_turn(thread.id,TurnCreate(message='first',
+            idempotency_key='artifact-first'),profile,owner);claim=await store.claim_turn(first.id,'worker-1',30)
+        artifact,_,created=await store.publish_artifact(thread.id,first.id,path='result.txt',
+            sha256='1'*64,size=1,mime='text/plain',object_ref='sha256:one',partial=False,
+            lease_owner='worker-1',recovery_generation=claim.recovery_generation)
+        assert created
+        await store.set_turn_state(first.id,TurnState.COMPLETED,lease_owner='worker-1',
+            recovery_generation=claim.recovery_generation)
+        second,_,_=await store.create_turn(thread.id,TurnCreate(message='again',
+            idempotency_key='artifact-second'),profile,owner);claim=await store.claim_turn(second.id,'worker-2',30)
+        replay,_,created=await store.publish_artifact(thread.id,second.id,path='result.txt',
+            sha256='1'*64,size=1,mime='text/plain',object_ref='sha256:one',partial=False,
+            lease_owner='worker-2',recovery_generation=claim.recovery_generation)
+        assert not created and replay.id==artifact.id
+        visible=[item for item in await store.items_after(thread.id) if item.type==ItemType.ARTIFACT]
+        assert len(visible)==1 and visible[0].payload['artifact_id']==artifact.id
+    finally:await store.close()
+
+
 async def test_internal_turn_is_auditable_but_marked_hidden_from_user_chat(tmp_path):
     store = Store("sqlite+aiosqlite:///" + str(tmp_path / "internal-turn.db")); await store.initialize()
     try:

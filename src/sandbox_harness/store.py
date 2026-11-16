@@ -3382,9 +3382,10 @@ class Store:
             turn = await db.get(TurnRow, turn_id, with_for_update=True)
             if not turn or turn.thread_id != thread_id:
                 raise KeyError("turn_not_found")
-            artifact_row = (await db.execute(select(ArtifactRow).where(
-                ArtifactRow.turn_id == turn_id, ArtifactRow.path == path,
-                ArtifactRow.sha256 == sha256).limit(1).with_for_update())).scalar_one_or_none()
+            artifact_row = (await db.execute(select(ArtifactRow).join(TurnRow,
+                TurnRow.id==ArtifactRow.turn_id).where(TurnRow.thread_id==thread_id,
+                ArtifactRow.path == path,ArtifactRow.sha256 == sha256).order_by(
+                ArtifactRow.created_at,ArtifactRow.id).limit(1).with_for_update())).scalar_one_or_none()
             created = artifact_row is None
             if artifact_row is None:
                 artifact_row = ArtifactRow(id=identifier(), turn_id=turn_id, path=path,
@@ -3394,7 +3395,7 @@ class Store:
                 path="artifacts/" + path, source_type="artifact", source_turn_id=turn_id,
                 sha256=sha256, size=size, mime=artifact_row.mime, object_ref=object_ref)
             artifact_items = (await db.execute(select(ItemRow).where(
-                ItemRow.turn_id == turn_id, ItemRow.type == ItemType.ARTIFACT.value
+                ItemRow.thread_id == thread_id, ItemRow.type == ItemType.ARTIFACT.value
             ).with_for_update())).scalars().all()
             item = next((row for row in artifact_items
                 if json.loads(row.payload_json).get("artifact_id") == artifact_row.id), None)
