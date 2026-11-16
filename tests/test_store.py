@@ -1,9 +1,19 @@
 from sandbox_harness.catalog import HarnessCatalog
 from datetime import timedelta
 
-from sandbox_harness.domain import EventKind, Harness, ItemType, RuntimeEvent, ThreadCreate, TurnCreate, TurnInputCreate, TurnState, now
+from sandbox_harness.domain import Attachment, EventKind, Harness, ItemType, RuntimeEvent, ThreadCreate, TurnCreate, TurnInputCreate, TurnState, now
 from sandbox_harness.store import MediaJobRow, Store, ThreadRow, TurnRow, valid_project_file_path
 import pytest
+
+
+async def test_concurrent_upload_registration_is_database_idempotent(tmp_path):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"uploads.db"));await store.initialize()
+    try:
+        attachment=Attachment(name="clip.mp4",object_ref="sha256:"+"1"*64,
+            sha256="1"*64,size=123,mime="video/mp4")
+        await __import__('asyncio').gather(*(store.record_upload("a"*64,attachment) for _ in range(16)))
+        assert await store.attachments_owned("a"*64,[attachment])
+    finally:await store.close()
 
 
 async def test_internal_turn_is_auditable_but_marked_hidden_from_user_chat(tmp_path):

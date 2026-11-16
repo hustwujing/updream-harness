@@ -11,6 +11,8 @@ from pathlib import PurePosixPath
 from sqlalchemy import and_, case, or_, Boolean, DateTime, Integer, String, Text, UniqueConstraint, delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .observability import observed
@@ -3803,10 +3805,19 @@ class Store:
 
     async def record_upload(self, owner_id: str, attachment) -> None:
         async with self.connections.begin() as db:
-            existing = await db.get(UploadRow, (owner_id, attachment.object_ref))
-            if not existing:
-                db.add(UploadRow(owner_id=owner_id, object_ref=attachment.object_ref, sha256=attachment.sha256,
-                    size=attachment.size, name=attachment.name, mime=attachment.mime, created_at=now()))
+            values={"owner_id":owner_id,"object_ref":attachment.object_ref,
+                "sha256":attachment.sha256,"size":attachment.size,"name":attachment.name,
+                "mime":attachment.mime,"created_at":now()}
+            dialect=db.bind.dialect.name
+            if dialect=="postgresql":
+                statement=postgresql_insert(UploadRow).values(**values).on_conflict_do_nothing(
+                    index_elements=[UploadRow.owner_id,UploadRow.object_ref])
+            elif dialect=="sqlite":
+                statement=sqlite_insert(UploadRow).values(**values).on_conflict_do_nothing(
+                    index_elements=[UploadRow.owner_id,UploadRow.object_ref])
+            else:
+                raise RuntimeError("upload_idempotency_requires_supported_database")
+            await db.execute(statement)
 
     async def attachments_owned(self, owner_id: str, attachments: list) -> bool:
         if not attachments:
