@@ -88,6 +88,7 @@ class JobCoordinator:
 
     async def prepare_group(self, owner_id: str, value: JobGroupCreate) -> PreparedGroup:
         value=self._normalize(value)
+        await self.store.validate_job_input_artifacts(owner_id,value.thread_id,value.jobs)
         value.validate_member_limit()
         sensitive = self._validate(value.jobs)
         if not sensitive:
@@ -114,6 +115,7 @@ class JobCoordinator:
                 if value.authorization_snapshot is not None else current.authorization_snapshot),
             "suppress_continuation":current.suppress_continuation}))
         sensitive = self._validate(normalized_group.jobs)
+        await self.store.validate_job_input_artifacts(owner_id,current.thread_id,normalized_group.jobs)
         updated = JobGroupDraftCreate.model_validate({
             **current.model_dump(),
             "jobs": [job.model_dump() for job in normalized_group.jobs],
@@ -131,6 +133,7 @@ class JobCoordinator:
         current=self._normalize(JobGroupCreate.model_validate(current.model_dump(exclude={
             "expires_at","requires_confirmation","authorization_gaps"})))
         self._validate(current.jobs)
+        await self.store.validate_job_input_artifacts(owner_id,current.thread_id,current.jobs)
         group, jobs = await self.store.confirm_job_group_draft(draft_id, owner_id)
         return ConfirmedGroup(group=group, jobs=jobs)
 

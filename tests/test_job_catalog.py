@@ -68,6 +68,13 @@ def test_durable_descriptor_requires_explicit_recovery_policies():
     assert descriptor.execution_mode == "durable"
 
 
+def test_review_policy_is_structured_and_default_off():
+    assert OperationDescriptor.model_validate(operation()).review_policy=='disabled'
+    assert OperationDescriptor.model_validate(operation(review_policy='required')).review_policy=='required'
+    with pytest.raises(ValidationError):
+        OperationDescriptor.model_validate(operation(review_policy='infer_from_prompt'))
+
+
 def test_example_job_catalog_is_parseable_and_digest_verified():
     raw=(ROOT/'deploy/job-catalog.example.json').read_text()
     value=JobCatalog.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest())

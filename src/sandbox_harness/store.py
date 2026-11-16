@@ -3690,6 +3690,17 @@ class Store:
                     ArtifactRow.id == artifact_id, ThreadRow.owner_id == owner_id))).scalar_one_or_none()
         return Artifact.model_validate({key: getattr(row, key) for key in Artifact.model_fields}) if row else None
 
+    async def validate_job_input_artifacts(self, owner_id: str, thread_id: str,
+                                           jobs: tuple[JobRequest, ...]) -> None:
+        identities={item.artifact_id for job in jobs for item in job.input_artifacts}
+        if not identities:return
+        async with self.connections() as db:
+            rows=(await db.execute(select(ArtifactRow.id).join(TurnRow,
+                TurnRow.id==ArtifactRow.turn_id).join(ThreadRow,
+                ThreadRow.id==TurnRow.thread_id).where(ArtifactRow.id.in_(identities),
+                TurnRow.thread_id==thread_id,ThreadRow.owner_id==owner_id))).scalars().all()
+        if set(rows)!=identities:raise RuntimeError('job_input_artifact_outside_scope')
+
     async def record_upload(self, owner_id: str, attachment) -> None:
         async with self.connections.begin() as db:
             existing = await db.get(UploadRow, (owner_id, attachment.object_ref))

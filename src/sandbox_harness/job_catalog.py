@@ -47,6 +47,7 @@ class OperationDescriptor(BaseModel):
     retry_policy: dict[str, Any]
     cancellation_policy: dict[str, Any]
     reconciliation_policy: dict[str, Any]
+    review_policy: Literal["disabled", "optional", "required"] = "disabled"
 
     @model_validator(mode="after")
     def valid_execution_boundary(self):
@@ -80,6 +81,7 @@ class CapabilityDescriptor(BaseModel):
     retry_policy: dict[str, Any]
     cancellation_policy: dict[str, Any]
     reconciliation_policy: dict[str, Any]
+    review_policy: Literal["disabled", "optional", "required"] = "disabled"
 
     @model_validator(mode="after")
     def no_infrastructure_parameters(self):
