@@ -40,6 +40,17 @@ def test_release_publishes_verified_complete_profile_catalog(tmp_path):
     assert target.name==digest+".json" and target.read_bytes()==catalog.read_bytes()
     assert target.with_suffix(".json.sig").is_file() and len(signature_digest)==64
 
+    repeated=release_module().publish_profile_catalog(target,tmp_path/"published",public)
+    assert repeated==(target,digest,signature_digest)
+
+
+def test_release_rejects_corrupted_content_addressed_target(tmp_path):
+    catalog,public=signed_catalog(tmp_path)
+    target,_,_=release_module().publish_profile_catalog(catalog,tmp_path/"published",public)
+    target.chmod(0o644);target.write_text("corrupted")
+    with pytest.raises(ValueError,match="corrupted"):
+        release_module().publish_profile_catalog(catalog,tmp_path/"published",public)
+
 
 def test_release_rejects_tampered_profile_catalog(tmp_path):
     catalog,public=signed_catalog(tmp_path);catalog.write_text(catalog.read_text()+" ")

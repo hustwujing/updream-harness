@@ -13,6 +13,15 @@ import subprocess
 import tempfile
 
 
+def publish_immutable(source: Path, target: Path, digest: str) -> None:
+    if target.exists():
+        if hashlib.sha256(target.read_bytes()).hexdigest()!=digest:
+            raise ValueError('Content-addressed release artifact is corrupted')
+    elif source.resolve()!=target.resolve():
+        shutil.copyfile(source,target)
+    target.chmod(0o444)
+
+
 def publish_profile_catalog(source: Path, destination_root: Path, public_key: Path) -> tuple[Path,str,str]:
     raw=source.read_bytes();digest=hashlib.sha256(raw).hexdigest();value=json.loads(raw)
     profiles=value.get('runtime_dependency_profiles',[])
@@ -30,9 +39,10 @@ def publish_profile_catalog(source: Path, destination_root: Path, public_key: Pa
         '-in',str(source),'-sigfile',str(signature)],check=True,stdout=subprocess.DEVNULL)
     destination_root.mkdir(parents=True,exist_ok=True);destination_root.chmod(0o755)
     target=destination_root/(digest+'.json');target_signature=target.with_suffix('.json.sig')
-    shutil.copyfile(source,target);shutil.copyfile(signature,target_signature)
-    target.chmod(0o444);target_signature.chmod(0o444)
-    return target,digest,hashlib.sha256(signature.read_bytes()).hexdigest()
+    signature_digest=hashlib.sha256(signature.read_bytes()).hexdigest()
+    publish_immutable(source,target,digest)
+    publish_immutable(signature,target_signature,signature_digest)
+    return target,digest,signature_digest
 
 
 def main():
