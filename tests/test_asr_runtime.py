@@ -19,6 +19,7 @@ def test_common_image_reuses_verified_offline_asr_model():
     assert "COPY --from=asr_source /opt/models/faster-whisper-small/" in dockerfile
     assert "sandbox-transcribe" in dockerfile and "asr_probe.py" in dockerfile
     assert "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671" in dockerfile
+    assert dockerfile.index("ARG BOOTSTRAP_IMAGE") < dockerfile.index("FROM ${ASR_SOURCE_IMAGE}")
     assert "SANDBOX_HARNESS_ASR_SOURCE_IMAGE" in build
 
 

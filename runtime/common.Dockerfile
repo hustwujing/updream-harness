@@ -1,6 +1,6 @@
 ARG ASR_SOURCE_IMAGE=sandbox-harness-runtime-base:0027ec835f16
-FROM ${ASR_SOURCE_IMAGE} AS asr_source
 ARG BOOTSTRAP_IMAGE=sandbox-harness-parallel-bootstrap:build
+FROM ${ASR_SOURCE_IMAGE} AS asr_source
 FROM ${BOOTSTRAP_IMAGE}
 USER root
 ARG DEBIAN_MIRROR=http://mirrors.aliyun.com
