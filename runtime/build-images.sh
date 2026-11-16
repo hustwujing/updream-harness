@@ -39,15 +39,13 @@ if ! "$docker" image inspect "$bootstrap" >/dev/null 2>&1; then
 fi
 common_hash=$(content_hash "$bootstrap_hash" "$root/runtime/common.Dockerfile" \
   "$root/runtime/requirements-common.txt" "$root/runtime/proxy_bridge.cjs" \
-  "$root/runtime/playwright_proxy_patch.cjs" "$root/runtime/apply_patch.py" \
-  "$root/runtime/asr_cli.py" "$root/runtime/asr_probe.py")
+  "$root/runtime/playwright_proxy_patch.cjs" "$root/runtime/apply_patch.py")
 common="sandbox-harness-parallel-common:$common_hash"
 if ! "$docker" image inspect "$common" >/dev/null 2>&1; then
-  "$docker" image inspect "$asr_source_image" >/dev/null
   "$docker" build --network host -f "$root/runtime/common.Dockerfile" \
-    --build-arg "BOOTSTRAP_IMAGE=$bootstrap" --build-arg "ASR_SOURCE_IMAGE=$asr_source_image" \
-    -t "$common" "$root"
+    --build-arg "BOOTSTRAP_IMAGE=$bootstrap" -t "$common" "$root"
 fi
+asr_source_id=$($docker image inspect "$asr_source_image" --format '{{.Id}}')
 
 : >"$output_root/images.tsv"
 for profile in $profiles; do
@@ -83,6 +81,18 @@ for profile in $profiles; do
   if ! "$docker" image inspect "$profile_image" >/dev/null 2>&1; then
     "$docker" build --network host -f "$dockerfile" \
       --build-arg "COMMON_IMAGE=$common" -t "$profile_image" "$root"
+  fi
+  if [[ "$profile" == primary-full-cpu || "$profile" == media-cpu ]]; then
+    asr_hash=$(content_hash "$profile_hash:$asr_source_id" \
+      "$root/runtime/asr-overlay.Dockerfile" "$root/runtime/requirements-asr.txt" \
+      "$root/runtime/asr_cli.py" "$root/runtime/asr_probe.py")
+    asr_image="sandbox-harness-parallel-$profile-asr:$asr_hash"
+    if ! "$docker" image inspect "$asr_image" >/dev/null 2>&1; then
+      "$docker" build --network host -f "$root/runtime/asr-overlay.Dockerfile" \
+        --build-arg "PROFILE_IMAGE=$profile_image" --build-arg "ASR_SOURCE_IMAGE=$asr_source_image" \
+        -t "$asr_image" "$root"
+    fi
+    profile_image=$asr_image
   fi
   for harness in $harnesses; do
     image="$registry/$profile-$harness:$tag"
