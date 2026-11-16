@@ -3,7 +3,9 @@ import hashlib
 import pytest
 
 from sandbox_harness.artifact_gateway import ArtifactEmission, ArtifactGateway, MimeRegistry
-from sandbox_harness.job_contracts import JobGroupCreate, JobKind, JobRequest, OutputDisposition
+from sandbox_harness.catalog import HarnessCatalog
+from sandbox_harness.domain import Harness,ItemType,ThreadCreate,TurnCreate
+from sandbox_harness.job_contracts import JobGroupCreate, JobKind, JobRequest, JobState, OutputDisposition
 from sandbox_harness.objects import ObjectStore
 from sandbox_harness.store import Store
 from sandbox_harness.store import ProjectFileRow
@@ -48,6 +50,36 @@ async def test_role_and_disposition_are_distinct_and_collection_publishes_atomic
                 ProjectFileRow.thread_id=='b'*32).order_by(ProjectFileRow.path))).scalars().all()
         assert [value.path for value in files]==[
             'artifacts/jobs/'+job.id+'/image-0.png','artifacts/jobs/'+job.id+'/image-1.png']
+    finally:await store.close()
+
+
+async def test_delivery_job_artifacts_become_visible_atomically_at_group_terminal(tmp_path):
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'delivery-items.db'));await store.initialize()
+    try:
+        profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level='standard',title='Delivery'),profile,'owner')
+        turn,_,_=await store.create_turn(thread.id,TurnCreate(message='deliver',
+            idempotency_key='delivery-origin'),profile,'owner')
+        output={'artifact_role':'files','output_disposition':'delivery','min_items':2,'max_items':2,
+            'mime_patterns':['text/*']}
+        request=JobRequest(local_job_id='deliver',kind=JobKind.OPERATION,adapter='render',
+            descriptor_id='render',descriptor_version='1',descriptor_digest='a'*64,
+            idempotency_key='delivery-job-key',expected_outputs=[output])
+        _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id=thread.id,
+            origin_turn_id=turn.id,idempotency_key='delivery-group-key',jobs=[request]))
+        attempt=await store.claim_job(jobs[0].id,'worker','node',30)
+        gateway=ArtifactGateway(store,ObjectStore(tmp_path/'objects'),tmp_path/'stage',maximum_bytes=1024)
+        for index in range(2):
+            await gateway.emit(ArtifactEmission(jobs[0].id,attempt.generation,'files',f'file-{index}',index,
+                f'file-{index}.txt',OutputDisposition.DELIVERY,'text/plain'),chunks(f'value-{index}'.encode()))
+        await store.finalize_job_artifact_collection(jobs[0].id,attempt.generation,'files')
+        assert not [row for row in await store.items_after(thread.id) if row.type==ItemType.ARTIFACT]
+        await store.transition_job(jobs[0].id,JobState.SUCCEEDED,
+            expected_generation=attempt.generation,result={'ok':True})
+        visible=[row for row in await store.items_after(thread.id) if row.type==ItemType.ARTIFACT]
+        assert [row.summary for row in visible]==['file-0.txt','file-1.txt']
+        assert all(row.payload['job_id']==jobs[0].id and not row.payload['partial'] for row in visible)
     finally:await store.close()
 
 

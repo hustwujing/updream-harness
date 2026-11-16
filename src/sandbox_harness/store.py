@@ -1779,6 +1779,28 @@ class Store:
                         group.state = JobGroupState.TERMINAL.value
                         group.terminal_at = group.terminal_at or now()
                         group.updated_at = now();release_group_budget=True
+                        delivery_rows=(await db.execute(select(JobArtifactRow,JobRow).join(
+                            JobRow,JobRow.id==JobArtifactRow.job_id).where(
+                            JobRow.group_id==group.id,
+                            JobArtifactRow.output_disposition==OutputDisposition.DELIVERY.value,
+                        ).order_by(JobRow.local_job_id,JobArtifactRow.artifact_role,
+                            JobArtifactRow.position).with_for_update())).all()
+                        existing_items=(await db.execute(select(ItemRow).where(
+                            ItemRow.thread_id==group.thread_id,
+                            ItemRow.type==ItemType.ARTIFACT.value).with_for_update())).scalars().all()
+                        visible_ids={json.loads(item.payload_json).get('artifact_id') for item in existing_items}
+                        for artifact_row,artifact_job in delivery_rows:
+                            if artifact_row.artifact_id in visible_ids:continue
+                            sequence=await self.next_item_sequence(db,group.thread_id);timestamp=now()
+                            db.add(ItemRow(id=identifier(),thread_id=group.thread_id,
+                                turn_id=artifact_job.origin_turn_id,sequence=sequence,
+                                type=ItemType.ARTIFACT.value,status='completed',
+                                summary=artifact_row.filename,payload_json=json.dumps({
+                                    'artifact_id':artifact_row.artifact_id,'mime':artifact_row.mime,
+                                    'size':artifact_row.size,'partial':False,'job_id':artifact_job.id,
+                                    'artifact_role':artifact_row.artifact_role}),
+                                created_at=timestamp,updated_at=timestamp))
+                            visible_ids.add(artifact_row.artifact_id)
                         all_cancelled = all(member.state == JobState.CANCELLED.value for member in jobs)
                         outbox = (await db.execute(select(JobOutboxRow).where(
                             JobOutboxRow.group_id == group.id).with_for_update())).scalar_one_or_none()
