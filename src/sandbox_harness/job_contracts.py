@@ -280,3 +280,41 @@ class JobOutboxView(BaseModel):
     continuation_turn_id: str = ""
     created_at: datetime
     updated_at: datetime
+
+
+class BudgetAccountView(BaseModel):
+    id: str
+    owner_id: str
+    thread_id: str
+    budget_key: str
+    limit: int
+    reserved: int
+    consumed: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class BudgetReservationView(BaseModel):
+    id: str
+    account_id: str
+    group_id: str
+    authorization_snapshot_id: str
+    budget_key: str
+    reserved: int
+    consumed: int
+    released: int
+    state: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class BudgetLedgerView(BaseModel):
+    id: str
+    reservation_id: str
+    group_id: str
+    job_id: str
+    action: str
+    amount: int
+    idempotency_key: str
+    detail: dict[str, Any]
+    created_at: datetime

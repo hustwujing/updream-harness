@@ -84,6 +84,56 @@ async def test_gateway_media_status_is_capability_and_thread_scoped(tmp_path, mo
     assert calls == [("job-1", "thread-1")]
 
 
+async def test_gateway_continuously_validates_job_grant_headers_and_parameters(tmp_path, monkeypatch):
+    import hashlib,json
+    from starlette.requests import Request
+    import sandbox_harness.gateway as gateway
+    from sandbox_harness.capability import CapabilityCodec
+    from sandbox_harness.config import Settings
+    from sandbox_harness.domain import Harness
+    class Redis:
+        async def eval(self,*args):return 1
+    class Store:
+        def __init__(self,*args,**kwargs):pass
+        async def get_media_job_for_thread(self,job_id,thread_id):
+            return {"id":job_id,"thread_id":thread_id,"status":"running"}
+    monkeypatch.setattr(gateway.Redis,'from_url',lambda *args,**kwargs:Redis())
+    monkeypatch.setattr(gateway,'Store',Store)
+    settings=Settings(backend='fake',database_url='sqlite+aiosqlite:///'+str(tmp_path/'job-grant.db'))
+    app=gateway.create_gateway(settings)
+    parameter_digest=hashlib.sha256(json.dumps({'query':[],'body':None},sort_keys=True,
+        separators=(',',':'),ensure_ascii=True).encode()).hexdigest()
+    token,_=CapabilityCodec(settings.gateway_signing_key).issue(
+        thread_id='a'*32,turn_id='b'*32,sandbox_id='sandbox-1',harness=Harness.CODEX,
+        model='gpt-5.6',routes=['/v1/media/jobs'],ttl_seconds=60,max_requests=10,
+        max_public_requests=1,token_budget=100,scope='job',group_id='c'*32,job_id='d'*32,
+        generation=2,source_identity='sandbox-1',descriptor_id='media.jobs',
+        descriptor_version='1',descriptor_digest='e'*64,operations=['status'],
+        capability_ids=['media.jobs'],parameter_digest=parameter_digest)
+    headers=[(b'authorization',('Bearer '+token).encode()),
+        (b'x-updream-thread-id',b'a'*32),(b'x-updream-turn-id',b'b'*32),
+        (b'x-updream-group-id',b'c'*32),(b'x-updream-job-id',b'd'*32),
+        (b'x-updream-job-generation',b'2'),(b'x-updream-source-sandbox',b'sandbox-1'),
+        (b'x-updream-descriptor-id',b'media.jobs'),(b'x-updream-descriptor-version',b'1'),
+        (b'x-updream-descriptor-digest',b'e'*64),(b'x-updream-operation',b'status'),
+        (b'x-updream-artifact-ids',b'[]'),(b'x-updream-skill-ids',b'[]'),
+        (b'x-updream-capability-id',b'media.jobs')]
+    endpoint=next(route.endpoint for route in app.routes
+        if getattr(route,'path',None)=='/v1/media/jobs/{job_id}')
+    async def receive():return {'type':'http.request','body':b'','more_body':False}
+    request=Request({'type':'http','method':'GET','path':'/v1/media/jobs/job-1',
+        'query_string':b'','headers':headers},receive)
+    result=await endpoint('job-1',request)
+    assert result['thread_id']=='a'*32
+    bad_headers=[row for row in headers if row[0]!=b'x-updream-job-generation']+[
+        (b'x-updream-job-generation',b'3')]
+    bad=Request({'type':'http','method':'GET','path':'/v1/media/jobs/job-1',
+        'query_string':b'','headers':bad_headers},receive)
+    with pytest.raises(HTTPException) as error:
+        await endpoint('job-1',bad)
+    assert error.value.status_code==403 and 'grant scope' in error.value.detail
+
+
 async def test_gateway_site_prepare_is_capability_scoped_and_turn_bound(tmp_path, monkeypatch):
     import io
     import tarfile

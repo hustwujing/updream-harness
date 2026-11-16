@@ -21,7 +21,8 @@ from .media_errors import media_error_guidance
 from .job_contracts import (
     JobAttemptReceipt, JobGroupCreate, JobGroupDraftCreate, JobGroupDraftState,
     JobGroupDraftView, JobGroupState, JobGroupView, JobKind, JobOutboxView,
-    JobState, JobView, TERMINAL_JOB_STATES,
+    JobState, JobView, TERMINAL_JOB_STATES, BudgetAccountView, BudgetLedgerView,
+    BudgetReservationView,
 )
 
 
@@ -49,7 +50,7 @@ def canonical_digest(value) -> str:
 
 
 JOB_DATABASE_LOCK_ORDER = (
-    "authorization_snapshot", "budget_reservation", "job_group_draft", "job_group",
+    "job_group_draft", "authorization_snapshot", "budget_account", "budget_reservation", "job_group",
     "job", "job_attempt", "job_lease", "job_artifact", "job_outbox",
 )
 
@@ -706,10 +707,25 @@ class JobOutboxRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class BudgetAccountRow(Base):
+    __tablename__ = "budget_accounts"
+    __table_args__ = (UniqueConstraint("owner_id", "thread_id", "budget_key"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    budget_key: Mapped[str] = mapped_column(String(160))
+    limit: Mapped[int] = mapped_column(Integer)
+    reserved: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    consumed: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class BudgetReservationRow(Base):
     __tablename__ = "budget_reservations"
     __table_args__ = (UniqueConstraint("group_id", "budget_key"),)
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    account_id: Mapped[str] = mapped_column(String(32), index=True)
     group_id: Mapped[str] = mapped_column(String(32), index=True)
     authorization_snapshot_id: Mapped[str] = mapped_column(String(32), index=True)
     budget_key: Mapped[str] = mapped_column(String(160))
@@ -849,6 +865,223 @@ class Store:
             created_at=utc_datetime(row.created_at), updated_at=utc_datetime(row.updated_at),
         )
 
+    @staticmethod
+    def budget_account_view(row: BudgetAccountRow) -> BudgetAccountView:
+        return BudgetAccountView(
+            id=row.id, owner_id=row.owner_id, thread_id=row.thread_id,
+            budget_key=row.budget_key, limit=row.limit, reserved=row.reserved,
+            consumed=row.consumed, created_at=utc_datetime(row.created_at),
+            updated_at=utc_datetime(row.updated_at),
+        )
+
+    @staticmethod
+    def budget_reservation_view(row: BudgetReservationRow) -> BudgetReservationView:
+        return BudgetReservationView(
+            id=row.id, account_id=row.account_id, group_id=row.group_id,
+            authorization_snapshot_id=row.authorization_snapshot_id,
+            budget_key=row.budget_key, reserved=row.reserved, consumed=row.consumed,
+            released=row.released, state=row.state, created_at=utc_datetime(row.created_at),
+            updated_at=utc_datetime(row.updated_at),
+        )
+
+    @staticmethod
+    def budget_ledger_view(row: BudgetLedgerRow) -> BudgetLedgerView:
+        return BudgetLedgerView(
+            id=row.id, reservation_id=row.reservation_id, group_id=row.group_id,
+            job_id=row.job_id, action=row.action, amount=row.amount,
+            idempotency_key=row.idempotency_key, detail=json.loads(row.detail_json),
+            created_at=utc_datetime(row.created_at),
+        )
+
+    async def configure_budget(self, owner_id: str, thread_id: str, budget_key: str,
+                               *, limit: int) -> BudgetAccountView:
+        if limit < 0:
+            raise ValueError("budget limit cannot be negative")
+        identity = f"budget:{owner_id}:{thread_id}:{budget_key}"
+        async with self.job_lock(identity):
+            async with self.connections.begin() as db:
+                row = (await db.execute(select(BudgetAccountRow).where(
+                    BudgetAccountRow.owner_id == owner_id,
+                    BudgetAccountRow.thread_id == thread_id,
+                    BudgetAccountRow.budget_key == budget_key,
+                ).with_for_update())).scalar_one_or_none()
+                timestamp = now()
+                if row:
+                    if limit < row.consumed + row.reserved:
+                        raise RuntimeError("budget_limit_below_committed_usage")
+                    row.limit = limit
+                    row.updated_at = timestamp
+                else:
+                    row = BudgetAccountRow(
+                        id=identifier(), owner_id=owner_id, thread_id=thread_id,
+                        budget_key=budget_key, limit=limit, reserved=0, consumed=0,
+                        created_at=timestamp, updated_at=timestamp,
+                    )
+                    db.add(row)
+                await db.flush()
+                return self.budget_account_view(row)
+
+    async def get_budget_account(self, account_id: str) -> BudgetAccountView | None:
+        async with self.connections() as db:
+            row = await db.get(BudgetAccountRow, account_id)
+            return self.budget_account_view(row) if row else None
+
+    async def reserve_budget(self, account_id: str, *, group_id: str,
+                             authorization_snapshot_id: str, amount: int,
+                             idempotency_key: str) -> BudgetReservationView:
+        if amount < 1:
+            raise ValueError("budget reservation amount must be positive")
+        async with self.job_lock(f"budget-account:{account_id}"):
+            async with self.connections.begin() as db:
+                account = await db.get(BudgetAccountRow, account_id, with_for_update=True)
+                if not account:
+                    raise KeyError("budget_account_not_found")
+                existing = (await db.execute(select(BudgetReservationRow).where(
+                    BudgetReservationRow.group_id == group_id,
+                    BudgetReservationRow.budget_key == account.budget_key,
+                ).with_for_update())).scalar_one_or_none()
+                if existing:
+                    ledger = (await db.execute(select(BudgetLedgerRow).where(
+                        BudgetLedgerRow.reservation_id == existing.id,
+                        BudgetLedgerRow.idempotency_key == idempotency_key,
+                    ))).scalar_one_or_none()
+                    if not ledger or existing.account_id != account_id or existing.reserved != amount:
+                        raise RuntimeError("budget_reservation_idempotency_conflict")
+                    return self.budget_reservation_view(existing)
+                if account.limit - account.consumed - account.reserved < amount:
+                    raise RuntimeError("budget_exhausted")
+                timestamp = now()
+                row = BudgetReservationRow(
+                    id=identifier(), account_id=account.id, group_id=group_id,
+                    authorization_snapshot_id=authorization_snapshot_id,
+                    budget_key=account.budget_key, reserved=amount, consumed=0, released=0,
+                    state="reserved", created_at=timestamp, updated_at=timestamp,
+                )
+                account.reserved += amount
+                account.updated_at = timestamp
+                db.add_all([row, BudgetLedgerRow(
+                    id=identifier(), reservation_id=row.id, group_id=group_id, job_id="",
+                    action="reserve", amount=amount, idempotency_key=idempotency_key,
+                    detail_json="{}", created_at=timestamp,
+                )])
+                await db.flush()
+                return self.budget_reservation_view(row)
+
+    async def consume_budget(self, reservation_id: str, *, job_id: str, amount: int,
+                             idempotency_key: str) -> BudgetReservationView:
+        if amount < 1:
+            raise ValueError("budget consumption amount must be positive")
+        async with self.connections() as lookup:
+            account_id = (await lookup.execute(select(BudgetReservationRow.account_id).where(
+                BudgetReservationRow.id == reservation_id))).scalar_one_or_none()
+        if not account_id:
+            raise KeyError("budget_reservation_not_found")
+        async with self.job_lock(f"budget-account:{account_id}"):
+            async with self.connections.begin() as db:
+                account = await db.get(BudgetAccountRow, account_id, with_for_update=True)
+                row = await db.get(BudgetReservationRow, reservation_id, with_for_update=True)
+                existing = (await db.execute(select(BudgetLedgerRow).where(
+                    BudgetLedgerRow.reservation_id == reservation_id,
+                    BudgetLedgerRow.idempotency_key == idempotency_key,
+                ))).scalar_one_or_none()
+                if existing:
+                    if existing.action != "consume" or existing.amount != amount or existing.job_id != job_id:
+                        raise RuntimeError("budget_ledger_idempotency_conflict")
+                    return self.budget_reservation_view(row)
+                if row.consumed + row.released + amount > row.reserved:
+                    raise RuntimeError("budget_reservation_exhausted")
+                timestamp = now()
+                row.consumed += amount
+                row.state = "consumed" if row.consumed + row.released == row.reserved else "partial"
+                row.updated_at = timestamp
+                account.reserved -= amount
+                account.consumed += amount
+                account.updated_at = timestamp
+                db.add(BudgetLedgerRow(
+                    id=identifier(), reservation_id=row.id, group_id=row.group_id, job_id=job_id,
+                    action="consume", amount=amount, idempotency_key=idempotency_key,
+                    detail_json="{}", created_at=timestamp,
+                ))
+                await db.flush()
+                return self.budget_reservation_view(row)
+
+    async def release_budget(self, reservation_id: str, *,
+                             idempotency_key: str) -> BudgetReservationView:
+        async with self.connections() as lookup:
+            account_id = (await lookup.execute(select(BudgetReservationRow.account_id).where(
+                BudgetReservationRow.id == reservation_id))).scalar_one_or_none()
+        if not account_id:
+            raise KeyError("budget_reservation_not_found")
+        async with self.job_lock(f"budget-account:{account_id}"):
+            async with self.connections.begin() as db:
+                account = await db.get(BudgetAccountRow, account_id, with_for_update=True)
+                row = await db.get(BudgetReservationRow, reservation_id, with_for_update=True)
+                existing = (await db.execute(select(BudgetLedgerRow).where(
+                    BudgetLedgerRow.reservation_id == reservation_id,
+                    BudgetLedgerRow.idempotency_key == idempotency_key,
+                ))).scalar_one_or_none()
+                if existing:
+                    if existing.action != "release":
+                        raise RuntimeError("budget_ledger_idempotency_conflict")
+                    return self.budget_reservation_view(row)
+                amount = row.reserved - row.consumed - row.released
+                timestamp = now()
+                row.released += amount
+                row.state = "released" if row.consumed == 0 else "closed"
+                row.updated_at = timestamp
+                account.reserved -= amount
+                account.updated_at = timestamp
+                db.add(BudgetLedgerRow(
+                    id=identifier(), reservation_id=row.id, group_id=row.group_id, job_id="",
+                    action="release", amount=amount, idempotency_key=idempotency_key,
+                    detail_json="{}", created_at=timestamp,
+                ))
+                await db.flush()
+                return self.budget_reservation_view(row)
+
+    async def adjust_budget(self, reservation_id: str, *, amount: int,
+                            idempotency_key: str, detail: dict | None = None) -> BudgetReservationView:
+        if amount == 0:
+            raise ValueError("budget adjustment cannot be zero")
+        async with self.connections() as lookup:
+            account_id = (await lookup.execute(select(BudgetReservationRow.account_id).where(
+                BudgetReservationRow.id == reservation_id))).scalar_one_or_none()
+        if not account_id:
+            raise KeyError("budget_reservation_not_found")
+        async with self.job_lock(f"budget-account:{account_id}"):
+            async with self.connections.begin() as db:
+                account = await db.get(BudgetAccountRow, account_id, with_for_update=True)
+                row = await db.get(BudgetReservationRow, reservation_id, with_for_update=True)
+                existing = (await db.execute(select(BudgetLedgerRow).where(
+                    BudgetLedgerRow.reservation_id == reservation_id,
+                    BudgetLedgerRow.idempotency_key == idempotency_key,
+                ))).scalar_one_or_none()
+                if existing:
+                    if existing.action != "adjust" or existing.amount != amount:
+                        raise RuntimeError("budget_ledger_idempotency_conflict")
+                    return self.budget_reservation_view(row)
+                if amount > 0 and account.consumed + account.reserved + amount > account.limit:
+                    raise RuntimeError("budget_exhausted")
+                if amount < 0 and row.consumed < -amount:
+                    raise RuntimeError("budget_adjustment_exceeds_consumption")
+                row.consumed += amount
+                account.consumed += amount
+                row.updated_at = account.updated_at = now()
+                db.add(BudgetLedgerRow(
+                    id=identifier(), reservation_id=row.id, group_id=row.group_id, job_id="",
+                    action="adjust", amount=amount, idempotency_key=idempotency_key,
+                    detail_json=canonical_json(detail or {}), created_at=now(),
+                ))
+                await db.flush()
+                return self.budget_reservation_view(row)
+
+    async def list_budget_ledger(self, reservation_id: str) -> list[BudgetLedgerView]:
+        async with self.connections() as db:
+            rows = (await db.execute(select(BudgetLedgerRow).where(
+                BudgetLedgerRow.reservation_id == reservation_id).order_by(
+                BudgetLedgerRow.created_at, BudgetLedgerRow.id))).scalars().all()
+            return [self.budget_ledger_view(row) for row in rows]
+
     async def create_job_group_draft(self, owner_id: str,
                                      value: JobGroupDraftCreate) -> tuple[JobGroupDraftView, bool]:
         value.validate_member_limit()
@@ -938,8 +1171,44 @@ class Store:
             snapshot_digest=canonical_digest(value.authorization_snapshot),
             snapshot_json=snapshot_json, created_at=timestamp,
         )
+        group_id = identifier()
+        reservations = value.authorization_snapshot.get("budget_reservations", [])
+        if not isinstance(reservations, list):
+            raise ValueError("budget_reservations must be a list")
+        normalized_reservations = []
+        for reservation in reservations:
+            if (not isinstance(reservation, dict)
+                    or set(reservation) != {"account_id", "amount"}
+                    or not isinstance(reservation["account_id"], str)
+                    or not isinstance(reservation["amount"], int)
+                    or reservation["amount"] < 1):
+                raise ValueError("invalid budget_reservation request")
+            normalized_reservations.append(reservation)
+        if len({row["account_id"] for row in normalized_reservations}) != len(normalized_reservations):
+            raise ValueError("duplicate budget account reservation")
+        for reservation in sorted(normalized_reservations, key=lambda row: row["account_id"]):
+            account = await db.get(BudgetAccountRow, reservation["account_id"], with_for_update=True)
+            if not account or account.owner_id != owner_id or account.thread_id != value.thread_id:
+                raise RuntimeError("budget_account_outside_authorization_scope")
+            amount = reservation["amount"]
+            if account.limit - account.consumed - account.reserved < amount:
+                raise RuntimeError("budget_exhausted")
+            budget_reservation = BudgetReservationRow(
+                id=identifier(), account_id=account.id, group_id=group_id,
+                authorization_snapshot_id=snapshot.id, budget_key=account.budget_key,
+                reserved=amount, consumed=0, released=0, state="reserved",
+                created_at=timestamp, updated_at=timestamp,
+            )
+            account.reserved += amount
+            account.updated_at = timestamp
+            db.add_all([budget_reservation, BudgetLedgerRow(
+                id=identifier(), reservation_id=budget_reservation.id, group_id=group_id,
+                job_id="", action="reserve", amount=amount,
+                idempotency_key=f"group-reserve:{group_id}:{account.budget_key}",
+                detail_json="{}", created_at=timestamp,
+            )])
         group = JobGroupRow(
-            id=identifier(), owner_id=owner_id, thread_id=value.thread_id,
+            id=group_id, owner_id=owner_id, thread_id=value.thread_id,
             origin_turn_id=value.origin_turn_id, draft_id=draft_id,
             idempotency_key=value.idempotency_key, request_digest=value.request_digest,
             authorization_snapshot_id=snapshot.id, state=JobGroupState.COMMITTED.value,

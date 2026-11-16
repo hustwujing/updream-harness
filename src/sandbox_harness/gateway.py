@@ -7,6 +7,7 @@ from datetime import timedelta
 import os
 import time
 import json
+import hashlib
 import logging
 import re
 from pydantic import ValidationError
@@ -19,6 +20,7 @@ import uvicorn
 
 from .observability import configure, RequestLoggingMiddleware, event, enrich, add_link, telemetry, operation, carrier
 from .capability import CapabilityCodec
+from .grants import GrantAuthority
 from .config import Settings, load_settings, validate_service_settings
 from .domain import Harness, MediaDraftCreate, now
 from .model_routes import ModelRoutes
@@ -89,6 +91,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     public_policy = DestinationPolicy(settings.public_proxy_allowlist, settings.public_proxy_denylist)
     unrestricted_public_policy = DestinationPolicy([], settings.public_proxy_denylist)
     codec = CapabilityCodec(settings.gateway_signing_key)
+    grant_authority = GrantAuthority(settings.gateway_signing_key)
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     active: dict[str, set[httpx.Response]] = defaultdict(set)
     public_connections: dict[str, set[asyncio.Task]] = defaultdict(set)
@@ -234,6 +237,57 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(401, "Capability token revoked")
         if count > claims.max_requests:
             raise HTTPException(429, "Capability request limit reached")
+        if claims.scope == "job":
+            try:
+                def required(name: str) -> str:
+                    value = request.headers.get(name, "")
+                    if not value:
+                        raise ValueError("Missing Job grant header: " + name)
+                    return value
+                def values(name: str) -> set[str]:
+                    raw = request.headers.get(name, "[]")
+                    parsed = json.loads(raw)
+                    if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+                        raise ValueError("Invalid Job grant header: " + name)
+                    return set(parsed)
+                body = await request.body()
+                if len(body) > 16 * 1024 * 1024:
+                    raise ValueError("Job call body exceeds grant validation limit")
+                if body:
+                    try:
+                        body_value = json.loads(body)
+                    except (ValueError, TypeError):
+                        body_value = {"sha256": hashlib.sha256(body).hexdigest(), "size": len(body)}
+                else:
+                    body_value = None
+                parameter_digest = hashlib.sha256(json.dumps({
+                    "query": sorted(request.query_params.multi_items()), "body": body_value,
+                }, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+                grant_authority.verify_call(
+                    token_from(request), route=route,
+                    thread_id=required("x-updream-thread-id"),
+                    turn_id=required("x-updream-turn-id"),
+                    group_id=required("x-updream-group-id"),
+                    job_id=required("x-updream-job-id"),
+                    generation=int(required("x-updream-job-generation")),
+                    sandbox_id=required("x-updream-source-sandbox"),
+                    source_identity=required("x-updream-source-sandbox"),
+                    descriptor_id=required("x-updream-descriptor-id"),
+                    descriptor_version=required("x-updream-descriptor-version"),
+                    descriptor_digest=required("x-updream-descriptor-digest"),
+                    operation=required("x-updream-operation"),
+                    artifact_ids=values("x-updream-artifact-ids"),
+                    skill_ids=values("x-updream-skill-ids"),
+                    capability_id=request.headers.get("x-updream-capability-id", ""),
+                    operation_id=request.headers.get("x-updream-operation-id", ""),
+                    network_origin=request.headers.get("x-updream-network-origin", ""),
+                    output_scope=request.headers.get("x-updream-output-scope", ""),
+                    child_profile_id=request.headers.get("x-updream-child-profile-id", ""),
+                    runtime_profile_id=request.headers.get("x-updream-runtime-profile-id", ""),
+                    parameter_digest=parameter_digest,
+                )
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                raise HTTPException(403, str(exc)) from exc
         return claims
 
     @app.get("/v1/media/jobs/{job_id}")

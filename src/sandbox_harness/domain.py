@@ -350,7 +350,7 @@ class RuntimeResult(BaseModel):
 
 class CapabilityClaims(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    version: Literal[2] = 2
+    version: Literal[3] = 3
     traceparent: str = ""
     thread_id: str
     turn_id: str
@@ -365,11 +365,36 @@ class CapabilityClaims(BaseModel):
     issued_at: int
     expires_at: int
     nonce: str
+    scope: Literal["thread", "turn", "group", "job"] = "turn"
+    authorization_version: int = Field(default=0, ge=0)
+    group_id: str = Field(default="", pattern=r"^$|^[0-9a-f]{32}$")
+    job_id: str = Field(default="", pattern=r"^$|^[0-9a-f]{32}$")
+    generation: int = Field(default=0, ge=0)
+    source_identity: str = ""
+    descriptor_id: str = ""
+    descriptor_version: str = ""
+    descriptor_digest: str = Field(default="", pattern=r"^$|^[0-9a-f]{64}$")
+    operations: list[str] = Field(default_factory=list)
+    artifact_ids: list[str] = Field(default_factory=list)
+    skill_ids: list[str] = Field(default_factory=list)
+    capability_ids: list[str] = Field(default_factory=list)
+    operation_ids: list[str] = Field(default_factory=list)
+    child_profile_ids: list[str] = Field(default_factory=list)
+    runtime_profile_ids: list[str] = Field(default_factory=list)
+    child_profile_id: str = ""
+    runtime_profile_id: str = ""
+    network_origins: list[str] = Field(default_factory=list)
+    output_scopes: list[str] = Field(default_factory=list)
+    parameter_digest: str = Field(default="", pattern=r"^$|^[0-9a-f]{64}$")
+    budget: dict[str, int] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def valid_time(self):
         if self.expires_at <= self.issued_at:
             raise ValueError("Capability expiration must follow issuance")
+        if self.scope == "job" and (not self.group_id or not self.job_id or self.generation < 1
+                or not self.source_identity or not self.descriptor_id or not self.descriptor_digest):
+            raise ValueError("Job capability requires frozen execution identity")
         return self
 
 

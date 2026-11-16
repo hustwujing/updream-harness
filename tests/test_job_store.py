@@ -38,7 +38,7 @@ async def make_store(tmp_path) -> Store:
 
 def test_job_database_lock_order_is_explicit_and_stable():
     assert JOB_DATABASE_LOCK_ORDER == (
-        "authorization_snapshot", "budget_reservation", "job_group_draft", "job_group",
+        "job_group_draft", "authorization_snapshot", "budget_account", "budget_reservation", "job_group",
         "job", "job_attempt", "job_lease", "job_artifact", "job_outbox",
     )
 
