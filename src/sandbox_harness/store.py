@@ -3418,7 +3418,8 @@ class Store:
 
     async def artifacts(self, turn_id: str) -> list[Artifact]:
         async with self.connections() as db:
-            rows = (await db.execute(select(ArtifactRow).where(ArtifactRow.turn_id == turn_id).order_by(ArtifactRow.created_at))).scalars().all()
+            rows = (await db.execute(select(ArtifactRow).where(ArtifactRow.turn_id == turn_id,
+                ArtifactRow.path.not_like("input/%")).order_by(ArtifactRow.created_at))).scalars().all()
         return [Artifact.model_validate({key: getattr(row, key) for key in Artifact.model_fields}) for row in rows]
 
     @staticmethod
