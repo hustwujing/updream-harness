@@ -20,7 +20,7 @@ PY
 test -x /usr/bin/libreoffice
 test -r /etc/libreoffice/registry/impress.xcd
 grep -Fx 'TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,mode=1777' \
-  "$project_root/deploy/systemd/sandbox-harness-api.service" >/dev/null
+  "$project_root/deploy/systemd/sandbox-harness-parallel-api.service" >/dev/null
 install -d -o "$service_user" -g "$service_user" -m 0700 "$project_root/.data/tmp/preview-runtime" "$project_root/.data/tmp/preview-config"
 install -d -o "$service_user" -g "$service_user" -m 0700 "$project_root/.data/preview-cache"
 chown -R "$service_user:$service_user" "$project_root/.data/preview-cache"

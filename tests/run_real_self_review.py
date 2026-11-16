@@ -61,7 +61,7 @@ class FaultTransport(httpx.AsyncBaseTransport):
     async def aclose(self): pass  # Shared across the short-lived RuntimeClient clients.
 
 async def main():
-    for key, value in dotenv_values(os.environ.get('SANDBOX_HARNESS_ENV_FILE','/data2/wujing03/sandbox-harness-platform/.data/config/platform.env')).items():
+    for key, value in dotenv_values(os.environ.get('SANDBOX_HARNESS_ENV_FILE','/data2/wujing03/sandbox-harness-platform-parallel/.data/config/platform.env')).items():
         if value is not None: os.environ[key] = value
     configured = Settings()
     root = configured.data_root / 'self-review' / ('real-' + uuid.uuid4().hex)

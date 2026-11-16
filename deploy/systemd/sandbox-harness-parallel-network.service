@@ -1,0 +1,16 @@
+[Unit]
+Description=Sandbox Harness bridge firewall rule
+After=opensandbox-docker.service
+Requires=opensandbox-docker.service
+Before=sandbox-harness-parallel-gateway.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+ExecStart=/data2/wujing03/sandbox-harness-platform-parallel/deploy/network-rule.sh install
+ExecStop=/data2/wujing03/sandbox-harness-platform-parallel/deploy/network-rule.sh remove
+StandardOutput=append:/data2/wujing03/sandbox-harness-platform-parallel/.data/service-logs/network.log
+StandardError=append:/data2/wujing03/sandbox-harness-platform-parallel/.data/service-logs/network.log
+
+[Install]
+WantedBy=multi-user.target

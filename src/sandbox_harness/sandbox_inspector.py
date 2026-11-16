@@ -21,7 +21,7 @@ from .sandbox import Sandbox, SandboxNotFound
 
 
 EXECD_PORT = 44772
-BLOCKED_PREVIEW_PORTS = {22, 8080, 18080, 28600, 28601, EXECD_PORT}
+BLOCKED_PREVIEW_PORTS = {22, 8080, 18080, 29880, 29881, EXECD_PORT}
 WEBSOCKET_HOP_HEADERS = {
     "connection", "host", "upgrade", "proxy-connection", "keep-alive",
     "transfer-encoding", "sec-websocket-key", "sec-websocket-version",

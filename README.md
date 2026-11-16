@@ -1,4 +1,4 @@
-# updream-harness
+# sandbox-harness-platform-parallel
 
 A thin, stateful OpenSandbox platform that sends every user message to a Codex, Claude or DeepSeek Harness. The platform restores the Harness workspace, streams its public output and steps, exports files, checkpoints the environment and removes the sandbox. It contains no DAG, planner or reviewer; media generation and static-site deployment use durable Jobs with independent Workers.
 
@@ -21,7 +21,12 @@ Redis: live event fan-out and short-lived capability revocation
 Object storage: content-addressed checkpoints and artifacts
 ```
 
-Production runs a dedicated PostgreSQL cluster on `127.0.0.1:25432` and reuses the host Redis, Docker/runsc, OpenSandbox and BOSS/S3 services. PostgreSQL data, service logs, caches, browser dependencies, test temporaries and other local writable state stay under `/data2/wujing03/sandbox-harness-platform/.data`; the root filesystem is not used for project-generated data. Shared services remain isolated by Redis key prefix, image repository, OpenSandbox metadata namespace and object prefix.
+The parallel project uses a dedicated PostgreSQL database on `127.0.0.1:28432` and reuses only
+shared executables and infrastructure daemons. PostgreSQL data, service logs, caches, browser
+dependencies, test temporaries, and all other writable state stay under
+`/data2/wujing03/sandbox-harness-platform-parallel/.data`. Database identity, Redis key prefix,
+image repository, OpenSandbox namespace, object prefix, ports, service units, and Nginx ingress are
+isolated from both predecessor deployments.
 
 The Capability Gateway is an infrastructure proxy. It injects model and Provider credentials after validating a Turn-scoped token. It does not understand prompts, plans or media quality.
 
@@ -42,7 +47,7 @@ successful Turn, Broker detects each exported directory containing
 bundle digest. This is still only a confirmation draft; no public version is
 activated until the user chooses **部署站点**. The HTML Artifact opens as an
 interactive owner-scoped preview in a CSP-sandboxed iframe instead of source
-text. Published versions use `/sandbox-harness/sites/<slug>/`, and Workspace
+text. Published versions use `/sandbox-harness-platform-parallel/sites/<slug>/`, and Workspace
 provides the stable link, immutable history, rollback and downline controls.
 
 Seedream supports immutable single/multi-image references through stable public
@@ -140,7 +145,7 @@ The browser keeps the selected Thread in `?thread=<id>`, restores it after refre
 ```bash
 UV_CACHE_DIR=.data/uv-cache uv sync --extra test --extra runtime-media
 .venv/bin/pytest
-.venv/bin/uvicorn sandbox_harness.app:create_app --factory --reload --port 22766
+.venv/bin/uvicorn sandbox_harness.app:create_app --factory --reload --port 24766
 ```
 
 Set `SANDBOX_HARNESS_BACKEND=fake` only for local UI development and tests. Production accepts only `opensandbox` and never falls back to a host Harness.

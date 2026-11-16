@@ -16,7 +16,7 @@ const assert=require('node:assert/strict');
   if(path.includes('/events'))return route.fulfill({status:200,contentType:'text/event-stream',body:''});
   return json({});
  });
- await page.goto(process.env.TEST_BASE_URL||'http://127.0.0.1:22766/');await page.waitForSelector('.composer textarea');
+ await page.goto(process.env.TEST_BASE_URL||'http://127.0.0.1:24766/');await page.waitForSelector('.composer textarea');
  const textarea=page.locator('.composer textarea'),send=page.getByRole('button',{name:'发送',exact:true});
  await textarea.evaluate(element=>element.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true,data:'updream'})));
  await textarea.fill('updream');

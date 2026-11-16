@@ -15,18 +15,18 @@ class Settings(BaseSettings):
 
     data_root: Path = Path(".data")
     api_bind_host: str = "127.0.0.1"
-    api_bind_port: int = Field(default=22766, ge=1024, le=65535)
+    api_bind_port: int = Field(default=24766, ge=1024, le=65535)
     database_url: str = "sqlite+aiosqlite:///.data/platform.db"
-    namespace: str = Field(default="sandbox-harness", pattern=r"^[a-z0-9][a-z0-9-]{1,62}$")
+    namespace: str = Field(default="sandbox-harness-parallel", pattern=r"^[a-z0-9][a-z0-9-]{1,62}$")
     backend: Literal["opensandbox", "fake"] = "opensandbox"
     opensandbox_url: str = "http://127.0.0.1:28090"
     opensandbox_api_key: str = ""
     redis_url: str = "redis://127.0.0.1:6379/0"
-    redis_prefix: str = "sandbox-harness:"
+    redis_prefix: str = "sandbox-harness-parallel:"
     object_backend: Literal["local", "s3"] = "local"
     object_endpoint: str = ""
     object_bucket: str = ""
-    object_prefix: str = "sandbox-harness/"
+    object_prefix: str = "sandbox-harness-parallel/"
     object_region: str = "updream"
     object_public_endpoint: str = "https://boss-shjd.biliapi.net"
     media_reference_prefix: str = "aniforge"
@@ -38,10 +38,10 @@ class Settings(BaseSettings):
     ark_asset_group_type: str = "AIGC"
     ark_asset_poll_seconds: float = Field(default=2, ge=0.1, le=30)
     ark_asset_max_wait_seconds: int = Field(default=900, ge=5, le=3600)
-    gateway_url: str = "http://172.31.0.1:28600"
+    gateway_url: str = "http://172.31.0.1:29880"
     gateway_bind_host: str = "172.31.0.1"
-    gateway_bind_port: int = Field(default=28600, ge=1024, le=65535)
-    gateway_proxy_port: int = Field(default=28601, ge=1024, le=65535)
+    gateway_bind_port: int = Field(default=29880, ge=1024, le=65535)
+    gateway_proxy_port: int = Field(default=29881, ge=1024, le=65535)
     public_proxy_allowlist: list[str] = Field(default_factory=list)
     public_proxy_denylist: list[str] = Field(default_factory=list)
     gateway_signing_key: str = Field(default="development-only-change-me", min_length=16)
@@ -110,7 +110,7 @@ class Settings(BaseSettings):
     video_task_timeout_seconds: int = Field(default=2 * 3600, ge=600, le=24 * 3600)
     site_worker_concurrency: int = Field(default=2, ge=1, le=16)
     site_draft_ttl_seconds: int = Field(default=24 * 3600, ge=600, le=7 * 86400)
-    site_public_base_path: str = Field(default="/sandbox-harness/sites",
+    site_public_base_path: str = Field(default="/sandbox-harness-platform-parallel/sites",
         pattern=r"^/[A-Za-z0-9/_-]+$")
     model_routes_json: str = ""
     harness_catalog_json: str = ""

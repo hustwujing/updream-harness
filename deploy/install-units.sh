@@ -2,13 +2,18 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-if [[ "$root" != /data2/wujing03/sandbox-harness-platform ]]; then
+if [[ "$root" != /data2/wujing03/sandbox-harness-platform-parallel ]]; then
   echo "unexpected project root: $root" >&2
   exit 1
 fi
 env_file="$root/.data/config/platform.env"
 if [[ ! -f "$env_file" ]]; then
   echo "create $env_file from .env.example first" >&2
+  exit 1
+fi
+configured_data_root=$(sed -n 's/^SANDBOX_HARNESS_DATA_ROOT=//p' "$env_file" | tail -1)
+if [[ "$configured_data_root" != "$root/.data" ]]; then
+  echo "SANDBOX_HARNESS_DATA_ROOT must be $root/.data; root-partition storage is forbidden" >&2
   exit 1
 fi
 if ! getent passwd sandbox-harness >/dev/null; then
@@ -39,5 +44,5 @@ chmod 0755 "$root/deploy/network-rule.sh"
 install -m 0644 "$root"/deploy/systemd/*.service /etc/systemd/system/
 python3 "$root/deploy/record-release.py" --env-file "$env_file"
 systemctl daemon-reload
-systemctl enable sandbox-harness-postgresql.service sandbox-harness-network.service sandbox-harness-gateway.service sandbox-harness-api.service sandbox-harness-media-worker.service sandbox-harness-site-worker.service
+systemctl enable sandbox-harness-parallel-postgresql.service sandbox-harness-parallel-network.service sandbox-harness-parallel-gateway.service sandbox-harness-parallel-api.service sandbox-harness-parallel-media-worker.service sandbox-harness-parallel-site-worker.service
 echo "units installed but not started"

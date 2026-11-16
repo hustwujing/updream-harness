@@ -3,8 +3,8 @@ const assert=require('node:assert/strict');
 const {execFileSync}=require('node:child_process');
 const fs=require('node:fs');
 
-const videoPath='/data2/wujing03/sandbox-harness-platform/.data/media-gallery-fixture.mp4';
-fs.mkdirSync('/data2/wujing03/sandbox-harness-platform/.data',{recursive:true});
+const videoPath='/data2/wujing03/sandbox-harness-platform-parallel/.data/media-gallery-fixture.mp4';
+fs.mkdirSync('/data2/wujing03/sandbox-harness-platform-parallel/.data',{recursive:true});
 execFileSync('ffmpeg',['-y','-f','lavfi','-i','color=c=0x256f5b:s=320x180:d=1','-vf',
  'drawtext=text=VIDEO:x=(w-text_w)/2:y=(h-text_h)/2:fontsize=36:fontcolor=white','-pix_fmt','yuv420p',videoPath],{stdio:'ignore'});
 const video=fs.readFileSync(videoPath);
@@ -34,7 +34,7 @@ function image(label,color){return Buffer.from(`<svg xmlns="http://www.w3.org/20
   if(path.includes('/events'))return route.fulfill({status:200,contentType:'text/event-stream',body:''});
   return json({});
  });
- await page.goto(process.env.TEST_BASE_URL||'http://127.0.0.1:22766/');await page.waitForSelector('.new-thread');
+ await page.goto(process.env.TEST_BASE_URL||'http://127.0.0.1:24766/');await page.waitForSelector('.new-thread');
  await page.locator('.thread-list button').filter({hasText:'媒体缩略图画廊'}).click();
  try{await page.waitForSelector('.artifact-gallery',{timeout:5000})}catch(error){throw new Error(`媒体画廊未渲染: ${await page.locator('body').innerText()}\n页面错误: ${errors.join(' | ')}\n${error.message}`)}
  const tiles=page.locator('.artifact-gallery .artifact-media');assert.equal(await tiles.count(),6);assert.equal(await page.locator('.artifact-row').count(),1);await page.getByAltText('矢量图.svg').waitFor();assert.ok(await page.getByAltText('矢量图.svg').evaluate(image=>image.naturalWidth>0));
@@ -42,10 +42,10 @@ function image(label,color){return Buffer.from(`<svg xmlns="http://www.w3.org/20
  const desktopBoxes=await tiles.evaluateAll(nodes=>nodes.map(node=>{const box=node.getBoundingClientRect();return {x:box.x,y:box.y,width:box.width,height:box.height}}));
  assert.equal(new Set(desktopBoxes.slice(0,4).map(box=>box.y)).size,1);assert.ok(desktopBoxes[0].width<190&&desktopBoxes[0].width>130);
  const thumbnail=page.locator('.artifact-thumbnail video');await thumbnail.waitFor();assert.equal(await thumbnail.getAttribute('preload'),'metadata');assert.equal(await thumbnail.getAttribute('controls'),null);assert.equal(await thumbnail.getAttribute('autoplay'),null);
- await page.screenshot({path:'/data2/wujing03/sandbox-harness-platform/.data/media-gallery-desktop.png',fullPage:true});
+ await page.screenshot({path:'/data2/wujing03/sandbox-harness-platform-parallel/.data/media-gallery-desktop.png',fullPage:true});
  await page.getByRole('button',{name:'预览 演示视频.mp4'}).click();const preview=page.locator('.media-preview video');await preview.waitFor();assert.equal(await preview.getAttribute('controls'),'');await page.getByLabel('关闭预览').click();
  await page.setViewportSize({width:390,height:844});await page.waitForTimeout(100);const mobileColumns=await page.locator('.artifact-gallery').evaluate(node=>getComputedStyle(node).gridTemplateColumns.split(' ').length);assert.equal(mobileColumns,2);
  const mobileBoxes=await tiles.evaluateAll(nodes=>nodes.map(node=>{const box=node.getBoundingClientRect();return {x:box.x,y:box.y,width:box.width}}));assert.equal(mobileBoxes[0].y,mobileBoxes[1].y);assert.ok(mobileBoxes[2].y>mobileBoxes[0].y);
- await page.screenshot({path:'/data2/wujing03/sandbox-harness-platform/.data/media-gallery-mobile.png',fullPage:true});
+ await page.screenshot({path:'/data2/wujing03/sandbox-harness-platform-parallel/.data/media-gallery-mobile.png',fullPage:true});
  assert.deepEqual(errors,[]);console.log(JSON.stringify({passed:true,media_tiles:6,svg_thumbnail:true,desktop_columns:4,mobile_columns:2,video_thumbnail:true,preview:true,download:true}));
 }finally{await browser?.close()}})().catch(error=>{console.error(error);process.exit(1)});

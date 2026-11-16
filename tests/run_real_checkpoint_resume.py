@@ -73,7 +73,7 @@ Read the already existing /workspace/project/{project_file}, compute its SHA-256
 
 async def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-url", default="http://127.0.0.1:22766/")
+    parser.add_argument("--base-url", default="http://127.0.0.1:24766/")
     parser.add_argument("--report", default=".data/first-capability-report.json")
     parser.add_argument("--case", choices=[*PROJECT_FILES, "all"], default="all")
     args = parser.parse_args()

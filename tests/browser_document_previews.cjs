@@ -4,7 +4,7 @@ const {execFileSync}=require('node:child_process');
 const fs=require('node:fs');
 const path=require('node:path');
 
-const root='/data2/wujing03/sandbox-harness-platform',fixtures=path.join(root,'.data/document-preview-fixtures');
+const root='/data2/wujing03/sandbox-harness-platform-parallel',fixtures=path.join(root,'.data/document-preview-fixtures');
 execFileSync(path.join(root,'.venv/bin/python'),[path.join(root,'tests/document_preview_fixtures.py')]);
 const files={pdf:fs.readFileSync(path.join(fixtures,'sample.pdf')),pptx:fs.readFileSync(path.join(fixtures,'sample.pptx')),docx:fs.readFileSync(path.join(fixtures,'sample.docx')),xlsx:fs.readFileSync(path.join(fixtures,'sample.xlsx'))};
 
@@ -27,7 +27,7 @@ const files={pdf:fs.readFileSync(path.join(fixtures,'sample.pdf')),pptx:fs.readF
   if(pathname.includes('/events'))return route.fulfill({status:200,contentType:'text/event-stream',body:''});
   return json({});
  });
- await page.goto(process.env.TEST_BASE_URL||'http://127.0.0.1:22766/');await page.waitForSelector('.new-thread');
+ await page.goto(process.env.TEST_BASE_URL||'http://127.0.0.1:24766/');await page.waitForSelector('.new-thread');
  await page.locator('.thread-list button').filter({hasText:'文档预览'}).click();await page.waitForSelector('.artifact-document-media');assert.equal(await page.locator('.artifact-document-media').count(),4);await page.waitForFunction(()=>document.querySelectorAll('.artifact-document-media canvas').length===2);await page.waitForFunction(()=>document.querySelector('.document-thumbnail-docx')?.innerText.includes('DOCX preview'));await page.waitForFunction(()=>document.querySelector('.document-thumbnail-sheet')?.innerText.includes('Images'));
  await page.getByRole('button',{name:/report.pdf/}).click();await page.waitForSelector('.document-preview-shell .document-pdf');await page.waitForFunction(()=>document.querySelectorAll('.document-preview-shell .react-pdf__Page').length===2);assert.ok(await page.locator('.document-preview-shell .document-pdf').evaluate(node=>getComputedStyle(node).overflowY==='auto'));await page.getByLabel('关闭预览').click();
  await page.getByRole('button',{name:/slides.pptx/}).click();await page.waitForSelector('.document-pdf.paged');await page.getByLabel('下一页').click();assert.match(await page.locator('.document-pdf nav').textContent(),/2 \/ 2/);await page.getByLabel('关闭预览').click();

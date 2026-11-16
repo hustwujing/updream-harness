@@ -14,8 +14,8 @@ if [[ ! "$network_id" =~ ^[0-9a-f]{64}$ || "$source_cidr" != 172.31.0.0/24 || "$
   exit 1
 fi
 bridge="br-${network_id:0:12}"
-port=28600:28601
-comment=sandbox-harness-gateway
+port=29880:29881
+comment=sandbox-harness-parallel-gateway
 rule=(-i "$bridge" -s "$source_cidr" -d "$gateway" -p tcp -m multiport --dports "$port" -m comment --comment "$comment" -j ACCEPT)
 
 case "$action" in

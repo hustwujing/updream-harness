@@ -13,12 +13,12 @@ class Response:
 
 
 def test_site_worker_is_independent_and_runtime_cli_is_installed():
-    unit = (ROOT / "deploy/systemd/sandbox-harness-site-worker.service").read_text()
+    unit = (ROOT / "deploy/systemd/sandbox-harness-parallel-site-worker.service").read_text()
     install = (ROOT / "deploy/install-units.sh").read_text()
     project = (ROOT / "pyproject.toml").read_text()
     runtime = (ROOT / "src/sandbox_runtime/instructions.py").read_text()
-    assert "sandbox-harness-site-worker" in unit and "site-worker.log" in unit
-    assert "sandbox-harness-site-worker.service" in install
+    assert "sandbox-harness-parallel-site-worker" in unit and "site-worker.log" in unit
+    assert "sandbox-harness-parallel-site-worker.service" in install
     assert 'sandbox-harness-site-worker = "sandbox_harness.site_service:run"' in project
     assert 'sandbox-site = "sandbox_runtime.site_cli:main"' in project
     assert "sandbox-site prepare" in runtime and "temporary localhost" in runtime

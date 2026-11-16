@@ -7,14 +7,14 @@ const assert=require('node:assert/strict');
   browser=await chromium.launch({headless:true,args:['--no-sandbox'],ignoreDefaultArgs:['--disable-dev-shm-usage']});
   for(const viewport of [{name:'desktop',width:1440,height:960},{name:'short-desktop',width:1280,height:600},{name:'mobile',width:390,height:844}]){
    const page=await browser.newPage({viewport});const errors=[];page.on('pageerror',error=>errors.push(error.message));
-   await page.goto('http://127.0.0.1:22766/');await page.waitForSelector('.new-thread');
+   await page.goto('http://127.0.0.1:24766/');await page.waitForSelector('.new-thread');
    await page.waitForTimeout(100);
    assert.equal(await page.locator('.thread-list section button').count(),0);
    if(viewport.name==='mobile'){
     await page.locator('.topbar .mobile-only').click();await page.waitForSelector('.sidebar.open');
     await page.locator('.new-thread').click();await page.waitForSelector('.sidebar.open',{state:'hidden'});await page.waitForTimeout(220);
    }
-   if(viewport.name==='mobile')await page.screenshot({path:'/data2/wujing03/sandbox-harness-platform/.data/ui-mobile.png',fullPage:true});
+   if(viewport.name==='mobile')await page.screenshot({path:'/data2/wujing03/sandbox-harness-platform-parallel/.data/ui-mobile.png',fullPage:true});
    await page.getByRole('button',{name:'Workspace',exact:true}).click();await page.waitForSelector('.inspector.open');
    if(viewport.name==='mobile'){assert.equal(await page.locator('.sidebar.open').count(),0);await page.waitForTimeout(220);}
    if(viewport.name==='desktop')assert.ok((await page.locator('.transcript').boundingBox()).width>500);
@@ -41,7 +41,7 @@ const assert=require('node:assert/strict');
    assert.equal(await page.getByTitle('更多').count(),0);
    assert.ok(await page.getByRole('button',{name:'Workspace',exact:true}).isVisible());
    assert.deepEqual(errors,[]);
-   await page.screenshot({path:`/data2/wujing03/sandbox-harness-platform/.data/ui-${viewport.name}-workspace.png`,fullPage:true});
+   await page.screenshot({path:`/data2/wujing03/sandbox-harness-platform-parallel/.data/ui-${viewport.name}-workspace.png`,fullPage:true});
    await page.close();
   }
   console.log(JSON.stringify({passed:true,viewports:['desktop','short-desktop','mobile'],catalog_mapping:true,new_session_empty:true,workspace:true,composer_in_viewport:true}));

@@ -1,28 +1,28 @@
 [Unit]
 Description=Sandbox Harness dedicated PostgreSQL cluster
 After=local-fs.target
-Before=sandbox-harness-api.service
+Before=sandbox-harness-parallel-api.service
 
 [Service]
 Type=notify
 User=sandbox-harness-db
 Group=sandbox-harness-db
-Environment=PGDATA=/data2/wujing03/sandbox-harness-platform/.data/postgresql/data
-ExecStart=/usr/lib/postgresql/16/bin/postgres -D ${PGDATA} -h 127.0.0.1 -p 25432 -k /data2/wujing03/sandbox-harness-platform/.data/postgresql/run
+Environment=PGDATA=/data2/wujing03/sandbox-harness-platform-parallel/.data/postgresql/data
+ExecStart=/usr/lib/postgresql/16/bin/postgres -D ${PGDATA} -h 127.0.0.1 -p 28432 -k /data2/wujing03/sandbox-harness-platform-parallel/.data/postgresql/run
 ExecReload=/bin/kill -HUP $MAINPID
 KillSignal=SIGINT
 TimeoutStopSec=120
 Restart=on-failure
 RestartSec=3
 UMask=0077
-StandardOutput=append:/data2/wujing03/sandbox-harness-platform/.data/postgresql/postgresql.log
-StandardError=append:/data2/wujing03/sandbox-harness-platform/.data/postgresql/postgresql.log
+StandardOutput=append:/data2/wujing03/sandbox-harness-platform-parallel/.data/postgresql/postgresql.log
+StandardError=append:/data2/wujing03/sandbox-harness-platform-parallel/.data/postgresql/postgresql.log
 NoNewPrivileges=true
 PrivateTmp=false
 TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/data2/wujing03/sandbox-harness-platform/.data/postgresql
+ReadWritePaths=/data2/wujing03/sandbox-harness-platform-parallel/.data/postgresql
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true

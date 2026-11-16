@@ -10,8 +10,8 @@ const fs=require('node:fs');
   browser=await chromium.launch({headless:true,args:['--no-sandbox'],ignoreDefaultArgs:['--disable-dev-shm-usage']});
   for(const viewport of [{name:'desktop',width:1440,height:900},{name:'mobile',width:390,height:844}]){
    const page=await browser.newPage({viewport});const errors=[];page.on('pageerror',error=>errors.push(error.message));
-   await page.context().addCookies([{name:'sandbox_harness_session',value:token,url:'http://127.0.0.1:22766/'}]);
-   await page.goto('http://127.0.0.1:22766/');await page.waitForSelector('.new-thread');
+   await page.context().addCookies([{name:'sandbox_harness_session',value:token,url:'http://127.0.0.1:24766/'}]);
+   await page.goto('http://127.0.0.1:24766/');await page.waitForSelector('.new-thread');
    if(viewport.name==='mobile'){await page.locator('.topbar .mobile-only').click();await page.waitForSelector('.sidebar.open');}
    const target=page.locator('.thread-list button').filter({hasText:'Workspace visual fixture'});
    await target.click();await page.waitForTimeout(150);
@@ -31,13 +31,13 @@ const fs=require('node:fs');
     await asset.getByTitle('版本记录').click();await asset.locator('.project-file-history').waitFor();
     await asset.getByTitle('重命名').click();await asset.locator('input').fill('renamed-reference.txt');await asset.getByRole('button',{name:'保存'}).click();
     await page.getByText('renamed-reference.txt',{exact:true}).waitFor();
-    const upload='/data2/wujing03/sandbox-harness-platform/.data/browser-upload.txt';fs.writeFileSync(upload,'browser-upload');
+    const upload='/data2/wujing03/sandbox-harness-platform-parallel/.data/browser-upload.txt';fs.writeFileSync(upload,'browser-upload');
     await page.locator('.inspector input[type=file]').setInputFiles(upload);await page.getByText('browser-upload.txt',{exact:true}).waitFor();
     const uploaded=page.locator('.project-file-wrap').filter({hasText:'browser-upload.txt'});await uploaded.getByTitle('删除').click();
     await page.getByText('browser-upload.txt',{exact:true}).waitFor({state:'detached'});
    }
    assert.deepEqual(errors,[]);
-   await page.screenshot({path:`/data2/wujing03/sandbox-harness-platform/.data/project-files-${viewport.name}.png`,fullPage:true});
+   await page.screenshot({path:`/data2/wujing03/sandbox-harness-platform-parallel/.data/project-files-${viewport.name}.png`,fullPage:true});
    await page.close();
   }
   console.log(JSON.stringify({passed:true,project_files:3,viewports:['desktop','mobile']}));

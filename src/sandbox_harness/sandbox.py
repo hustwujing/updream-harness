@@ -48,7 +48,7 @@ class SandboxBackend(Protocol):
 
 
 class OpenSandboxBackend:
-    def __init__(self, base_url: str, api_key: str, timeout_seconds: int, namespace: str, gateway_url: str = "http://172.31.0.1:28600", proxy_port: int = 28601):
+    def __init__(self, base_url: str, api_key: str, timeout_seconds: int, namespace: str, gateway_url: str = "http://172.31.0.1:29880", proxy_port: int = 29881):
         headers = {"OPEN-SANDBOX-API-KEY": api_key} if api_key else {}
         self.client = httpx.AsyncClient(base_url=base_url.rstrip("/"), headers=headers, timeout=30, trust_env=False)
         self.timeout_seconds = timeout_seconds

@@ -13,7 +13,7 @@ import tempfile
 
 def main():
     parser=argparse.ArgumentParser()
-    parser.add_argument('--env-file',default='/data2/wujing03/sandbox-harness-platform/.data/config/platform.env')
+    parser.add_argument('--env-file',default='/data2/wujing03/sandbox-harness-platform-parallel/.data/config/platform.env')
     parser.add_argument('--code-root',type=Path,help='Clean checkout to deploy; defaults to this repository')
     parser.add_argument('--record-file',type=Path,help='Override release manifest path')
     args=parser.parse_args()

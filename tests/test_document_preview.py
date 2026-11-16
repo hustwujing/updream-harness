@@ -55,5 +55,5 @@ def test_presentation_preview_isolates_shared_extension_cache(tmp_path, monkeypa
 
 
 def test_api_private_tmp_allows_libreoffice_ipc_pipe():
-    unit = (ROOT / "deploy/systemd/sandbox-harness-api.service").read_text()
+    unit = (ROOT / "deploy/systemd/sandbox-harness-parallel-api.service").read_text()
     assert "TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,mode=1777" in unit

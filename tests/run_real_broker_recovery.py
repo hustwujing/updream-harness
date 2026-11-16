@@ -29,7 +29,7 @@ async def request(client: httpx.AsyncClient, method: str, path: str, **kwargs) -
 
 async def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-url", default="http://127.0.0.1:22766/")
+    parser.add_argument("--base-url", default="http://127.0.0.1:24766/")
     parser.add_argument("--report", default=".data/broker-recovery-report.json")
     args = parser.parse_args()
     async with httpx.AsyncClient(base_url=args.base_url, timeout=None, trust_env=False) as client:
@@ -57,9 +57,9 @@ async def main() -> None:
             raise TimeoutError("Turn did not enter an observable Runtime execution")
 
         old_pid = subprocess.check_output(["systemctl", "show", "-p", "MainPID", "--value",
-            "sandbox-harness-api.service"], text=True).strip()
+            "sandbox-harness-parallel-api.service"], text=True).strip()
         subprocess.run(["sudo", "-n", "systemctl", "kill", "--kill-who=main", "--signal=SIGKILL",
-            "sandbox-harness-api.service"], check=True)
+            "sandbox-harness-parallel-api.service"], check=True)
         killed_at = time.monotonic()
 
         final = None
@@ -72,7 +72,7 @@ async def main() -> None:
         else:
             raise TimeoutError("Recovered Turn did not finish")
         new_pid = subprocess.check_output(["systemctl", "show", "-p", "MainPID", "--value",
-            "sandbox-harness-api.service"], text=True).strip()
+            "sandbox-harness-parallel-api.service"], text=True).strip()
         if final["state"] != "COMPLETED":
             raise AssertionError(f"Recovered Turn ended {final['state']}: {final.get('error_code')} {final.get('error_detail')}")
         if new_pid == old_pid or final["sandbox_id"] != before["sandbox_id"]:

@@ -3653,7 +3653,7 @@ wheels = [
 ]
 
 [[package]]
-name = "sandbox-harness-platform"
+name = "sandbox-harness-platform-parallel"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

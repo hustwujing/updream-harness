@@ -4,7 +4,7 @@ from pathlib import Path
 import httpx
 ROOT=Path(__file__).parents[1]
 async def main():
- async with httpx.AsyncClient(base_url='http://127.0.0.1:22766/',timeout=None,trust_env=False) as client:
+ async with httpx.AsyncClient(base_url='http://127.0.0.1:24766/',timeout=None,trust_env=False) as client:
   title='LIVE-U-BG-'+uuid.uuid4().hex[:8];thread=(await client.post('api/threads',json={'harness':'claude','model':'claude-sonnet-5-5','reasoning_level':'standard','title':title})).json()
   response=await client.post(f"api/threads/{thread['id']}/turns",json={'message':"Run exactly: sandbox-background start --name browser-cancel -- python -c 'import time;time.sleep(60)'. Then reply briefly.",'attachments':[],'idempotency_key':'browser-bg-'+uuid.uuid4().hex,'delivery_mode':'start'});response.raise_for_status();turn=response.json()
   for _ in range(240):
