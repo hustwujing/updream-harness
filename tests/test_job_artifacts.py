@@ -117,6 +117,10 @@ def test_mime_registry_sniffs_aliases_and_unknowns(tmp_path):
     assert MimeRegistry.detect(svg,'image/svg+xml')=='image/svg+xml'
     document=tmp_path/'report.json';document.write_text('{"status":"succeeded"}\n')
     assert MimeRegistry.detect(document,'application/json')=='application/json'
+    mp3=tmp_path/'audio.mp3';mp3.write_bytes(b'ID3\x04\x00\x00\x00\x00\x00\x00')
+    assert MimeRegistry.detect(mp3,'audio/mpeg')=='audio/mpeg'
+    m4a=tmp_path/'audio.m4a';m4a.write_bytes(b'\x00\x00\x00\x18ftypM4A \x00\x00\x00\x00')
+    assert MimeRegistry.detect(m4a,'audio/mp4')=='audio/mp4'
     invalid=tmp_path/'invalid.svg';invalid.write_text('<svg>')
     with pytest.raises(ValueError,match='does not match'):
         MimeRegistry.detect(invalid,'image/svg+xml')
