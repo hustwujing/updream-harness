@@ -92,6 +92,21 @@ async def test_draft_reject_and_expire_create_no_jobs(tmp_path):
         await store.close()
 
 
+async def test_active_child_sandbox_is_preserved_only_while_job_is_nonterminal(tmp_path):
+    store=await make_store(tmp_path)
+    try:
+        _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id='a'*32,
+            origin_turn_id='b'*32,idempotency_key='active-child-sandbox-group',jobs=[request('child')]))
+        attempt=await store.claim_job(jobs[0].id,'worker','node',30)
+        await store.record_job_acceptance(jobs[0].id,'worker',attempt.generation,
+            external_execution_id='execution',receipt={'sandbox_id':'sandbox-child'})
+        assert await store.active_job_sandbox_ids()=={'sandbox-child'}
+        await store.transition_job(jobs[0].id,JobState.SUCCEEDED,
+            expected_generation=attempt.generation,result={'ok':True})
+        assert await store.active_job_sandbox_ids()==set()
+    finally:await store.close()
+
+
 async def test_confirming_expired_draft_persists_expired_state(tmp_path):
     store = await make_store(tmp_path)
     try:

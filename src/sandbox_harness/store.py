@@ -2507,6 +2507,19 @@ class Store:
                 SandboxControlRow.state.in_(["user_controlled", "releasing"])))).scalars().all()
         return set(rows)
 
+    async def active_job_sandbox_ids(self) -> set[str]:
+        async with self.connections() as db:
+            rows=(await db.execute(select(JobAttemptRow.acceptance_receipt_json).join(
+                JobRow,JobRow.id==JobAttemptRow.job_id).where(
+                JobRow.state.not_in([state.value for state in TERMINAL_JOB_STATES]),
+                JobAttemptRow.accepted_at.is_not(None)))).scalars().all()
+        result=set()
+        for encoded in rows:
+            try:identity=json.loads(encoded).get('sandbox_id','')
+            except (TypeError,ValueError):continue
+            if isinstance(identity,str) and identity:result.add(identity)
+        return result
+
     async def expired_sandbox_controls(self, limit: int = 20) -> list[dict]:
         async with self.connections() as db:
             rows = (await db.execute(select(SandboxControlRow).where(

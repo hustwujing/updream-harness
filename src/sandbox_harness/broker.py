@@ -121,7 +121,8 @@ class Broker:
         await self.pool.retry_deletions()
         live_turns = await self.store.nonterminal_turn_ids()
         active_ids = ({sandbox.id for sandbox in self.active_sandboxes.values()}
-            | await self.pool.managed_sandbox_ids() | await self.store.active_sandbox_control_ids())
+            | await self.pool.managed_sandbox_ids() | await self.store.active_sandbox_control_ids()
+            | await self.store.active_job_sandbox_ids())
         for sandbox in await self.pool.backend.list_namespace():
             turn_id = sandbox.metadata.get("sandbox-harness.io/turn", "")
             if turn_id.startswith("warm-") and not delete_stale_warm:

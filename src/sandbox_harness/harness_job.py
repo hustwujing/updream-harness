@@ -12,6 +12,7 @@ from .job_adapters import AdapterStatus, AdapterSubmission, BaseJobAdapter, JobE
 from .job_contracts import JobState
 from .artifact_gateway import ArtifactEmission,ArtifactGateway
 from .scheduler import ResourceRequest, Scheduler
+from .sandbox import SandboxNotFound
 
 
 class ChildExecutionBackend(Protocol):
@@ -236,7 +237,13 @@ class OpenSandboxChildBackend:
         sandbox=await self._sandbox(context,receipt)
         self._ensure_collector(context,sandbox,external_execution_id)
         value=await self.runtime.execution_status(sandbox,external_execution_id)
-        if not value:return AdapterStatus(False)
+        if not value:
+            try:await self.pool.backend.get(sandbox.id)
+            except SandboxNotFound:
+                self.sessions.pop(context.job.id,None)
+                return AdapterStatus(True,JobState.FAILED,{
+                    'error_code':'child_sandbox_lost','sandbox_id':sandbox.id})
+            return AdapterStatus(False)
         result=value.get('result')
         if result is None:return AdapterStatus(False)
         status=result.get('status')

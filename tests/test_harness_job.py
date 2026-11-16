@@ -10,7 +10,7 @@ from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.config import Settings
 from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate
 from sandbox_harness.objects import ObjectStore
-from sandbox_harness.sandbox import Sandbox
+from sandbox_harness.sandbox import Sandbox,SandboxNotFound
 from sandbox_harness.scheduler import NodeInventory,Scheduler
 from sandbox_harness.store import Store
 
@@ -129,3 +129,20 @@ async def test_opensandbox_child_collects_output_into_atomic_delivery(tmp_path):
         files=await store.current_project_files(thread.id,'owner')
         assert [value.path for value in files]==['artifacts/jobs/'+job.id+'/result.png']
     finally:await store.close()
+
+
+async def test_missing_child_sandbox_is_terminal_not_an_infinite_pending_status(tmp_path):
+    sandbox=Sandbox(id='sandbox-lost',harness=Harness.CODEX,image='image',
+        runtime_url='http://runtime',metadata={})
+    class Runtime:
+        async def execution_status(self,*args):return None
+    class Backend:
+        async def get(self,*args):raise SandboxNotFound('gone')
+    backend=OpenSandboxChildBackend(pool=SimpleNamespace(backend=Backend()),runtime=Runtime(),
+        store=SimpleNamespace(),objects=SimpleNamespace(),
+        settings=Settings(backend='fake',data_root=tmp_path),token_factory=lambda *args:None)
+    backend.sessions['job-lost']=sandbox
+    context=SimpleNamespace(job=SimpleNamespace(id='job-lost'))
+    value=await backend.status(context,'execution',{'sandbox_id':sandbox.id})
+    assert value.terminal and value.state==JobState.FAILED
+    assert value.result['error_code']=='child_sandbox_lost'
