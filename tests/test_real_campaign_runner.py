@@ -126,6 +126,14 @@ class JobGroupClient:
         raise AssertionError(path)
 
 
+class PaginatedItemClient:
+    async def get(self,path,params=None):
+        assert path.endswith('/items');after=int(params['after']);limit=int(params['limit'])
+        rows=[{'sequence':index,'type':'tool'} for index in range(after+1,min(after+limit,500)+1)]
+        if after>=500:rows=[{'sequence':501,'type':'artifact'}] if after==500 else []
+        return Response(rows)
+
+
 @pytest.mark.asyncio
 async def test_media_campaign_confirms_waits_for_job_and_continuation(monkeypatch):
     campaign=campaign_module();client=MediaClient()
@@ -148,6 +156,12 @@ async def test_campaign_waits_for_job_group_continuation_and_quiescence(monkeypa
     final,jobs=await campaign.settle_media_workflow(client,'thread-1',
         {'id':'turn-1','state':'COMPLETED'},running,'C16',10,allow_external=True)
     assert client.graph_polls>=5 and final=={'id':'turn-2','state':'COMPLETED'} and jobs==[]
+
+
+@pytest.mark.asyncio
+async def test_item_reader_paginates_to_tail_artifacts():
+    campaign=campaign_module();items=await campaign.list_all_items(PaginatedItemClient(),'thread-1')
+    assert len(items)==501 and items[-1]=={'sequence':501,'type':'artifact'}
 
 
 def test_media_provider_failure_is_not_prompt_failure():

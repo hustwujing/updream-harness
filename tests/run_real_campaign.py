@@ -58,6 +58,16 @@ async def upload(client,path):
     response.raise_for_status();return response.json()
 
 
+async def list_all_items(client,thread_id):
+    values=[];after=0
+    while True:
+        response=await client.get(f"api/threads/{thread_id}/items",
+            params={"after":after,"limit":500});response.raise_for_status();rows=response.json()
+        if not rows:return values
+        values.extend(rows);after=max(int(row.get("sequence",0)) for row in rows)
+        if len(rows)<500:return values
+
+
 def classify(final,artifacts,media_jobs=None):
     state=final.get("state","");code=final.get("error_code","") or ""
     if state=="COMPLETED" and artifacts:return "success",""
@@ -283,9 +293,7 @@ async def primary_case(client,case,args,running):
         if intervention in AFTER_ARTIFACT_INTERVENTIONS:
             deadline=time.monotonic()+args.timeout
             while time.monotonic()<deadline:
-                current=await client.get(f"api/threads/{thread['id']}/items")
-                current.raise_for_status()
-                if any(row.get('type')=='artifact' for row in current.json()):break
+                if any(row.get('type')=='artifact' for row in await list_all_items(client,thread['id'])):break
                 await asyncio.sleep(1)
             else:raise TimeoutError('intervention_artifact_timeout')
         else:await asyncio.sleep(args.intervention_delay)
@@ -306,8 +314,8 @@ async def primary_case(client,case,args,running):
         final=await wait_turn(client,intervention_turn,running,case["id"],args.timeout)
     final,media_jobs=await settle_media_workflow(client,thread["id"],final,running,case["id"],
         args.timeout,allow_external=bool(case.get("allowed_external_operations")))
-    response=await client.get(f"api/threads/{thread['id']}/items");response.raise_for_status()
-    items=response.json();artifacts=[row for row in items if row.get("type")=="artifact"]
+    items=await list_all_items(client,thread['id'])
+    artifacts=[row for row in items if row.get("type")=="artifact"]
     classification,reason=classify(final,artifacts,media_jobs)
     validation_errors,validation=await validate_artifacts(client,case,artifacts) if artifacts else ([],[])
     if classification=="success" and validation_errors:
