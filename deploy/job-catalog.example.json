@@ -61,6 +61,27 @@
       "reconciliation_policy": {"supported": false},
       "runtime_profile_id": "media-cpu",
       "runtime_harness": "codex"
+    },
+    {
+      "id": "media.concat_sequence",
+      "version": "1",
+      "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "execution_mode": "durable",
+      "timeout_seconds": 7200,
+      "parameter_schema": {"type": "object", "properties": {"recipe": {"type": "object", "properties": {"operation": {"const": "media.concat_sequence"}, "source_role": {"type": "string"}, "music_role": {"type": "string"}, "segment_count": {"type": "integer", "minimum": 1, "maximum": 100}, "segment_seconds": {"type": "number", "minimum": 0.2, "maximum": 60}, "width": {"type": "integer", "minimum": 16, "maximum": 8192}, "height": {"type": "integer", "minimum": 16, "maximum": 8192}, "fps": {"type": "integer", "minimum": 1, "maximum": 120}, "output_filename": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$"}}, "required": ["operation", "source_role", "music_role", "segment_count", "segment_seconds", "width", "height", "fps", "output_filename"], "additionalProperties": false}}, "required": ["recipe"], "additionalProperties": false},
+      "input_roles": ["source", "music"],
+      "output_roles": ["rendered_media", "compiler_report"],
+      "required_capabilities": [],
+      "network_origins": [],
+      "resources": {"cpu": 4, "memory_mb": 4096, "gpu": 0},
+      "side_effects": false,
+      "billable": false,
+      "creates_artifacts": true,
+      "retry_policy": {"max_pre_accept_attempts": 2, "deterministic": true},
+      "cancellation_policy": {"supported": false},
+      "reconciliation_policy": {"supported": false},
+      "runtime_profile_id": "media-cpu",
+      "runtime_harness": "codex"
     }
   ],
   "capabilities": [

@@ -59,9 +59,17 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
                 data=await asyncio.to_thread(self.objects.get,artifact.object_ref,
                     maximum=self.settings.max_artifact_bytes)
                 await self.runtime.put_project_file(sandbox,path,data,artifact.mime);inputs[item.artifact_role]=path
-            recipe=dict(context.request.parameters['recipe']);role=str(recipe.pop('input_role'))
-            if role not in inputs:raise ValueError('operation_input_role_missing')
-            value=await self.runtime.media_render(sandbox,{**recipe,'input_path':inputs[role]})
+            recipe=dict(context.request.parameters['recipe'])
+            if recipe.get('operation')=='media.concat_sequence':
+                source_role=str(recipe.pop('source_role'));music_role=str(recipe.pop('music_role'))
+                if source_role not in inputs or music_role not in inputs:
+                    raise ValueError('operation_input_role_missing')
+                runtime_value={**recipe,'source_path':inputs[source_role],'music_path':inputs[music_role]}
+            else:
+                role=str(recipe.pop('input_role'))
+                if role not in inputs:raise ValueError('operation_input_role_missing')
+                runtime_value={**recipe,'input_path':inputs[role]}
+            value=await self.runtime.media_render(sandbox,runtime_value)
             self.sessions[context.job.id]=sandbox
             receipt={'sandbox_id':sandbox.id,'capability_nonce':claims.nonce,
                 'reservation_id':reservation.id,'node_id':reservation.node_id,

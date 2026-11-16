@@ -70,8 +70,10 @@ class Configure(BaseModel):
 
 
 class MediaRenderOperation(BaseModel):
-    operation: Literal["image.resize","video.transcode","audio.process"]
-    input_path: str = Field(min_length=1,max_length=2000)
+    operation: Literal["image.resize","video.transcode","audio.process","media.concat_sequence"]
+    input_path: str = Field(default="",max_length=2000)
+    source_path: str = Field(default="",max_length=2000)
+    music_path: str = Field(default="",max_length=2000)
     output_filename: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
     width: int = Field(default=0,ge=0,le=8192)
     height: int = Field(default=0,ge=0,le=8192)
@@ -84,6 +86,8 @@ class MediaRenderOperation(BaseModel):
     fade_out: float = Field(default=0,ge=0,le=30)
     highpass_hz: float = Field(default=0,ge=0,le=300)
     denoise: bool = False
+    segment_count: int = Field(default=1,ge=1,le=100)
+    segment_seconds: float = Field(default=2,ge=.2,le=60)
 
 
 class JobArtifactStage(BaseModel):
@@ -1370,18 +1374,86 @@ def create_app() -> FastAPI:
     async def media_render_operation(value:MediaRenderOperation):
         if not app.state.child_mode or app.state.runtime_profile_id not in {"media-cpu","primary-full-cpu"}:
             raise HTTPException(403,"Controlled media Operation requires an authorized media Runtime Profile")
-        relative=safe_relative(value.input_path)
-        if len(relative.parts)<3 or relative.parts[:2]!=("assets","inputs"):
-            raise HTTPException(422,"Operation input must be a frozen Job Artifact")
-        source=WORKSPACE/"project"/relative
-        try:
-            if (not source.is_file() or source.is_symlink()
-                    or not source.resolve().is_relative_to((WORKSPACE/"project/assets/inputs").resolve())):
-                raise ValueError
-        except (OSError,ValueError):raise HTTPException(404,"Operation input is unavailable")
+        def frozen_input(raw:str)->Path:
+            relative=safe_relative(raw)
+            if len(relative.parts)<3 or relative.parts[:2]!=("assets","inputs"):
+                raise HTTPException(422,"Operation input must be a frozen Job Artifact")
+            source=WORKSPACE/"project"/relative
+            try:
+                if (not source.is_file() or source.is_symlink()
+                        or not source.resolve().is_relative_to((WORKSPACE/"project/assets/inputs").resolve())):
+                    raise ValueError
+            except (OSError,ValueError):raise HTTPException(404,"Operation input is unavailable")
+            return source
+        if value.operation=="media.concat_sequence":
+            source=frozen_input(value.source_path);music=frozen_input(value.music_path)
+        else:source=frozen_input(value.input_path)
         target=OUTPUTS/value.output_filename;target.unlink(missing_ok=True)
         if value.operation in {"image.resize","video.transcode"} and (not value.width or not value.height):
             raise HTTPException(422,"Image and video Operations require non-zero dimensions")
+        if value.operation=="media.concat_sequence":
+            work=WORKSPACE/"tmp"/("concat-sequence-"+uuid.uuid4().hex);work.mkdir(parents=True)
+            try:
+                probe=await asyncio.create_subprocess_exec("ffprobe","-v","error","-show_entries",
+                    "format=duration","-of","json",str(source),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                probe_out,_=await probe.communicate();source_duration=float(
+                    json.loads(probe_out).get("format",{}).get("duration") or 0)
+                if probe.returncode or source_duration<value.segment_seconds:
+                    raise HTTPException(422,"Sequence source is shorter than one segment")
+                segments=[];font="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+                for index in range(value.segment_count):
+                    segment=work/f"segment_{index+1:03d}.mp4";offset=(index*value.segment_seconds)%source_duration
+                    label=f"{index+1:02d}";filter_value=(
+                        f"scale={value.width}:{value.height}:force_original_aspect_ratio=decrease,"
+                        f"pad={value.width}:{value.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,"
+                        f"drawbox=x=24:y=24:w=100:h=64:color=black@0.65:t=fill,"
+                        f"drawtext=fontfile={font}:text='{label}':x=44:y=32:fontsize=42:fontcolor=white")
+                    process=await asyncio.create_subprocess_exec("ffmpeg","-nostdin","-v","error","-y",
+                        "-ss",f"{offset:.6f}","-i",str(source),"-t",f"{value.segment_seconds:.6f}",
+                        "-an","-vf",filter_value,"-r",str(value.fps),"-c:v","libx264","-pix_fmt","yuv420p",
+                        str(segment),stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+                    output,_=await asyncio.wait_for(process.communicate(),timeout=1800)
+                    if process.returncode or not segment.is_file():
+                        raise HTTPException(422,"Sequence segment render failed")
+                    segments.append(segment)
+                concat=work/"concat.txt";concat.write_text("".join(
+                    "file '"+path.name+"'\n" for path in segments))
+                total=value.segment_count*value.segment_seconds
+                process=await asyncio.create_subprocess_exec("ffmpeg","-nostdin","-v","error","-y",
+                    "-f","concat","-safe","0","-i",str(concat),"-stream_loop","-1","-i",str(music),
+                    "-t",f"{total:.6f}","-map","0:v:0","-map","1:a:0","-c:v","copy","-c:a","aac",
+                    "-shortest",str(target),stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+                output,_=await asyncio.wait_for(process.communicate(),timeout=7200)
+                if process.returncode or not target.is_file():raise HTTPException(422,"Sequence concat failed")
+                probe=await asyncio.create_subprocess_exec("ffprobe","-v","error","-show_streams",
+                    "-show_format","-of","json",str(target),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                probe_out,_=await probe.communicate();metadata=json.loads(probe_out)
+                streams=metadata.get("streams",[]);video=next((row for row in streams
+                    if row.get("codec_type")=="video"),{});audio=next((row for row in streams
+                    if row.get("codec_type")=="audio"),{})
+                output_duration=float(metadata.get("format",{}).get("duration") or 0)
+                if (probe.returncode or abs(output_duration-total)>.2 or int(video.get("width") or 0)!=value.width
+                        or int(video.get("height") or 0)!=value.height or not audio):
+                    raise HTTPException(422,"Sequence output contract failed")
+                with target.open("rb") as stream:digest=hashlib.file_digest(stream,"sha256").hexdigest()
+                report={"schema":1,"status":"succeeded","segment_count":value.segment_count,
+                    "segment_seconds":value.segment_seconds,"source_duration":source_duration,
+                    "sequence":[{"position":index+1,"label":f"{index+1:02d}",
+                        "source_offset":round((index*value.segment_seconds)%source_duration,6)}
+                        for index in range(value.segment_count)],
+                    "output":{"name":target.name,"duration":output_duration,"width":value.width,
+                        "height":value.height,"fps":value.fps,"audio":True,"sha256":digest,
+                        "size":target.stat().st_size}}
+                report_path=OUTPUTS/"compiler-report.json"
+                report_path.write_text(json.dumps(report,ensure_ascii=False,indent=2)+"\n")
+                with report_path.open("rb") as stream:report_digest=hashlib.file_digest(stream,"sha256").hexdigest()
+                return {"outputs":[{"role":"rendered_media","path":target.name,
+                    "size":target.stat().st_size,"sha256":digest,"mime":"video/mp4",
+                    "validation_receipts":[{"validator":"video","status":"pass",
+                        "artifact_digests":[digest],"evidence":report["output"]}]},
+                    {"role":"compiler_report","path":report_path.name,"size":report_path.stat().st_size,
+                        "sha256":report_digest,"mime":"application/json"}]}
+            finally:shutil.rmtree(work,ignore_errors=True)
         if value.operation=="image.resize":
             argv=["ffmpeg","-hide_banner","-loglevel","error","-y","-i",str(source),
                 "-vf",f"scale={value.width}:{value.height}:force_original_aspect_ratio=decrease,"

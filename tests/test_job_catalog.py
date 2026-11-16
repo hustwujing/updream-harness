@@ -80,7 +80,8 @@ def test_review_policy_is_structured_and_default_off():
 def test_example_job_catalog_is_parseable_and_digest_verified():
     raw=(ROOT/'deploy/job-catalog.example.json').read_text()
     value=JobCatalog.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest())
-    assert {row.id for row in value.payload.operations}=={'artifact.inspect','media.render','audio.process'}
+    assert {row.id for row in value.payload.operations}=={
+        'artifact.inspect','media.render','audio.process','media.concat_sequence'}
     assert {row.id for row in value.payload.capabilities}=={'image.generate'}
     audio=value.operation('audio.process','1','d'*64)
     recipe=audio.parameter_schema['properties']['recipe']
@@ -91,3 +92,6 @@ def test_example_job_catalog_is_parseable_and_digest_verified():
         job_catalog=value,profile_resolver=SimpleNamespace(skills={},children={})).public_execution_metadata()
     exposed=next(row for row in public['operations'] if row['id']=='audio.process')
     assert exposed['parameter_schema']==audio.parameter_schema
+    concat=value.operation('media.concat_sequence','1','e'*64)
+    assert concat.input_roles==('source','music') and concat.output_roles==(
+        'rendered_media','compiler_report')

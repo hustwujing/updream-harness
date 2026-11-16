@@ -7,6 +7,7 @@ import asyncio
 import io
 import tarfile
 import wave
+import subprocess
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -120,6 +121,31 @@ def test_controlled_audio_process_emits_audio_and_objective_report(tmp_path,monk
     assert audio['validation_receipts'][0]['artifact_digests']==[audio['sha256']]
     report=json.loads((tmp_path/'workspace/outputs/audio-process-report.json').read_text())
     assert report['normalization_applied'] and abs(report['output']['duration']-2)<.05
+
+
+def test_controlled_concat_sequence_renders_numbered_video_and_report(tmp_path,monkeypatch):
+    monkeypatch.setattr(runtime_app,'RUN',tmp_path/'run');monkeypatch.setattr(runtime_app,'WORKSPACE',tmp_path/'workspace')
+    monkeypatch.setattr(runtime_app,'OUTPUTS',tmp_path/'workspace/outputs');monkeypatch.setattr(runtime_app,'PERSISTENT',('project','state'))
+    inputs=tmp_path/'workspace/project/assets/inputs';inputs.mkdir(parents=True)
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','testsrc2=size=64x36:rate=10',
+        '-t','2','-c:v','libx264','-pix_fmt','yuv420p',str(inputs/'source.mp4')],check=True)
+    subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:sample_rate=16000',
+        '-t','2',str(inputs/'music.wav')],check=True)
+    app=runtime_app.create_app()
+    with TestClient(app) as client:
+        client.post('/v1/configure',json={'thread_id':'a'*32,'turn_id':'b'*32,
+            'sandbox_id':'sandbox-operation','capability_token':'x'*32,
+            'gateway_url':'http://gateway:28600','harness':'codex','model':'operation-only',
+            'proxy_url':'http://172.31.0.1:28601','runtime_profile_id':'media-cpu','child_mode':True})
+        response=client.post('/v1/operations/media-render',json={'operation':'media.concat_sequence',
+            'source_path':'assets/inputs/source.mp4','music_path':'assets/inputs/music.wav',
+            'output_filename':'sequence.mp4','segment_count':2,'segment_seconds':.5,
+            'width':64,'height':36,'fps':10})
+    assert response.status_code==200,response.text
+    value=response.json();assert {row['role'] for row in value['outputs']}=={
+        'rendered_media','compiler_report'}
+    report=json.loads((tmp_path/'workspace/outputs/compiler-report.json').read_text())
+    assert report['segment_count']==2 and abs(report['output']['duration']-1)<.1
 
 
 def test_controlled_media_operation_rejects_primary_or_unmanaged_paths(tmp_path,monkeypatch):
