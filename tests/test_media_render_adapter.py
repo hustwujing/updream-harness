@@ -88,7 +88,8 @@ async def test_media_render_adapter_collects_role_addressed_operation_outputs(tm
             descriptor_id='audio.process',descriptor_version='1',descriptor_digest='d'*64,
             idempotency_key='audio-operation-job',parameters={'recipe':{'operation':'audio.process'}},
             expected_outputs=(
-                JobExpectedOutput(artifact_role='processed_audio',output_disposition='delivery',min_items=1),
+                JobExpectedOutput(artifact_role='processed_audio',output_disposition='delivery',min_items=1,
+                    validators=('audio',)),
                 JobExpectedOutput(artifact_role='measurement_report',output_disposition='workspace',min_items=1)))
         _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id=thread.id,
             origin_turn_id=turn.id,idempotency_key='audio-operation-group',jobs=[request]))
@@ -105,7 +106,8 @@ async def test_media_render_adapter_collects_role_addressed_operation_outputs(tm
         context=JobExecutionContext(job=job,request=request,generation=attempt.generation,
             previous_acceptance_receipt={'sandbox_id':'sandbox'})
         result=await adapter.collect(context,'operation:'+job.id,AdapterStatus(True,JobState.SUCCEEDED,{
-            'outputs':[{'role':'processed_audio','path':'processed.wav','mime':'audio/wav'},
+            'outputs':[{'role':'processed_audio','path':'processed.wav','mime':'audio/wav',
+                'validation_receipts':[{'validator':'audio','status':'pass'}]},
                 {'role':'measurement_report','path':'audio-process-report.json','mime':'application/json'}]}))
         assert {row['artifact_role'] for row in result['artifacts']}=={
             'processed_audio','measurement_report'}

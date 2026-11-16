@@ -100,8 +100,11 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
                 filename=Path(path).name,output_disposition=contract.output_disposition,
                 declared_mime=str(value.get('mime','application/octet-stream'))),chunks())
             artifacts.append(artifact.model_dump(mode='json'))
+            receipts=[]
+            for receipt in value.get('validation_receipts',[]):
+                current=dict(receipt);current.setdefault('artifact_digests',[artifact.sha256]);receipts.append(current)
             collections.append(await self.store.finalize_job_artifact_collection(
-                context.job.id,context.generation,role))
+                context.job.id,context.generation,role,validation_receipts=receipts))
         return {'operation':context.request.parameters['recipe']['operation'],
             'artifacts':artifacts,'collections':collections}
 

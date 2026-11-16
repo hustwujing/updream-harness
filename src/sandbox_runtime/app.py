@@ -1463,7 +1463,9 @@ def create_app() -> FastAPI:
             report_path.write_text(json.dumps(report,ensure_ascii=False,indent=2)+"\n")
             with report_path.open("rb") as stream:report_digest=hashlib.file_digest(stream,"sha256").hexdigest()
             return {"outputs":[{"role":"processed_audio","path":target.name,"size":target.stat().st_size,
-                "sha256":digest,"mime":mimetypes.guess_type(target.name)[0] or "application/octet-stream"},
+                "sha256":digest,"mime":mimetypes.guess_type(target.name)[0] or "application/octet-stream",
+                "validation_receipts":[{"validator":"audio","status":"pass",
+                    "artifact_digests":[digest],"evidence":output_metadata}]},
                 {"role":"measurement_report","path":report_path.name,"size":report_path.stat().st_size,
                 "sha256":report_digest,"mime":"application/json"}]}
         return {"path":value.output_filename,"size":target.stat().st_size,"sha256":digest,

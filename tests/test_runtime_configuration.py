@@ -115,6 +115,9 @@ def test_controlled_audio_process_emits_audio_and_objective_report(tmp_path,monk
     assert configured.status_code==200 and response.status_code==200,response.text
     value=response.json();assert {row['role'] for row in value['outputs']}=={
         'processed_audio','measurement_report'}
+    audio=next(row for row in value['outputs'] if row['role']=='processed_audio')
+    assert audio['validation_receipts'][0]['validator']=='audio'
+    assert audio['validation_receipts'][0]['artifact_digests']==[audio['sha256']]
     report=json.loads((tmp_path/'workspace/outputs/audio-process-report.json').read_text())
     assert report['normalization_applied'] and abs(report['output']['duration']-2)<.05
 
