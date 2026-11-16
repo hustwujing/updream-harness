@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from .domain import TERMINAL, TurnState
-from .store import (InteractionRow, JobActivityRow, JobArtifactRow, JobGroupDraftRow, JobGroupRow, JobRow,
+from .store import (InteractionRow, JobActivityRow, JobArtifactRow, JobAttemptRow, JobGroupDraftRow, JobGroupRow, JobRow,
     ResourceReservationRow, ThreadRow, TurnRow, utc_datetime)
 
 
@@ -58,12 +58,18 @@ class ExecutionGraphProjector:
                 ResourceReservationRow.job_id.in_(job_ids or {''})))).scalars().all())
             activities=list((await db.execute(select(JobActivityRow).where(
                 JobActivityRow.job_id.in_(job_ids or {''})))).scalars().all())
+            attempts=list((await db.execute(select(JobAttemptRow).where(
+                JobAttemptRow.job_id.in_(job_ids or {''})))).scalars().all())
             artifacts=list((await db.execute(select(JobArtifactRow).where(
                 JobArtifactRow.job_id.in_(job_ids or {''})).order_by(
                 JobArtifactRow.job_id,JobArtifactRow.artifact_role,JobArtifactRow.position))).scalars().all())
         reservation_by_job={row.job_id:row for row in reservations}
         activity_count={identity:0 for identity in job_ids}
         for row in activities:activity_count[row.job_id]=activity_count.get(row.job_id,0)+1
+        retry_count={identity:0 for identity in job_ids}
+        for row in attempts:
+            if row.outcome=='PRE_ACCEPT_RETRY' or row.retry_kind in {'recovery','reconcile'}:
+                retry_count[row.job_id]=retry_count.get(row.job_id,0)+1
         artifacts_by_job={identity:[] for identity in job_ids}
         for row in artifacts:artifacts_by_job[row.job_id].append({'artifact_id':row.artifact_id,
             'artifact_role':row.artifact_role,'filename':row.filename,'mime':row.mime,
@@ -103,20 +109,30 @@ class ExecutionGraphProjector:
             edges.append({'from':parent,'to':identity,'kind':'contains' if group.draft_id else 'submitted_by'})
         for job in jobs:
             reservation=reservation_by_job.get(job.id);resources=json.loads(reservation.gpu_ids_json) if reservation else []
+            request=json.loads(job.request_json);requirements=request.get('resource_requirements') or {}
+            runtime_profile=request.get('runtime_profile_id') or ''
             role=('质量审查员' if job.descriptor_id=='review.submit' else '委托任务执行员'
                 if job.kind=='harness' else '外部能力任务' if job.kind=='provider' else '任务执行员')
             location=('opensandbox' if job.kind=='harness' else 'external_provider' if job.kind=='provider'
                 else 'gpu_worker' if resources else 'host_worker')
             labels={'opensandbox':'OpenSandbox','external_provider':'外部服务','gpu_worker':'GPU Worker','host_worker':'宿主 Worker'}
+            location_label=labels[location]+((' · '+runtime_profile) if location=='opensandbox' and runtime_profile else '')
             nodes.append({'id':'job:'+job.id,'type':'job','role':role,
                 'title':f'{job.local_job_id} · {job.descriptor_id}','state':job.state,
-                'location':location,'location_label':labels[location],
+                'location':location,'location_label':location_label,
                 'started_at':iso(job.created_at),'ended_at':iso(job.terminal_at),
-                'duration_ms':duration_ms(job.created_at,job.terminal_at) if job.terminal_at else 0,'retries':max(0,job.generation-1),
+                'duration_ms':duration_ms(job.created_at,job.terminal_at) if job.terminal_at else 0,
+                'retries':retry_count.get(job.id,0),
                 'activity_count':activity_count.get(job.id,0),'job_id':job.id,'turn_id':job.origin_turn_id,
                 'artifacts':artifacts_by_job.get(job.id,[]),
                 'resources':{'cpu':reservation.cpu if reservation else None,
-                    'memory_mb':reservation.memory_mb if reservation else None,'gpu_ids':resources}})
+                    'memory_mb':reservation.memory_mb if reservation else None,'gpu_ids':resources,
+                    'runtime_profile_id':runtime_profile,'child_profile_id':request.get('child_profile_id') or '',
+                    'harness':requirements.get('harness') or request.get('parameters',{}).get('harness') or '',
+                    'model':request.get('parameters',{}).get('model') or '',
+                    'skill_ids':request.get('skill_ids') or [],
+                    'capability_ids':requirements.get('required_capability_ids') or [],
+                    'network_origins':request.get('network_origins') or []}})
             edges.append({'from':'group:'+job.group_id,'to':'job:'+job.id,'kind':'contains'})
         for interaction in interactions:
             identity='interaction:'+interaction.id

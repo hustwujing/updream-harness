@@ -41,6 +41,10 @@ async def test_execution_graph_contains_only_factual_boundaries_and_truthful_loc
         assert provider_node['location']=='external_provider'
         assert child_node['location']=='opensandbox' and child_node['activity_count']==1
         assert child_node['retries']==0 and child_node['state']=='RUNNING'
+        assert child_node['location_label']=='OpenSandbox · general-cpu'
+        assert child_node['resources']['runtime_profile_id']=='general-cpu'
+        assert child_node['resources']['child_profile_id']=='child-general'
+        assert child_node['resources']['harness']=='codex'
         assert {'submitted_by','contains','requested_interaction'}<={edge['kind'] for edge in graph['edges']}
         unchanged=await ExecutionGraphProjector(store).snapshot(thread.id,'owner',cursor=graph['cursor'])
         assert unchanged=={'cursor':graph['cursor'],'reset':False,'nodes':[],'edges':[]}
