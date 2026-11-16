@@ -136,6 +136,12 @@ def test_selective_build_keeps_state_under_data2_and_reuses_original_vendor():
     assert 'ln "$drawio_vendor/drawio-amd64-32.6.10.deb"' in source
     assert "partial development matrix" in source
     assert "BUILD_PROFILES" in source and "BUILD_HARNESSES" in source
+    assert 'bootstrap_hash=$(content_hash bootstrap-v1' in source
+    assert 'common_hash=$(content_hash "$bootstrap_hash"' in source
+    assert 'profile_hash=$(content_hash "$common_hash"' in source
+    for value in ("requirements-runtime.txt","bundle_public_key.pem","bootstrap_entrypoint.sh",
+            "runtime_cli_dispatch.sh","proxy_bridge.cjs","playwright_proxy_patch.cjs","apply_patch.py"):
+        assert value in source
 
 
 def test_profile_catalog_builder_requires_complete_digest_pinned_matrix(tmp_path):

@@ -21,13 +21,24 @@ output_root="$root/.data/image-build/$tag"
 mkdir -p "$output_root"
 [[ "$output_root" == /data2/wujing03/sandbox-harness-platform-parallel/.data/* ]]
 
-bootstrap_hash=$(sha256sum "$root/runtime/bootstrap.Dockerfile" | cut -c1-12)
+content_hash() {
+  local parent=$1
+  shift
+  { printf '%s\n' "$parent"; sha256sum "$@"; } | sha256sum | cut -c1-12
+}
+mapfile -t bootstrap_sources < <(find "$root/src/sandbox_bootstrap" -type f | sort)
+bootstrap_hash=$(content_hash bootstrap-v1 "$root/runtime/bootstrap.Dockerfile" \
+  "$root/runtime/requirements-runtime.txt" "$root/runtime/bundle_public_key.pem" \
+  "$root/runtime/bootstrap_entrypoint.sh" "$root/runtime/runtime_cli_dispatch.sh" \
+  "${bootstrap_sources[@]}")
 bootstrap="sandbox-harness-parallel-bootstrap:$bootstrap_hash"
 if ! "$docker" image inspect "$bootstrap" >/dev/null 2>&1; then
   "$docker" build --network host -f "$root/runtime/bootstrap.Dockerfile" \
     --build-arg "SANDBOX_USERNAME=$sandbox_username" -t "$bootstrap" "$root"
 fi
-common_hash=$(sha256sum "$root/runtime/common.Dockerfile" "$root/runtime/requirements-common.txt" | sha256sum | cut -c1-12)
+common_hash=$(content_hash "$bootstrap_hash" "$root/runtime/common.Dockerfile" \
+  "$root/runtime/requirements-common.txt" "$root/runtime/proxy_bridge.cjs" \
+  "$root/runtime/playwright_proxy_patch.cjs" "$root/runtime/apply_patch.py")
 common="sandbox-harness-parallel-common:$common_hash"
 if ! "$docker" image inspect "$common" >/dev/null 2>&1; then
   "$docker" build --network host -f "$root/runtime/common.Dockerfile" \
@@ -46,19 +57,21 @@ for profile in $profiles; do
     data-analysis) requirement="$root/runtime/requirements-data.txt" ;;
     primary-full-cpu) requirement="$root/runtime/requirements-runtime.txt" ;;
   esac
-  profile_hash=$(sha256sum "$dockerfile" "$requirement" | sha256sum | cut -c1-12)
+  profile_inputs=("$dockerfile" "$requirement")
+  if [[ "$profile" == primary-full-cpu ]]; then
+    test -f "$drawio_vendor/drawio-amd64-32.6.10.deb"
+    mkdir -p "$root/runtime/vendor"
+    if [[ ! -f "$root/runtime/vendor/drawio-amd64-32.6.10.deb" ]]; then
+      ln "$drawio_vendor/drawio-amd64-32.6.10.deb" \
+        "$root/runtime/vendor/drawio-amd64-32.6.10.deb"
+    fi
+    printf '%s  %s\n' fc96faafe68cb4e06c0b7116779891592b20fce2cde7907adec504f23c5af83c \
+      "$root/runtime/vendor/drawio-amd64-32.6.10.deb" | sha256sum -c -
+    profile_inputs+=("$root/runtime/vendor/drawio-amd64-32.6.10.deb")
+  fi
+  profile_hash=$(content_hash "$common_hash" "${profile_inputs[@]}")
   profile_image="sandbox-harness-parallel-$profile:$profile_hash"
   if ! "$docker" image inspect "$profile_image" >/dev/null 2>&1; then
-    if [[ "$profile" == primary-full-cpu ]]; then
-      test -f "$drawio_vendor/drawio-amd64-32.6.10.deb"
-      mkdir -p "$root/runtime/vendor"
-      if [[ ! -f "$root/runtime/vendor/drawio-amd64-32.6.10.deb" ]]; then
-        ln "$drawio_vendor/drawio-amd64-32.6.10.deb" \
-          "$root/runtime/vendor/drawio-amd64-32.6.10.deb"
-      fi
-      printf '%s  %s\n' fc96faafe68cb4e06c0b7116779891592b20fce2cde7907adec504f23c5af83c \
-        "$root/runtime/vendor/drawio-amd64-32.6.10.deb" | sha256sum -c -
-    fi
     "$docker" build --network host -f "$dockerfile" \
       --build-arg "COMMON_IMAGE=$common" -t "$profile_image" "$root"
   fi
