@@ -117,7 +117,9 @@ async def test_one_job_exception_does_not_crash_service_worker(tmp_path):
         else:raise AssertionError('isolated failure was not recorded')
         assert not task.done()
         worker.stop_event.set();await task
-        assert (await store.get_job(job.id)).result['error_code']=='worker_internal_error'
+        result=(await store.get_job(job.id)).result
+        assert result['error_code']=='worker_internal_error'
+        assert result['exception_type']=='AttributeError' and 'terminal' in result['error_detail']
     finally:await store.close()
 
 

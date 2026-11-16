@@ -56,15 +56,24 @@ class JobWorker:
         try:await self.process(attempt,continuous=True)
         except Exception as exc:
             event('job.worker.process_failed',level=40,job_id=attempt.job_id,
-                generation=attempt.generation,exception_type=type(exc).__name__)
+                generation=attempt.generation,exception_type=type(exc).__name__,exc=exc)
             job=await self.store.get_job(attempt.job_id)
             if not job or job.state in TERMINAL_JOB_STATES:return
             state=JobState.UNKNOWN if job.kind==JobKind.PROVIDER else JobState.FAILED
             try:
                 await self.store.transition_job(job.id,state,expected_generation=attempt.generation,
-                    result={'error_code':'worker_internal_error','exception_type':type(exc).__name__})
+                    result={'error_code':'worker_internal_error','exception_type':type(exc).__name__,
+                        'error_detail':str(exc)[:2000]})
             except RuntimeError as stale:
                 if str(stale)!='stale_job_generation':raise
+                return
+            accepted=await self.store.latest_job_acceptance(job.id)
+            request=await self.store.get_job_request(job.id);adapter=self.adapters.get(job.adapter)
+            if accepted and request and adapter:
+                context=JobExecutionContext(job=job,request=request,generation=attempt.generation,
+                    previous_external_execution_id=accepted.external_execution_id,
+                    previous_acceptance_receipt=accepted.acceptance_receipt)
+                await self._cleanup(adapter,context,accepted.external_execution_id)
 
     async def process(self, attempt, *, continuous: bool = False) -> None:
         job = await self.store.get_job(attempt.job_id)
