@@ -153,7 +153,7 @@ class Broker:
         if heartbeats:await asyncio.gather(*heartbeats,return_exceptions=True)
         self.heartbeats.clear()
         for turn_id, generation in list(self.leases.items()):
-            await self.store.release_turn_lease(turn_id, self.instance_id, generation)
+            await self._release_turn_lease_safely(turn_id,generation)
         return preserve_sandbox_ids
 
     async def _recovery_loop(self) -> None:
@@ -180,7 +180,7 @@ class Broker:
                 logger.exception("Turn reconciliation failed turn=%s", turn.id)
                 generation = self.leases.pop(turn.id, None)
                 if generation is not None:
-                    await self.store.release_turn_lease(turn.id, self.instance_id, generation)
+                    await self._release_turn_lease_safely(turn.id,generation)
 
     @observed("turn.recover", new_trace=True)
     async def _reconcile_turn(self, turn) -> None:
@@ -213,7 +213,7 @@ class Broker:
                     "generation": claimed.recovery_generation, "final_state": target.value})
                 logger.warning("Recovered cleanup turn=%s generation=%s final=%s", turn.id, claimed.recovery_generation, target.value)
                 await self._state(turn.id, target, sandbox_id="", error_code=claimed.error_code, error_detail=claimed.error_detail)
-                await self.store.release_turn_lease(turn.id, self.instance_id, claimed.recovery_generation)
+                await self._release_turn_lease_safely(turn.id,claimed.recovery_generation)
                 self.leases.pop(turn.id, None)
                 next_turn = await self.store.claim_next_turn(turn.thread_id, turn.id)
                 if next_turn:
@@ -241,7 +241,7 @@ class Broker:
             await self.store.complete_agent_item(turn.id, "interrupted")
             await self._state(turn.id, TurnState.FAILED, sandbox_id="", error_code="turn_interrupted_during_harness_execution",
                 error_detail="Harness execution was interrupted and was not replayed because external side effects may already exist")
-            await self.store.release_turn_lease(turn.id, self.instance_id, claimed.recovery_generation)
+            await self._release_turn_lease_safely(turn.id,claimed.recovery_generation)
             self.leases.pop(turn.id, None)
             next_turn = await self.store.claim_next_turn(turn.thread_id, turn.id)
             if next_turn:
@@ -440,6 +440,14 @@ class Broker:
                     and task and not task.cancelling()):
                 task.cancel()
 
+    async def _release_turn_lease_safely(self,turn_id:str,generation:int)->None:
+        release=asyncio.create_task(self.store.release_turn_lease(
+            turn_id,self.instance_id,generation),name="turn-lease-release-"+turn_id)
+        try:await asyncio.shield(release)
+        except asyncio.CancelledError:
+            await release
+            raise
+
     async def _record_runtime_event(self, thread_id: str, turn_id: str, value: RuntimeEvent,
                                     execution_id: str = "") -> None:
         generation = self.leases.get(turn_id)
@@ -580,7 +588,7 @@ class Broker:
             heartbeat.cancel()
             await asyncio.gather(heartbeat, return_exceptions=True)
             self.heartbeats.pop(turn_id, None)
-            await self.store.release_turn_lease(turn_id, self.instance_id, generation)
+            await self._release_turn_lease_safely(turn_id,generation)
             self.leases.pop(turn_id, None)
             self.tasks.pop(turn_id, None)
             return
@@ -589,7 +597,7 @@ class Broker:
             heartbeat.cancel()
             await asyncio.gather(heartbeat, return_exceptions=True)
             self.heartbeats.pop(turn_id, None)
-            await self.store.release_turn_lease(turn_id, self.instance_id, generation)
+            await self._release_turn_lease_safely(turn_id,generation)
             self.leases.pop(turn_id, None)
             self.tasks.pop(turn_id, None)
             return
@@ -834,7 +842,7 @@ class Broker:
         finally:
             try:
                 if abandoned:
-                    await self.store.release_turn_lease(turn_id, self.instance_id, generation)
+                    await self._release_turn_lease_safely(turn_id,generation)
                     self.leases.pop(turn_id, None)
                     self.tasks.pop(turn.id, None)
                     return
@@ -933,7 +941,7 @@ class Broker:
                     next_turn = await self.store.claim_next_turn(turn.thread_id, turn.id)
                     if next_turn:
                         self._schedule(next_turn.id)
-                    await self.store.release_turn_lease(turn.id, self.instance_id, generation)
+                    await self._release_turn_lease_safely(turn.id,generation)
                     self.leases.pop(turn.id, None)
                     self.tasks.pop(turn.id, None)
             finally:
