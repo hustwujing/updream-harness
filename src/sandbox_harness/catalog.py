@@ -7,6 +7,8 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .domain import Harness
+from .job_catalog import JobCatalog
+from .profiles import ProfileResolver
 
 
 DEFAULT_CATALOG = {
@@ -86,7 +88,8 @@ class ResolvedProfile:
 
 
 class HarnessCatalog:
-    def __init__(self, raw: str | None = None):
+    def __init__(self, raw: str | None = None, *, job_catalog: JobCatalog | None = None,
+                 profile_resolver: ProfileResolver | None = None):
         value = json.loads(raw) if raw else DEFAULT_CATALOG
         if set(value) != {item.value for item in Harness}:
             raise ValueError("Catalog must configure codex, claude and deepseek")
@@ -96,6 +99,32 @@ class HarnessCatalog:
             for harness, option in self.options.items()
         }
         self.availability: dict[tuple[Harness, str], dict[str, Any]] = {}
+        self.job_catalog = job_catalog
+        self.profile_resolver = profile_resolver
+
+    def public_execution_metadata(self) -> dict[str, list[dict]]:
+        if not self.job_catalog or not self.profile_resolver:
+            return {"operations": [], "capabilities": [], "skills": [],
+                "child_execution_profiles": []}
+        return {
+            "operations": [{"id": row.id, "version": row.version,
+                "digest": row.digest, "execution_mode": row.execution_mode,
+                "input_roles": list(row.input_roles), "output_roles": list(row.output_roles)}
+                for row in self.job_catalog.payload.operations],
+            "capabilities": [{"id": row.id, "version": row.version,
+                "digest": row.digest, "operations": list(row.operations),
+                "input_roles": list(row.input_roles), "output_roles": list(row.output_roles)}
+                for row in self.job_catalog.payload.capabilities],
+            "skills": [{"id": row.id, "version": row.version, "digest": row.digest,
+                "supported_harnesses": list(row.supported_harnesses),
+                "required_capabilities": list(row.required_capabilities),
+                "network_origins": list(row.network_origins), "requires_gpu": row.requires_gpu}
+                for row in self.profile_resolver.skills.values()],
+            "child_execution_profiles": [{"id": row.id,
+                "supported_harnesses": list(row.supported_harnesses),
+                "max_delegation_depth": row.max_delegation_depth}
+                for row in self.profile_resolver.children.values()],
+        }
 
     def replace_models(self, discovered: dict[Harness | str, list[str]]) -> None:
         for raw_harness, identifiers in discovered.items():

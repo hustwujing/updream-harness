@@ -38,14 +38,52 @@ def remove_path(path: Path) -> None:
         shutil.rmtree(path)
 
 
-def materialize_skills(harness: str, workspace: Path) -> dict:
+def clear_materialized_skills(harness: str, workspace: Path) -> list[str]:
+    destination = destination_root(harness, workspace)
+    marker = destination / ".image-bundle.json"
+    previous: set[str] = set()
+    if marker.is_file():
+        try:
+            previous = set(json.loads(marker.read_text()).get("skills", []))
+        except (OSError, ValueError, TypeError):
+            previous = set()
+    for skill_id in previous:
+        remove_path(destination / skill_id)
+    if marker.is_file():
+        marker.write_text(json.dumps({"bundle_version": "deferred", "skills": []},
+            separators=(",", ":")) + "\n")
+    return sorted(previous)
+
+
+def materialize_skills(harness: str, workspace: Path, skill_ids: list[str] | tuple[str, ...],
+                       expected_digests: dict[str, str] | None = None) -> dict:
     source = bundle_root()
     manifest = json.loads((source / "manifest.json").read_text())
     destination = destination_root(harness, workspace)
     destination.mkdir(parents=True, exist_ok=True)
     marker = destination / ".image-bundle.json"
-    selected = [row for row in manifest["skills"] if harness in row["supported_harnesses"]]
+    requested = set(skill_ids)
+    by_id = {row["id"]: row for row in manifest["skills"]}
+    unknown = requested - set(by_id)
+    if unknown:
+        raise ValueError("Unknown Skill IDs: " + ",".join(sorted(unknown)))
+    selected = [by_id[skill_id] for skill_id in sorted(requested)]
+    unsupported = [row["id"] for row in selected if harness not in row["supported_harnesses"]]
+    if unsupported:
+        raise ValueError("Skills do not support Harness: " + ",".join(unsupported))
+    if expected_digests is not None:
+        actual = {row["id"]: row["content_sha256"] for row in selected}
+        if actual != expected_digests:
+            raise ValueError("Skill digest grant does not match signed Runtime Bundle")
     current = {row["id"] for row in selected}
+    previous = set()
+    if marker.is_file():
+        try:
+            previous = set(json.loads(marker.read_text()).get("skills", []))
+        except (OSError, ValueError, TypeError):
+            previous = set()
+    for skill_id in previous - current:
+        remove_path(destination / skill_id)
     for skill_id in manifest.get("retired_skills", []):
         remove_path(destination / skill_id)
     for row in selected:
@@ -62,4 +100,7 @@ def materialize_skills(harness: str, workspace: Path) -> dict:
     }, separators=(",", ":")) + "\n")
     temporary.replace(marker)
     return {"bundle_version": manifest["bundle_version"], "skill_count": len(selected),
-        "root": str(destination)}
+        "skill_ids": sorted(current), "skill_digests": {
+            row["id"]: row["content_sha256"] for row in selected},
+        "added_skill_ids": sorted(current - previous),
+        "revoked_skill_ids": sorted(previous - current), "root": str(destination)}

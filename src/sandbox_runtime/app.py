@@ -29,7 +29,7 @@ from sandbox_harness.observability import RequestLoggingMiddleware, observed, ev
 from .adapters import command, control_interaction_response, control_user_message, normalize, streaming_user_message
 from .instructions import RUNTIME_GUIDANCE, runtime_guidance
 from .runtime_bundle import MAX_BUNDLE_BYTES, activate_runtime_bundle, verify_runtime_bundle_signature
-from .skills import materialize_skills
+from .skills import clear_materialized_skills, materialize_skills
 
 
 WORKSPACE = Path("/workspace")
@@ -58,6 +58,9 @@ class Configure(BaseModel):
     model_start_timeout_seconds: float = Field(default=150, ge=10, le=900)
     event_idle_timeout_seconds: float = Field(default=900, ge=60, le=3600)
     runtime_bundle_digest: str = Field(default="", pattern=r"^$|^[0-9a-f]{64}$")
+    runtime_profile_id: str = Field(default="", max_length=100)
+    skill_ids: list[str] = Field(default_factory=list, max_length=64)
+    skill_digests: dict[str, str] = Field(default_factory=dict)
 
 
 class TurnRequest(BaseModel):
@@ -226,6 +229,10 @@ def create_app() -> FastAPI:
     app.state.model_start_timeout_seconds = 150.0
     app.state.event_idle_timeout_seconds = 900.0
     app.state.harness = ""
+    app.state.runtime_profile_id = ""
+    app.state.skill_ids = []
+    app.state.skill_digests = {}
+    app.state.capability_change_frame = None
     app.state.stream_heartbeat_seconds = 15.0
     jobs_root = WORKSPACE / "state" / "background-jobs"
     jobs_root.mkdir(parents=True, exist_ok=True)
@@ -756,6 +763,11 @@ def create_app() -> FastAPI:
         os.environ["HARNESS_KIND"] = value.harness
         os.environ["HARNESS_MODEL"] = value.model
         app.state.harness = value.harness
+        previous_profile = app.state.runtime_profile_id
+        previous_skills = set(app.state.skill_ids)
+        app.state.runtime_profile_id = value.runtime_profile_id
+        app.state.skill_ids = list(value.skill_ids)
+        app.state.skill_digests = dict(value.skill_digests)
         runtime_home = WORKSPACE / "state" / "home"
         runtime_home.mkdir(parents=True, exist_ok=True)
         os.environ["HOME"] = str(runtime_home)
@@ -774,11 +786,24 @@ def create_app() -> FastAPI:
         os.environ["NO_PROXY"] = no_proxy
         os.environ["no_proxy"] = no_proxy
         skills = None
-        if not value.defer_skill_install:
-            skills = materialize_skills(value.harness, WORKSPACE)
+        if value.defer_skill_install:
+            clear_materialized_skills(value.harness, WORKSPACE)
+        else:
+            skills = materialize_skills(value.harness, WORKSPACE, value.skill_ids,
+                value.skill_digests or None)
             event("runtime.skills.materialized", harness=value.harness,
                 bundle_version=skills["bundle_version"], skill_count=skills["skill_count"])
-        return {"configured": True, "skills": skills, "skills_deferred": value.defer_skill_install}
+        app.state.capability_change_frame = {
+            "type": "platform_capability_change",
+            "runtime_profile_id": value.runtime_profile_id,
+            "previous_runtime_profile_id": previous_profile,
+            "skill_ids": sorted(value.skill_ids),
+            "skill_digests": dict(sorted(value.skill_digests.items())),
+            "added_skill_ids": sorted(set(value.skill_ids) - previous_skills),
+            "revoked_skill_ids": sorted(previous_skills - set(value.skill_ids)),
+        }
+        return {"configured": True, "skills": skills, "skills_deferred": value.defer_skill_install,
+            "capability_change": app.state.capability_change_frame}
 
     @app.put("/v1/checkpoint")
     async def restore(request: Request):
@@ -803,7 +828,8 @@ def create_app() -> FastAPI:
                     safe_members.append(member)
                 archive.extractall(WORKSPACE, members=safe_members, filter="data")
         if app.state.harness:
-            skills = materialize_skills(app.state.harness, WORKSPACE)
+            skills = materialize_skills(app.state.harness, WORKSPACE, app.state.skill_ids,
+                app.state.skill_digests or None)
             event("runtime.skills.materialized", harness=app.state.harness,
                 bundle_version=skills["bundle_version"], skill_count=skills["skill_count"])
         load_jobs()
@@ -970,7 +996,10 @@ def create_app() -> FastAPI:
                 raise HTTPException(409, "Execution is no longer accepting input")
             if not initial and not execution.selected.streaming_input:
                 raise HTTPException(409, "Harness does not have a live input stream")
-            prompt = (runtime_guidance() if initial else "") + value.message
+            change_frame = app.state.capability_change_frame
+            prefix = ((json.dumps(change_frame, ensure_ascii=False, sort_keys=True) + "\n\n")
+                if change_frame else "")
+            prompt = prefix + (runtime_guidance() if initial else "") + value.message
             if value.attachments:
                 prompt += "\n\nAttached files are available in /workspace/inbox. Their immutable records are listed in attachments.json."
                 (WORKSPACE / "inbox" / "attachments.json").write_text(json.dumps(value.attachments, ensure_ascii=False))
@@ -984,6 +1013,8 @@ def create_app() -> FastAPI:
             execution.pending_input_ids.append(value.input_id)
             app.state.pending_inputs = len(execution.pending_input_ids)
             await execution.process.stdin.drain()
+            if change_frame is app.state.capability_change_frame:
+                app.state.capability_change_frame = None
             event("runtime.input.submitted",execution_id=execution.id,input_id=value.input_id)
             if not selected.streaming_input:
                 execution.process.stdin.close()

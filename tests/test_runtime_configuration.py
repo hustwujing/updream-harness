@@ -61,6 +61,36 @@ def test_runtime_configuration_freezes_turn_harness_and_model(tmp_path, monkeypa
     assert (tmp_path / "run" / "capability-token").read_text() == "x" * 32
 
 
+def test_capability_change_frame_precedes_next_native_input(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
+    monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")
+    monkeypatch.setattr(runtime_app, "OUTPUTS", tmp_path / "workspace" / "outputs")
+    monkeypatch.setattr(runtime_app, "PERSISTENT", ("project", "state"))
+    runner=tmp_path/'echo_prompt.py'
+    runner.write_text("""import json,sys
+value=json.loads(sys.stdin.readline())
+prompt=value['message']['content'][0]['text']
+print(json.dumps({'type':'stream_event','event':{'type':'content_block_delta','delta':{'type':'text_delta','text':prompt}}}),flush=True)
+print(json.dumps({'type':'result','session_id':'native','usage':{}}),flush=True)
+""")
+    monkeypatch.setenv('HARNESS_COMMAND_JSON',json.dumps({name:[sys.executable,str(runner)]
+        for name in ('codex','claude','deepseek')}))
+    app=runtime_app.create_app()
+    with TestClient(app) as client:
+        configured=client.post('/v1/configure',json={'capability_token':'x'*32,
+            'gateway_url':'http://gateway:28600','harness':'claude','model':'model',
+            'proxy_url':'http://172.31.0.1:28601','runtime_profile_id':'general-cpu',
+            'skill_ids':[],'skill_digests':{}})
+        response=client.post('/v1/turns',json={'message':'USER_PAYLOAD','execution_id':'frame-order',
+            'input_id':'initial','reasoning_effort':'high'})
+    assert configured.status_code==200 and response.status_code==200
+    text=''.join(json.loads(line).get('payload',{}).get('text','')
+        for line in response.text.splitlines())
+    assert text.startswith('{"added_skill_ids": [], "previous_runtime_profile_id": ""')
+    assert '"type": "platform_capability_change"' in text
+    assert text.index('platform_capability_change') < text.index('USER_PAYLOAD')
+
+
 def test_harness_commands_preload_the_playwright_proxy_bridge(monkeypatch, tmp_path):
     token=tmp_path/'token';token.write_text('x'*32)
     monkeypatch.setenv('HARNESS_GATEWAY_URL','http://gateway:28600')

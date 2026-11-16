@@ -43,6 +43,7 @@ def test_skill_smoke_matrix_covers_every_bundled_skill():
 
 def test_skills_materialize_for_each_native_harness_and_upgrade_managed_entries(tmp_path, monkeypatch):
     monkeypatch.setenv('SANDBOX_RUNTIME_SKILL_ROOT',str(ROOT/'runtime/skills'))
+    all_ids=[row['id'] for row in json.loads((ROOT/'runtime/skills/manifest.json').read_text())['skills']]
     for harness in ('codex','claude','deepseek'):
         workspace=tmp_path/harness
         root=destination_root(harness,workspace);root.mkdir(parents=True)
@@ -50,10 +51,10 @@ def test_skills_materialize_for_each_native_harness_and_upgrade_managed_entries(
         (root/'custom-skill').mkdir()
         (root/'.image-bundle.json').write_text(json.dumps({'bundle_version':'old','skills':['anatomy','removed-skill']}))
         (root/'removed-skill').mkdir()
-        result=materialize_skills(harness,workspace)
+        result=materialize_skills(harness,workspace,all_ids)
         assert result['bundle_version']=='2026.11.14.2' and result['skill_count']==33
         assert (root/'anatomy').is_symlink() and (root/'anatomy/SKILL.md').is_file()
-        assert (root/'removed-skill').is_dir()
+        assert not (root/'removed-skill').exists()
         assert (root/'custom-skill').is_dir()
         assert len(list(root.glob('*/SKILL.md')))==33
 
@@ -72,7 +73,8 @@ def test_deferred_skill_install_replaces_checkpoint_copy_after_restore(tmp_path,
     with TestClient(runtime_app.create_app()) as client:
         configured=client.post('/v1/configure',json={'capability_token':'x'*32,
             'gateway_url':'http://gateway:28600','harness':'codex','model':'model',
-            'proxy_url':'http://172.31.0.1:28601','defer_skill_install':True})
+            'proxy_url':'http://172.31.0.1:28601','defer_skill_install':True,
+            'skill_ids':['anatomy']})
         assert configured.status_code==200 and configured.json()['skills_deferred'] is True
         assert not (tmp_path/'workspace/state/codex/skills/anatomy').exists()
         restored=client.put('/v1/checkpoint',content=archive.getvalue())
@@ -80,6 +82,26 @@ def test_deferred_skill_install_replaces_checkpoint_copy_after_restore(tmp_path,
     installed=tmp_path/'workspace/state/codex/skills/anatomy'
     assert installed.is_symlink()
     assert (installed/'SKILL.md').read_text()!=body.decode()
+
+
+def test_deferred_restore_revokes_current_managed_skills_before_checkpoint(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_app,'RUN',tmp_path/'run')
+    monkeypatch.setattr(runtime_app,'WORKSPACE',tmp_path/'workspace')
+    monkeypatch.setattr(runtime_app,'OUTPUTS',tmp_path/'workspace/outputs')
+    monkeypatch.setattr(runtime_app,'PERSISTENT',('project','state'))
+    monkeypatch.setenv('SANDBOX_RUNTIME_SKILL_ROOT',str(ROOT/'runtime/skills'))
+    app=runtime_app.create_app()
+    with TestClient(app) as client:
+        assert client.post('/v1/configure',json={'capability_token':'x'*32,
+            'gateway_url':'http://gateway:28600','harness':'codex','model':'model',
+            'proxy_url':'http://172.31.0.1:28601','skill_ids':['anatomy']}).status_code==200
+        installed=tmp_path/'workspace/state/codex/skills/anatomy'
+        assert installed.is_symlink()
+        deferred=client.post('/v1/configure',json={'capability_token':'x'*32,
+            'gateway_url':'http://gateway:28600','harness':'codex','model':'model',
+            'proxy_url':'http://172.31.0.1:28601','skill_ids':[],
+            'defer_skill_install':True})
+        assert deferred.status_code==200 and not installed.exists()
 
 
 def test_checkpoint_restore_never_writes_through_materialized_skill_link(tmp_path, monkeypatch):
@@ -96,11 +118,52 @@ def test_checkpoint_restore_never_writes_through_materialized_skill_link(tmp_pat
     with TestClient(runtime_app.create_app()) as client:
         configured=client.post('/v1/configure',json={'capability_token':'x'*32,
             'gateway_url':'http://gateway:28600','harness':'codex','model':'model',
-            'proxy_url':'http://172.31.0.1:28601'})
+            'proxy_url':'http://172.31.0.1:28601','skill_ids':['anatomy']})
         assert configured.status_code==200
         restored=client.put('/v1/checkpoint',content=archive.getvalue())
         assert restored.status_code==400 and restored.json()['detail']=='Checkpoint member traverses a link'
     assert (ROOT/'runtime/skills/anatomy/SKILL.md').read_bytes()==original
+
+
+def test_runtime_materializes_only_granted_skills_and_removes_revoked_managed_paths(tmp_path, monkeypatch):
+    monkeypatch.setenv('SANDBOX_RUNTIME_SKILL_ROOT',str(ROOT/'runtime/skills'))
+    workspace=tmp_path/'workspace'
+    destination=destination_root('codex',workspace);destination.mkdir(parents=True)
+    (destination/'custom-skill').mkdir()
+    first=materialize_skills('codex',workspace,['anatomy','writing-plans'])
+    assert first['skill_ids']==['anatomy','writing-plans']
+    assert (destination/'anatomy').is_symlink() and (destination/'writing-plans').is_symlink()
+    assert not (destination/'docx').exists()
+    second=materialize_skills('codex',workspace,['writing-plans'])
+    assert second['revoked_skill_ids']==['anatomy']
+    assert not (destination/'anatomy').exists()
+    assert (destination/'writing-plans').is_symlink()
+    assert (destination/'custom-skill').is_dir()
+
+
+def test_runtime_configure_reports_authoritative_capability_change(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_app,'RUN',tmp_path/'run')
+    monkeypatch.setattr(runtime_app,'WORKSPACE',tmp_path/'workspace')
+    monkeypatch.setattr(runtime_app,'OUTPUTS',tmp_path/'workspace/outputs')
+    monkeypatch.setenv('SANDBOX_RUNTIME_SKILL_ROOT',str(ROOT/'runtime/skills'))
+    manifest=json.loads((ROOT/'runtime/skills/manifest.json').read_text())
+    anatomy=next(row for row in manifest['skills'] if row['id']=='anatomy')
+    with TestClient(runtime_app.create_app()) as client:
+        first=client.post('/v1/configure',json={'capability_token':'x'*32,
+            'gateway_url':'http://gateway:28600','harness':'codex','model':'model',
+            'proxy_url':'http://172.31.0.1:28601','runtime_profile_id':'web-browser',
+            'skill_ids':['anatomy'],'skill_digests':{'anatomy':anatomy['content_sha256']}})
+        assert first.status_code==200
+        assert first.json()['capability_change']['added_skill_ids']==['anatomy']
+        second=client.post('/v1/configure',json={'capability_token':'x'*32,
+            'gateway_url':'http://gateway:28600','harness':'codex','model':'model',
+            'proxy_url':'http://172.31.0.1:28601','runtime_profile_id':'general-cpu',
+            'skill_ids':[],'skill_digests':{}})
+        frame=second.json()['capability_change']
+        assert frame['previous_runtime_profile_id']=='web-browser'
+        assert frame['runtime_profile_id']=='general-cpu'
+        assert frame['revoked_skill_ids']==['anatomy']
+        assert not (destination_root('codex',tmp_path/'workspace')/'anatomy').exists()
 
 
 def test_runtime_image_declares_skill_dependencies_and_domestic_mirrors():

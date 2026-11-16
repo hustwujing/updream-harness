@@ -92,7 +92,7 @@ def test_runtime_bundle_endpoint_requires_active_digest_before_configuration(tmp
     assert mismatch.status_code == 409
     assert unsigned.status_code == 400
     assert installed.status_code == 200 and installed.json()["sha256"] == digest
-    assert configured.status_code == 200 and configured.json()["skills"]["skill_count"] > 0
+    assert configured.status_code == 200 and configured.json()["skills"]["skill_count"] == 0
 
 
 @pytest.mark.asyncio

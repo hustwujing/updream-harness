@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "operations": [
+    {
+      "id": "artifact.inspect",
+      "version": "1",
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "execution_mode": "inline",
+      "timeout_seconds": 10,
+      "parameter_schema": {"type": "object", "properties": {"artifact_id": {"type": "string"}}, "required": ["artifact_id"], "additionalProperties": false},
+      "input_roles": ["source"],
+      "output_roles": [],
+      "required_capabilities": [],
+      "network_origins": [],
+      "resources": {"cpu": 1, "memory_mb": 128, "gpu": 0},
+      "side_effects": false,
+      "billable": false,
+      "creates_artifacts": false,
+      "retry_policy": {"max_pre_accept_attempts": 1},
+      "cancellation_policy": {"supported": false},
+      "reconciliation_policy": {"supported": false}
+    },
+    {
+      "id": "media.render",
+      "version": "1",
+      "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "execution_mode": "durable",
+      "timeout_seconds": 7200,
+      "parameter_schema": {"type": "object", "properties": {"recipe": {"type": "object"}}, "required": ["recipe"], "additionalProperties": false},
+      "input_roles": ["source", "reference"],
+      "output_roles": ["rendered_media"],
+      "required_capabilities": [],
+      "network_origins": [],
+      "resources": {"cpu": 4, "memory_mb": 8192, "gpu": 0},
+      "side_effects": true,
+      "billable": false,
+      "creates_artifacts": true,
+      "retry_policy": {"max_pre_accept_attempts": 2, "post_accept": "reattach"},
+      "cancellation_policy": {"supported": true},
+      "reconciliation_policy": {"supported": true}
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "image.generate",
+      "version": "1",
+      "digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "operations": ["submit", "status", "cancel", "collect", "reconcile", "cleanup"],
+      "parameter_schema": {"type": "object", "properties": {"prompt": {"type": "string"}}, "required": ["prompt"], "additionalProperties": false},
+      "input_roles": ["reference"],
+      "output_roles": ["generated_images"],
+      "network_origins": ["image-provider"],
+      "resources": {"cpu": 1, "memory_mb": 512, "gpu": 0},
+      "billable": true,
+      "side_effects": true,
+      "retry_policy": {"max_pre_accept_attempts": 2, "post_accept": "reconcile_only"},
+      "cancellation_policy": {"supported": true},
+      "reconciliation_policy": {"supported": true}
+    }
+  ]
+}

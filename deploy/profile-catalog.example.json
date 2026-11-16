@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "child_execution_profiles": [
+    {
+      "id": "child-general",
+      "supported_harnesses": ["codex", "claude", "deepseek"],
+      "allowed_skill_ids": ["academy-guide", "algorithmic-art", "anatomy", "brainstorming", "brand-guidelines", "canvas-design", "claude-api", "codex-ppt", "data-quality-audit", "diagram-design", "discernment-nudge", "doc-and-modernize", "doc-coauthoring", "docx", "drawio-skill", "frontend-design", "image-to-editable-ppt", "internal-comms", "manim-video", "mcp-builder", "pdf", "pptx", "programmatic-eda", "query-validation", "skill-creator", "slack-gif-creator", "systematic-debugging", "theme-factory", "verification-before-completion", "web-artifacts-builder", "webapp-testing", "writing-plans", "xlsx"],
+      "allowed_capability_ids": ["image.generate"],
+      "allowed_operation_ids": ["artifact.inspect", "media.render"],
+      "allowed_network_origins": ["image-provider"],
+      "max_delegation_depth": 1,
+      "fallback_profile_ids": ["primary-full-cpu"]
+    }
+  ],
+  "runtime_dependency_profiles": [
+    {
+      "id": "general-cpu",
+      "supported_harnesses": ["codex", "claude", "deepseek"],
+      "image_digests": {"codex": "1111111111111111111111111111111111111111111111111111111111111111", "claude": "2222222222222222222222222222222222222222222222222222222222222222", "deepseek": "3333333333333333333333333333333333333333333333333333333333333333"},
+      "commands": ["bash", "node", "npm", "python3"],
+      "python_modules": [], "node_modules": [], "dependency_capabilities": [], "network_origins": [], "gpu": false, "priority": 10
+    },
+    {
+      "id": "office",
+      "supported_harnesses": ["codex", "claude", "deepseek"],
+      "image_digests": {"codex": "4444444444444444444444444444444444444444444444444444444444444444", "claude": "5555555555555555555555555555555555555555555555555555555555555555", "deepseek": "6666666666666666666666666666666666666666666666666666666666666666"},
+      "commands": ["libreoffice", "pandoc", "pdftoppm", "pdftotext", "python3", "qpdf", "tesseract"],
+      "python_modules": ["PIL", "defusedxml", "lxml", "markitdown", "openpyxl", "pandas", "pdf2image", "pdfplumber", "pypdf", "pytesseract"],
+      "node_modules": ["docx", "pptxgenjs", "react", "react-dom", "react-icons", "sharp"],
+      "dependency_capabilities": [], "network_origins": [], "gpu": false, "priority": 20
+    },
+    {
+      "id": "web-browser",
+      "supported_harnesses": ["codex", "claude", "deepseek"],
+      "image_digests": {"codex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "claude": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "deepseek": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+      "commands": ["chromium", "node", "pnpm", "python3"],
+      "python_modules": ["playwright"], "node_modules": ["esbuild", "react", "react-dom", "typescript"],
+      "dependency_capabilities": [], "network_origins": [], "gpu": false, "priority": 20
+    },
+    {
+      "id": "data-analysis",
+      "supported_harnesses": ["codex", "claude", "deepseek"],
+      "image_digests": {"codex": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "claude": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "deepseek": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"},
+      "commands": ["python3"], "python_modules": ["numpy", "pandas", "sqlglot"], "node_modules": [],
+      "dependency_capabilities": [], "network_origins": [], "gpu": false, "priority": 20
+    },
+    {
+      "id": "media-cpu",
+      "supported_harnesses": ["codex", "claude", "deepseek"],
+      "image_digests": {"codex": "1212121212121212121212121212121212121212121212121212121212121212", "claude": "1313131313131313131313131313131313131313131313131313131313131313", "deepseek": "1414141414141414141414141414141414141414141414141414141414141414"},
+      "commands": ["dvisvgm", "ffmpeg", "ffprobe", "latex", "manim", "python3"],
+      "python_modules": ["PIL", "manim", "numpy"], "node_modules": [],
+      "dependency_capabilities": [], "network_origins": [], "gpu": false, "priority": 20
+    },
+    {
+      "id": "primary-full-cpu",
+      "supported_harnesses": ["codex", "claude", "deepseek"],
+      "image_digests": {"codex": "7777777777777777777777777777777777777777777777777777777777777777", "claude": "8888888888888888888888888888888888888888888888888888888888888888", "deepseek": "9999999999999999999999999999999999999999999999999999999999999999"},
+      "commands": ["bash", "chromium", "dot", "drawio", "dvisvgm", "ffmpeg", "ffprobe", "latex", "libreoffice", "manim", "node", "npm", "pandoc", "pdftoppm", "pdftotext", "pnpm", "python3", "qpdf", "tesseract"],
+      "python_modules": ["PIL", "anthropic", "defusedxml", "filelock", "fitz", "lxml", "manim", "markitdown", "mcp", "numpy", "openai", "openpyxl", "pandas", "pdf2image", "pdfplumber", "playwright", "pptx", "pypdf", "pytesseract", "requests", "sqlglot", "yaml"],
+      "node_modules": ["docx", "esbuild", "pptxgenjs", "react", "react-dom", "react-icons", "sharp", "typescript"],
+      "dependency_capabilities": ["image.generate"], "network_origins": ["image-provider"], "gpu": false, "priority": 100
+    }
+  ]
+}
