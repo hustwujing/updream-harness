@@ -82,6 +82,7 @@ def test_configure_local_rejects_collision_and_non_data2_storage():
 def test_service_account_can_read_descriptors_and_schema_startup_is_serialized():
     installer=(ROOT/"deploy/install-units.sh").read_text()
     assert '"$root/runtime"' in installer
+    assert 'u:sandbox-harness:rx "$root/deploy"' in installer
     assert '"$root/deploy/job-catalog.example.json"' in installer
     store=(ROOT/"src/sandbox_harness/store.py").read_text()
     assert "pg_advisory_xact_lock" in store
