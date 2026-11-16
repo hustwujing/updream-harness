@@ -1,10 +1,19 @@
 from pathlib import Path
+import importlib.util
 import re
 import tomllib
 
 
 ROOT=Path(__file__).resolve().parents[1]
 DATA_ROOT=ROOT/".data"
+
+
+def load_configure_local():
+    spec=importlib.util.spec_from_file_location("configure_local",ROOT/"deploy/configure-local.py")
+    module=importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 def deployment_text() -> str:
@@ -68,6 +77,41 @@ def test_configure_local_rejects_collision_and_non_data2_storage():
     assert "sandbox-harness-parallel" in source
     assert "/data2/wujing03/sandbox-harness-platform-parallel/.data" in source
     assert "os.path.commonpath" in source
+
+
+def test_configure_local_inherits_provider_configuration_but_not_storage_identity():
+    module=load_configure_local()
+    route_key="CUSTOM_MODEL_ROUTE_KEY"
+    source={
+        "SANDBOX_HARNESS_UPSTREAM_IMAGE":"https://provider.example/v1",
+        "SANDBOX_HARNESS_UPSTREAM_IMAGE_KEY":"provider-secret",
+        "SANDBOX_HARNESS_OBJECT_PUBLIC_ENDPOINT":"https://objects.example",
+        "SANDBOX_HARNESS_OBJECT_PREFIX":"predecessor/",
+        "SANDBOX_HARNESS_DATABASE_URL":"postgresql://predecessor",
+        "SANDBOX_HARNESS_MODEL_ROUTES_JSON":(
+            "'{\"custom/model\":{\"credential_env\":\""+route_key+"\"}}'"),
+        route_key:"route-secret",
+        "UNREFERENCED_SECRET":"must-not-be-copied",
+    }
+    values=dict(module.EXPECTED)
+    module.copy_shared_configuration(values,source)
+    assert values["SANDBOX_HARNESS_UPSTREAM_IMAGE_KEY"]=="provider-secret"
+    assert values["SANDBOX_HARNESS_OBJECT_PUBLIC_ENDPOINT"]=="https://objects.example"
+    assert values[route_key]=="route-secret"
+    assert values["SANDBOX_HARNESS_OBJECT_PREFIX"]=="sandbox-harness-parallel/"
+    assert "SANDBOX_HARNESS_DATABASE_URL" not in values
+    assert "UNREFERENCED_SECRET" not in values
+
+
+def test_configure_local_rejects_unsafe_dynamic_credential_names():
+    module=load_configure_local()
+    unsafe='{\"route\":{\"credential_env\":\"BAD-NAME\"}}'
+    try:
+        module.model_route_credential_keys(unsafe)
+    except ValueError as exc:
+        assert str(exc)=="invalid_model_route_credential_env"
+    else:
+        raise AssertionError("unsafe credential env accepted")
 
 
 def test_release_requires_complete_signed_profile_catalog_under_data2():

@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
+import re
 import secrets
+import shlex
 import shutil
 import socket
 import stat
@@ -25,13 +28,27 @@ EXPECTED={
 }
 FORBIDDEN_IDENTITIES={"sandbox-harness","agent-plus","sandbox-harness-platform-plus"}
 SHARED_CREDENTIAL_KEYS={
+    "AWS_ACCESS_KEY_ID","AWS_DEFAULT_REGION","AWS_SECRET_ACCESS_KEY",
     "SANDBOX_HARNESS_OPENSANDBOX_API_KEY","SANDBOX_HARNESS_UPSTREAM_CODEX_KEY",
     "SANDBOX_HARNESS_UPSTREAM_CLAUDE_KEY","SANDBOX_HARNESS_UPSTREAM_DEEPSEEK_KEY",
+    "SANDBOX_HARNESS_UPSTREAM_CODEX","SANDBOX_HARNESS_UPSTREAM_CLAUDE",
+    "SANDBOX_HARNESS_UPSTREAM_DEEPSEEK","SANDBOX_HARNESS_UPSTREAM_IMAGE",
+    "SANDBOX_HARNESS_UPSTREAM_IMAGE_KEY","SANDBOX_HARNESS_UPSTREAM_VIDEO",
+    "SANDBOX_HARNESS_UPSTREAM_VIDEO_KEY","SANDBOX_HARNESS_UPSTREAM_AUDIO",
+    "SANDBOX_HARNESS_UPSTREAM_AUDIO_KEY",
     "SANDBOX_HARNESS_MODEL_ROUTES_JSON","SANDBOX_HARNESS_TRIPO_API_KEY",
+    "SANDBOX_HARNESS_TRIPO_BASE_URL","SANDBOX_HARNESS_TRIPO_POLL_SECONDS",
+    "SANDBOX_HARNESS_TRIPO_SUBMIT_MAX_RETRIES","SANDBOX_HARNESS_TRIPO_TASK_TIMEOUT_SECONDS",
+    "SANDBOX_HARNESS_TRIPO_WORKER_CONCURRENCY",
     "SANDBOX_HARNESS_ARK_ACCESS_KEY","SANDBOX_HARNESS_ARK_SECRET_KEY",
     "SANDBOX_HARNESS_ARK_PROJECT_NAME","SANDBOX_HARNESS_ARK_ASSET_GROUP_ID",
-    "SANDBOX_HARNESS_OBJECT_ENDPOINT","SANDBOX_HARNESS_OBJECT_BUCKET",
+    "SANDBOX_HARNESS_ARK_IMAGE_MODEL_SEEDREAM_5_0","SANDBOX_HARNESS_ARK_VIDEO_MODEL_SED2",
+    "SANDBOX_HARNESS_OBJECT_BACKEND","SANDBOX_HARNESS_OBJECT_ENDPOINT",
+    "SANDBOX_HARNESS_OBJECT_PUBLIC_ENDPOINT","SANDBOX_HARNESS_OBJECT_BUCKET",
+    "SANDBOX_HARNESS_OBJECT_REGION","SANDBOX_HARNESS_MEDIA_CATALOG_JSON",
+    "SANDBOX_HARNESS_MEDIA_REFERENCE_PREFIX",
 }
+ENVIRONMENT_KEY=re.compile(r"^[A-Z_][A-Z0-9_]*$")
 
 
 def parse_environment(path: Path) -> dict[str,str]:
@@ -44,6 +61,39 @@ def parse_environment(path: Path) -> dict[str,str]:
 
 def render_environment(values: dict[str,str]) -> str:
     return "".join(f"{key}={value}\n" for key,value in values.items())
+
+
+def decode_environment_value(value: str) -> str:
+    if len(value)>=2 and value[0] in {"'",'"'} and value[-1]==value[0]:
+        decoded=shlex.split(value)
+        if len(decoded)!=1:raise ValueError("invalid_quoted_environment_value")
+        return decoded[0]
+    return value
+
+
+def model_route_credential_keys(value: str) -> set[str]:
+    routes=json.loads(decode_environment_value(value))
+    keys=set()
+    pending=[routes]
+    while pending:
+        item=pending.pop()
+        if isinstance(item,dict):
+            credential=item.get("credential_env")
+            if credential is not None:
+                if not isinstance(credential,str) or not ENVIRONMENT_KEY.fullmatch(credential):
+                    raise ValueError("invalid_model_route_credential_env")
+                keys.add(credential)
+            pending.extend(item.values())
+        elif isinstance(item,list):pending.extend(item)
+    return keys
+
+
+def copy_shared_configuration(values: dict[str,str],source: dict[str,str]) -> None:
+    keys=set(SHARED_CREDENTIAL_KEYS)
+    routes=source.get("SANDBOX_HARNESS_MODEL_ROUTES_JSON")
+    if routes:keys.update(model_route_credential_keys(routes))
+    for key in keys:
+        if source.get(key):values[key]=source[key]
 
 
 def ensure_isolated(values: dict[str,str]) -> None:
@@ -81,8 +131,7 @@ def main() -> None:
     values=parse_environment(ROOT/".env.example");values.update(EXPECTED)
     if args.source_env:
         source=parse_environment(args.source_env)
-        for key in SHARED_CREDENTIAL_KEYS:
-            if source.get(key):values[key]=source[key]
+        copy_shared_configuration(values,source)
     password=secrets.token_urlsafe(36)
     values["SANDBOX_HARNESS_DATABASE_URL"]=("postgresql+asyncpg://sandbox_harness_parallel:"
         +quote(password,safe="")+"@127.0.0.1:28432/sandbox_harness_parallel")
