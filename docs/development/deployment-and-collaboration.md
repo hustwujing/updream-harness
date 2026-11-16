@@ -31,7 +31,12 @@ object storage as part of this product's release.
 7. Use `deploy/record-release.py` to pin Git revision and `PYTHONPATH`.
 8. Restart only affected services and verify API/Gateway health plus Job,
    Media and Site Worker systemd state. They are independent failure domains.
-9. Run a focused deployed case and confirm state, logs and cleanup.
+9. Install `deploy/nginx.conf` as the dedicated
+   `/etc/nginx/snippets/sandbox-harness-platform-parallel.conf` include inside
+   the existing `updream-lab` server. Run `nginx -t` before reload. Do not
+   register FRPC or alter predecessor locations. Local verification must send
+   `Host: updream-lab.bilibili.co`; bare `127.0.0.1` selects a different server.
+10. Run a focused deployed case and confirm state, logs and cleanup.
 
 `record-release.py` refuses staged or unstaged changes to tracked files in the
 selected checkout; it does not detect untracked files. Inspect `git status`
