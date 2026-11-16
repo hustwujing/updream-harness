@@ -88,6 +88,8 @@ def test_parallel_runtime_uses_four_stable_layers_and_domestic_mirrors():
     assert "skills" not in bootstrap.lower() and "ANTHROPIC_API_KEY" not in bootstrap
     assert "ARG NODE_MIRROR=https://npmmirror.com/mirrors/node" in common
     assert "ARG PYPI_INDEX=http://mirrors.cloud.aliyuncs.com/pypi/simple/" in common
+    assert "/usr/local/lib/sandbox-proxy-bridge.cjs" in common
+    assert "/usr/local/lib/sandbox-playwright-proxy.cjs" in common
     assert "COPY src/sandbox_runtime" not in common and "requirements-media" not in common
 
 
@@ -113,7 +115,12 @@ def test_parallel_profiles_are_dependency_only_and_cover_declared_catalog():
     assert "ffmpeg" in (ROOT/"runtime/profiles/media-cpu.Dockerfile").read_text()
     assert "libreoffice" in (ROOT/"runtime/profiles/office.Dockerfile").read_text()
     assert "playwright install chromium" in (ROOT/"runtime/profiles/web-browser.Dockerfile").read_text()
-    assert "npm install -g --force" in (ROOT/"runtime/profiles/primary-full-cpu.Dockerfile").read_text()
+    primary=(ROOT/"runtime/profiles/primary-full-cpu.Dockerfile").read_text()
+    web=(ROOT/"runtime/profiles/web-browser.Dockerfile").read_text()
+    assert "npm install -g --force" in primary
+    for value in ("sandbox-browser-screenshot","sandbox-browser-render","chromium_proxy.cjs"):
+        assert value in primary and value in web
+    assert "drawio_wrapper.sh" in primary and "xvfb" in primary
     assert "sqlglot" in (ROOT/"runtime/requirements-data.txt").read_text()
     assert all("sandbox-review" in (ROOT/"runtime/profiles"/f"{name}.Dockerfile").read_text()
         for name in expected)

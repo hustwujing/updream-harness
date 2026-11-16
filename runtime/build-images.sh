@@ -58,6 +58,10 @@ for profile in $profiles; do
     primary-full-cpu) requirement="$root/runtime/requirements-runtime.txt" ;;
   esac
   profile_inputs=("$dockerfile" "$requirement")
+  if [[ "$profile" == web-browser || "$profile" == primary-full-cpu ]]; then
+    profile_inputs+=("$root/runtime/browser_screenshot.mjs" "$root/runtime/browser_render.mjs" \
+      "$root/runtime/chromium_proxy.cjs")
+  fi
   if [[ "$profile" == primary-full-cpu ]]; then
     test -f "$drawio_vendor/drawio-amd64-32.6.10.deb"
     mkdir -p "$root/runtime/vendor"
@@ -68,6 +72,7 @@ for profile in $profiles; do
     printf '%s  %s\n' fc96faafe68cb4e06c0b7116779891592b20fce2cde7907adec504f23c5af83c \
       "$root/runtime/vendor/drawio-amd64-32.6.10.deb" | sha256sum -c -
     profile_inputs+=("$root/runtime/vendor/drawio-amd64-32.6.10.deb")
+    profile_inputs+=("$root/runtime/drawio_wrapper.sh")
   fi
   profile_hash=$(content_hash "$common_hash" "${profile_inputs[@]}")
   profile_image="sandbox-harness-parallel-$profile:$profile_hash"

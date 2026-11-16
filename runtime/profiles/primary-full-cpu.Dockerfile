@@ -10,11 +10,15 @@ COPY runtime/vendor/drawio-amd64-${DRAWIO_VERSION}.deb /tmp/drawio.deb
 RUN apt-get update && apt-get install -y --no-install-recommends chromium dvisvgm ffmpeg graphviz \
       imagemagick libcairo2-dev libpango1.0-dev libreoffice-calc libreoffice-core \
       libreoffice-impress libreoffice-writer pandoc poppler-utils qpdf tesseract-ocr \
-      tesseract-ocr-chi-sim texlive-fonts-recommended texlive-latex-base texlive-latex-extra && \
+      tesseract-ocr-chi-sim texlive-fonts-recommended texlive-latex-base texlive-latex-extra xvfb && \
     echo "${DRAWIO_SHA256}  /tmp/drawio.deb" | sha256sum -c - && \
     apt-get install -y --no-install-recommends /tmp/drawio.deb && rm /tmp/drawio.deb && \
     rm -rf /var/lib/apt/lists/*
 COPY runtime/requirements-runtime.txt /tmp/requirements-profile.txt
+COPY runtime/browser_screenshot.mjs /usr/local/bin/sandbox-browser-screenshot
+COPY runtime/browser_render.mjs /usr/local/bin/sandbox-browser-render
+COPY runtime/chromium_proxy.cjs /usr/local/bin/chromium
+COPY runtime/drawio_wrapper.sh /usr/local/bin/drawio
 RUN pip install --no-cache-dir --trusted-host mirrors.cloud.aliyuncs.com \
       --index-url ${PYPI_INDEX} -r /tmp/requirements-profile.txt && rm /tmp/requirements-profile.txt && \
     apt-get purge -y libcairo2-dev libpango1.0-dev && apt-get autoremove -y && \
@@ -24,6 +28,8 @@ RUN pip install --no-cache-dir --trusted-host mirrors.cloud.aliyuncs.com \
       pptxgenjs@4.0.1 sharp@0.35.5 && \
     PLAYWRIGHT_DOWNLOAD_HOST="${PLAYWRIGHT_DOWNLOAD_HOST}" PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
       playwright install chromium && chmod -R a+rX /ms-playwright && npm cache clean --force && \
+    chmod 0755 /usr/local/bin/sandbox-browser-screenshot /usr/local/bin/sandbox-browser-render \
+      /usr/local/bin/chromium /usr/local/bin/drawio && \
     for command in sandbox-job sandbox-artifact sandbox-review sandbox-media sandbox-site sandbox-background sandbox-interact; do \
       ln -s /usr/local/bin/sandbox-runtime-cli "/usr/local/bin/$command"; done
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright CHROME_PATH=/usr/bin/chromium
