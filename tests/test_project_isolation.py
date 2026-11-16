@@ -27,6 +27,13 @@ def test_parallel_project_defaults_are_isolated(monkeypatch):
     assert settings.site_public_base_path == "/sandbox-harness-platform-parallel/sites"
 
 
+def test_example_environment_uses_parallel_mutable_state_prefixes():
+    source = (ROOT / ".env.example").read_text()
+    assert "SANDBOX_HARNESS_NAMESPACE=sandbox-harness-parallel\n" in source
+    assert "SANDBOX_HARNESS_REDIS_PREFIX=sandbox-harness-parallel:\n" in source
+    assert "SANDBOX_HARNESS_OBJECT_PREFIX=sandbox-harness-parallel/\n" in source
+
+
 def test_parallel_distribution_and_commands_have_independent_identity():
     value = tomllib.loads((ROOT / "pyproject.toml").read_text())
     assert value["project"]["name"] == "sandbox-harness-platform-parallel"

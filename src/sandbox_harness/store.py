@@ -1121,6 +1121,52 @@ class Store:
             row = (await db.execute(query)).scalar_one_or_none()
             return self.job_group_draft_view(row) if row else None
 
+    async def get_job_group_draft_request(self, draft_id: str,
+                                          owner_id: str) -> JobGroupDraftCreate | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(JobGroupDraftRow).where(
+                JobGroupDraftRow.id == draft_id,
+                JobGroupDraftRow.owner_id == owner_id,
+            ))).scalar_one_or_none()
+            return JobGroupDraftCreate.model_validate_json(row.request_json) if row else None
+
+    async def list_job_group_drafts(self, thread_id: str, owner_id: str) -> list[JobGroupDraftView]:
+        async with self.connections() as db:
+            rows = (await db.execute(select(JobGroupDraftRow).where(
+                JobGroupDraftRow.thread_id == thread_id,
+                JobGroupDraftRow.owner_id == owner_id,
+            ).order_by(JobGroupDraftRow.created_at.desc()))).scalars().all()
+            return [self.job_group_draft_view(row) for row in rows]
+
+    async def update_job_group_draft(self, draft_id: str, owner_id: str, *,
+                                     expected_digest: str,
+                                     value: JobGroupDraftCreate) -> JobGroupDraftView:
+        value.validate_member_limit()
+        async with self.job_lock(f"draft:{draft_id}"):
+            async with self.connections.begin() as db:
+                row = (await db.execute(select(JobGroupDraftRow).where(
+                    JobGroupDraftRow.id == draft_id,
+                    JobGroupDraftRow.owner_id == owner_id,
+                ).with_for_update())).scalar_one_or_none()
+                if not row:
+                    raise KeyError("job_group_draft_not_found")
+                if row.state not in {JobGroupDraftState.DRAFT.value,
+                                     JobGroupDraftState.AWAITING_CONFIRMATION.value}:
+                    raise RuntimeError("draft_not_editable")
+                if row.request_digest != expected_digest:
+                    raise RuntimeError("draft_digest_conflict")
+                if (row.thread_id != value.thread_id or row.origin_turn_id != value.origin_turn_id
+                        or row.idempotency_key != value.idempotency_key):
+                    raise RuntimeError("draft_identity_immutable")
+                row.request_digest = value.request_digest
+                row.request_json = value.model_dump_json()
+                row.requires_confirmation = value.requires_confirmation
+                row.authorization_gaps_json = canonical_json(value.authorization_gaps)
+                row.expires_at = value.expires_at
+                row.updated_at = now()
+                await db.flush()
+                return self.job_group_draft_view(row)
+
     async def reject_job_group_draft(self, draft_id: str, owner_id: str) -> JobGroupDraftView:
         async with self.job_lock(f"draft:{draft_id}"):
             async with self.connections.begin() as db:
@@ -1287,16 +1333,74 @@ class Store:
             row = await db.get(JobGroupRow, group_id)
             return self.job_group_view(row) if row else None
 
+    async def get_job_group_for_owner(self, group_id: str, owner_id: str) -> JobGroupView | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(JobGroupRow).where(
+                JobGroupRow.id == group_id, JobGroupRow.owner_id == owner_id,
+            ))).scalar_one_or_none()
+            return self.job_group_view(row) if row else None
+
     async def get_job(self, job_id: str) -> JobView | None:
         async with self.connections() as db:
             row = await db.get(JobRow, job_id)
             return self.job_view(row) if row else None
+
+    async def get_job_for_owner(self, job_id: str, owner_id: str) -> JobView | None:
+        async with self.connections() as db:
+            row = (await db.execute(select(JobRow).where(
+                JobRow.id == job_id, JobRow.owner_id == owner_id,
+            ))).scalar_one_or_none()
+            return self.job_view(row) if row else None
+
+    async def list_jobs_for_group(self, group_id: str, owner_id: str | None = None) -> list[JobView]:
+        async with self.connections() as db:
+            query = select(JobRow).where(JobRow.group_id == group_id)
+            if owner_id is not None:
+                query = query.where(JobRow.owner_id == owner_id)
+            rows = (await db.execute(query.order_by(
+                JobRow.created_at, JobRow.local_job_id))).scalars().all()
+            return [self.job_view(row) for row in rows]
 
     async def list_jobs_for_thread(self, thread_id: str) -> list[JobView]:
         async with self.connections() as db:
             rows = (await db.execute(select(JobRow).where(JobRow.thread_id == thread_id)
                 .order_by(JobRow.created_at, JobRow.local_job_id))).scalars().all()
             return [self.job_view(row) for row in rows]
+
+    async def request_job_cancel(self, job_id: str, owner_id: str) -> JobView:
+        async with self.job_lock(f"job:{job_id}"):
+            async with self.connections.begin() as db:
+                row = (await db.execute(select(JobRow).where(
+                    JobRow.id == job_id, JobRow.owner_id == owner_id,
+                ).with_for_update())).scalar_one_or_none()
+                if not row:
+                    raise KeyError("job_not_found")
+                if JobState(row.state) not in TERMINAL_JOB_STATES:
+                    row.cancel_requested = True
+                    row.state = JobState.CANCELLING.value
+                    row.updated_at = now()
+                await db.flush()
+                return self.job_view(row)
+
+    async def request_job_group_cancel(self, group_id: str, owner_id: str) -> list[JobView]:
+        async with self.job_lock(f"group:{group_id}"):
+            async with self.connections.begin() as db:
+                group = (await db.execute(select(JobGroupRow).where(
+                    JobGroupRow.id == group_id, JobGroupRow.owner_id == owner_id,
+                ).with_for_update())).scalar_one_or_none()
+                if not group:
+                    raise KeyError("job_group_not_found")
+                rows = (await db.execute(select(JobRow).where(
+                    JobRow.group_id == group_id).order_by(
+                    JobRow.created_at, JobRow.local_job_id).with_for_update())).scalars().all()
+                timestamp = now()
+                for row in rows:
+                    if JobState(row.state) not in TERMINAL_JOB_STATES:
+                        row.cancel_requested = True
+                        row.state = JobState.CANCELLING.value
+                        row.updated_at = timestamp
+                await db.flush()
+                return [self.job_view(row) for row in rows]
 
     async def claim_job(self, job_id: str, worker_id: str, node_id: str,
                         lease_seconds: int, *, retry_kind: str = "initial") -> JobAttemptReceipt:

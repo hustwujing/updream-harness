@@ -1,0 +1,105 @@
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+import pytest
+
+from sandbox_harness.app import create_app
+from sandbox_harness.config import Settings
+from sandbox_runtime import job_cli
+
+
+ROOT=Path(__file__).resolve().parents[1]
+
+
+def settings(tmp_path):
+    return Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'api.db'),
+        redis_url='',backend='fake',object_backend='local',model_catalog_discovery=False,
+        job_catalog_path=ROOT/'deploy/job-catalog.example.json',
+        profile_catalog_path=ROOT/'deploy/profile-catalog.example.json')
+
+
+def request(local_id,kind,descriptor,digest,parameters):
+    return {'local_job_id':local_id,'kind':kind,'adapter':descriptor,'descriptor_id':descriptor,
+        'descriptor_version':'1','descriptor_digest':digest,'idempotency_key':'job-'+local_id+'-key',
+        'parameters':parameters}
+
+
+def test_job_group_api_edits_confirms_once_and_enforces_owner(tmp_path):
+    app=create_app(settings(tmp_path))
+    with TestClient(app) as client:
+        thread=client.post('/api/threads',json={'harness':'codex','model':'gpt-5.6',
+            'reasoning_level':'standard','title':'Parallel jobs'}).json()
+        app.state.broker._schedule=lambda turn_id:None
+        turn=client.post(f"/api/threads/{thread['id']}/turns",json={
+            'message':'generate and render','idempotency_key':'job-api-origin-turn'}).json()
+        jobs=[request('generate','provider','image.generate','c'*64,{'prompt':'one image'}),
+            request('render','operation','media.render','b'*64,{'recipe':{'fps':24}})]
+        prepared=client.post('/api/job-group-drafts',json={'thread_id':thread['id'],
+            'origin_turn_id':turn['id'],'idempotency_key':'job-api-group-key','jobs':jobs})
+        assert prepared.status_code==200 and prepared.json()['mode']=='draft'
+        draft=prepared.json()['draft']
+        edited=client.patch(f"/api/job-group-drafts/{draft['id']}",json={
+            'expected_digest':draft['request_digest'],'jobs':[jobs[0]]})
+        assert edited.status_code==200 and edited.json()['request_digest']!=draft['request_digest']
+        confirmed=client.post(f"/api/job-group-drafts/{draft['id']}/confirm")
+        assert confirmed.status_code==200
+        value=confirmed.json();assert value['group']['member_count']==1
+        assert [job['local_job_id'] for job in value['jobs']]==['generate']
+        repeated=client.post(f"/api/job-group-drafts/{draft['id']}/confirm")
+        assert repeated.status_code==200 and repeated.json()['group']['id']==value['group']['id']
+        detail=client.get(f"/api/job-groups/{value['group']['id']}")
+        assert detail.status_code==200 and len(detail.json()['jobs'])==1
+        cancelled=client.post(f"/api/jobs/{value['jobs'][0]['id']}/cancel")
+        assert cancelled.status_code==200 and cancelled.json()['state']=='CANCELLING'
+    other_app=create_app(settings(tmp_path/'other'))
+    with TestClient(other_app) as other:
+        assert other.get(f"/api/job-groups/{value['group']['id']}").status_code==404
+
+
+def test_job_group_api_rejects_inline_operation_and_origin_turn_mismatch(tmp_path):
+    app=create_app(settings(tmp_path))
+    with TestClient(app) as client:
+        first=client.post('/api/threads',json={'harness':'codex','model':'gpt-5.6',
+            'reasoning_level':'standard','title':'First'}).json()
+        second=client.post('/api/threads',json={'harness':'codex','model':'gpt-5.6',
+            'reasoning_level':'standard','title':'Second'}).json()
+        app.state.broker._schedule=lambda turn_id:None
+        turn=client.post(f"/api/threads/{first['id']}/turns",json={
+            'message':'inspect','idempotency_key':'inline-origin-turn'}).json()
+        inline=request('inspect','operation','artifact.inspect','a'*64,{})
+        mismatch=client.post('/api/job-group-drafts',json={'thread_id':second['id'],
+            'origin_turn_id':turn['id'],'idempotency_key':'mismatch-group','jobs':[inline]})
+        assert mismatch.status_code==404
+        rejected=client.post('/api/job-group-drafts',json={'thread_id':first['id'],
+            'origin_turn_id':turn['id'],'idempotency_key':'inline-group','jobs':[inline]})
+        assert rejected.status_code==422 and 'inline Operation' in rejected.json()['detail']
+
+
+def test_sandbox_job_cli_validates_complete_group_before_gateway_call(tmp_path,monkeypatch,capsys):
+    token=tmp_path/'token';token.write_text('x'*32)
+    monkeypatch.setenv('HARNESS_GATEWAY_URL','http://gateway.test')
+    monkeypatch.setenv('HARNESS_CAPABILITY_TOKEN_FILE',str(token))
+    calls=[]
+    class Result:
+        is_success=True;text='{"mode":"draft"}'
+    monkeypatch.setattr(job_cli.httpx,'post',lambda url,**kwargs:calls.append((url,kwargs)) or Result())
+    payload={'thread_id':'a'*32,'origin_turn_id':'b'*32,'idempotency_key':'cli-group-key',
+        'jobs':[request('generate','provider','image.generate','c'*64,{'prompt':'one image'})]}
+    assert job_cli.main(['prepare','--request',__import__('json').dumps(payload)])==0
+    assert calls[0][0]=='http://gateway.test/v1/job-group-drafts'
+    assert calls[0][1]['json']==payload
+    assert '"mode":"draft"' in capsys.readouterr().out
+
+
+def test_sandbox_cli_and_gateway_cannot_confirm_user_authorized_group(tmp_path):
+    with pytest.raises(SystemExit):
+        job_cli.main(['confirm','--draft-id','draft'])
+    app=create_app(settings(tmp_path))
+    api_paths={getattr(route,'path','') for route in app.routes}
+    from sandbox_harness.gateway import create_gateway
+    gateway_settings=settings(tmp_path/'gateway').model_copy(update={'redis_url':'redis://127.0.0.1:6379/15'})
+    gateway_paths={getattr(route,'path','') for route in create_gateway(gateway_settings).routes}
+    assert '/v1/job-group-drafts/{draft_id}/confirm' not in gateway_paths
+    assert '/v1/job-group-drafts/{draft_id}/reject' not in gateway_paths
+    assert '/api/job-group-drafts/{draft_id}/confirm' in api_paths
+    assert '/api/job-group-drafts/{draft_id}/reject' in api_paths

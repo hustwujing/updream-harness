@@ -27,6 +27,10 @@ from websockets.asyncio.client import connect as websocket_connect
 from .broker import Broker
 from .auth import AUTH_COOKIE, AccountAuth, normalize_username
 from .catalog import HarnessCatalog
+from .job_catalog import JobCatalog
+from .profiles import ProfileResolver
+from .job_coordinator import JobCoordinator, JobGroupDraftUpdate
+from .job_contracts import JobGroupCreate
 from .config import Settings, load_settings, validate_service_settings
 from .observability import RequestLoggingMiddleware, telemetry, event
 from .domain import Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, RegisterRequest, UpdateAccountRequest, MediaDraftCreate, MediaDraftUpdate, MediaReferenceUploadCreate, ProjectFileRename, SandboxReleaseRequest, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, valid_attachment_name, now
@@ -183,6 +187,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     validate_service_settings(settings)
     store, objects, pool, catalog, discovery, media_catalog, broker = components(settings)
+    job_catalog_raw = settings.job_catalog_path.read_text()
+    job_catalog = JobCatalog.from_json(job_catalog_raw,
+        expected_digest=(settings.job_catalog_digest or hashlib.sha256(job_catalog_raw.encode()).hexdigest()))
+    profile_catalog_raw = settings.profile_catalog_path.read_text()
+    skill_manifest = json.loads((Path(__file__).resolve().parents[2] / "runtime/skills/manifest.json").read_text())
+    profile_resolver = ProfileResolver.from_json(profile_catalog_raw,
+        expected_digest=(settings.profile_catalog_digest or hashlib.sha256(profile_catalog_raw.encode()).hexdigest()),
+        skill_manifest=skill_manifest)
+    catalog.job_catalog = job_catalog
+    catalog.profile_resolver = profile_resolver
+    job_coordinator = JobCoordinator(store, job_catalog,
+        draft_ttl_seconds=settings.media_draft_ttl_seconds)
     sessions = Sessions(settings.session_signing_key)
     account_auth = AccountAuth(store, settings.auth_session_ttl_seconds)
     inspector = SandboxInspector(settings, store, objects, pool, broker.runtime, broker)
@@ -298,6 +314,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.broker = broker
     app.state.account_auth = account_auth
     app.state.inspector = inspector
+    app.state.job_coordinator = job_coordinator
 
     def cookie_path(request: Request) -> str:
         prefix = request.headers.get("x-forwarded-prefix", "").rstrip("/")
@@ -361,6 +378,99 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if kind is not None and kind not in {"image", "video", "audio", "model3d"}:
             raise HTTPException(422, "Invalid media kind")
         return {"models": media_catalog.public(kind)}
+
+    @app.get("/api/catalog/execution")
+    async def execution_catalog():
+        return catalog.public_execution_metadata()
+
+    @app.post("/api/job-group-drafts")
+    async def prepare_job_group(value: JobGroupCreate, request: Request):
+        thread = await store.get_thread(value.thread_id, request.state.owner_id)
+        turn = await store.get_turn_for_owner(value.origin_turn_id, request.state.owner_id)
+        if not thread or not turn or turn.thread_id != thread.id:
+            raise HTTPException(404, "Thread or origin Turn not found")
+        try:
+            return await job_coordinator.prepare_group(request.state.owner_id, value)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.get("/api/job-group-drafts/{draft_id}")
+    async def get_job_group_draft(draft_id: str, request: Request):
+        value = await store.get_job_group_draft(draft_id, request.state.owner_id)
+        if not value:
+            raise HTTPException(404, "JobGroupDraft not found")
+        frozen = await store.get_job_group_draft_request(draft_id, request.state.owner_id)
+        return {**value.model_dump(mode="json"), "jobs": [job.model_dump(mode="json") for job in frozen.jobs]}
+
+    @app.get("/api/threads/{thread_id}/job-group-drafts")
+    async def list_job_group_drafts(thread_id: str, request: Request):
+        if not await store.get_thread(thread_id, request.state.owner_id):
+            raise HTTPException(404, "Thread not found")
+        result = []
+        for draft in await store.list_job_group_drafts(thread_id, request.state.owner_id):
+            frozen = await store.get_job_group_draft_request(draft.id, request.state.owner_id)
+            result.append({**draft.model_dump(mode="json"),
+                "jobs": [job.model_dump(mode="json") for job in frozen.jobs]})
+        return result
+
+    @app.patch("/api/job-group-drafts/{draft_id}")
+    async def edit_job_group_draft(draft_id: str, value: JobGroupDraftUpdate, request: Request):
+        try:
+            return await job_coordinator.edit_group(draft_id, request.state.owner_id, value)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.post("/api/job-group-drafts/{draft_id}/confirm")
+    async def confirm_job_group_draft(draft_id: str, request: Request):
+        try:
+            return await job_coordinator.confirm_group(draft_id, request.state.owner_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.post("/api/job-group-drafts/{draft_id}/reject")
+    async def reject_job_group_draft(draft_id: str, request: Request):
+        try:
+            return await job_coordinator.reject_group(draft_id, request.state.owner_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.get("/api/job-groups/{group_id}")
+    async def get_job_group(group_id: str, request: Request):
+        group = await store.get_job_group_for_owner(group_id, request.state.owner_id)
+        if not group:
+            raise HTTPException(404, "JobGroup not found")
+        return {"group": group, "jobs": await store.list_jobs_for_group(group.id, request.state.owner_id)}
+
+    @app.post("/api/job-groups/{group_id}/cancel")
+    async def cancel_job_group(group_id: str, request: Request):
+        try:
+            return {"jobs": await job_coordinator.cancel_group(group_id, request.state.owner_id)}
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.get("/api/jobs/{job_id}")
+    async def get_job(job_id: str, request: Request):
+        value = await store.get_job_for_owner(job_id, request.state.owner_id)
+        if not value:
+            raise HTTPException(404, "Job not found")
+        return value
+
+    @app.post("/api/jobs/{job_id}/cancel")
+    async def cancel_job(job_id: str, request: Request):
+        try:
+            return await job_coordinator.cancel_job(job_id, request.state.owner_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
 
     @app.post("/api/threads/{thread_id}/media/reference-uploads")
     async def create_media_reference_upload(thread_id: str, value: MediaReferenceUploadCreate,

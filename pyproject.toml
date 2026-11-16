@@ -114,6 +114,7 @@ sandbox-background = "sandbox_runtime.background_cli:main"
 sandbox-interact = "sandbox_runtime.interaction_cli:main"
 sandbox-media = "sandbox_runtime.media_cli:main"
 sandbox-site = "sandbox_runtime.site_cli:main"
+sandbox-job = "sandbox_runtime.job_cli:main"
 
 [build-system]
 requires = ["hatchling>=1.27"]

@@ -21,6 +21,9 @@ import uvicorn
 from .observability import configure, RequestLoggingMiddleware, event, enrich, add_link, telemetry, operation, carrier
 from .capability import CapabilityCodec
 from .grants import GrantAuthority
+from .job_catalog import JobCatalog
+from .job_coordinator import JobCoordinator, JobGroupDraftUpdate
+from .job_contracts import JobGroupCreate
 from .config import Settings, load_settings, validate_service_settings
 from .domain import Harness, MediaDraftCreate, now
 from .model_routes import ModelRoutes
@@ -99,6 +102,11 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     clients: dict[str, httpx.AsyncClient] = {}
     model_routes = ModelRoutes(settings)
     activity_store = Store(settings.database_url, settings.redis_url, settings.redis_prefix)
+    job_catalog_raw = settings.job_catalog_path.read_text()
+    job_catalog = JobCatalog.from_json(job_catalog_raw,
+        expected_digest=(settings.job_catalog_digest or hashlib.sha256(job_catalog_raw.encode()).hexdigest()))
+    job_coordinator = JobCoordinator(activity_store, job_catalog,
+        draft_ttl_seconds=settings.media_draft_ttl_seconds)
     objects = object_store(settings)
     media_catalog = MediaCatalog(settings.media_catalog_json,
         ark_assets_configured=bool(settings.ark_access_key and settings.ark_secret_key
@@ -297,6 +305,76 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         if not value:
             raise HTTPException(404, "Media job not found")
         return value
+
+    @app.post("/v1/job-group-drafts")
+    async def runtime_prepare_job_group(value: JobGroupCreate, request: Request):
+        claims = await authorize_runtime_request(request, "/v1/job-group-drafts")
+        if value.thread_id != claims.thread_id or value.origin_turn_id != claims.turn_id:
+            raise HTTPException(403, "JobGroup identity is outside Turn capability")
+        try:
+            owner_id = await activity_store.owner_id_for_thread(claims.thread_id)
+            return await job_coordinator.prepare_group(owner_id, value)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    async def runtime_draft_owner(draft_id: str, claims):
+        value = await activity_store.get_job_group_draft(draft_id)
+        if not value or value.thread_id != claims.thread_id:
+            raise HTTPException(404, "JobGroupDraft not found")
+        return value.owner_id
+
+    @app.get("/v1/job-group-drafts/{draft_id}")
+    async def runtime_get_job_group_draft(draft_id: str, request: Request):
+        claims = await authorize_runtime_request(request, "/v1/job-group-drafts")
+        owner_id = await runtime_draft_owner(draft_id, claims)
+        return await activity_store.get_job_group_draft(draft_id, owner_id)
+
+    @app.patch("/v1/job-group-drafts/{draft_id}")
+    async def runtime_edit_job_group_draft(draft_id: str, value: JobGroupDraftUpdate, request: Request):
+        claims = await authorize_runtime_request(request, "/v1/job-group-drafts")
+        owner_id = await runtime_draft_owner(draft_id, claims)
+        try:
+            return await job_coordinator.edit_group(draft_id, owner_id, value)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.get("/v1/job-groups/{group_id}")
+    async def runtime_get_job_group(group_id: str, request: Request):
+        claims = await authorize_runtime_request(request, "/v1/job-groups")
+        group = await activity_store.get_job_group(group_id)
+        if not group or group.thread_id != claims.thread_id:
+            raise HTTPException(404, "JobGroup not found")
+        return {"group": group, "jobs": await activity_store.list_jobs_for_group(group.id)}
+
+    @app.post("/v1/job-groups/{group_id}/cancel")
+    async def runtime_cancel_job_group(group_id: str, request: Request):
+        claims = await authorize_runtime_request(request, "/v1/job-groups")
+        group = await activity_store.get_job_group(group_id)
+        if not group or group.thread_id != claims.thread_id:
+            raise HTTPException(404, "JobGroup not found")
+        return {"jobs": await job_coordinator.cancel_group(group_id, group.owner_id)}
+
+    @app.get("/v1/jobs/{job_id}")
+    async def runtime_get_job(job_id: str, request: Request):
+        claims = await authorize_runtime_request(request, "/v1/jobs")
+        value = await activity_store.get_job(job_id)
+        if not value or value.thread_id != claims.thread_id:
+            raise HTTPException(404, "Job not found")
+        return value
+
+    @app.post("/v1/jobs/{job_id}/cancel")
+    async def runtime_cancel_job(job_id: str, request: Request):
+        claims = await authorize_runtime_request(request, "/v1/jobs")
+        value = await activity_store.get_job(job_id)
+        if not value or value.thread_id != claims.thread_id:
+            raise HTTPException(404, "Job not found")
+        return await job_coordinator.cancel_job(job_id, value.owner_id)
 
     @app.get("/v1/media/catalog")
     async def runtime_media_catalog(request: Request, kind: str | None = None):

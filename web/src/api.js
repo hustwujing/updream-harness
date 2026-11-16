@@ -19,6 +19,10 @@ export const uploadAccountAvatar=file=>api('auth/avatar',{method:'POST',body:fil
 export const deleteAccountAvatar=()=>api('auth/avatar',{method:'DELETE'});
 export const getHarnessCatalog=()=>api('catalog/harnesses');
 export const getMediaCatalog=(kind='')=>api(`catalog/media${kind?`?kind=${encodeURIComponent(kind)}`:''}`);
+export const listJobGroupDrafts=threadId=>api(`threads/${threadId}/job-group-drafts`);
+export const editJobGroupDraft=(draftId,value)=>api(`job-group-drafts/${draftId}`,{method:'PATCH',body:JSON.stringify(value)});
+export const confirmJobGroupDraft=draftId=>api(`job-group-drafts/${draftId}/confirm`,{method:'POST'});
+export const rejectJobGroupDraft=draftId=>api(`job-group-drafts/${draftId}/reject`,{method:'POST'});
 export const listMediaJobs=threadId=>api(`threads/${threadId}/media/jobs`);
 export const listMediaDrafts=threadId=>api(`threads/${threadId}/media/drafts`);
 export const getMediaJob=jobId=>api(`media/jobs/${jobId}`);

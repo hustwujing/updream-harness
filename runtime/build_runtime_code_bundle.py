@@ -11,7 +11,7 @@ import tarfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED_MODULES = ("__init__.py", "domain.py", "media_catalog.py", "observability.py", "site_bundle.py")
+SHARED_MODULES = ("__init__.py", "domain.py", "job_contracts.py", "media_catalog.py", "observability.py", "site_bundle.py")
 
 
 def add_file(archive: tarfile.TarFile, path: str, data: bytes) -> None:

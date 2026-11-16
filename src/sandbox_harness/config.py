@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     opensandbox_api_key: str = ""
     redis_url: str = "redis://127.0.0.1:6379/0"
     redis_prefix: str = "sandbox-harness-parallel:"
+    job_catalog_path: Path = Path("deploy/job-catalog.example.json")
+    job_catalog_digest: str = Field(default="", pattern=r"^$|^[0-9a-f]{64}$")
+    profile_catalog_path: Path = Path("deploy/profile-catalog.example.json")
+    profile_catalog_digest: str = Field(default="", pattern=r"^$|^[0-9a-f]{64}$")
     object_backend: Literal["local", "s3"] = "local"
     object_endpoint: str = ""
     object_bucket: str = ""
@@ -147,6 +151,8 @@ def validate_service_settings(value: Settings) -> None:
             raise ValueError("OpenSandbox deployment requires a frozen Runtime Bundle digest")
         if not value.runtime_code_bundle_digest:
             raise ValueError("OpenSandbox deployment requires a frozen Runtime Code Bundle digest")
+        if not value.job_catalog_digest or not value.profile_catalog_digest:
+            raise ValueError("OpenSandbox deployment requires frozen Job and Profile Catalog digests")
         bundle = value.runtime_bundle_dir / (value.runtime_bundle_digest + ".tar")
         code_bundle = value.runtime_code_bundle_dir / (value.runtime_code_bundle_digest + ".tar")
         if not bundle.is_file():

@@ -7,6 +7,7 @@
  .media-confirmations,.media-progress,.site-confirmations,.site-progress{width:calc(100% - 20px);margin:0 10px 8px;padding-right:10px;padding-left:10px}
  .site-confirmations>article{grid-template-columns:28px minmax(0,1fr)}
  .site-confirmations>article>div:last-child{grid-column:1/-1;justify-content:flex-end}
+ .job-group-confirmations footer{display:grid;grid-template-columns:1fr 1fr}.job-group-confirmations footer button{width:100%}
  .media-confirmation,.media-confirmation-copy,.media-confirmation-title{min-width:0;max-width:100%}
  .media-progress>summary{align-items:center;min-width:0}
  .media-progress>summary>div{overflow:hidden}
