@@ -131,7 +131,14 @@ class HarnessCatalog:
                 for row in self.profile_resolver.skills.values()],
             "child_execution_profiles": [{"id": row.id,
                 "supported_harnesses": list(row.supported_harnesses),
-                "max_delegation_depth": row.max_delegation_depth}
+                "max_delegation_depth": row.max_delegation_depth,
+                "job_template":{"kind":"harness","adapter":"child-harness",
+                    "descriptor_id":"delegate.harness","descriptor_version":"1",
+                    "descriptor_digest":"d"*64,"child_profile_id":row.id},
+                "parameter_schema":{"type":"object","required":["harness","model","objective"],
+                    "properties":{"harness":{"enum":list(row.supported_harnesses)},
+                        "model":{"type":"string","minLength":1},
+                        "objective":{"type":"string","minLength":1}},"additionalProperties":True}}
                 for row in self.profile_resolver.children.values()],
         }
 

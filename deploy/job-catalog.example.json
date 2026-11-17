@@ -39,7 +39,8 @@
       "cancellation_policy": {"supported": false},
       "reconciliation_policy": {"supported": false},
       "runtime_profile_id": "media-cpu",
-      "runtime_harness": "codex"
+      "runtime_harness": "codex",
+      "guidance": "For image.resize, preserve aspect ratio with contain semantics and center the image inside the exact target dimensions; uncovered pixels are transparent. Use it directly when the request says proportional fit/adapt without requesting a crop. For video.transcode, preserve aspect ratio with contain semantics, center the frame, and use opaque black padding."
     },
     {
       "id": "audio.process",

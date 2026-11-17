@@ -98,3 +98,19 @@ def test_example_job_catalog_is_parseable_and_digest_verified():
     assert 'original registered source video' in concat.guidance
     exposed_concat=next(row for row in public['operations'] if row['id']=='media.concat_sequence')
     assert exposed_concat['guidance']==concat.guidance
+    render=value.operation('media.render','1','b'*64)
+    assert 'contain semantics' in render.guidance and 'transparent' in render.guidance
+
+
+def test_public_child_profiles_expose_frozen_harness_job_template():
+    raw=(ROOT/'deploy/job-catalog.example.json').read_text()
+    value=JobCatalog.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest())
+    child=SimpleNamespace(id='child-general',supported_harnesses=('codex','claude'),
+        max_delegation_depth=1)
+    public=HarnessCatalog(job_catalog=value,profile_resolver=SimpleNamespace(
+        skills={},children={'child-general':child})).public_execution_metadata()
+    profile=public['child_execution_profiles'][0];template=profile['job_template']
+    assert template=={'kind':'harness','adapter':'child-harness',
+        'descriptor_id':'delegate.harness','descriptor_version':'1','descriptor_digest':'d'*64,
+        'child_profile_id':'child-general'}
+    assert profile['parameter_schema']['properties']['harness']['enum']==['codex','claude']
