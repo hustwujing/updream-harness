@@ -165,6 +165,7 @@ POST /api/sites/drafts/{draft_id}/confirm
 POST /api/sites/drafts/{draft_id}/cancel
 GET  /api/threads/{thread_id}/sites/jobs
 GET  /api/sites/jobs/{job_id}
+POST /api/sites/jobs/{job_id}/retry
 GET  /api/threads/{thread_id}/sites
 POST /api/sites/{project_id}/versions/{version_id}/activate
 POST /api/sites/{project_id}/unpublish
@@ -176,6 +177,9 @@ Gateway capability. Preparation validates and stores a draft only. Browser
 confirmation creates the asynchronous Job. Public reads resolve only the
 current active immutable version, support byte ranges and ETags, set no
 application Cookie and sandbox HTML scripts away from the application origin.
+Transient deployment failures retry automatically. After bounded exhaustion,
+the Job exposes `retryable=true`, an actionable `error_detail`, and the
+owner-scoped retry endpoint resumes the same immutable draft.
 
 ## Sandbox inspector
 

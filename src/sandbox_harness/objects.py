@@ -53,14 +53,25 @@ class ObjectStore:
         return "sha256:" + digest, digest
 
     @observed_sync("object.put_file")
-    def put_file(self, source: Path, *, digest: str, size: int) -> tuple[str, str]:
+    def put_file(self, source: Path, *, digest: str, size: int,
+                 repair: bool = False) -> tuple[str, str]:
         if not re.fullmatch(r"[0-9a-f]{64}", digest) or source.stat().st_size != size:
             raise ValueError("Invalid staged object identity")
         with source.open("rb") as stream:
             if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
                 raise ValueError("Invalid staged object digest")
         target = self._path(digest)
-        if not target.exists():
+        valid_existing=False
+        if target.exists():
+            try:
+                with target.open("rb") as stream:
+                    valid_existing=(target.stat().st_size==size
+                        and hashlib.file_digest(stream,"sha256").hexdigest()==digest)
+            except OSError:
+                valid_existing=False
+        if not valid_existing:
+            if target.exists() and not repair:
+                raise ValueError("Existing object identity mismatch")
             target.parent.mkdir(parents=True, exist_ok=True)
             with NamedTemporaryFile(dir=target.parent, delete=False) as stream:
                 temporary = Path(stream.name)
@@ -184,19 +195,23 @@ class S3ObjectStore:
         return "sha256:" + digest, digest
 
     @observed_sync("object.put_file")
-    def put_file(self, source: Path, *, digest: str, size: int) -> tuple[str, str]:
+    def put_file(self, source: Path, *, digest: str, size: int,
+                 repair: bool = False) -> tuple[str, str]:
         if not re.fullmatch(r"[0-9a-f]{64}", digest) or source.stat().st_size != size:
             raise ValueError("Invalid staged object identity")
         with source.open("rb") as stream:
             if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
                 raise ValueError("Invalid staged object digest")
-        try:
-            self.client.head_object(Bucket=self.bucket, Key=self._key(digest))
-        except Exception as exc:
-            response = getattr(exc, "response", {})
-            status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-            if status not in (404,):
-                raise
+        exists=False
+        if not repair:
+            try:
+                self.client.head_object(Bucket=self.bucket, Key=self._key(digest));exists=True
+            except Exception as exc:
+                response = getattr(exc, "response", {})
+                status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                if status not in (404,):
+                    raise
+        if repair or not exists:
             with source.open("rb") as stream:
                 self.client.upload_fileobj(stream, self.bucket, self._key(digest))
         return "sha256:" + digest, digest

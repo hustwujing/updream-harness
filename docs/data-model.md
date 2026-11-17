@@ -118,7 +118,10 @@ status and current immutable version pointer. `site_drafts` stores the
 content-addressed validated tar and confirmation state; `site_draft_files`
 indexes its individually content-addressed files for efficient owner-scoped
 preview. `site_deploy_jobs` stores asynchronous phase, progress, lease, error
-and terminal timestamps for the independent Site Worker.
+and terminal timestamps for the independent Site Worker. Its generation fences
+every mutation; attempt count and next-attempt timestamp survive restart and
+drive bounded retry/manual continuation. `site_drafts.request_digest` covers the
+complete frozen request for concurrent database idempotency.
 
 `site_versions` is unique by project/version and project/bundle digest.
 `site_files` maps each version path to its immutable object reference, MIME,
@@ -126,6 +129,9 @@ size and SHA-256. The Worker writes objects before one transaction inserts the
 version/files, advances the project pointer and completes the Job. Partial
 object writes are never visible. Rollback updates only the project pointer;
 downline changes project status while retaining version history.
+Activation follows successful streaming verification of every referenced
+object. Missing/corrupt objects are repaired from the validated staged archive
+before this transaction.
 
 ## Interactions
 

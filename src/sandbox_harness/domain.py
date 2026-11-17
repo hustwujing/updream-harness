@@ -643,6 +643,9 @@ class SiteDeployJobView(BaseModel):
     phase: str = ""
     progress: int | None = None
     error_code: str = ""
+    error_detail: str = ""
+    attempt_count: int = 0
+    retryable: bool = False
     public_url: str = ""
     created_at: datetime
     finished_at: datetime | None = None

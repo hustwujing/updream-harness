@@ -480,6 +480,7 @@ class SiteDraftRow(Base):
     file_count: Mapped[int] = mapped_column(Integer)
     total_size: Mapped[int] = mapped_column(Integer)
     idempotency_key: Mapped[str] = mapped_column(String(160))
+    request_digest: Mapped[str] = mapped_column(String(64), default="", server_default="")
     status: Mapped[str] = mapped_column(String(32), index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     job_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
@@ -516,6 +517,9 @@ class SiteDeployJobRow(Base):
     progress: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_code: Mapped[str] = mapped_column(String(100), default="", server_default="")
     error_detail: Mapped[str] = mapped_column(Text, default="", server_default="")
+    generation: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     lease_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -1001,6 +1005,29 @@ class Store:
                 except OperationalError as exc:
                     if (connection.dialect.name!="sqlite"
                             or "duplicate column name: generation" not in str(exc).lower()):raise
+            site_columns = await connection.run_sync(lambda value: {
+                column["name"] for column in sqlalchemy_inspect(value).get_columns("site_deploy_jobs")})
+            for column,definition in {
+                "generation":"INTEGER NOT NULL DEFAULT 0",
+                "attempt_count":"INTEGER NOT NULL DEFAULT 0",
+                "next_attempt_at":"TIMESTAMP",
+            }.items():
+                if column not in site_columns:
+                    suffix=" IF NOT EXISTS" if connection.dialect.name=="postgresql" else ""
+                    try:await connection.execute(text(
+                        f"ALTER TABLE site_deploy_jobs ADD COLUMN{suffix} {column} {definition}"))
+                    except OperationalError as exc:
+                        if (connection.dialect.name!="sqlite"
+                                or f"duplicate column name: {column}" not in str(exc).lower()):raise
+            draft_columns = await connection.run_sync(lambda value: {
+                column["name"] for column in sqlalchemy_inspect(value).get_columns("site_drafts")})
+            if "request_digest" not in draft_columns:
+                suffix=" IF NOT EXISTS" if connection.dialect.name=="postgresql" else ""
+                try:await connection.execute(text(
+                    f"ALTER TABLE site_drafts ADD COLUMN{suffix} request_digest VARCHAR(64) NOT NULL DEFAULT ''"))
+                except OperationalError as exc:
+                    if (connection.dialect.name!="sqlite"
+                            or "duplicate column name: request_digest" not in str(exc).lower()):raise
             await connection.execute(text("""
                 INSERT INTO turn_order (turn_id, thread_id, sequence, created_at)
                 SELECT t.id, t.thread_id, MIN(i.sequence), t.created_at
@@ -5680,7 +5707,9 @@ class Store:
         return SiteDeployJobView(id=row.id, thread_id=row.thread_id, turn_id=row.turn_id,
             project_id=row.project_id, draft_id=row.draft_id, name=row.name, slug=row.slug,
             status=row.status, phase=row.phase or "", progress=row.progress,
-            error_code=row.error_code or "", public_url=public_url,
+            error_code=row.error_code or "", error_detail=row.error_detail or "",
+            attempt_count=row.attempt_count, retryable=row.status=="retry_exhausted",
+            public_url=public_url,
             created_at=utc_datetime(row.created_at),
             finished_at=utc_datetime(row.finished_at) if row.finished_at else None)
 
@@ -5695,12 +5724,22 @@ class Store:
                 or len({value.get("path") for value in files}) != file_count
                 or not any(value.get("path") == "index.html" for value in files)):
             raise ValueError("site_draft_files_invalid")
+        request_digest=canonical_digest({"turn_id":turn_id,"name":name,"requested_slug":slug,
+            "archive_object_ref":archive_object_ref,"bundle_sha256":bundle_sha256,
+            "archive_size":archive_size,"file_count":file_count,"total_size":total_size,
+            "files":sorted(files,key=lambda value:value["path"])})
         timestamp = now(); draft_id = identifier()
         async with self.connections.begin() as db:
             thread = (await db.execute(select(ThreadRow).where(ThreadRow.id == thread_id,
                 ThreadRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
             if not thread:
                 raise KeyError("thread_not_found")
+            if db.bind.dialect.name=="sqlite":
+                await db.execute(update(ThreadRow).where(ThreadRow.id==thread_id).values(
+                    updated_at=ThreadRow.updated_at))
+            elif db.bind.dialect.name=="postgresql":
+                lock_id=int.from_bytes(hashlib.sha256(slug.encode()).digest()[:8],"big",signed=True)
+                await db.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"),{"lock_id":lock_id})
             if turn_id:
                 turn = await db.get(TurnRow, turn_id)
                 if not turn or turn.thread_id != thread_id:
@@ -5709,8 +5748,9 @@ class Store:
                 SiteDraftRow.thread_id == thread_id,
                 SiteDraftRow.idempotency_key == idempotency_key).with_for_update())).scalar_one_or_none()
             if existing:
-                if (existing.bundle_sha256 != bundle_sha256 or existing.name != name
-                        or existing.archive_size != archive_size):
+                if ((existing.request_digest and existing.request_digest!=request_digest)
+                        or (not existing.request_digest and (existing.bundle_sha256 != bundle_sha256
+                            or existing.name != name or existing.archive_size != archive_size))):
                     raise RuntimeError("site_draft_idempotency_conflict")
                 return self._site_draft_view(existing), False
             project = (await db.execute(select(SiteProjectRow).where(
@@ -5733,7 +5773,8 @@ class Store:
                 turn_id=turn_id, project_id=project.id, name=name, slug=project.slug,
                 archive_object_ref=archive_object_ref, bundle_sha256=bundle_sha256,
                 archive_size=archive_size, file_count=file_count, total_size=total_size,
-                idempotency_key=idempotency_key, status="awaiting_confirmation",
+                idempotency_key=idempotency_key, request_digest=request_digest,
+                status="awaiting_confirmation",
                 expires_at=expires_at, job_id="", created_at=timestamp, updated_at=timestamp)
             db.add(row)
             for value in files:
@@ -5827,10 +5868,13 @@ class Store:
             db.add(job); draft.status = "confirmed"; draft.job_id = job.id; draft.updated_at = timestamp
         return self._site_job_view(job, project.public_url if project else "")
 
-    async def claim_site_jobs(self, owner: str, limit: int = 2) -> list[dict]:
+    async def claim_site_jobs(self, owner: str, limit: int = 2,
+                              lease_seconds: int = 60) -> list[dict]:
         async with self.connections.begin() as db:
             rows = (await db.execute(select(SiteDeployJobRow).where(
-                SiteDeployJobRow.status.in_(["created", "running"]),
+                SiteDeployJobRow.status.in_(["created", "running", "retry_wait"]),
+                or_(SiteDeployJobRow.next_attempt_at.is_(None),
+                    SiteDeployJobRow.next_attempt_at <= now()),
                 or_(SiteDeployJobRow.lease_expires_at.is_(None),
                     SiteDeployJobRow.lease_expires_at < now()),
             ).order_by(SiteDeployJobRow.created_at).limit(limit).with_for_update())).scalars().all()
@@ -5842,10 +5886,13 @@ class Store:
                     row.error_code = "site_draft_missing"; row.finished_at = now(); row.updated_at = now()
                     continue
                 row.status = "running"; row.phase = "validating"; row.progress = 5
-                row.lease_owner = owner; row.lease_expires_at = now() + timedelta(seconds=60)
+                row.generation += 1; row.attempt_count += 1; row.next_attempt_at=None
+                row.lease_owner = owner
+                row.lease_expires_at = now() + timedelta(seconds=lease_seconds)
                 row.updated_at = now()
                 result.append({"id":row.id, "project_id":row.project_id,
                     "draft_id":row.draft_id, "thread_id":row.thread_id, "owner_id":row.owner_id,
+                    "generation":row.generation,"attempt_count":row.attempt_count,
                     "archive_object_ref":draft.archive_object_ref,
                     "archive_size":draft.archive_size, "bundle_sha256":draft.bundle_sha256,
                     "file_count":draft.file_count, "total_size":draft.total_size,
@@ -5855,34 +5902,60 @@ class Store:
                             SiteDraftFileRow.draft_id == draft.id))).scalars().all()]})
             return result
 
-    async def update_site_job(self, job_id: str, owner: str, *, phase: str,
+    async def renew_site_job_lease(self,job_id:str,owner:str,generation:int,
+                                   lease_seconds:int=60)->bool:
+        async with self.connections.begin() as db:
+            result=await db.execute(update(SiteDeployJobRow).where(
+                SiteDeployJobRow.id==job_id,SiteDeployJobRow.lease_owner==owner,
+                SiteDeployJobRow.generation==generation,SiteDeployJobRow.status=="running").values(
+                    lease_expires_at=now()+timedelta(seconds=lease_seconds),updated_at=now()))
+            return bool(result.rowcount)
+
+    async def update_site_job(self, job_id: str, owner: str, generation: int, *, phase: str,
                               progress: int, error_code: str = "", error_detail: str = "") -> bool:
         async with self.connections.begin() as db:
             row = (await db.execute(select(SiteDeployJobRow).where(
                 SiteDeployJobRow.id == job_id, SiteDeployJobRow.lease_owner == owner,
+                SiteDeployJobRow.generation == generation,
             ).with_for_update())).scalar_one_or_none()
             if not row:
-                return False
+                raise RuntimeError("stale_site_job_lease")
             row.phase = phase; row.progress = progress; row.error_code = error_code
             row.error_detail = error_detail[:1000]; row.updated_at = now()
-            row.lease_expires_at = now() + timedelta(seconds=60)
             return True
 
-    async def fail_site_job(self, job_id: str, owner: str, *, error_code: str,
+    async def fail_site_job(self, job_id: str, owner: str, generation: int, *, error_code: str,
                             error_detail: str = "") -> bool:
         async with self.connections.begin() as db:
             row = (await db.execute(select(SiteDeployJobRow).where(
                 SiteDeployJobRow.id == job_id, SiteDeployJobRow.lease_owner == owner,
+                SiteDeployJobRow.generation == generation,
             ).with_for_update())).scalar_one_or_none()
             if not row:
-                return False
+                raise RuntimeError("stale_site_job_lease")
             row.status = "failed"; row.phase = "terminal"; row.progress = None
             row.error_code = error_code; row.error_detail = error_detail[:1000]
             row.finished_at = now(); row.updated_at = row.finished_at
             row.lease_owner = ""; row.lease_expires_at = None
             return True
 
-    async def complete_site_job(self, job_id: str, owner: str, *, bundle_sha256: str,
+    async def defer_site_job(self,job_id:str,owner:str,generation:int,*,error_code:str,
+                             error_detail:str,retry_after_seconds:int,max_attempts:int)->bool:
+        async with self.connections.begin() as db:
+            row=(await db.execute(select(SiteDeployJobRow).where(
+                SiteDeployJobRow.id==job_id,SiteDeployJobRow.lease_owner==owner,
+                SiteDeployJobRow.generation==generation).with_for_update())).scalar_one_or_none()
+            if not row:raise RuntimeError("stale_site_job_lease")
+            exhausted=row.attempt_count>=max_attempts
+            row.status="retry_exhausted" if exhausted else "retry_wait"
+            row.phase="retry_exhausted" if exhausted else "retry_wait"
+            row.progress=None;row.error_code=error_code;row.error_detail=error_detail[:1000]
+            row.next_attempt_at=None if exhausted else now()+timedelta(seconds=retry_after_seconds)
+            row.finished_at=now() if exhausted else None;row.updated_at=now()
+            row.lease_owner="";row.lease_expires_at=None
+            return True
+
+    async def complete_site_job(self, job_id: str, owner: str, generation: int, *, bundle_sha256: str,
                                 files: list[dict]) -> bool:
         if not files or not any(value["path"] == "index.html" for value in files):
             raise ValueError("site_files_invalid")
@@ -5890,9 +5963,10 @@ class Store:
         async with self.connections.begin() as db:
             job = (await db.execute(select(SiteDeployJobRow).where(
                 SiteDeployJobRow.id == job_id, SiteDeployJobRow.lease_owner == owner,
+                SiteDeployJobRow.generation == generation,
             ).with_for_update())).scalar_one_or_none()
             if not job:
-                return False
+                raise RuntimeError("stale_site_job_lease")
             project = (await db.execute(select(SiteProjectRow).where(
                 SiteProjectRow.id == job.project_id).with_for_update())).scalar_one_or_none()
             draft = await db.get(SiteDraftRow, job.draft_id)
@@ -5919,6 +5993,18 @@ class Store:
             job.updated_at = timestamp; job.lease_owner = ""; job.lease_expires_at = None
             draft.status = "deployed"; draft.updated_at = timestamp
             return True
+
+    async def retry_site_job(self,job_id:str,owner_id:str)->SiteDeployJobView:
+        async with self.connections.begin() as db:
+            row=(await db.execute(select(SiteDeployJobRow).where(
+                SiteDeployJobRow.id==job_id,SiteDeployJobRow.owner_id==owner_id)
+                .with_for_update())).scalar_one_or_none()
+            if not row:raise KeyError("site_job_not_found")
+            if row.status!="retry_exhausted":raise RuntimeError("site_job_not_retryable")
+            row.status="retry_wait";row.phase="retry_wait";row.next_attempt_at=now()
+            row.attempt_count=0;row.finished_at=None;row.updated_at=now()
+            project=await db.get(SiteProjectRow,row.project_id)
+        return self._site_job_view(row,project.public_url if project else "")
 
     async def release_site_job_leases(self, owner: str) -> int:
         async with self.connections.begin() as db:

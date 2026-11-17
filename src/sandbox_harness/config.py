@@ -130,6 +130,9 @@ class Settings(BaseSettings):
     audio_task_timeout_seconds: int = Field(default=2 * 3600, ge=600, le=24 * 3600)
     video_task_timeout_seconds: int = Field(default=2 * 3600, ge=600, le=24 * 3600)
     site_worker_concurrency: int = Field(default=2, ge=1, le=16)
+    site_job_lease_seconds: int = Field(default=60, ge=10, le=600)
+    site_job_max_attempts: int = Field(default=4, ge=1, le=20)
+    site_job_retry_base_seconds: int = Field(default=5, ge=1, le=300)
     site_draft_ttl_seconds: int = Field(default=24 * 3600, ge=600, le=7 * 86400)
     site_public_base_path: str = Field(default="/sandbox-harness-platform-parallel/sites",
         pattern=r"^/[A-Za-z0-9/_-]+$")

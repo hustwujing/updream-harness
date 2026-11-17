@@ -36,6 +36,7 @@ export const listSiteDrafts=threadId=>api(`threads/${threadId}/sites/drafts`);
 export const confirmSiteDraft=draftId=>api(`sites/drafts/${draftId}/confirm`,{method:'POST'});
 export const cancelSiteDraft=draftId=>api(`sites/drafts/${draftId}/cancel`,{method:'POST'});
 export const listSiteJobs=threadId=>api(`threads/${threadId}/sites/jobs`);
+export const retrySiteJob=jobId=>api(`sites/jobs/${jobId}/retry`,{method:'POST'});
 export const listSiteProjects=threadId=>api(`threads/${threadId}/sites`);
 export const activateSiteVersion=(projectId,versionId)=>api(`sites/${projectId}/versions/${versionId}/activate`,{method:'POST'});
 export const unpublishSite=projectId=>api(`sites/${projectId}/unpublish`,{method:'POST'});

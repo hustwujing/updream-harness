@@ -172,9 +172,9 @@ async def test_gateway_site_prepare_is_capability_scoped_and_turn_bound(tmp_path
         async def create_site_draft(self, owner_id, thread_id, turn_id, **values):
             calls.append((owner_id, thread_id, turn_id, values)); return Draft(), True
     class Objects:
-        def put(self, data):
-            import hashlib
-            digest = hashlib.sha256(data).hexdigest(); return "sha256:" + digest, digest
+        def put_file(self, path, *, digest, size, **_):
+            assert path.stat().st_size == size
+            return "sha256:" + digest, digest
     monkeypatch.setattr(gateway.Redis, "from_url", lambda *args, **kwargs: Redis())
     monkeypatch.setattr(gateway, "Store", Store)
     monkeypatch.setattr(gateway, "object_store", lambda settings: Objects())
@@ -194,6 +194,26 @@ async def test_gateway_site_prepare_is_capability_scoped_and_turn_bound(tmp_path
     response = await endpoint(request, name="Demo", slug="demo-site", idempotency_key="site-key-123")
     assert response["requires_confirmation"] and calls[0][:3] == ("a" * 64, "thread-1", "turn-1")
     assert calls[0][3]["file_count"] == 1 and calls[0][3]["total_size"] == len(content)
+
+    async def empty_receive():return {"type":"http.request","body":b"","more_body":False}
+    declared_request=Request({"type":"http","method":"POST","path":"/v1/sites/drafts",
+        "query_string":b"","headers":[(b"authorization",("Bearer "+token).encode()),
+            (b"content-length",str(gateway.MAX_SITE_ARCHIVE_BYTES+1).encode())]},empty_receive)
+    with pytest.raises(HTTPException) as declared_error:
+        await endpoint(declared_request,name="Demo",slug="demo-site",idempotency_key="site-key-124")
+    assert declared_error.value.status_code==413
+
+    monkeypatch.setattr(gateway,"MAX_SITE_ARCHIVE_BYTES",32);sent=False
+    async def oversized_receive():
+        nonlocal sent
+        if sent:return {"type":"http.request","body":b"","more_body":False}
+        sent=True;return {"type":"http.request","body":b"x"*33,"more_body":False}
+    chunked_request=Request({"type":"http","method":"POST","path":"/v1/sites/drafts",
+        "query_string":b"","headers":[(b"authorization",("Bearer "+token).encode())]},oversized_receive)
+    with pytest.raises(HTTPException) as chunked_error:
+        await endpoint(chunked_request,name="Demo",slug="demo-site",idempotency_key="site-key-125")
+    assert chunked_error.value.status_code==413
+    assert not list((settings.data_root/"tmp"/"site-stages").glob("site-ingress-*"))
 
 
 async def test_gateway_media_prepare_creates_turn_bound_draft(tmp_path, monkeypatch):

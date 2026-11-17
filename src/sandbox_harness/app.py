@@ -756,6 +756,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "Site deployment job not found")
         return value
 
+    @app.post("/api/sites/jobs/{job_id}/retry")
+    async def retry_site_job(job_id: str, request: Request):
+        try:
+            return await store.retry_site_job(job_id, request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404, "Site deployment job not found")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+
     @app.get("/api/threads/{thread_id}/sites")
     async def list_site_projects(thread_id: str, request: Request):
         if not await store.get_thread(thread_id, request.state.owner_id):
@@ -1592,6 +1601,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not value:
             raise HTTPException(404, "Published site file not found")
         source_size = value["size"]
+        try:
+            if await asyncio.to_thread(objects.size,value["object_ref"],maximum=settings.max_artifact_bytes)!=source_size:
+                raise ValueError("published_site_object_size_mismatch")
+        except Exception:
+            raise HTTPException(503,"Published site file is temporarily unavailable")
         is_html = value["mime"] == "text/html"
         size = source_size + (len(ISOLATED_SITE_STORAGE_SHIM) if is_html else 0)
         etag_value = isolated_site_etag(value["sha256"]) if is_html else value["sha256"]

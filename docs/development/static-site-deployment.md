@@ -25,6 +25,12 @@ independent Site Worker validates the archive again, writes every file to the
 content-addressed store and atomically activates a new immutable version. A
 Sandbox process or private port is a preview, never a deployment.
 
+Gateway request bodies, Worker archive reads and tar members are staged as
+bounded files under `data_root/tmp/site-stages`; neither service may materialize
+the whole archive plus expanded site in memory. Stages are removed on success,
+validation failure and cancellation, and dead-process stage directories are
+reaped on the next validation.
+
 ## Protected contracts
 
 - Input must contain `index.html`, use only regular files and stay within file,
@@ -32,9 +38,22 @@ Sandbox process or private port is a preview, never a deployment.
   absolute paths, traversal and special files at CLI and Worker boundaries.
 - Site Job ownership, confirmation and management are owner-scoped. Runtime
   status is additionally Thread-scoped by its capability claim.
-- Job leases make API, Site Worker and browser restarts independent. Object
-  writes are content-addressed; only the database activation transaction makes
-  a version public.
+- Every claimed Site Job increments a generation and heartbeats its lease over
+  archive read, validation, object verification/repair and activation. Every
+  Worker mutation requires owner plus generation; heartbeat rejection or error
+  cancels the stale business task.
+- Deterministic archive/manifest defects are terminal and actionable. Storage,
+  database and service failures use bounded exponential retry on the same
+  immutable draft. Exhaustion exposes the error and an owner-scoped continue
+  action; it never asks the user to rebuild the draft.
+- Object writes are content-addressed. Before activation, the Worker reads and
+  identity-checks every public file and repairs a missing/corrupt object from
+  the validated staged archive. Only the database activation transaction makes
+  a version public, so success means every file is immediately readable.
+- Draft idempotency stores a digest of the complete frozen request. Database
+  locks serialize the idempotency key and globally unique slug allocation;
+  identical concurrent calls replay one draft while different content is a
+  semantic conflict.
 - Public HTML uses a CSP sandbox without `allow-same-origin`. Generated scripts
   cannot inherit the main application's authenticated origin. Published pages
   receive no application Cookie.
@@ -61,7 +80,7 @@ Sandbox process or private port is a preview, never a deployment.
 ## Completion
 
 Run `tests/test_site_deployment.py`, `tests/test_site_service.py`,
-`tests/test_gateway.py`, the frontend build and
+`tests/test_gateway.py`, `tests/test_site_durability_review12.py`, the frontend build and
 `tests/browser_site_deployment.cjs`. A release also requires an immutable
 Runtime image containing `sandbox-site`, the independent systemd unit, a real
 OpenSandbox prepare call, user confirmation, Worker completion, browser

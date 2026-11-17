@@ -150,10 +150,11 @@ def test_public_site_serves_isolated_html_ranges_and_stops_after_unpublish(tmp_p
         await store.confirm_site_draft(draft.id, owner)
         claimed = await store.claim_site_jobs(worker.owner, 1); await worker.process(claimed[0])
         project = (await store.list_site_projects(thread.id, owner))[0]
+        published = await store.public_site_file(project.slug, "index.html")
         await store.close()
-        return project, owner, draft.id, html_artifact.id
+        return project, owner, draft.id, html_artifact.id, published["object_ref"]
 
-    project, owner, draft_id, artifact_id = asyncio.run(prepare())
+    project, owner, draft_id, artifact_id, published_ref = asyncio.run(prepare())
     with TestClient(create_app(settings)) as client:
         client.cookies.set(COOKIE, token)
         preview = client.get(f"/api/sites/drafts/{draft_id}/preview/")
@@ -175,6 +176,13 @@ def test_public_site_serves_isolated_html_ranges_and_stops_after_unpublish(tmp_p
         partial = client.get(f"/sites/{project.slug}/app.js", headers={"Range":"bytes=0-7"})
         assert partial.status_code == 206 and partial.headers["content-range"].startswith("bytes 0-7/")
         assert client.get(f"/sites/{project.slug}/missing.js").status_code == 404
+
+    published_store=ObjectStore(tmp_path/"objects")
+    published_store._path(published_ref.removeprefix("sha256:")).unlink()
+    with TestClient(create_app(settings)) as client:
+        unavailable=client.get(f"/sites/{project.slug}/")
+        assert unavailable.status_code==503
+        assert unavailable.json()["detail"]=="Published site file is temporarily unavailable"
 
     async def stop():
         store = Store(settings.database_url); await store.initialize()

@@ -10,6 +10,7 @@ import json
 import hashlib
 import logging
 import re
+from tempfile import NamedTemporaryFile
 from pathlib import Path
 from pydantic import ValidationError
 
@@ -37,7 +38,7 @@ from .model_activity import ModelActivity
 from .media_catalog import MediaCatalog
 from .media_references import resolve_media_references
 from .objects import object_store
-from .site_bundle import MAX_SITE_ARCHIVE_BYTES, normalize_site_slug, validate_site_archive
+from .site_bundle import MAX_SITE_ARCHIVE_BYTES, normalize_site_slug, stage_site_archive
 from .store import Store
 from .public_proxy import DestinationPolicy, start_proxy
 
@@ -595,17 +596,31 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             slug = normalize_site_slug(slug)
         except ValueError as exc:
             raise HTTPException(422, str(exc))
-        archive = bytearray()
-        async for chunk in request.stream():
-            if len(archive) + len(chunk) > MAX_SITE_ARCHIVE_BYTES:
-                raise HTTPException(413, "site_archive_too_large")
-            archive.extend(chunk)
+        declared=request.headers.get("content-length")
+        if declared:
+            try:declared_size=int(declared)
+            except ValueError:raise HTTPException(400,"invalid_content_length")
+            if declared_size>MAX_SITE_ARCHIVE_BYTES:raise HTTPException(413,"site_archive_too_large")
+        staging_root=settings.data_root/"tmp"/"site-stages";staging_root.mkdir(parents=True,exist_ok=True)
+        package=None;archive_path=None
         try:
-            files = await asyncio.to_thread(validate_site_archive, bytes(archive))
-            object_ref, digest = await asyncio.to_thread(objects.put, bytes(archive))
+            with NamedTemporaryFile(dir=staging_root,
+                    prefix=f"site-ingress-{os.getpid()}-",delete=False) as stream:
+                archive_path=Path(stream.name);digest_builder=hashlib.sha256();archive_size=0
+                async for chunk in request.stream():
+                    archive_size+=len(chunk)
+                    if archive_size>MAX_SITE_ARCHIVE_BYTES:raise HTTPException(413,"site_archive_too_large")
+                    digest_builder.update(chunk);stream.write(chunk)
+            os.chmod(archive_path,0o600);digest=digest_builder.hexdigest()
+            package=await asyncio.to_thread(stage_site_archive,archive_path,staging_root)
+            files=package.files
+            object_ref,stored_digest=await asyncio.to_thread(objects.put_file,archive_path,
+                digest=digest,size=archive_size)
+            if stored_digest!=digest:raise ValueError("site_archive_identity_mismatch")
             staged = []
             for value in files:
-                file_ref, file_digest = await asyncio.to_thread(objects.put, value.data)
+                file_ref, file_digest = await asyncio.to_thread(objects.put_file,value.source,
+                    digest=value.sha256,size=value.size)
                 if file_digest != value.sha256:
                     raise ValueError("site_file_identity_mismatch")
                 staged.append({"path":value.path, "sha256":value.sha256, "size":value.size,
@@ -615,7 +630,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(404, "Thread not found")
             draft, _ = await activity_store.create_site_draft(owner_id, claims.thread_id,
                 claims.turn_id, name=name.strip(), slug=slug, idempotency_key=idempotency_key,
-                archive_object_ref=object_ref, bundle_sha256=digest, archive_size=len(archive),
+                archive_object_ref=object_ref, bundle_sha256=digest, archive_size=archive_size,
                 file_count=len(files), total_size=sum(value.size for value in files),
                 expires_at=now() + timedelta(seconds=settings.site_draft_ttl_seconds),
                 public_base_path=settings.site_public_base_path, files=staged)
@@ -625,6 +640,9 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "Site Turn not found")
         except RuntimeError as exc:
             raise HTTPException(409, str(exc))
+        finally:
+            if package:package.remove()
+            if archive_path:archive_path.unlink(missing_ok=True)
         return {**draft.model_dump(mode="json"), "requires_confirmation":True}
 
     @app.get("/v1/sites/jobs/{job_id}")

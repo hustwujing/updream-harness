@@ -4,9 +4,12 @@ from dataclasses import dataclass
 import hashlib
 import io
 import mimetypes
+import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import tarfile
+import uuid
 
 
 MAX_SITE_FILES = 512
@@ -22,6 +25,46 @@ class SiteFile:
     sha256: str
     size: int
     mime: str
+
+
+@dataclass(frozen=True)
+class StagedSiteFile:
+    path: str
+    source: Path
+    sha256: str
+    size: int
+    mime: str
+
+
+@dataclass
+class StagedSitePackage:
+    root: Path
+    files: list[StagedSiteFile]
+
+    def remove(self) -> None:
+        shutil.rmtree(self.root, ignore_errors=True)
+
+
+def _process_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def reap_site_stages(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    for value in root.glob("site-*-*-*"):
+        try:
+            pid = int(value.name.split("-", 3)[2])
+        except (IndexError, ValueError):
+            continue
+        if not _process_alive(pid):
+            if value.is_dir():shutil.rmtree(value, ignore_errors=True)
+            else:value.unlink(missing_ok=True)
 
 
 def safe_site_path(value: str) -> str:
@@ -83,6 +126,65 @@ def validate_site_archive(data: bytes) -> list[SiteFile]:
     if site_mime("index.html") != "text/html":
         raise ValueError("site_index_invalid")
     return sorted(files, key=lambda value: value.path)
+
+
+def stage_site_archive(source: Path, staging_root: Path) -> StagedSitePackage:
+    size = source.stat().st_size
+    if size <= 0 or size > MAX_SITE_ARCHIVE_BYTES:
+        raise ValueError("site_archive_size_invalid")
+    reap_site_stages(staging_root)
+    root = staging_root / f"site-stage-{os.getpid()}-{uuid.uuid4().hex}"
+    root.mkdir(parents=True, mode=0o700)
+    files: list[StagedSiteFile] = []
+    paths: set[str] = set()
+    total = 0
+    try:
+        try:
+            archive = tarfile.open(source, mode="r:*")
+        except tarfile.TarError as exc:
+            raise ValueError("site_archive_invalid") from exc
+        with archive:
+            for member in archive:
+                if member.isdir():
+                    continue
+                if not member.isfile() or member.issym() or member.islnk():
+                    raise ValueError("site_archive_special_file")
+                path = safe_site_path(member.name)
+                if path in paths:
+                    raise ValueError("site_archive_duplicate_path")
+                if member.size < 0 or member.size > MAX_SITE_FILE_BYTES:
+                    raise ValueError("site_file_size_invalid")
+                total += member.size
+                if total > MAX_SITE_TOTAL_BYTES:
+                    raise ValueError("site_total_size_invalid")
+                if len(files) >= MAX_SITE_FILES:
+                    raise ValueError("site_file_count_invalid")
+                incoming = archive.extractfile(member)
+                if incoming is None:
+                    raise ValueError("site_archive_invalid")
+                target = root / f"{len(files):04d}.file"
+                digest = hashlib.sha256(); written = 0
+                with target.open("xb") as output:
+                    while written < member.size:
+                        chunk = incoming.read(min(1024 * 1024, member.size - written))
+                        if not chunk:
+                            raise ValueError("site_archive_truncated")
+                        written += len(chunk); digest.update(chunk); output.write(chunk)
+                    if incoming.read(1):
+                        raise ValueError("site_archive_member_overflow")
+                os.chmod(target, 0o600)
+                files.append(StagedSiteFile(path=path, source=target,
+                    sha256=digest.hexdigest(), size=written, mime=site_mime(path)))
+                paths.add(path)
+        if "index.html" not in paths:
+            raise ValueError("site_index_missing")
+        index = next(value for value in files if value.path == "index.html")
+        if index.size == 0 or index.mime != "text/html":
+            raise ValueError("site_index_invalid")
+        return StagedSitePackage(root, sorted(files, key=lambda value: value.path))
+    except Exception:
+        shutil.rmtree(root, ignore_errors=True)
+        raise
 
 
 def normalize_site_slug(value: str) -> str:
