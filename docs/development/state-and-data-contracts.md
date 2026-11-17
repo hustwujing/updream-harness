@@ -124,7 +124,10 @@ exact ordered Artifact/digest set. Deterministic validator receipts are loaded
 from the source collection and frozen into Reviewer context before scheduling.
 The Job and Gate are inserted by the same Store transaction; no Reviewer Job is
 claimable without its gate. Every terminal Reviewer transition applies an
-availability outcome even if Adapter collection was never reached.
+availability outcome even if Adapter collection was never reached. Non-success
+Job state, Gate state, optional publication/warning, Job result and group
+continuation outbox commit in one transaction, so continuation cannot observe a
+terminal Reviewer with a pending Gate.
 
 A digest-bound `PASS` atomically promotes candidates and publishes late
 delivery Items if the source group already terminated. `REVISE`,

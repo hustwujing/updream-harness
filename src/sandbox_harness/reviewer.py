@@ -166,17 +166,12 @@ class ReviewerJobAdapter:
     async def collect(self,context:JobExecutionContext,external_execution_id:str,status:AdapterStatus)->dict:
         result=await self.delegate.collect(context,external_execution_id,status)
         if status.state!=JobState.SUCCEEDED:
-            gate=(await self.store.apply_review_gate(context.job.id,
-                execution_error="reviewer_"+status.state.value.lower()) if self.store else None)
-            return {**result,**({"review_gate":gate} if gate else {})}
+            return result
         try:
             verdict=ReviewVerdict.model_validate(result.get('review',result))
             expected=tuple(context.request.parameters['review_context']['artifact_digests'])
             if verdict.artifact_digests!=expected:raise ValueError('review_artifact_digest_mismatch')
             gate=(await self.store.apply_review_gate(context.job.id,
                 receipt=verdict.model_dump(mode='json')) if self.store else None)
-        except Exception:
-            if self.store:await self.store.apply_review_gate(context.job.id,
-                execution_error="review_verdict_invalid")
-            raise
+        except Exception:raise
         return {'review':verdict.model_dump(mode='json'),**({"review_gate":gate} if gate else {})}

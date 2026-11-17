@@ -2491,13 +2491,19 @@ class Store:
             raise KeyError("job_not_found")
         encoded = canonical_json(result or {})
         digest = hashlib.sha256(encoded.encode()).hexdigest()
-        view=None;review_failure=""
+        view=None
         async with self.job_lock(f"group:{group_id}"):
             async with self.connections.begin() as db:
                 group = await db.get(JobGroupRow, group_id, with_for_update=True)
                 job = await db.get(JobRow, job_id, with_for_update=True)
                 if job.generation != expected_generation:
                     raise RuntimeError("stale_job_generation")
+                if (job.adapter=="reviewer-harness" and state in TERMINAL_JOB_STATES
+                        and state!=JobState.SUCCEEDED):
+                    gate=await self.apply_review_gate(job_id,
+                        execution_error="reviewer_"+state.value.lower(),_db=db)
+                    effective={**(result or {}),"review_gate":gate}
+                    encoded=canonical_json(effective);digest=hashlib.sha256(encoded.encode()).hexdigest()
                 if JobState(job.state) in TERMINAL_JOB_STATES:
                     if job.state == state.value and job.result_digest == digest:
                         view=self.job_view(job)
@@ -2560,6 +2566,7 @@ class Store:
                             "local_job_id": member.local_job_id,
                             "state": member.state,
                             "result_digest": member.result_digest,
+                            "result": json.loads(member.result_json or "{}"),
                         } for member in jobs]
                         result_json = canonical_json(terminal_payload)
                         result_digest = hashlib.sha256(result_json.encode()).hexdigest()
@@ -2605,10 +2612,6 @@ class Store:
                             ))
                     await db.flush()
                     view=self.job_view(job)
-                if job.adapter=="reviewer-harness" and state in TERMINAL_JOB_STATES and state!=JobState.SUCCEEDED:
-                    review_failure="reviewer_"+state.value.lower()
-        if review_failure:
-            await self.apply_review_gate(job_id,execution_error=review_failure)
         return view
 
     async def get_job_outbox(self, group_id: str) -> JobOutboxView | None:
@@ -2967,61 +2970,65 @@ class Store:
         return results
 
     async def apply_review_gate(self, reviewer_job_id: str, *, receipt: dict | None = None,
-                                execution_error: str = "") -> dict:
-        async with self.connections.begin() as db:
-            gate=await db.get(ReviewGateRow,reviewer_job_id,with_for_update=True)
-            if not gate:return {"state":"unlinked"}
-            encoded=canonical_json(receipt or {"execution_error":execution_error})
-            if gate.state in {"published","review_blocked","optional_warning"}:
-                if gate.receipt_json!=encoded:raise RuntimeError("review_gate_terminal_conflict")
-                return {"state":gate.state,"warning":gate.warning}
-            source=await db.get(JobRow,gate.source_job_id,with_for_update=True)
-            if not source or source.generation!=gate.source_generation:
-                raise RuntimeError("stale_review_source_generation")
-            rows=list((await db.execute(select(JobArtifactRow).where(
-                JobArtifactRow.job_id==gate.source_job_id,
-                JobArtifactRow.artifact_role==gate.artifact_role)
-                .order_by(JobArtifactRow.position).with_for_update())).scalars().all())
-            ids=[row.artifact_id for row in rows];digests=[row.sha256 for row in rows]
-            if ids!=json.loads(gate.artifact_ids_json) or digests!=json.loads(gate.artifact_digests_json):
-                raise RuntimeError("review_target_identity_changed")
-            if receipt and receipt.get("artifact_digests")!=digests:
-                raise RuntimeError("artifact_review_digest_mismatch")
-            verdict=str((receipt or {}).get("verdict", ""))
-            publish=verdict=="PASS" or (bool(execution_error) and not gate.required)
-            warning=("optional_review_unavailable:"+execution_error if execution_error and not gate.required else "")
+                                execution_error: str = "", _db:AsyncSession|None=None) -> dict:
+        if _db is None:
+            async with self.connections.begin() as db:
+                return await self.apply_review_gate(reviewer_job_id,receipt=receipt,
+                    execution_error=execution_error,_db=db)
+        db=_db
+        gate=await db.get(ReviewGateRow,reviewer_job_id,with_for_update=True)
+        if not gate:return {"state":"unlinked"}
+        encoded=canonical_json(receipt or {"execution_error":execution_error})
+        if gate.state in {"published","review_blocked","optional_warning"}:
+            if gate.receipt_json!=encoded:raise RuntimeError("review_gate_terminal_conflict")
+            return {"state":gate.state,"warning":gate.warning}
+        source=await db.get(JobRow,gate.source_job_id,with_for_update=True)
+        if not source or source.generation!=gate.source_generation:
+            raise RuntimeError("stale_review_source_generation")
+        rows=list((await db.execute(select(JobArtifactRow).where(
+            JobArtifactRow.job_id==gate.source_job_id,
+            JobArtifactRow.artifact_role==gate.artifact_role)
+            .order_by(JobArtifactRow.position).with_for_update())).scalars().all())
+        ids=[row.artifact_id for row in rows];digests=[row.sha256 for row in rows]
+        if ids!=json.loads(gate.artifact_ids_json) or digests!=json.loads(gate.artifact_digests_json):
+            raise RuntimeError("review_target_identity_changed")
+        if receipt and receipt.get("artifact_digests")!=digests:
+            raise RuntimeError("artifact_review_digest_mismatch")
+        verdict=str((receipt or {}).get("verdict", ""))
+        publish=verdict=="PASS" or (bool(execution_error) and not gate.required)
+        warning=("optional_review_unavailable:"+execution_error if execution_error and not gate.required else "")
+        for row in rows:
+            row.review_receipts_json=canonical_json([receipt or {
+                "verdict":"UNAVAILABLE","error":execution_error}])
+            row.state="reviewed" if publish else "review_blocked"
+        if publish:
             for row in rows:
-                row.review_receipts_json=canonical_json([receipt or {
-                    "verdict":"UNAVAILABLE","error":execution_error}])
-                row.state="reviewed" if publish else "review_blocked"
-            if publish:
-                for row in rows:
-                    row.output_disposition=row.requested_disposition
-                    if row.output_disposition in {OutputDisposition.WORKSPACE.value,
-                            OutputDisposition.DELIVERY.value}:
-                        await self._register_project_file_locked(db,source.thread_id,
-                            path=f"artifacts/jobs/{source.id}/{row.filename}",source_type="artifact",
-                            source_turn_id=source.origin_turn_id,sha256=row.sha256,size=row.size,
-                            mime=row.mime,object_ref=row.object_ref)
-                    if (row.output_disposition==OutputDisposition.DELIVERY.value
-                            and JobState(source.state) in TERMINAL_JOB_STATES):
-                        visible=(await db.execute(select(ItemRow.id).where(ItemRow.thread_id==source.thread_id,
-                            ItemRow.type==ItemType.ARTIFACT.value,
-                            ItemRow.payload_json.like(f'%"artifact_id": "{row.artifact_id}"%'))
-                            .limit(1))).scalar_one_or_none()
-                        if not visible:
-                            sequence=await self.next_item_sequence(db,source.thread_id);timestamp=now()
-                            db.add(ItemRow(id=identifier(),thread_id=source.thread_id,
-                                turn_id=source.origin_turn_id,sequence=sequence,type=ItemType.ARTIFACT.value,
-                                status="completed",summary=row.filename,payload_json=json.dumps({
-                                    "artifact_id":row.artifact_id,"mime":row.mime,"size":row.size,
-                                    "partial":False,"job_id":source.id,"artifact_role":row.artifact_role}),
-                                created_at=timestamp,updated_at=timestamp))
-                gate.state="published" if verdict=="PASS" else "optional_warning"
-            else:
-                gate.state="required_unavailable" if execution_error else "review_blocked"
-            gate.receipt_json=encoded;gate.warning=warning;gate.updated_at=now()
-            return {"state":gate.state,"warning":warning}
+                row.output_disposition=row.requested_disposition
+                if row.output_disposition in {OutputDisposition.WORKSPACE.value,
+                        OutputDisposition.DELIVERY.value}:
+                    await self._register_project_file_locked(db,source.thread_id,
+                        path=f"artifacts/jobs/{source.id}/{row.filename}",source_type="artifact",
+                        source_turn_id=source.origin_turn_id,sha256=row.sha256,size=row.size,
+                        mime=row.mime,object_ref=row.object_ref)
+                if (row.output_disposition==OutputDisposition.DELIVERY.value
+                        and JobState(source.state) in TERMINAL_JOB_STATES):
+                    visible=(await db.execute(select(ItemRow.id).where(ItemRow.thread_id==source.thread_id,
+                        ItemRow.type==ItemType.ARTIFACT.value,
+                        ItemRow.payload_json.like(f'%"artifact_id": "{row.artifact_id}"%'))
+                        .limit(1))).scalar_one_or_none()
+                    if not visible:
+                        sequence=await self.next_item_sequence(db,source.thread_id);timestamp=now()
+                        db.add(ItemRow(id=identifier(),thread_id=source.thread_id,
+                            turn_id=source.origin_turn_id,sequence=sequence,type=ItemType.ARTIFACT.value,
+                            status="completed",summary=row.filename,payload_json=json.dumps({
+                                "artifact_id":row.artifact_id,"mime":row.mime,"size":row.size,
+                                "partial":False,"job_id":source.id,"artifact_role":row.artifact_role}),
+                            created_at=timestamp,updated_at=timestamp))
+            gate.state="published" if verdict=="PASS" else "optional_warning"
+        else:
+            gate.state="required_unavailable" if execution_error else "review_blocked"
+        gate.receipt_json=encoded;gate.warning=warning;gate.updated_at=now()
+        return {"state":gate.state,"warning":warning}
 
     async def get_review_gate(self,reviewer_job_id:str)->dict|None:
         async with self.connections() as db:

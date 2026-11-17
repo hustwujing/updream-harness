@@ -8,7 +8,8 @@ from sqlalchemy import update
 from sandbox_harness.artifact_gateway import ArtifactEmission,ArtifactGateway
 from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.domain import Harness,ItemType,ThreadCreate,TurnCreate
-from sandbox_harness.job_adapters import AdapterStatus,JobExecutionContext,PreAcceptFailure
+from sandbox_harness.job_adapters import (AdapterStatus,AdapterSubmission,JobExecutionContext,
+    PreAcceptFailure)
 from sandbox_harness.job_catalog import JobCatalog
 from sandbox_harness.job_contracts import (JobExpectedOutput,JobGroupCreate,JobKind,JobRequest,
     JobState,OutputDisposition)
@@ -17,7 +18,7 @@ from sandbox_harness.job_worker import JobWorker
 from sandbox_harness.objects import ObjectStore
 from sandbox_harness.profiles import ProfileResolver
 from sandbox_harness.reviewer import ReviewSubmission,ReviewerCoordinator,ReviewerJobAdapter
-from sandbox_harness.store import JobArtifactRow,Store
+from sandbox_harness.store import JobArtifactRow,JobOutboxRow,Store
 
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -141,7 +142,9 @@ async def test_revise_and_required_failure_retain_candidates_while_optional_fail
         failed=await ReviewerJobAdapter(Failed(),store).collect(
             JobExecutionContext(job=job,request=request,generation=attempt.generation),"execution",
             AdapterStatus(True,JobState.FAILED,{}))
-        assert failed["review_gate"]["state"]=="required_unavailable"
+        failed_job=await store.transition_job(job.id,JobState.FAILED,
+            expected_generation=attempt.generation,result=failed)
+        assert failed_job.result["review_gate"]["state"]=="required_unavailable"
 
         _,_,optional_artifact,_=await source_collection(store,thread,turn,objects,"optional-failure","optional")
         prepared=await reviewer.prepare_submission("owner",thread.id,turn.id,ReviewSubmission(
@@ -152,8 +155,10 @@ async def test_revise_and_required_failure_retain_candidates_while_optional_fail
         optional=await ReviewerJobAdapter(Failed(),store).collect(
             JobExecutionContext(job=job,request=request,generation=attempt.generation),"execution",
             AdapterStatus(True,JobState.FAILED,{}))
-        assert optional["review_gate"]["state"]=="optional_warning"
-        assert "optional_review_unavailable" in optional["review_gate"]["warning"]
+        optional_job=await store.transition_job(job.id,JobState.FAILED,
+            expected_generation=attempt.generation,result=optional)
+        assert optional_job.result["review_gate"]["state"]=="optional_warning"
+        assert "optional_review_unavailable" in optional_job.result["review_gate"]["warning"]
         assert any(value.path.endswith("optional-failure.pdf")
             for value in await store.current_project_files(thread.id,"owner"))
     finally:await store.close()
@@ -197,6 +202,8 @@ async def test_preaccept_failure_finalizes_required_and_optional_gates(tmp_path)
                 node_id="node",worker_id="review-worker")
             await worker.run_once()
             assert (await store.get_review_gate(prepared.jobs[0].id))["state"]==expected
+            terminal=await store.get_job(prepared.jobs[0].id)
+            assert terminal.result["review_gate"]["state"]==expected
         assert any(value.path.endswith("preaccept-optional.pdf")
             for value in await store.current_project_files(thread.id,"owner"))
         assert not any(value.path.endswith("preaccept-required.pdf")
@@ -226,4 +233,32 @@ async def test_late_required_gate_rejected_but_mixed_advisory_review_allowed(tmp
         assert request.parameters["review_context"]["target"] is None
         assert len(request.input_artifacts)==3
         assert await store.get_review_gate(prepared.jobs[0].id) is None
+    finally:await store.close()
+
+
+async def test_malformed_verdict_terminalizes_job_and_gate_atomically_without_worker_escape(tmp_path):
+    store,thread,turn,reviewer,objects=await environment(tmp_path)
+    class Malformed:
+        async def submit(self,*args):return AdapterSubmission("review-execution",{},completed=True)
+        async def collect(self,*args):return {"review":{"verdict":"PASS"}}
+    try:
+        for policy,expected in (("required","required_unavailable"),("optional","optional_warning")):
+            _,_,artifact,_=await source_collection(store,thread,turn,objects,"malformed-"+policy,policy)
+            prepared=await reviewer.prepare_submission("owner",thread.id,turn.id,ReviewSubmission(
+                artifact_ids=(artifact.artifact_id,),required=policy=="required",harness="codex",
+                model="gpt-5.6",rubric="Review.",idempotency_key="malformed-review-"+policy))
+            worker=JobWorker(store,{"reviewer-harness":ReviewerJobAdapter(Malformed(),store)},
+                node_id="node",worker_id="malformed-worker")
+            attempts=await store.claim_available_jobs(worker.worker_id,"node",60,limit=1,
+                adapters={"reviewer-harness"})
+            await worker._process_isolated(attempts[0])
+            terminal=await store.get_job(prepared.jobs[0].id)
+            gate=await store.get_review_gate(prepared.jobs[0].id)
+            assert terminal.state==JobState.FAILED and gate["state"]==expected
+            assert terminal.result["review_gate"]["state"]==expected
+            async with store.connections() as db:
+                outbox=(await db.execute(__import__('sqlalchemy').select(JobOutboxRow).where(
+                    JobOutboxRow.group_id==prepared.group.id))).scalar_one()
+            payload=json.loads(outbox.result_json)
+            assert payload[0]["result"]["review_gate"]["state"]==expected
     finally:await store.close()
