@@ -27,6 +27,7 @@ def test_intervention_cases_use_messages_not_product_keyword_rules():
     assert 'deliver_intervention(client,thread,turn,message,intervention_attachments)' in source
     assert '"attachments":attachments' in source
     assert 'AFTER_ARTIFACT_INTERVENTIONS' in source and "intervention_artifact_timeout" in source
+    assert 'current.json()["state"] in TERMINAL' in source
 
 
 def test_parallel_protocol_runner_never_fakes_unimplemented_success():

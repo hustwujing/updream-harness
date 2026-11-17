@@ -323,6 +323,8 @@ async def primary_case(client,case,args,running):
             deadline=time.monotonic()+args.timeout
             while time.monotonic()<deadline:
                 if any(row.get('type')=='artifact' for row in await list_all_items(client,thread['id'])):break
+                current=await client.get(f"api/turns/{turn['id']}");current.raise_for_status()
+                if current.json()["state"] in TERMINAL:return
                 await asyncio.sleep(1)
             else:raise TimeoutError('intervention_artifact_timeout')
         else:await asyncio.sleep(args.intervention_delay)
