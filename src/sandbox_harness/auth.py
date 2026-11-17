@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta
 import hashlib
 import re
 import secrets
@@ -59,16 +59,20 @@ class AccountAuth:
         valid = await self.verify_hash(password_hash, password)
         if not row or not valid or row[0].disabled:return None
         if self.hasher.check_needs_rehash(password_hash):
-            await self.store.update_password(row[0].id, await self.hash_password(password))
+            await self.store.rehash_password(row[0].id, await self.hash_password(password))
         return row[0]
+
+    def new_session(self) -> tuple[str, str, datetime]:
+        token = secrets.token_urlsafe(32)
+        return token, token_hash(token), now() + timedelta(seconds=self.ttl_seconds)
 
     async def verify_account(self, account: AccountView, password: str) -> bool:
         row = await self.store.get_user_by_username(account.username)
         return bool(row and row[0].id == account.id and await self.verify_hash(row[1], password))
 
     async def create_session(self, user_id: str) -> tuple[str, str]:
-        token = secrets.token_urlsafe(32);digest = token_hash(token)
-        await self.store.create_auth_session(digest, user_id, now() + timedelta(seconds=self.ttl_seconds))
+        token, digest, expires_at = self.new_session()
+        await self.store.create_auth_session(digest, user_id, expires_at)
         return token, digest
 
     async def resolve(self, token: str | None) -> tuple[AccountView | None, str]:

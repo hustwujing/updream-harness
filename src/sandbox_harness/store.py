@@ -839,6 +839,16 @@ class JobActivityRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+OWNER_MIGRATION_ROWS = (
+    ThreadRow, ThreadControlRow, PauseParticipantRow, UploadRow,
+    MediaDraftRow, MediaReferenceUploadRow, MediaVoiceCloneRow, MediaBatchRow, MediaJobRow,
+    SiteProjectRow, SiteDraftRow, SiteDeployJobRow,
+    SandboxControlRow, SandboxPortGrantRow, SandboxAuditRow,
+    JobGroupDraftRow, AuthorizationSnapshotRow, JobGroupRow, JobRow, BudgetAccountRow,
+)
+OWNER_MIGRATION_TABLES = frozenset(row.__tablename__ for row in OWNER_MIGRATION_ROWS)
+
+
 class Store:
     def __init__(self, database_url: str, redis_url: str = "", redis_prefix: str = "sandbox-harness:"):
         self.engine = create_async_engine(database_url)
@@ -2438,7 +2448,9 @@ class Store:
             raise RuntimeError("username_taken") from exc
         return self.account_view(row)
 
-    async def register_user(self, username: str, password_hash: str, source_owner_id: str = "") -> AccountView:
+    async def register_user(self, username: str, password_hash: str, source_owner_id: str = "", *,
+                            session_token_hash: str = "",
+                            session_expires_at: datetime | None = None) -> AccountView:
         timestamp = now(); identity = identifier()
         row = UserRow(id=identity, owner_id=hashlib.sha256(("account:" + identity).encode()).hexdigest(),
             username=username, password_hash=password_hash, created_at=timestamp, updated_at=timestamp)
@@ -2452,26 +2464,42 @@ class Store:
                         TurnRow.state.not_in([state.value for state in TERMINAL])).limit(1))).scalar_one_or_none()
                     if active:
                         raise RuntimeError("active_work_prevents_registration")
+                    active_job = (await db.execute(select(JobRow.id).where(
+                        JobRow.owner_id == source_owner_id,
+                        JobRow.state.not_in([state.value for state in TERMINAL_JOB_STATES]),
+                    ).limit(1))).scalar_one_or_none()
+                    active_control = (await db.execute(select(SandboxControlRow.thread_id).where(
+                        SandboxControlRow.owner_id == source_owner_id).limit(1))).scalar_one_or_none()
+                    active_reference = (await db.execute(select(MediaReferenceUploadRow.id).where(
+                        MediaReferenceUploadRow.owner_id == source_owner_id,
+                        MediaReferenceUploadRow.status == "pending",
+                        MediaReferenceUploadRow.expires_at > timestamp).limit(1))).scalar_one_or_none()
+                    active_pause = (await db.execute(select(ThreadControlRow.thread_id).where(
+                        ThreadControlRow.owner_id == source_owner_id,
+                        ThreadControlRow.state.in_([ThreadControlState.PAUSING.value,
+                            ThreadControlState.RESUMING.value])).limit(1))).scalar_one_or_none()
+                    active_media = (await db.execute(select(MediaJobRow.id).where(
+                        MediaJobRow.owner_id == source_owner_id,
+                        MediaJobRow.status.not_in(["succeeded", "failed", "cancelled", "unknown"]),
+                    ).limit(1))).scalar_one_or_none()
+                    active_site = (await db.execute(select(SiteDeployJobRow.id).where(
+                        SiteDeployJobRow.owner_id == source_owner_id,
+                        SiteDeployJobRow.status.not_in(["succeeded", "failed"]),
+                    ).limit(1))).scalar_one_or_none()
+                    if any((active_job, active_control, active_reference, active_pause,
+                            active_media, active_site)):
+                        raise RuntimeError("active_work_prevents_registration")
                 db.add(row)
+                if session_token_hash:
+                    if not session_expires_at:
+                        raise ValueError("session_expires_at_required")
+                    db.add(AuthSessionRow(token_hash=session_token_hash, user_id=row.id,
+                        expires_at=session_expires_at, created_at=timestamp,
+                        last_seen_at=timestamp))
                 if source_owner_id:
-                    await db.execute(update(ThreadRow).where(ThreadRow.owner_id == source_owner_id)
-                        .values(owner_id=row.owner_id))
-                    await db.execute(update(UploadRow).where(UploadRow.owner_id == source_owner_id)
-                        .values(owner_id=row.owner_id))
-                    await db.execute(update(MediaDraftRow).where(MediaDraftRow.owner_id == source_owner_id)
-                        .values(owner_id=row.owner_id))
-                    await db.execute(update(MediaBatchRow).where(MediaBatchRow.owner_id == source_owner_id)
-                        .values(owner_id=row.owner_id))
-                    await db.execute(update(MediaJobRow).where(MediaJobRow.owner_id == source_owner_id)
-                        .values(owner_id=row.owner_id))
-                    await db.execute(update(MediaVoiceCloneRow).where(
-                        MediaVoiceCloneRow.owner_id == source_owner_id).values(owner_id=row.owner_id))
-                    await db.execute(update(SiteProjectRow).where(SiteProjectRow.owner_id == source_owner_id)
-                        .values(owner_id=row.owner_id))
-                    await db.execute(update(SiteDraftRow).where(SiteDraftRow.owner_id == source_owner_id)
-                        .values(owner_id=row.owner_id))
-                    await db.execute(update(SiteDeployJobRow).where(SiteDeployJobRow.owner_id == source_owner_id)
-                        .values(owner_id=row.owner_id))
+                    for model in OWNER_MIGRATION_ROWS:
+                        await db.execute(update(model).where(model.owner_id == source_owner_id)
+                            .values(owner_id=row.owner_id))
         except IntegrityError as exc:
             raise RuntimeError("username_taken") from exc
         return self.account_view(row)
@@ -2533,6 +2561,13 @@ class Store:
             query = delete(AuthSessionRow).where(AuthSessionRow.user_id == user_id)
             if keep_token_hash:query = query.where(AuthSessionRow.token_hash != keep_token_hash)
             await db.execute(query)
+
+    async def rehash_password(self, user_id: str, password_hash: str) -> None:
+        async with self.connections.begin() as db:
+            row = await db.get(UserRow, user_id, with_for_update=True)
+            if not row: raise KeyError("user_not_found")
+            row.password_hash = password_hash
+            row.updated_at = now()
 
     async def update_account(self, user_id: str, *, username: str | None = None,
                              password_hash: str | None = None, keep_token_hash: str = "") -> AccountView:

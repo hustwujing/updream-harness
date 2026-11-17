@@ -752,7 +752,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def login(value: LoginRequest, request: Request):
         source = request.headers.get("x-real-ip", "") if request.state.ingress == "frpc" else ""
         source = source or (request.client.host if request.client else "unknown")
-        identity = hashlib.sha256((source + "\0" + value.username.strip().casefold()).encode()).hexdigest()
+        try: canonical_username = normalize_username(value.username)
+        except ValueError: canonical_username = "invalid-user"
+        identity = hashlib.sha256((source + "\0" + canonical_username).encode()).hexdigest()
         current = time.monotonic()
         if len(login_failures) > 10_000:
             for key, values in list(login_failures.items()):
@@ -781,12 +783,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             username = normalize_username(value.username)
             password_hash = await account_auth.hash_password(value.password)
-            account = await store.register_user(username, password_hash, request.state.owner_id)
+            token, digest, expires_at = account_auth.new_session()
+            account = await store.register_user(username, password_hash, request.state.owner_id,
+                session_token_hash=digest, session_expires_at=expires_at)
         except ValueError as exc:
             raise HTTPException(422, str(exc))
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
-        token, _ = await account_auth.create_session(account.id)
+            if str(exc) != "username_taken":
+                raise HTTPException(409, str(exc))
+            account = await account_auth.authenticate(value.username, value.password)
+            if not account:
+                raise HTTPException(409, "username_taken")
+            token, _ = await account_auth.create_session(account.id)
         response = JSONResponse({"authenticated": True, "user": account.model_dump(mode="json")})
         response.delete_cookie(COOKIE, path=cookie_path(request))
         response.set_cookie(AUTH_COOKIE, token, httponly=True, samesite="lax", secure=secure_cookie(request),

@@ -1,4 +1,6 @@
 import asyncio
+from datetime import timedelta
+from types import SimpleNamespace
 
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
@@ -7,8 +9,11 @@ import pytest
 from sandbox_harness.app import create_app
 from sandbox_harness.auth import AUTH_COOKIE, AccountAuth, normalize_username, token_hash
 from sandbox_harness.config import Settings
+from sandbox_harness.catalog import HarnessCatalog
+from sandbox_harness.domain import Harness, ThreadCreate, TurnCreate, TurnState, now
+from sandbox_harness.job_contracts import JobGroupCreate, JobGroupDraftCreate, JobKind, JobRequest
 from sandbox_harness.sessions import COOKIE
-from sandbox_harness.store import Store
+from sandbox_harness.store import Base, OWNER_MIGRATION_TABLES, Store
 
 
 async def test_account_password_sessions_and_rotation(tmp_path):
@@ -27,6 +32,94 @@ async def test_account_password_sessions_and_rotation(tmp_path):
         assert (await auth.resolve(second))[0].id==account.id
         assert await auth.authenticate('renamed.user','new password for this account')
         await store.set_user_disabled(account.id,True);assert (await auth.resolve(second))[0] is None
+    finally:await store.close()
+
+
+async def test_transparent_password_rehash_preserves_existing_sessions(tmp_path):
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'rehash.db'));await store.initialize()
+    auth=AccountAuth(store,3600);password='eight888'
+    weak=PasswordHasher(time_cost=1,memory_cost=8192,parallelism=1).hash(password)
+    try:
+        account=await store.create_user('rehash.user',weak)
+        first,_=await auth.create_session(account.id);second,_=await auth.create_session(account.id)
+        assert (await auth.authenticate('rehash.user',password)).id==account.id
+        assert (await auth.resolve(first))[0].id==account.id
+        assert (await auth.resolve(second))[0].id==account.id
+    finally:await store.close()
+
+
+async def test_owner_migration_catalog_covers_every_owner_table_and_moves_job_draft(tmp_path):
+    owner_tables={table.name for table in Base.metadata.tables.values()
+        if 'owner_id' in table.c and table.name!='users'}
+    assert OWNER_MIGRATION_TABLES==owner_tables
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'owner-migration.db'));await store.initialize()
+    profile=HarnessCatalog().resolve('codex','gpt-5.6','standard');source='anonymous-owner'
+    try:
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model='gpt-5.6',
+            reasoning_level='standard',title='Migrate'),profile,source)
+        turn,_,_=await store.create_turn(thread.id,TurnCreate(message='done',
+            idempotency_key='migration-origin'),profile,source)
+        await store.set_turn_state(turn.id,TurnState.COMPLETED)
+        request=JobRequest(local_job_id='draft',kind=JobKind.OPERATION,adapter='fixture',
+            descriptor_id='fixture',descriptor_version='1',descriptor_digest='a'*64,
+            idempotency_key='migration-draft-job',parameters={})
+        draft,_=await store.create_job_group_draft(source,JobGroupDraftCreate(
+            thread_id=thread.id,origin_turn_id=turn.id,idempotency_key='migration-draft',
+            jobs=(request,),expires_at=now()+timedelta(hours=1)))
+        account=await store.register_user('migrated.user','password-hash',source)
+        assert await store.get_job_group_draft(draft.id,account.owner_id)
+        assert await store.get_job_group_draft(draft.id,source) is None
+        assert (await store.get_thread(thread.id,account.owner_id)).id==thread.id
+        assert await store.get_thread(thread.id,source) is None
+    finally:await store.close()
+
+
+async def test_registration_rejects_active_job_pending_upload_and_live_takeover(tmp_path):
+    async def scenario(name,seed):
+        store=Store('sqlite+aiosqlite:///'+str(tmp_path/(name+'.db')));await store.initialize()
+        profile=HarnessCatalog().resolve('codex','gpt-5.6','standard');source='owner-'+name
+        try:
+            thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model='gpt-5.6',
+                reasoning_level='standard',title=name),profile,source)
+            turn,_,_=await store.create_turn(thread.id,TurnCreate(message='done',
+                idempotency_key=name+'-origin'),profile,source)
+            await store.set_turn_state(turn.id,TurnState.COMPLETED)
+            await seed(store,thread,turn,source)
+            with pytest.raises(RuntimeError,match='active_work_prevents_registration'):
+                await store.register_user(name+'.user','password-hash',source)
+        finally:await store.close()
+    async def active_job(store,thread,turn,source):
+        request=JobRequest(local_job_id='active',kind=JobKind.OPERATION,adapter='fixture',
+            descriptor_id='fixture',descriptor_version='1',descriptor_digest='a'*64,
+            idempotency_key='active-job-request',parameters={})
+        await store.create_job_group(source,JobGroupCreate(thread_id=thread.id,
+            origin_turn_id=turn.id,idempotency_key='active-job-group',jobs=(request,)))
+    async def pending_upload(store,thread,turn,source):
+        await store.create_media_reference_upload(source,thread.id,SimpleNamespace(
+            name='input.png',kind='image',mime='image/png',size=10,sha256='b'*64),
+            object_key='pending-key',public_url='https://example.invalid/pending',
+            expires_at=now()+timedelta(minutes=5))
+    async def live_control(store,thread,turn,source):
+        await store.begin_sandbox_control(thread.id,source,'sandbox-live','nonce',
+            now()+timedelta(minutes=5))
+    await scenario('active-job',active_job)
+    await scenario('pending-upload',pending_upload)
+    await scenario('live-control',live_control)
+
+
+async def test_registration_session_insert_failure_rolls_back_account_and_owner_migration(tmp_path):
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'register-atomic.db'));await store.initialize()
+    profile=HarnessCatalog().resolve('codex','gpt-5.6','standard');source='atomic-owner'
+    try:
+        existing=await store.create_user('existing.user','hash')
+        await store.create_auth_session('f'*64,existing.id,now()+timedelta(hours=1))
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model='gpt-5.6',
+            reasoning_level='standard',title='Atomic'),profile,source)
+        with pytest.raises(RuntimeError,match='username_taken'):
+            await store.register_user('atomic.user','hash',source,
+                session_token_hash='f'*64,session_expires_at=now()+timedelta(hours=1))
+        assert await store.get_user_by_username('atomic.user') is None
+        assert (await store.get_thread(thread.id,source)).id==thread.id
     finally:await store.close()
 
 
@@ -120,6 +213,24 @@ def test_direct_registration_migrates_anonymous_threads_and_rotates_identity(tmp
         assert removed.json()['user']['avatar_version']==2 and client.get('/api/auth/avatar').status_code==404
 
 
+def test_registration_response_loss_can_replay_same_credentials(tmp_path):
+    settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'register-replay.db'),
+        redis_url='',backend='fake',object_backend='local',model_catalog_discovery=False,
+        session_signing_key='register-replay-secret')
+    with TestClient(create_app(settings)) as client:
+        client.get('/api/session');anonymous_cookie=client.cookies.get(COOKIE)
+        thread=client.post('/api/threads',json={'harness':'codex','model':'gpt-5.6',
+            'reasoning_level':'standard','title':'Replay'}).json()
+        body={'username':'replay.user','password':'new account password'}
+        first=client.post('/api/auth/register',json=body)
+        assert first.status_code==200 and AUTH_COOKIE in first.cookies
+        client.cookies.clear();client.cookies.set(COOKIE,anonymous_cookie)
+        replay=client.post('/api/auth/register',json=body)
+        assert replay.status_code==200 and replay.json()['authenticated']
+        assert AUTH_COOKIE in replay.cookies
+        assert [value['id'] for value in client.get('/api/threads').json()]==[thread['id']]
+
+
 def test_direct_registration_waits_for_active_anonymous_work(tmp_path):
     database='sqlite+aiosqlite:///'+str(tmp_path/'register-active.db')
     settings=Settings(data_root=tmp_path,database_url=database,redis_url='',backend='fake',object_backend='local',
@@ -162,6 +273,8 @@ def test_login_rate_limit_is_scoped_to_source_and_username(tmp_path):
         for _ in range(5):
             assert client.post('/api/auth/login',headers={'X-Updream-Ingress':'frpc','X-Real-IP':'203.0.113.8'},
                 json={'username':'missing.user','password':'wrong'}).status_code==401
+        assert client.post('/api/auth/login',headers={'X-Updream-Ingress':'frpc','X-Real-IP':'203.0.113.8'},
+            json={'username':'ｍｉｓｓｉｎｇ．ｕｓｅｒ','password':'wrong'}).status_code==429
         assert client.post('/api/auth/login',headers={'X-Updream-Ingress':'frpc','X-Real-IP':'203.0.113.8'},
             json={'username':'missing.user','password':'wrong'}).status_code==429
         assert client.post('/api/auth/login',headers={'X-Updream-Ingress':'frpc','X-Real-IP':'203.0.113.9'},

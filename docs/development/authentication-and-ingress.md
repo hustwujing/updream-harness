@@ -28,7 +28,16 @@ entry point later does not change an existing or queued Turn.
 Passwords are Argon2id hashes. `users` stores stable identity; `auth_sessions`
 stores only SHA-256 hashes of random Cookie tokens. Cookies are HttpOnly and
 SameSite=Lax. Password change keeps the current Session and revokes the rest;
-disable/reset revokes all Sessions.
+disable/reset revokes all Sessions. A transparent Argon2 parameter rehash only
+updates `password_hash`; it is maintenance, not password rotation, and must not
+revoke any Session.
+
+Login throttling uses the same NFKC, trim and case-fold canonical username as
+authentication, combined with the trusted source address. The current limiter
+is deliberately process-local: failures expire after five minutes, and an API
+process restart clears them. Deploy exactly one public API process unless the
+limiter is moved to shared storage; multiple API workers would otherwise create
+independent buckets and weaken brute-force protection.
 
 The current FRPC endpoint is HTTP by explicit deployment choice. This provides
 no transport confidentiality for password, Cookie or content; hashing protects
@@ -48,9 +57,15 @@ administration. Direct-ingress users may also register from the browser account
 panel. FRPC users may log in, log out and change passwords, but cannot register
 or change profile identity/avatar; both UI and API enforce this boundary.
 Passwords must contain 8-256 characters. Direct anonymous registration moves
-the current owner's Threads, uploads and media records to a new account owner
-in one transaction, and clears the anonymous Cookie. Registration is rejected
-while that owner has active work. FRPC registration starts with an empty owner.
+every ORM table bearing `owner_id` (except the new `users` row itself) to the
+account owner in the same transaction that creates the first Auth Session, and
+clears the anonymous Cookie. A metadata test fails when a newly added
+owner-bearing table is absent from this migration set. Registration is rejected
+while that owner has an active Turn, generic Job, pending reference upload,
+Sandbox takeover, pause/resume saga, media Job or site deployment. Replaying the
+same username and password after response loss logs into the account that was
+already committed instead of returning a false `username_taken`. FRPC
+registration starts with an empty owner.
 The CLI reads new passwords from a mode-0600 file so credentials do not appear
 in command arguments or logs. Password files must be mode 0600 and are not tracked.
 
