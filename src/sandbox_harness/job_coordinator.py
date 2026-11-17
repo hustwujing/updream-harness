@@ -11,7 +11,7 @@ from .domain import now
 from .job_catalog import JobCatalog
 from .profiles import ProfileRequirements, ProfileResolver
 from .job_contracts import (
-    JobGroupCreate, JobGroupDraftCreate, JobGroupDraftView, JobGroupView,
+    FROZEN_HARNESS_DESCRIPTORS,JobGroupCreate, JobGroupDraftCreate, JobGroupDraftView, JobGroupView,
     JobKind, JobRequest, JobView,
 )
 
@@ -91,8 +91,8 @@ class JobCoordinator:
                 continue
             if not self.profile_resolver:
                 raise ValueError("Harness delegation ProfileResolver is unavailable")
-            if (request.adapter!="child-harness" or request.descriptor_id!="delegate.harness"
-                    or request.descriptor_version!="1" or request.descriptor_digest!="d"*64):
+            if (request.adapter,request.descriptor_id,request.descriptor_version,
+                    request.descriptor_digest) not in FROZEN_HARNESS_DESCRIPTORS:
                 raise ValueError("Harness Job must use the frozen delegation Descriptor")
             harness=str(request.parameters.get("harness", ""))
             resources=request.resource_requirements

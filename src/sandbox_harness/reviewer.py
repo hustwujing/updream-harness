@@ -6,7 +6,8 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .job_adapters import AdapterStatus, AdapterSubmission, JobExecutionContext
-from .job_contracts import JobArtifactInput, JobGroupCreate, JobKind, JobRequest, JobState
+from .job_contracts import (JobArtifactInput,JobGroupCreate,JobKind,JobRequest,JobState,
+    REVIEWER_HARNESS_DESCRIPTOR)
 
 
 class ReviewTrigger(StrEnum):
@@ -110,9 +111,10 @@ class ReviewerCoordinator:
         total_bytes=sum(candidate.size for candidate in value.candidates)
         if total_bytes>8*1024*1024*1024:raise ValueError("review_candidate_total_too_large")
         disk_mb=max(1024,(total_bytes+1024*1024-1)//(1024*1024)+512)
-        request=JobRequest(local_job_id='review',kind=JobKind.HARNESS,adapter='reviewer-harness',
-            descriptor_id='review.submit',descriptor_version='1',
-            descriptor_digest=__import__('hashlib').sha256(b'review.submit:1').hexdigest(),
+        adapter,descriptor_id,descriptor_version,descriptor_digest=REVIEWER_HARNESS_DESCRIPTOR
+        request=JobRequest(local_job_id='review',kind=JobKind.HARNESS,adapter=adapter,
+            descriptor_id=descriptor_id,descriptor_version=descriptor_version,
+            descriptor_digest=descriptor_digest,
             idempotency_key=value.idempotency_key+'-job',
             parameters={'harness':value.harness,'model':value.model,'objective':value.rubric,
                 'review_context':{'artifact_digests':digests,'required':value.required,

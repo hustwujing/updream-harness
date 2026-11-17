@@ -11,6 +11,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 DEFAULT_JOB_GROUP_LIMIT = 32
 HARD_JOB_GROUP_LIMIT = 100
+CHILD_HARNESS_DESCRIPTOR=("child-harness","delegate.harness","1","d"*64)
+REVIEWER_HARNESS_DESCRIPTOR=("reviewer-harness","review.submit","1",
+    hashlib.sha256(b"review.submit:1").hexdigest())
+FROZEN_HARNESS_DESCRIPTORS={CHILD_HARNESS_DESCRIPTOR,REVIEWER_HARNESS_DESCRIPTOR}
 
 
 class JobState(StrEnum):

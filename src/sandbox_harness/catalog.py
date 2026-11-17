@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .domain import Harness
 from .job_catalog import JobCatalog
+from .job_contracts import CHILD_HARNESS_DESCRIPTOR
 from .profiles import ProfileResolver
 
 
@@ -109,6 +110,7 @@ class HarnessCatalog:
         if not self.job_catalog or not self.profile_resolver:
             return {"operations": [], "capabilities": [], "skills": [],
                 "child_execution_profiles": []}
+        adapter,descriptor_id,descriptor_version,descriptor_digest=CHILD_HARNESS_DESCRIPTOR
         return {
             "operations": [{"id": row.id, "version": row.version,
                 "digest": row.digest, "execution_mode": row.execution_mode,
@@ -132,9 +134,9 @@ class HarnessCatalog:
             "child_execution_profiles": [{"id": row.id,
                 "supported_harnesses": list(row.supported_harnesses),
                 "max_delegation_depth": row.max_delegation_depth,
-                "job_template":{"kind":"harness","adapter":"child-harness",
-                    "descriptor_id":"delegate.harness","descriptor_version":"1",
-                    "descriptor_digest":"d"*64,"child_profile_id":row.id},
+                "job_template":{"kind":"harness","adapter":adapter,
+                    "descriptor_id":descriptor_id,"descriptor_version":descriptor_version,
+                    "descriptor_digest":descriptor_digest,"child_profile_id":row.id},
                 "parameter_schema":{"type":"object","required":["harness","model","objective"],
                     "properties":{"harness":{"enum":list(row.supported_harnesses)},
                         "model":{"type":"string","minLength":1},
