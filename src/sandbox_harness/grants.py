@@ -114,6 +114,7 @@ class GrantAuthority:
             harness=parent.harness, model=parent.model, routes=value.routes,
             ttl_seconds=value.ttl_seconds, max_requests=value.max_requests,
             max_public_requests=value.max_public_requests, token_budget=value.token_budget,
+            parent_nonce=parent.nonce, parent_token_budget=parent.token_budget,
             network_access=parent.network_access, scope="job",
             authorization_version=parent.authorization_version,
             group_id=value.group_id, job_id=value.job_id, generation=value.generation,

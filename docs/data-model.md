@@ -159,6 +159,17 @@ ID, expiry, creation and last-seen timestamps. Password reset/disable revokes
 Sessions by deleting rows. Anonymous browser identities remain stateless signed
 Cookies and do not create `users` rows.
 
+## Capability authority
+
+`capability_ledger` is the PostgreSQL authority for signed nonce identity,
+expiry, revocation, normal/public request counters, and token
+reserved/consumed totals. A parent nonce links Job spend to its Turn/Group
+ceiling. `model_token_reservations` records one Gateway model-request identity,
+the requested output limit, conservative reservation, final charge and
+terminal state. Finalization is idempotent; an unfinalized reservation remains
+charged against availability after process restart rather than reopening
+budget.
+
 ## Schema upgrades
 
 `Store.initialize` creates missing tables and performs explicit additive ALTERs

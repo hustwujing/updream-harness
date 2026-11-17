@@ -44,6 +44,7 @@ def test_job_grant_is_exactly_scoped_and_host_secrets_are_absent():
         child_profile_id="child-general",runtime_profile_id="general-cpu",now=claims.issued_at)
     assert verified.child_profile_id=="child-general" and verified.runtime_profile_id=="general-cpu"
     assert verified.job_id=="f"*32 and verified.generation==3
+    assert verified.parent_nonce==parent.nonce and verified.parent_token_budget==parent.token_budget
     payload=json.loads(__import__('base64').urlsafe_b64decode(token.split('.')[0]+'=='))
     assert not ({'api_key','credential','base_url','secret'} & set(payload))
 

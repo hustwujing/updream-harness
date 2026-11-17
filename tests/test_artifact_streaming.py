@@ -57,6 +57,8 @@ async def test_gateway_streams_job_artifact_under_exact_output_grant(tmp_path,mo
         async def eval(self,*args):return 1
     class Store:
         def __init__(self,*args,**kwargs):pass
+        async def authorize_capability(self,claims,usage="request"):
+            return {"request_count":1,"public_request_count":0,"token_remaining":claims.token_budget}
         async def bind_job_artifact(self,value,**identity):
             calls.append((value,identity));return {'artifact_id':'f'*32,
                 'artifact_role':value.artifact_role,'output_disposition':'candidate'}

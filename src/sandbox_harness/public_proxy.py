@@ -15,9 +15,18 @@ from urllib.parse import urlsplit
 MAX_HEADER = 64 * 1024
 ALLOWED_PORTS = {80, 443}
 DOMAIN_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 
 
 class DestinationDenied(ValueError):
+    pass
+
+
+class ProxyRequestTooLarge(ValueError):
+    pass
+
+
+class ProxyBodyTimeout(TimeoutError):
     pass
 
 
@@ -98,7 +107,9 @@ class DestinationPolicy:
 
 async def reject(writer: asyncio.StreamWriter, status: int, code: str) -> None:
     body = (code + "\n").encode()
-    writer.write((f"HTTP/1.1 {status} {'Forbidden' if status == 403 else 'Bad Gateway'}\r\n"
+    phrase={403:"Forbidden",408:"Request Timeout",413:"Payload Too Large",
+        503:"Service Unavailable"}.get(status,"Bad Gateway")
+    writer.write((f"HTTP/1.1 {status} {phrase}\r\n"
         f"Content-Type: text/plain; charset=utf-8\r\nContent-Length: {len(body)}\r\n"
         f"X-Sandbox-Proxy-Error: {code}\r\nConnection: close\r\n\r\n").encode() + body)
     await writer.drain()
@@ -146,9 +157,29 @@ def proxy_token(headers: dict[str, str]) -> str:
     return token
 
 
+def parse_authority(value: str, default_port: int) -> tuple[str,int]:
+    parsed=urlsplit("//"+value)
+    if (not parsed.hostname or parsed.username or parsed.password or parsed.path
+            or parsed.query or parsed.fragment):
+        raise ValueError("Invalid Host header")
+    try:port=parsed.port or default_port
+    except ValueError as exc:raise ValueError("Invalid Host header") from exc
+    return normalize_host(parsed.hostname),port
+
+
+def authority_header(host: str, port: int, default_port: int) -> str:
+    normalized=normalize_host(host)
+    try:ip=ipaddress.ip_address(normalized)
+    except ValueError:value=normalized
+    else:value=f"[{normalized}]" if ip.version==6 else normalized
+    return value if port==default_port else f"{value}:{port}"
+
+
 @observed("public_proxy.request",new_trace=True)
 async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, authorize, *, connections=None,
-        policy: DestinationPolicy | None = None, policy_selector=None) -> None:
+        policy: DestinationPolicy | None = None, policy_selector=None,
+        maximum_body: int = 16*1024*1024, body_idle_timeout: float = 15,
+        body_total_timeout: float = 120) -> None:
     upstream_writer = None
     registered_nonce = None
     expiry = None
@@ -161,24 +192,34 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
         method, target, version = lines[0].split(" ", 2)
         if version not in ("HTTP/1.0", "HTTP/1.1"):
             raise ValueError("Unsupported HTTP version")
-        headers = []
-        header_map = {}
+        headers = [];header_values={}
         content_length = 0
         for line in lines[1:]:
             if not line:
                 continue
+            if line.startswith((" ","\t")) or ":" not in line:
+                raise ValueError("Ambiguous proxy header framing")
             name, value = line.split(":", 1)
             lowered = name.strip().lower()
-            header_map[lowered] = value.strip()
+            if not HEADER_NAME.fullmatch(name.strip()):raise ValueError("Invalid proxy header name")
+            header_values.setdefault(lowered,[]).append(value.strip())
+        for duplicate in ("host","content-length","proxy-authorization"):
+            if len(header_values.get(duplicate,[]))>1:
+                raise ValueError("Duplicate proxy header: "+duplicate)
+        header_map={name:values[0] for name,values in header_values.items()}
+        for lowered, values in header_values.items():
+            value=values[0]
             if lowered in {"proxy-authorization", "proxy-connection", "connection"}:
                 continue
             if lowered == "transfer-encoding":
                 raise ValueError("Chunked proxy requests are not supported")
             if lowered == "content-length":
-                content_length = int(value.strip())
-                if content_length < 0 or content_length > 256 * 1024 * 1024:
-                    raise ValueError("Proxy request body is too large")
-            headers.append((name.strip(), value.strip()))
+                try:content_length = int(value)
+                except ValueError as exc:raise ValueError("Invalid Content-Length") from exc
+                if content_length < 0 or content_length > maximum_body:
+                    raise ProxyRequestTooLarge("request_too_large")
+                continue
+            if lowered != "host":headers.append((lowered, value))
         claims = await authorize(proxy_token(header_map))
         request_policy = policy_selector(claims) if policy_selector else policy
         log_context={key:getattr(claims,key,"") for key in ("turn_id","thread_id","sandbox_id")}
@@ -191,6 +232,8 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
                 max(0, claims.expires_at - time.time()), asyncio.current_task().cancel)
 
         if method.upper() == "CONNECT":
+            if content_length:
+                raise ValueError("CONNECT request body is not allowed")
             host, separator, port_text = target.rpartition(":")
             if not separator or not host:
                 raise ValueError("Invalid CONNECT target")
@@ -202,9 +245,13 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
             await asyncio.gather(relay(reader, upstream_writer), relay(upstream_reader, writer))
             return
         parsed = urlsplit(target)
-        if parsed.scheme != "http" or not parsed.hostname or parsed.username or parsed.password:
+        if (parsed.scheme != "http" or not parsed.hostname or parsed.username or parsed.password
+                or parsed.fragment):
             raise ValueError("Proxy requires an absolute HTTP URL")
         port = parsed.port or 80
+        canonical_host=normalize_host(parsed.hostname)
+        if "host" in header_map and parse_authority(header_map["host"],80)!=(canonical_host,port):
+            raise DestinationDenied("Proxy Host conflicts with absolute URL")
         address = await resolve_public(parsed.hostname, port, request_policy)
         upstream_reader, upstream_writer = await asyncio.open_connection(address, port)
         path = parsed.path or "/"
@@ -212,10 +259,22 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
             path += "?" + parsed.query
         outgoing = f"{method} {path} {version}\r\n".encode("latin-1")
         outgoing += b"".join(f"{name}: {value}\r\n".encode("latin-1") for name, value in headers)
+        outgoing += f"Host: {authority_header(canonical_host,port,80)}\r\n".encode("latin-1")
         outgoing += b"Connection: close\r\n"
         upstream_writer.write(outgoing + b"\r\n")
         if content_length:
-            upstream_writer.write(await reader.readexactly(content_length))
+            remaining=content_length
+            try:
+                async with asyncio.timeout(body_total_timeout):
+                    while remaining:
+                        try:data=await asyncio.wait_for(reader.read(min(64*1024,remaining)),
+                            timeout=body_idle_timeout)
+                        except TimeoutError as exc:raise ProxyBodyTimeout("request_body_timeout") from exc
+                        if not data:raise asyncio.IncompleteReadError(data,remaining)
+                        remaining-=len(data);upstream_writer.write(data);await upstream_writer.drain()
+            except TimeoutError as exc:
+                if isinstance(exc,ProxyBodyTimeout):raise
+                raise ProxyBodyTimeout("request_body_timeout") from exc
         await upstream_writer.drain()
         while data := await upstream_reader.read(64 * 1024):
             writer.write(data)
@@ -223,9 +282,14 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
     except (ValueError, asyncio.IncompleteReadError, asyncio.LimitOverrunError, asyncio.TimeoutError) as exc:
         event("public_proxy.rejected",level=logging.WARNING,exc=exc,**log_context)
         if not writer.is_closing():
-            code = ("destination_timeout" if isinstance(exc, asyncio.TimeoutError) else
+            code = ("request_too_large" if isinstance(exc,ProxyRequestTooLarge) else
+                "request_body_timeout" if isinstance(exc,ProxyBodyTimeout) else
+                "capability_authority_unavailable" if str(exc)=="capability_authority_unavailable" else
+                "destination_timeout" if isinstance(exc, asyncio.TimeoutError) else
                 "destination_denied" if isinstance(exc, DestinationDenied) else "destination_rejected")
-            await reject(writer,403,code)
+            status=(413 if isinstance(exc,ProxyRequestTooLarge) else 408 if isinstance(exc,ProxyBodyTimeout)
+                else 503 if code=="capability_authority_unavailable" else 403)
+            await reject(writer,status,code)
     except (ConnectionError, OSError) as exc:
         event("public_proxy.failed",level=logging.ERROR,exc=exc,**log_context)
         if not writer.is_closing():
@@ -246,9 +310,12 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
 
 
 async def start_proxy(host: str, port: int, authorize, *, connections=None,
-        policy: DestinationPolicy | None = None, policy_selector=None) -> asyncio.Server:
+        policy: DestinationPolicy | None = None, policy_selector=None,
+        maximum_body: int = 16*1024*1024, body_idle_timeout: float = 15,
+        body_total_timeout: float = 120) -> asyncio.Server:
     async def handle(reader, writer):
         await handle_proxy(reader, writer, authorize, connections=connections, policy=policy,
-            policy_selector=policy_selector)
+            policy_selector=policy_selector,maximum_body=maximum_body,
+            body_idle_timeout=body_idle_timeout,body_total_timeout=body_total_timeout)
 
     return await asyncio.start_server(handle, host, port, limit=MAX_HEADER + 1)

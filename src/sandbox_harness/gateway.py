@@ -54,12 +54,31 @@ def validation_detail(error: ValidationError) -> dict:
         "message": value.get("msg", "Invalid value"),
     } for value in error.errors(include_url=False, include_context=False, include_input=False)[:12]]}
 
-CONSUME_CAPABILITY = """
-if redis.call('EXISTS', KEYS[1]) == 1 then return -1 end
-local count = redis.call('INCR', KEYS[2])
-if count == 1 then redis.call('EXPIRE', KEYS[2], ARGV[1]) end
-return count
-"""
+class ModelUpstreamIdleTimeout(TimeoutError):
+    pass
+
+
+async def bounded_request_body(request: Request, maximum: int, idle_timeout: float,
+                               total_timeout: float) -> bytes:
+    raw_length = request.headers.get("content-length")
+    if raw_length is not None:
+        try:length=int(raw_length)
+        except ValueError as exc:raise HTTPException(400,"request_content_length_invalid") from exc
+        if length < 0:raise HTTPException(400,"request_content_length_invalid")
+        if length > maximum:raise HTTPException(413,"request_too_large")
+    body=bytearray();iterator=request.stream().__aiter__()
+    try:
+        async with asyncio.timeout(total_timeout):
+            while True:
+                try:chunk=await asyncio.wait_for(iterator.__anext__(),timeout=idle_timeout)
+                except StopAsyncIteration:break
+                if len(body)+len(chunk)>maximum:raise HTTPException(413,"request_too_large")
+                body.extend(chunk)
+    except TimeoutError as exc:
+        raise HTTPException(408,"request_body_timeout") from exc
+    if raw_length is not None and len(body)!=length:raise HTTPException(400,"request_size_mismatch")
+    request._body=bytes(body)
+    return request._body
 
 
 def token_from(request: Request) -> str:
@@ -76,6 +95,22 @@ def upstream_suffix(route: str, prefix: str) -> str:
     return suffix
 
 
+def enforce_model_output_budget(payload: dict, suffix: str, remaining: int,
+                                input_token_ceiling: int = 0) -> int:
+    field = "max_output_tokens" if suffix.rstrip("/") == "/responses" else "max_tokens"
+    available=remaining-max(0,input_token_ceiling)
+    if available<1:raise HTTPException(429,"model_token_budget_exhausted")
+    value = payload.get(field)
+    if value is None:
+        value = min(8192, available)
+        payload[field] = value
+    if not isinstance(value,int) or isinstance(value,bool) or value < 1:
+        raise HTTPException(422,"model_output_token_limit_invalid")
+    if value > available:
+        raise HTTPException(429,"model_token_budget_exhausted")
+    return value
+
+
 async def send_with_start_timeout(client, request, timeout_seconds: float):
     try:
         return await asyncio.wait_for(client.send(request, stream=True), timeout=timeout_seconds)
@@ -90,8 +125,8 @@ async def bytes_with_idle_timeout(response, timeout_seconds: float):
             yield await asyncio.wait_for(iterator.__anext__(), timeout=timeout_seconds)
         except StopAsyncIteration:
             return
-        except TimeoutError:
-            return
+        except TimeoutError as exc:
+            raise ModelUpstreamIdleTimeout("model_upstream_idle_timeout") from exc
 
 
 def create_gateway(settings: Settings | None = None) -> FastAPI:
@@ -146,22 +181,21 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
                 claims = codec.verify(token, route="/v1/public-http")
             except ValueError as exc:
                 raise ValueError("Invalid proxy capability") from exc
-            remaining = max(1, claims.expires_at - int(time.time()))
-            count = await redis.eval(
-                CONSUME_CAPABILITY,
-                2,
-                settings.redis_prefix + "capability:revoked:" + claims.nonce,
-                settings.redis_prefix + "capability:public-usage:" + claims.nonce,
-                remaining,
-            )
-            if count == -1 or count > claims.max_public_requests:
-                raise ValueError("Proxy capability is revoked or exhausted")
+            try:
+                await activity_store.authorize_capability(claims,"public")
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
+            except Exception as exc:
+                raise ValueError("capability_authority_unavailable") from exc
             return claims
 
         proxy = await start_proxy(settings.gateway_bind_host, settings.gateway_proxy_port, authorize_public,
             connections=public_connections, policy=public_policy,
             policy_selector=lambda claims: unrestricted_public_policy
-                if claims.network_access == "public" else public_policy)
+                if claims.network_access == "public" else public_policy,
+            maximum_body=settings.public_proxy_request_max_bytes,
+            body_idle_timeout=settings.public_proxy_body_idle_timeout_seconds,
+            body_total_timeout=settings.public_proxy_body_total_timeout_seconds)
         try:
             yield
         finally:
@@ -193,11 +227,13 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             if re.fullmatch(r"[0-9a-f]{32}|[0-9a-f-]{36}",value):fields[key]=value
         if not hasattr(request.state,"log_context"):request.state.log_context={}
         request.state.log_context.update(fields);enrich(**fields)
-        await redis.set(
-            settings.redis_prefix + "capability:revoked:" + nonce,
-            "1",
-            ex=settings.capability_ttl_seconds,
-        )
+        await activity_store.revoke_capability(nonce,
+            int(time.time())+settings.capability_ttl_seconds)
+        try:
+            await redis.set(settings.redis_prefix + "capability:revoked:" + nonce,
+                "1",ex=settings.capability_ttl_seconds)
+        except Exception as exc:
+            event("capability.revocation_cache_failed",level=logging.WARNING,exc=exc)
         tunnels = list(public_connections.pop(nonce, set()))
         for task in tunnels:
             task.cancel()
@@ -214,8 +250,9 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         from .telemetry_ingest import decode_otlp
         try:claims=codec.verify(token_from(request),route="/v1/telemetry")
         except ValueError:raise HTTPException(401,"Invalid telemetry capability")
-        if await redis.exists(settings.redis_prefix+"capability:revoked:"+claims.nonce):
-            raise HTTPException(401,"Telemetry capability revoked")
+        try:await activity_store.authorize_capability(claims,"check")
+        except ValueError:raise HTTPException(401,"Telemetry capability revoked")
+        except Exception:raise HTTPException(503,"capability_authority_unavailable")
         key=settings.redis_prefix+"telemetry:rate:"+claims.nonce+":"+str(int(time.time())//60)
         count=await redis.eval("local n=redis.call('INCR',KEYS[1]);redis.call('EXPIRE',KEYS[1],120);return n",1,key)
         if count>600:raise HTTPException(429,"Telemetry rate exceeded")
@@ -252,14 +289,23 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         request.state.log_context.update({"turn_id": claims.turn_id, "thread_id": claims.thread_id,
             "sandbox_id": claims.sandbox_id, "model": claims.model, "harness": claims.harness})
         enrich(**request.state.log_context); add_link(claims.traceparent)
-        remaining = max(1, claims.expires_at - int(time.time()))
-        count = await redis.eval(CONSUME_CAPABILITY, 2,
-            settings.redis_prefix + "capability:revoked:" + claims.nonce,
-            settings.redis_prefix + "capability:usage:" + claims.nonce, remaining)
-        if count == -1:
-            raise HTTPException(401, "Capability token revoked")
-        if count > claims.max_requests:
-            raise HTTPException(429, "Capability request limit reached")
+        try:
+            security = await activity_store.authorize_capability(claims,"request")
+        except ValueError as exc:
+            code=str(exc)
+            if code in {"capability_revoked","capability_expired"}:
+                raise HTTPException(401,code)
+            if code in {"capability_request_limit","capability_public_request_limit"}:
+                raise HTTPException(429,code)
+            raise HTTPException(403,code)
+        except Exception as exc:
+            raise HTTPException(503,"capability_authority_unavailable") from exc
+        request.state.capability_security=security
+        if (not streaming_body and request.method in {"POST","PUT","PATCH"}
+                and not hasattr(request,"_body")):
+            await bounded_request_body(request,settings.gateway_request_max_bytes,
+                settings.gateway_body_idle_timeout_seconds,
+                settings.gateway_body_total_timeout_seconds)
         if claims.scope == "job":
             if route.startswith("/v1/models/"):
                 if "model" not in claims.operations:
@@ -282,9 +328,9 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
                 if operation_name == "submit":
                     if streaming_body:
                         raise ValueError("Submit parameter validation cannot use an unbounded streaming body")
-                    body = await request.body()
-                    if len(body) > 16 * 1024 * 1024:
-                        raise ValueError("Job call body exceeds grant validation limit")
+                    body = await bounded_request_body(request,settings.gateway_request_max_bytes,
+                        settings.gateway_body_idle_timeout_seconds,
+                        settings.gateway_body_total_timeout_seconds)
                     if body:
                         try:
                             body_value = json.loads(body)
@@ -615,7 +661,15 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             headers["authorization"] = "Bearer " + credential
             if prefix.endswith(("claude", "deepseek")):
                 headers["x-api-key"] = credential
-        body = await request.body()
+        body = await bounded_request_body(request,settings.gateway_request_max_bytes,
+            settings.gateway_body_idle_timeout_seconds,
+            settings.gateway_body_total_timeout_seconds)
+        observe_model = prefix.startswith("/v1/models/") and suffix.rstrip("/") in {
+            "/responses", "/messages", "/chat/completions"}
+        if prefix.startswith("/v1/models/") and not observe_model:
+            raise HTTPException(404,"model_route_not_supported")
+        activity = ModelActivity(activity_store, claims) if observe_model else None
+        reservation_id = ""
         if prefix.startswith("/v1/models/"):
             try:
                 payload = json.loads(body)
@@ -624,11 +678,20 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             if not isinstance(payload, dict):
                 raise HTTPException(422, "Model request must be an object")
             payload["model"] = claims.model
+            requested_output = enforce_model_output_budget(payload,suffix,
+                int(request.state.capability_security["token_remaining"]),len(body))
+            if activity:
+                reservation_id=activity.request_id
+                try:
+                    await activity_store.reserve_model_tokens(claims,reservation_id,requested_output)
+                except ValueError as exc:
+                    if str(exc)=="model_token_budget_exhausted":
+                        raise HTTPException(429,str(exc))
+                    raise HTTPException(409,str(exc))
+                except Exception as exc:
+                    raise HTTPException(503,"capability_authority_unavailable") from exc
             body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
         upstream = client.build_request(request.method, suffix, params=request.query_params, headers=headers, content=body)
-        observe_model = prefix.startswith("/v1/models/") and suffix.rstrip("/") in {
-            "/responses", "/messages", "/chat/completions"}
-        activity = ModelActivity(activity_store, claims) if observe_model else None
         if activity:
             await activity.start()
         upstream.headers.update(carrier(getattr(activity,"span",None)))
@@ -638,6 +701,8 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         except BaseException as exc:
             if activity:
                 await activity.finish(error_code=type(exc).__name__)
+            if reservation_id:
+                await activity_store.finalize_model_tokens(reservation_id,None)
             raise
         if activity:
             activity.header_ms = round((time.monotonic() - started) * 1000)
@@ -645,25 +710,69 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             turn_id=claims.turn_id,model=claims.model,header_ms=round((time.monotonic()-started)*1000,3),
             **{"http.response.status_code":response.status_code},request_bytes=len(body),
             upstream_request_id=response.headers.get("x-request-id") or response.headers.get("request-id", ""))
-        if (int(time.time()) >= claims.expires_at or
-                await redis.exists(settings.redis_prefix + "capability:revoked:" + claims.nonce)):
+        try:
+            await activity_store.authorize_capability(claims,"check")
+        except ValueError:
             await response.aclose()
             if activity:
                 await activity.finish(error_code="capability_revoked")
+            if reservation_id:
+                await activity_store.finalize_model_tokens(reservation_id,None)
             raise HTTPException(401, "Capability token expired or revoked")
+        except Exception as exc:
+            await response.aclose()
+            if activity:await activity.finish(error_code="capability_authority_unavailable")
+            if reservation_id:await activity_store.finalize_model_tokens(reservation_id,None)
+            raise HTTPException(503,"capability_authority_unavailable") from exc
+        iterator=response.aiter_bytes().__aiter__();first_chunk=None
+        try:
+            first_chunk=await asyncio.wait_for(iterator.__anext__(),
+                timeout=settings.gateway_model_idle_timeout_seconds)
+        except StopAsyncIteration:
+            if activity and "text/event-stream" in response.headers.get("content-type",""):
+                await response.aclose();await activity.finish(error_code="stream_incomplete")
+                if reservation_id:await activity_store.finalize_model_tokens(reservation_id,None)
+                raise HTTPException(502,"model_stream_incomplete")
+        except TimeoutError as exc:
+            await response.aclose()
+            if activity:await activity.finish(error_code="model_response_idle_timeout")
+            if reservation_id:await activity_store.finalize_model_tokens(reservation_id,None)
+            raise HTTPException(504,"model_response_idle_timeout") from exc
         active[claims.nonce].add(response)
+
+        token_finalized=False
+        async def finalize_tokens():
+            nonlocal token_finalized
+            if token_finalized or not reservation_id:return
+            token_finalized=True
+            usage=(activity.probe.input_tokens+activity.probe.output_tokens
+                if activity and activity.probe.input_tokens is not None
+                and activity.probe.output_tokens is not None else None)
+            await activity_store.finalize_model_tokens(reservation_id,usage)
+
+        async def observe_chunk(chunk):
+            if activity:
+                await activity.observe(chunk)
+                if activity.probe.completed or activity.probe.failed:
+                    await activity.finish(response.status_code)
+                    await finalize_tokens()
 
         async def content():
             stream_error = ""
             try:
                 async with asyncio.timeout(max(0, claims.expires_at - time.time())):
-                    async for chunk in bytes_with_idle_timeout(response, settings.gateway_model_idle_timeout_seconds):
-                        if activity:
-                            await activity.observe(chunk)
-                            if activity.probe.completed or activity.probe.failed:
-                                # Commit before forwarding the terminal frame: native
-                                # clients may close the HTTP stream immediately after it.
-                                await activity.finish(response.status_code)
+                    if first_chunk is not None:
+                        await observe_chunk(first_chunk)
+                        yield first_chunk
+                    while True:
+                        try:
+                            chunk=await asyncio.wait_for(iterator.__anext__(),
+                                timeout=settings.gateway_model_idle_timeout_seconds)
+                        except StopAsyncIteration:break
+                        except TimeoutError as exc:
+                            if activity and activity.probe.completed:return
+                            raise ModelUpstreamIdleTimeout("model_response_idle_timeout") from exc
+                        await observe_chunk(chunk)
                         yield chunk
             except BaseException as exc:
                 stream_error = "" if activity and activity.probe.completed and isinstance(exc, asyncio.CancelledError) else type(exc).__name__
@@ -680,6 +789,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
                             active.pop(claims.nonce, None)
                         if activity:
                             await activity.finish(response.status_code, stream_error)
+                        await finalize_tokens()
                 # ASGI disconnect cancellation must not cancel the durable receipt.
                 finalizer = asyncio.create_task(finalize())
                 timing_finalizers.add(finalizer)

@@ -417,6 +417,8 @@ class CapabilityClaims(BaseModel):
     max_requests: int = Field(ge=1)
     max_public_requests: int = Field(ge=1)
     token_budget: int = Field(ge=1)
+    parent_nonce: str = ""
+    parent_token_budget: int = Field(default=0, ge=0)
     issued_at: int
     expires_at: int
     nonce: str

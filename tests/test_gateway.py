@@ -1,5 +1,16 @@
 import asyncio
 import pytest
+
+
+class CapabilityStoreStub:
+    async def authorize_capability(self,claims,usage="request"):
+        return {"request_count":1,"public_request_count":0,
+            "token_remaining":claims.token_budget}
+    async def reserve_model_tokens(self,claims,request_id,requested_output):
+        return {"reserved":claims.token_budget,"remaining":claims.token_budget-requested_output}
+    async def finalize_model_tokens(self,request_id,usage_tokens):
+        return {"charged":usage_tokens or 0}
+    async def revoke_capability(self,nonce,expires_at):pass
 from fastapi import HTTPException
 
 from sandbox_harness.gateway import bytes_with_idle_timeout, send_with_start_timeout, upstream_suffix
@@ -46,14 +57,16 @@ async def test_gateway_fails_model_request_when_upstream_never_starts_response()
 
 
 async def test_gateway_closes_stream_after_idle_timeout():
+    from sandbox_harness.gateway import ModelUpstreamIdleTimeout
     class Response:
         async def aiter_bytes(self):
             yield b"first"
             await asyncio.sleep(1)
             yield b"late"
     rows = []
-    async for chunk in bytes_with_idle_timeout(Response(), .01):
-        rows.append(chunk)
+    with pytest.raises(ModelUpstreamIdleTimeout):
+        async for chunk in bytes_with_idle_timeout(Response(), .01):
+            rows.append(chunk)
     assert rows == [b"first"]
 
 
@@ -66,7 +79,7 @@ async def test_gateway_media_status_is_capability_and_thread_scoped(tmp_path, mo
     calls = []
     class Redis:
         async def eval(self, *args): return 1
-    class Store:
+    class Store(CapabilityStoreStub):
         def __init__(self, *args, **kwargs): pass
         async def get_media_job_for_thread(self, job_id, thread_id):
             calls.append((job_id, thread_id)); return {"id": job_id, "status": "running"}
@@ -93,7 +106,7 @@ async def test_gateway_continuously_validates_job_grant_headers_and_parameters(t
     from sandbox_harness.domain import Harness
     class Redis:
         async def eval(self,*args):return 1
-    class Store:
+    class Store(CapabilityStoreStub):
         def __init__(self,*args,**kwargs):pass
         async def get_media_job_for_thread(self,job_id,thread_id):
             return {"id":job_id,"thread_id":thread_id,"status":"running"}
@@ -153,7 +166,7 @@ async def test_gateway_site_prepare_is_capability_scoped_and_turn_bound(tmp_path
         async def eval(self, *args): return 1
     class Draft:
         def model_dump(self, mode=None): return {"id":"draft", "thread_id":"thread-1"}
-    class Store:
+    class Store(CapabilityStoreStub):
         def __init__(self, *args, **kwargs): pass
         async def owner_id_for_thread(self, thread_id): return "a" * 64
         async def create_site_draft(self, owner_id, thread_id, turn_id, **values):
@@ -195,7 +208,7 @@ async def test_gateway_media_prepare_creates_turn_bound_draft(tmp_path, monkeypa
     expirations = []
     class Redis:
         async def eval(self, *args): return 1
-    class Store:
+    class Store(CapabilityStoreStub):
         def __init__(self, *args, **kwargs): pass
         async def owner_id_for_thread(self, thread_id): return "owner-1"
         async def create_media_draft(self, owner_id, thread_id, value, **kwargs):
@@ -230,9 +243,10 @@ async def test_gateway_media_prepare_creates_turn_bound_draft(tmp_path, monkeypa
     assert 23 * 3600 < (expirations[0] - __import__('sandbox_harness.domain',fromlist=['now']).now()).total_seconds() <= 24 * 3600
     commit_endpoint = next(route.endpoint for route in app.routes
         if getattr(route, "path", None) == "/v1/media/batch/commit")
+    async def empty_receive():return {"type":"http.request","body":b"","more_body":False}
     committed = await commit_endpoint(Request({"type": "http", "method": "POST",
         "path": "/v1/media/batch/commit", "query_string": b"", "headers": [
-            (b"authorization", ("Bearer " + token).encode())]}))
+            (b"authorization", ("Bearer " + token).encode())]},empty_receive))
     assert committed["status"] == "sealed"
     assert calls[-1] == ("commit", "owner-1", "thread-1", turn_id)
 
@@ -247,7 +261,7 @@ async def test_gateway_media_candidate_content_and_promotion_are_thread_scoped(t
     promoted = []
     class Redis:
         async def eval(self, *args): return 1
-    class Store:
+    class Store(CapabilityStoreStub):
         def __init__(self, *args, **kwargs): pass
         async def media_job_output_for_thread(self, job_id, thread_id):
             assert (job_id, thread_id) == ("job-1", "thread-1")
@@ -296,9 +310,10 @@ async def test_terminal_model_step_is_saved_before_last_frame_is_forwarded(tmp_p
         async def eval(self,*args):return 1
         async def exists(self,*args):return 0
     monkeypatch.setattr(gateway.Redis,'from_url',lambda *a,**k:Redis())
+    monkeypatch.setattr(gateway,'Store',lambda *a,**k:CapabilityStoreStub())
     observations=[]
     class Activity:
-        def __init__(self,*args):self.probe=OutputProbe();self.finished=False;observations.append(self)
+        def __init__(self,*args):self.probe=OutputProbe();self.finished=False;self.request_id='model-request';observations.append(self)
         async def start(self):pass
         async def observe(self,data):self.probe.feed(data)
         async def finish(self,*args,**kwargs):self.finished=True
