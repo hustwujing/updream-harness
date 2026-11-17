@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from contextlib import asynccontextmanager
 from datetime import timedelta
 import os
@@ -47,6 +47,16 @@ logger = logging.getLogger(__name__)
 
 
 HOP_HEADERS = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length"}
+
+
+def fallback_rate_count(state: OrderedDict, nonce: str, window: int, capacity: int) -> int:
+    for key,(stored_window,_) in list(state.items()):
+        if stored_window!=window:state.pop(key,None)
+    previous=state.pop(nonce,None)
+    if previous is None and len(state)>=capacity:state.popitem(last=False)
+    count=(previous[1]+1) if previous and previous[0]==window else 1
+    state[nonce]=(window,count)
+    return count
 
 
 def validation_detail(error: ValidationError) -> dict:
@@ -142,7 +152,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     public_connections: dict[str, set[asyncio.Task]] = defaultdict(set)
     timing_finalizers: set[asyncio.Task] = set()
     clients: dict[str, httpx.AsyncClient] = {}
-    telemetry_fallback: dict[str, tuple[int,int]] = {}
+    telemetry_fallback: OrderedDict[str, tuple[int,int]] = OrderedDict()
     model_routes = ModelRoutes(settings)
     activity_store = Store(settings.database_url, settings.redis_url, settings.redis_prefix)
     job_catalog_raw = settings.job_catalog_path.read_text()
@@ -219,6 +229,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(RequestLoggingMiddleware,service="gateway")
     app.state.store=activity_store
     app.state.redis=redis
+    app.state.telemetry_fallback=telemetry_fallback
 
     @app.get("/health")
     async def health():
@@ -229,7 +240,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             database={"available":False,"error":type(exc).__name__}
         try:
             await asyncio.wait_for(redis.ping(),timeout=1)
-            app.state.redis_available=True;app.state.redis_last_error=""
+            app.state.redis_available=True;app.state.redis_last_error="";telemetry_fallback.clear()
         except Exception as exc:
             app.state.redis_available=False;app.state.redis_last_error=type(exc).__name__
         payload={"status": "ok" if database["available"] and app.state.redis_available else "degraded",
@@ -281,12 +292,12 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         key=settings.redis_prefix+"telemetry:rate:"+claims.nonce+":"+str(int(time.time())//60)
         try:
             count=await redis.eval("local n=redis.call('INCR',KEYS[1]);redis.call('EXPIRE',KEYS[1],120);return n",1,key)
-            app.state.redis_available=True;app.state.redis_last_error=""
+            app.state.redis_available=True;app.state.redis_last_error="";telemetry_fallback.clear()
         except Exception as exc:
             app.state.redis_available=False;app.state.redis_last_error=type(exc).__name__
-            window=int(time.time())//60;previous=telemetry_fallback.get(claims.nonce,(window,0))
-            count=(previous[1]+1) if previous[0]==window else 1
-            telemetry_fallback[claims.nonce]=(window,count)
+            window=int(time.time())//60
+            count=fallback_rate_count(telemetry_fallback,claims.nonce,window,
+                settings.gateway_telemetry_fallback_capacity)
             event("telemetry.rate_limit_fallback",level=logging.WARNING,
                 exception_type=type(exc).__name__)
         if count>600:raise HTTPException(429,"Telemetry rate exceeded")

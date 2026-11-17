@@ -51,6 +51,19 @@ from .store import Store
 
 logger = logging.getLogger(__name__)
 
+
+def web_distribution_digest(root: Path) -> str:
+    files=sorted(path for path in root.rglob("*") if path.is_file())
+    if not files:raise ValueError("Frontend distribution is empty")
+    digest=hashlib.sha256()
+    for path in files:
+        relative=path.relative_to(root).as_posix().encode()
+        digest.update(len(relative).to_bytes(4,"big"));digest.update(relative)
+        size=path.stat().st_size;digest.update(size.to_bytes(8,"big"))
+        with path.open("rb") as stream:
+            for chunk in iter(lambda:stream.read(1024*1024),b""):digest.update(chunk)
+    return digest.hexdigest()
+
 SAFE_INLINE_MIMES = {
     "image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp", "image/svg+xml",
     "text/plain", "application/pdf", "model/gltf-binary",
@@ -311,16 +324,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     except asyncio.TimeoutError:pass
                     delay=min(delay*2,settings.supervisor_retry_max_seconds)
                     continue
-                app.state.media_outbox_status="running";app.state.media_outbox_last_error="";delay=initial_delay
+                iteration_error=None
                 for batch in batches:
                     try:
-                        await continue_media(batch)
+                        try:
+                            await continue_media(batch)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:
+                            permanent=isinstance(exc,RuntimeError) and str(exc)=="thread_archived"
+                            await store.finish_media_batch(batch["turn_id"], media_outbox_owner,
+                                delivered=False, error=type(exc).__name__,permanent=permanent)
+                        else:
+                            await store.finish_media_batch(batch["turn_id"], media_outbox_owner, delivered=True)
+                    except asyncio.CancelledError:
+                        raise
                     except Exception as exc:
-                        permanent=isinstance(exc,RuntimeError) and str(exc)=="thread_archived"
-                        await store.finish_media_batch(batch["turn_id"], media_outbox_owner,
-                            delivered=False, error=type(exc).__name__,permanent=permanent)
-                    else:
-                        await store.finish_media_batch(batch["turn_id"], media_outbox_owner, delivered=True)
+                        iteration_error=exc;break
+                if iteration_error:
+                    app.state.media_outbox_status="degraded"
+                    app.state.media_outbox_last_error=type(iteration_error).__name__
+                    app.state.media_outbox_failures+=1
+                    event("media.outbox.finish_failed",level=40,
+                        exception_type=type(iteration_error).__name__,
+                        failures=app.state.media_outbox_failures)
+                    try:await asyncio.wait_for(media_outbox_stop.wait(),timeout=delay)
+                    except asyncio.TimeoutError:pass
+                    delay=min(delay*2,settings.supervisor_retry_max_seconds)
+                    continue
+                app.state.media_outbox_status="running";app.state.media_outbox_last_error="";delay=initial_delay
                 try:
                     await asyncio.wait_for(media_outbox_stop.wait(), timeout=2)
                 except asyncio.TimeoutError:
@@ -450,6 +482,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ready=available and database["available"] and supervisors_ready
         payload = {"status": "ok" if ready else "degraded",
                    "backend": settings.backend, "execution_backend_available":available,
+                   "web_dist_digest":app.state.web_dist_digest,
                    "database":database,"supervisors":supervisors,
                    "media_outbox":{"status":app.state.media_outbox_status,
                        "last_error":app.state.media_outbox_last_error,
@@ -1797,6 +1830,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     web_root = Path(__file__).resolve().parents[2] / "web"
     static = web_root / "dist" if (web_root / "dist" / "index.html").is_file() else web_root
+    served_web_digest=web_distribution_digest(static)
+    if settings.web_dist_digest and served_web_digest!=settings.web_dist_digest:
+        raise ValueError("Configured frontend distribution digest does not match served files")
+    app.state.web_dist_digest=served_web_digest
     if (static / "assets").is_dir():
         app.mount("/assets", StaticFiles(directory=static / "assets"), name="assets")
 

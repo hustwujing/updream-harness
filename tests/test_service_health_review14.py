@@ -1,10 +1,12 @@
 import asyncio
+from collections import OrderedDict
+from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
 import sandbox_harness.gateway as gateway_module
-from sandbox_harness.app import create_app
+from sandbox_harness.app import create_app,web_distribution_digest
 from sandbox_harness.config import Settings
 from sandbox_harness.sandbox_inspector import SandboxInspector
 
@@ -101,3 +103,63 @@ def test_gateway_redis_is_optional_but_database_is_required(tmp_path,monkeypatch
         assert response.status_code==503 and response.json()["ready"] is False
         store.healthcheck=original
         assert client.get("/health").status_code==200
+
+
+def test_configured_frontend_digest_is_enforced_at_app_creation(tmp_path):
+    current=web_distribution_digest(Path(__file__).resolve().parents[1]/"web"/"dist")
+    app=create_app(settings(tmp_path,"web-good").model_copy(update={"web_dist_digest":current}))
+    assert app.state.web_dist_digest==current
+    try:
+        create_app(settings(tmp_path,"web-bad").model_copy(update={"web_dist_digest":"0"*64}))
+    except ValueError as exc:
+        assert "frontend distribution digest" in str(exc)
+    else:
+        raise AssertionError("mutated frontend digest was accepted")
+
+
+def test_media_outbox_finish_success_write_failure_recovers(tmp_path):
+    app=create_app(settings(tmp_path,"finish-success"));store=app.state.store
+    batch={"turn_id":"turn","thread_id":"thread"};done=False;finishes=0
+    async def claim(*args,**kwargs):return [] if done else [batch]
+    async def group(*args,**kwargs):return True,[{"status":"cancelled","output_role":"candidate",
+        "job_id":"","draft_id":"draft","kind":"image","model":"test","project_path":"",
+        "error_code":""}]
+    async def finish(*args,**kwargs):
+        nonlocal finishes,done;finishes+=1
+        if finishes==1:raise ConnectionError("ack failed")
+        assert kwargs["delivered"] is True;done=True
+    store.claim_media_batches=claim;store.media_continuation_group=group;store.finish_media_batch=finish
+    with TestClient(app) as client:
+        for _ in range(100):
+            if done:break
+            __import__('time').sleep(.02)
+        assert done and finishes==2
+        assert client.get("/api/health").json()["supervisors"]["media_outbox"] is True
+
+
+def test_media_outbox_finish_failure_write_failure_recovers(tmp_path):
+    app=create_app(settings(tmp_path,"finish-failure"));store=app.state.store
+    batch={"turn_id":"turn","thread_id":"thread"};done=False;finishes=0
+    async def claim(*args,**kwargs):return [] if done else [batch]
+    async def group(*args,**kwargs):return False,[]
+    async def finish(*args,**kwargs):
+        nonlocal finishes,done;finishes+=1
+        if finishes==1:raise ConnectionError("nack failed")
+        assert kwargs["delivered"] is False;done=True
+    store.claim_media_batches=claim;store.media_continuation_group=group;store.finish_media_batch=finish
+    with TestClient(app) as client:
+        for _ in range(100):
+            if done:break
+            __import__('time').sleep(.02)
+        assert done and finishes==2
+        assert client.get("/api/health").json()["supervisors"]["media_outbox"] is True
+
+
+def test_telemetry_fallback_expires_windows_and_enforces_capacity():
+    state=OrderedDict();capacity=64
+    for index in range(200):
+        assert gateway_module.fallback_rate_count(state,f"nonce-{index}",1,capacity)==1
+    assert len(state)==capacity
+    assert gateway_module.fallback_rate_count(state,"hot",2,capacity)==1
+    assert gateway_module.fallback_rate_count(state,"hot",2,capacity)==2
+    assert len(state)==1 and state["hot"]==(2,2)

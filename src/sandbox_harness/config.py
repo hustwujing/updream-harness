@@ -138,6 +138,8 @@ class Settings(BaseSettings):
     site_draft_ttl_seconds: int = Field(default=24 * 3600, ge=600, le=7 * 86400)
     site_public_base_path: str = Field(default="/sandbox-harness-platform-parallel/sites",
         pattern=r"^/[A-Za-z0-9/_-]+$")
+    web_dist_digest: str = Field(default="", pattern=r"^$|^[0-9a-f]{64}$")
+    gateway_telemetry_fallback_capacity: int = Field(default=4096, ge=64, le=65536)
     model_routes_json: str = ""
     harness_catalog_json: str = ""
     model_catalog_discovery: bool = True
