@@ -526,6 +526,42 @@ async def test_broker_reattaches_expired_running_turn_and_replays_runtime_journa
         await broker.close(); await pool.close(); await store.close()
 
 
+async def test_recovery_waits_for_transient_runtime_health_then_reattaches(tmp_path):
+    settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'health-recover.db'),
+        backend='fake',gateway_signing_key='k'*32,gateway_url='http://127.0.0.1:9',
+        session_keepalive_seconds=0,recovery_scan_seconds=300)
+    store=Store(settings.database_url);await store.initialize();objects=ObjectStore(tmp_path/'objects')
+    backend=FakeSandboxBackend();pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness})
+    catalog=HarnessCatalog();profile=catalog.resolve('codex','gpt-5.6','standard');owner='a'*64
+    thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+        reasoning_level='standard',title='Health recovery'),profile,owner)
+    turn,_,_=await store.create_turn(thread.id,TurnCreate(message='recover',
+        idempotency_key='health-recover-turn'),profile,owner)
+    old=await store.claim_turn(turn.id,'dead',30);execution_id=turn.id+':'+turn.id
+    await store.start_runtime_execution(turn.id,execution_id,'dead',old.recovery_generation)
+    sandbox=await backend.create(Harness.CODEX,'',{'sandbox-harness.io/turn':turn.id,
+        'sandbox-harness.io/thread':thread.id,'sandbox-harness.io/harness':'codex'}, {})
+    sandbox.health_state='unhealthy';sandbox.health_error='runtime_health_unavailable'
+    await store.set_turn_state(turn.id,TurnState.RUNNING,sandbox_id=sandbox.id,
+        lease_owner='dead',recovery_generation=old.recovery_generation)
+    await store.release_turn_lease(turn.id,'dead',old.recovery_generation)
+    broker=Broker(settings,store,objects,pool,RecoverableRuntime(),catalog)
+    try:
+        await broker.reconcile()
+        assert (await store.get_turn(turn.id)).state==TurnState.RUNNING
+        assert sandbox.id in backend.items
+        assert any(value.payload.get('code')=='turn_runtime_not_ready'
+            for value in await store.events_after(turn.id,0))
+        sandbox.health_state='ready';sandbox.health_error=''
+        await broker.reconcile()
+        for _ in range(200):
+            current=await store.get_turn(turn.id)
+            if current.state==TurnState.COMPLETED and turn.id not in broker.tasks:break
+            await asyncio.sleep(.01)
+        assert current.state==TurnState.COMPLETED and sandbox.id not in backend.items
+    finally:await broker.close();await pool.close();await store.close()
+
+
 async def test_primary_execution_failure_survives_cleanup_failure_and_saves_partial_workspace(tmp_path, monkeypatch):
     settings = Settings(data_root=tmp_path,
         database_url="sqlite+aiosqlite:///" + str(tmp_path / "primary-failure.db"),
@@ -549,21 +585,56 @@ async def test_primary_execution_failure_survives_cleanup_failure_and_saves_part
             TurnCreate(message="run", idempotency_key="primary-failure-turn"))
         for _ in range(200):
             current = await store.get_turn(turn.id)
-            if current.state == TurnState.FAILED and turn.id not in broker.tasks:
+            if current.state == TurnState.CLEANING and turn.id not in broker.tasks:
                 break
             await asyncio.sleep(.02)
         events = await store.events_after(turn.id, 0)
-        errors = [item for item in await store.items_after(thread.id) if item.type.value == "error"]
+        assert current.pending_final_state==TurnState.FAILED.value
         assert current.error_code == "RuntimeStreamInterrupted"
-        assert len(errors) == 1 and "连接中断" in errors[0].summary
-        assert any(event.payload.get("code") == "cleanup_secondary_failed" for event in events)
+        assert any(event.payload.get("code") == "cleanup_pending" for event in events)
         assert not any(event.payload.get("code") == "cleanup_failed" for event in events)
         assert (await store.get_thread(thread.id)).checkpoint_ref
         assert (await store.artifacts(turn.id))[0].path == "result.txt"
+        monkeypatch.setattr(backend, "delete", original_delete)
+        await pool.retry_deletions();await broker.reconcile()
+        current=await store.get_turn(turn.id)
+        errors = [item for item in await store.items_after(thread.id) if item.type.value == "error"]
+        assert current.state==TurnState.FAILED and current.error_code=="RuntimeStreamInterrupted"
+        assert len(errors)==1 and "连接中断" in errors[0].summary
     finally:
         monkeypatch.setattr(backend, "delete", original_delete)
         await pool.retry_deletions()
         await broker.close(); await pool.close(); await store.close()
+
+
+async def test_success_cleanup_failure_keeps_durable_completed_intent_until_recovery(tmp_path,monkeypatch):
+    settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'success-cleanup.db'),
+        backend='fake',gateway_signing_key='k'*32,gateway_url='http://127.0.0.1:9',
+        session_keepalive_seconds=0)
+    store=Store(settings.database_url);await store.initialize();objects=ObjectStore(tmp_path/'objects')
+    backend=FakeSandboxBackend();pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness})
+    broker=Broker(settings,store,objects,pool,Runtime(),HarnessCatalog());original=backend.delete
+    async def fail_delete(sandbox):raise ConnectionError('delete unavailable')
+    monkeypatch.setattr(backend,'delete',fail_delete)
+    try:
+        profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level='standard',title='Success cleanup'),profile,'a'*64)
+        turn=await broker.submit(thread.id,TurnCreate(message='complete',
+            idempotency_key='success-cleanup-turn'))
+        for _ in range(200):
+            current=await store.get_turn(turn.id)
+            if current.state==TurnState.CLEANING and turn.id not in broker.tasks:break
+            await asyncio.sleep(.01)
+        assert current.pending_final_state==TurnState.COMPLETED.value
+        assert any(value.payload.get('code')=='cleanup_pending'
+            for value in await store.events_after(turn.id,0))
+        monkeypatch.setattr(backend,'delete',original)
+        await pool.retry_deletions();await broker.reconcile();current=await store.get_turn(turn.id)
+        assert current.state==TurnState.COMPLETED and current.error_code==''
+    finally:
+        monkeypatch.setattr(backend,'delete',original)
+        await broker.close();await pool.close();await store.close()
 
 
 async def test_broker_does_not_replay_turn_when_runtime_execution_is_lost(tmp_path):

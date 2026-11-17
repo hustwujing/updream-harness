@@ -221,6 +221,19 @@ class Broker:
                 await self.store.append_event(turn.id, EventKind.WARNING, {"code": "turn_cleanup_recovered",
                     "generation": claimed.recovery_generation, "final_state": target.value})
                 logger.warning("Recovered cleanup turn=%s generation=%s final=%s", turn.id, claimed.recovery_generation, target.value)
+                if target == TurnState.FAILED:
+                    errors=[item for item in await self.store.items_after(turn.thread_id)
+                        if item.turn_id==turn.id and item.type==ItemType.ERROR]
+                    if not errors:
+                        code,detail=public_failure(claimed.error_code,claimed.error_detail)
+                        item=await self.store.append_item(turn.thread_id,turn.id,ItemType.ERROR,
+                            status="failed",summary=detail,payload={"code":code,"detail":detail},
+                            lease_owner=self.instance_id,
+                            recovery_generation=claimed.recovery_generation)
+                        await self.store.append_event(turn.id,EventKind.ERROR,
+                            {"code":code,"detail":detail},item_id=item.id,
+                            lease_owner=self.instance_id,
+                            recovery_generation=claimed.recovery_generation)
                 await self._state(turn.id, target, sandbox_id="", error_code=claimed.error_code, error_detail=claimed.error_detail)
                 await self._release_turn_lease_safely(turn.id,claimed.recovery_generation)
                 self.leases.pop(turn.id, None)
@@ -235,12 +248,34 @@ class Broker:
                     "code": "turn_recovered_before_harness_start", "generation": claimed.recovery_generation})
                 await self._state(turn.id, TurnState.QUEUED, sandbox_id=""); self._schedule(turn.id); return
             if claimed.state in {TurnState.RUNNING, TurnState.AWAITING_USER, TurnState.DRAINING_INPUTS, TurnState.CHECKPOINTING} and claimed.runtime_execution_id:
-                matches = await self.pool.backend.find_by_turn(turn.id)
-                if len(matches) == 1 and await self.runtime.execution_status(matches[0], claimed.runtime_execution_id) is not None:
+                matches = sorted(await self.pool.backend.find_by_turn(turn.id),
+                    key=lambda value:value.id)
+                candidates=[]
+                for match in matches:
+                    if match.health_state != "ready":continue
+                    if await self.runtime.execution_status(match,claimed.runtime_execution_id) is not None:
+                        candidates.append(match)
+                if candidates:
+                    selected=candidates[0]
+                    for duplicate in matches:
+                        if duplicate.id!=selected.id:
+                            await self.pool.backend.delete(duplicate)
                     await self.store.append_event(turn.id, EventKind.WARNING, {"code": "turn_runtime_reattached",
                         "generation": claimed.recovery_generation, "runtime_sequence": claimed.runtime_sequence})
                     event("turn.runtime.reattached",turn_id=turn.id,thread_id=turn.thread_id,generation=claimed.recovery_generation,runtime_sequence=claimed.runtime_sequence)
                     self._schedule(turn.id); return
+                transient=[value for value in matches
+                    if value.health_state in {"inventory","starting","unhealthy"}]
+                if transient:
+                    await self.store.append_event(turn.id,EventKind.WARNING,{
+                        "code":"turn_runtime_not_ready",
+                        "generation":claimed.recovery_generation,
+                        "sandboxes":[{"id":value.id,"health":value.health_state,
+                            "detail":value.health_error} for value in transient]})
+                    await self._release_turn_lease_safely(
+                        turn.id,claimed.recovery_generation)
+                    self.leases.pop(turn.id,None)
+                    return
                 for sandbox in matches:
                     await self.pool.backend.delete(sandbox)
             await self.store.append_event(turn.id, EventKind.ERROR, {"code": "turn_interrupted_during_harness_execution",
@@ -634,6 +669,7 @@ class Broker:
         error_detail = "Turn failed before the Harness returned a result"
         abandoned = False
         lost_lease = False
+        cleanup_pending = False
         try:
             async with self.thread_lock(thread.id):
                 try:
@@ -645,35 +681,52 @@ class Broker:
                     "primary_harness", turn.id, control.generation)
                     if control.state.value == "PAUSING" else None)
                 if participant and participant.state.value == "REQUESTED":
-                    matches = await self.pool.backend.find_by_turn(turn.id)
-                    if matches:
-                        sandbox = await self.pool.adopt(matches[0], thread_id=thread.id,
+                    matches = sorted(await self.pool.backend.find_by_turn(turn.id),
+                        key=lambda value:value.id)
+                    ready = [value for value in matches if value.health_state == "ready"]
+                    if ready:
+                        sandbox = await self.pool.adopt(ready[0], thread_id=thread.id,
                             turn_id=turn.id)
                         self.active_sandboxes[turn.id] = sandbox
-                        extra_sandboxes = matches[1:]
+                        extra_sandboxes = [value for value in matches if value.id != sandbox.id]
+                    else:
+                        extra_sandboxes = matches
                     raise asyncio.CancelledError()
                 if turn.cancel_requested:
-                    matches = await self.pool.backend.find_by_turn(turn.id)
-                    if matches:
-                        sandbox = matches[0]
-                        # Stop every owned process, then revoke before deleting any match.
-                        extra_sandboxes = matches[1:]
-                        for extra in extra_sandboxes:
-                            await self.runtime.cancel(extra)
+                    matches = sorted(await self.pool.backend.find_by_turn(turn.id),
+                        key=lambda value:value.id)
+                    ready = [value for value in matches if value.health_state == "ready"]
+                    if ready:
+                        sandbox = await self.pool.adopt(ready[0], thread_id=thread.id,
+                            turn_id=turn.id)
+                        self.active_sandboxes[turn.id] = sandbox
+                        extra_sandboxes = [value for value in matches if value.id != sandbox.id]
+                    else:
+                        extra_sandboxes = matches
                     raise asyncio.CancelledError()
                 recovering = turn.state in {
                     TurnState.RUNNING, TurnState.AWAITING_USER, TurnState.DRAINING_INPUTS, TurnState.CHECKPOINTING,
                 } and bool(turn.runtime_execution_id)
                 recovered_result = None
                 if recovering:
-                    matches = await self.pool.backend.find_by_turn(turn.id)
-                    if len(matches) != 1:
+                    matches = sorted(await self.pool.backend.find_by_turn(turn.id),
+                        key=lambda value:value.id)
+                    candidates = []
+                    for match in matches:
+                        if match.health_state != "ready":
+                            continue
+                        status = await self.runtime.execution_status(
+                            match, turn.runtime_execution_id)
+                        if status is not None:
+                            candidates.append((match,status))
+                    if not candidates:
                         raise RuntimeError("recoverable_sandbox_not_found")
-                    sandbox = await self.pool.adopt(matches[0], thread_id=thread.id, turn_id=turn.id)
+                    selected,status = candidates[0]
+                    for duplicate in matches:
+                        if duplicate.id != selected.id:
+                            await self.pool.backend.delete(duplicate)
+                    sandbox = await self.pool.adopt(selected, thread_id=thread.id, turn_id=turn.id)
                     self.active_sandboxes[turn.id] = sandbox
-                    status = await self.runtime.execution_status(sandbox, turn.runtime_execution_id)
-                    if status is None:
-                        raise RuntimeError("recoverable_runtime_execution_not_found")
                     if status.get("state") == "completed" and turn.runtime_sequence >= int(status.get("last_sequence") or 0):
                         recovered_result = RuntimeResult.model_validate({
                             **(status.get("result") or {}),
@@ -965,26 +1018,14 @@ class Broker:
                 except Exception as exc:
                     if isinstance(exc, RuntimeError) and str(exc) == "stale_turn_lease":
                         lost_lease = True
-                    elif final_state == TurnState.FAILED and error_code not in {"", "turn_failed"}:
-                        event("turn.cleanup.secondary_failed",level=logging.WARNING,exc=exc,
-                            turn_id=turn.id,reason=error_code)
+                    else:
+                        cleanup_pending = True
+                        event("turn.cleanup.pending",level=logging.WARNING,exc=exc,
+                            turn_id=turn.id,final_state=final_state.value)
                         try:
                             await self.store.append_event(turn.id, EventKind.WARNING, {
-                                "code": "cleanup_secondary_failed",
-                                "detail": "执行失败后的环境清理仍在后台重试。",
-                            }, lease_owner=self.instance_id, recovery_generation=generation)
-                        except RuntimeError as fence_error:
-                            if str(fence_error) != "stale_turn_lease":
-                                raise
-                            lost_lease = True
-                    else:
-                        final_state = TurnState.FAILED
-                        error_code = "cleanup_failed"
-                        error_detail = type(exc).__name__ + ": " + str(exc)
-                        try:
-                            await self.store.append_event(turn.id, EventKind.ERROR, {
-                                "code": error_code,
-                                "detail": error_detail[:1000],
+                                "code": "cleanup_pending",
+                                "detail": "执行结果已确定，环境清理仍在后台重试。",
                             }, lease_owner=self.instance_id, recovery_generation=generation)
                         except RuntimeError as fence_error:
                             if str(fence_error) != "stale_turn_lease":
@@ -995,6 +1036,12 @@ class Broker:
                         if sandbox:
                             await self.pool.detach(sandbox)
                         self.active_sandboxes.pop(turn.id, None)
+                        self.leases.pop(turn.id, None)
+                        self.tasks.pop(turn.id, None)
+                        return
+                    if cleanup_pending:
+                        self.active_sandboxes.pop(turn.id, None)
+                        await self._release_turn_lease_safely(turn.id,generation)
                         self.leases.pop(turn.id, None)
                         self.tasks.pop(turn.id, None)
                         return

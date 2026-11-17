@@ -137,16 +137,27 @@ class SandboxPool:
             async with self._lock:
                 if self._closed:
                     raise RuntimeError("sandbox_pool_closed")
-                expiry = self._expiry.pop(thread_id, None)
                 attached = self._attached.get(thread_id)
-                self._idle_since.pop(thread_id, None)
-                if attached and attached.harness != harness:
+                expiry = None
+                incompatible = bool(attached and (attached.harness != harness
+                    or image_frozen and attached.image != desired_image))
+                if incompatible:
                     self._attached.pop(thread_id, None)
-            if expiry:
-                expiry.cancel()
-            if attached and attached.harness == harness and (not image_frozen or attached.image == desired_image):
+                    self._idle_since.pop(thread_id, None)
+                    expiry = self._expiry.pop(thread_id, None)
+            if incompatible:
+                if expiry:
+                    expiry.cancel()
+                await self._delete_tracked(attached)
+                attached = None
+            if attached:
                 try:
                     await self.backend.bind(attached, thread_id, turn_id)
+                    async with self._lock:
+                        expiry = self._expiry.pop(thread_id, None)
+                        self._idle_since.pop(thread_id, None)
+                    if expiry:
+                        expiry.cancel()
                     attached.turn_id = turn_id
                     attached.reused = True
                     return attached
@@ -154,10 +165,12 @@ class SandboxPool:
                     async with self._lock:
                         if self._attached.get(thread_id) is attached:
                             self._attached.pop(thread_id, None)
+                        self._idle_since.pop(thread_id, None)
+                        expiry = self._expiry.pop(thread_id, None)
+                    if expiry:
+                        expiry.cancel()
                     self._user_slots.release()
                     attached = None
-            if attached:
-                await self._delete_tracked(attached)
 
             while not slot_reserved:
                 evict = None

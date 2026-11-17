@@ -31,6 +31,8 @@ class Sandbox:
     turn_id: str = ""
     reused: bool = False
     expires_at_monotonic: float = 0
+    health_state: str = "ready"
+    health_error: str = ""
 
 
 class SandboxBackend(Protocol):
@@ -67,7 +69,9 @@ class OpenSandboxBackend:
         runtime_url = payload.get("runtime_url") or endpoints.get("runtime") or endpoints.get("8080")
         if not isinstance(sandbox_id, str):
             raise RuntimeError("OpenSandbox response has no sandbox ID")
-        return Sandbox(id=sandbox_id, harness=harness, image=image, runtime_url=runtime_url or "", metadata=metadata)
+        return Sandbox(id=sandbox_id, harness=harness, image=image,
+            runtime_url=runtime_url or "", metadata=metadata,
+            health_state="inventory")
 
     async def _ready(self, sandbox: Sandbox) -> Sandbox:
         for _ in range(80):
@@ -90,6 +94,8 @@ class OpenSandboxBackend:
                     try:
                         health = await self.client.get(sandbox.runtime_url.rstrip("/") + "/health")
                         if health.status_code == 200 and health.json().get("status") in {"ok", "bootstrap"}:
+                            sandbox.health_state = "ready"
+                            sandbox.health_error = ""
                             return sandbox
                     except (httpx.TimeoutException, httpx.TransportError, ValueError):
                         pass
@@ -118,9 +124,10 @@ class OpenSandboxBackend:
             return sandbox
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             matches = await self.find_by_turn(request_id)
-            if len(matches) == 1:
-                return matches[0]
-            if len(matches) > 1:
+            ready = [value for value in matches if value.health_state == "ready"]
+            if len(ready) == 1:
+                return ready[0]
+            if len(ready) > 1:
                 raise RuntimeError("Duplicate sandboxes found for one Turn") from exc
             raise RuntimeError("OpenSandbox create outcome is unknown") from exc
 
@@ -135,8 +142,51 @@ class OpenSandboxBackend:
             if (metadata.get("sandbox-harness.io/namespace") != self.namespace
                     or metadata.get("sandbox-harness.io/turn") != turn_id):
                 continue
-            harness = Harness(metadata.get("sandbox-harness.io/harness", "codex"))
-            result.append(await self._ready(self._sandbox(row, harness, (row.get("image") or {}).get("uri", ""), metadata)))
+            sandbox = None
+            try:
+                harness = Harness(metadata.get("sandbox-harness.io/harness", "codex"))
+                sandbox = self._sandbox(row, harness,
+                    (row.get("image") or {}).get("uri", ""), metadata)
+                status = await self.client.get(f"/v1/sandboxes/{sandbox.id}")
+                if status.status_code == 404:
+                    sandbox.health_state = "missing"
+                    sandbox.health_error = "sandbox_not_found"
+                else:
+                    status.raise_for_status()
+                    state = ((status.json().get("status") or {}).get("state") or "").lower()
+                    if state in {"failed", "terminated"}:
+                        sandbox.health_state = "failed"
+                        sandbox.health_error = "opensandbox_" + state
+                    elif state != "running":
+                        sandbox.health_state = "starting"
+                        sandbox.health_error = "opensandbox_" + (state or "unknown")
+                    else:
+                        endpoint = await self.client.get(
+                            f"/v1/sandboxes/{sandbox.id}/endpoints/8080",
+                            params={"use_server_proxy": "true"})
+                        if endpoint.status_code == 200 and endpoint.json().get("endpoint"):
+                            value = endpoint.json()["endpoint"]
+                            sandbox.runtime_url = value if "://" in value else "http://" + value
+                            sandbox.runtime_headers = dict(self.client.headers)
+                            health = await self.client.get(
+                                sandbox.runtime_url.rstrip("/") + "/health")
+                            if (health.status_code == 200
+                                    and health.json().get("status") in {"ok", "bootstrap"}):
+                                sandbox.health_state = "ready"
+                                sandbox.health_error = ""
+                            else:
+                                sandbox.health_state = "unhealthy"
+                                sandbox.health_error = "runtime_health_unavailable"
+                        else:
+                            sandbox.health_state = "unhealthy"
+                            sandbox.health_error = "runtime_endpoint_unavailable"
+                result.append(sandbox)
+            except (httpx.HTTPError, ValueError, RuntimeError) as exc:
+                if sandbox is None:
+                    continue
+                sandbox.health_state = "unhealthy"
+                sandbox.health_error = type(exc).__name__
+                result.append(sandbox)
         return result
 
     async def list_namespace(self) -> list[Sandbox]:

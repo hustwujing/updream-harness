@@ -30,6 +30,20 @@ Cleanup retains capacity ownership until delete converges. OpenSandbox DELETE
 must be followed by absence confirmation. Namespace cleanup never touches
 resources without the product namespace.
 
+Once a Harness result is known, `begin_turn_cleanup` durably records the
+original `pending_final_state`. A revoke/delete failure leaves the Turn in
+`CLEANING`; it does not rewrite a successful result to `cleanup_failed` and it
+does not publish the terminal state while resources remain. A replacement
+Broker retries cleanup and publishes exactly that pending outcome after
+convergence. This makes uninterrupted and crash-during-cleanup behavior equal.
+
+Turn inventory lookup classifies every matching Sandbox independently. Recovery
+selects one ready Sandbox with the recorded Runtime execution, deletes permanent
+failures and duplicates, and waits for `starting` or transiently unhealthy
+matches instead of failing/replaying the Turn. Cancellation deletes every match
+regardless of health. A replacement process must `adopt` the selected Sandbox
+before using Pool release semantics.
+
 Warm and attached sandboxes retain the expiration timestamp from their
 original creation unless explicitly renewed. Every bind must renew a full
 Sandbox TTL, and the active Turn lease heartbeat must continue renewing long

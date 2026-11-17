@@ -185,6 +185,27 @@ def components(settings: Settings):
     return store, objects, pool, catalog, discovery, media_catalog, Broker(settings, store, objects, pool, runtime, catalog)
 
 
+async def supervise_warm_pool(app, pool, *, initial_delay: float = .5,
+                               maximum_delay: float = 30) -> None:
+    delay = initial_delay
+    while True:
+        app.state.pool_attempts += 1
+        try:
+            await pool.fill()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            app.state.pool_status = "degraded"
+            app.state.pool_last_error = type(exc).__name__
+            logger.exception("OpenSandbox warm pool convergence failed; retrying")
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, maximum_delay)
+        else:
+            app.state.pool_status = "ready"
+            app.state.pool_last_error = ""
+            return
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     validate_service_settings(settings)
@@ -282,18 +303,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             catalog_task = asyncio.create_task(refresh_catalog(), name="model-catalog-refresh")
         if settings.backend == "opensandbox":
             app.state.pool_status = "starting"
+            app.state.pool_attempts = 0
+            app.state.pool_last_error = ""
 
             async def fill_pool():
-                try:
-                    await pool.fill()
-                    app.state.pool_status = "ready"
-                except Exception:
-                    app.state.pool_status = "error"
-                    logger.exception("OpenSandbox warm pool initialization failed")
+                await supervise_warm_pool(app,pool)
 
             pool_task = asyncio.create_task(fill_pool(), name="warm-pool-fill")
         else:
             app.state.pool_status = "disabled"
+            app.state.pool_attempts = 0
+            app.state.pool_last_error = ""
         yield
         if catalog_task:
             catalog_task.cancel()
@@ -373,10 +393,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/health")
     async def health():
         pool_status = app.state.pool_status
-        payload = {"status": "ok" if pool_status in {"ready", "disabled"} else "degraded",
-                   "backend": settings.backend, "warm_pool": pool_status, "broker": broker.status(),
+        payload = {"status": "ok", "backend": settings.backend, "warm_pool": pool_status,
+                   "warm_pool_optional_degraded": pool_status in {"starting", "degraded"},
+                   "warm_pool_attempts": app.state.pool_attempts,
+                   "warm_pool_last_error": app.state.pool_last_error,
+                   "broker": broker.status(),
                    "model_catalog": discovery.status(),"observability":telemetry().status() if telemetry() else {"enabled":False}}
-        return JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
+        return JSONResponse(payload)
 
 
     @app.get("/api/catalog/harnesses")

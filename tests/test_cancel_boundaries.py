@@ -69,6 +69,44 @@ async def test_cancel_survives_broker_restart_without_replaying_harness(tmp_path
         await old.close();await new.close();await pool.close();await store.close()
 
 
+async def test_cancel_restart_with_fresh_pool_adopts_and_deletes_every_matching_sandbox(tmp_path):
+    settings=Settings(backend='fake',data_root=tmp_path,gateway_url='http://127.0.0.1:9',
+        database_url='sqlite+aiosqlite:///'+str(tmp_path/'fresh-pool.db')).model_copy(
+            update={'turn_heartbeat_seconds':.02})
+    store=Store(settings.database_url);await store.initialize();backend=FakeSandboxBackend()
+    old_pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness})
+    class Runtime(AppendedInputRuntime):
+        cancelled=0
+        async def cancel(self,sandbox):self.cancelled+=1;return {'cancelled':True}
+    runtime=Runtime();old=Broker(settings,store,ObjectStore(tmp_path/'objects'),old_pool,runtime,HarnessCatalog())
+    try:
+        _,first,_=await seed(store)
+        claim=await store.claim_turn(first.id,old.instance_id,30)
+        await store.set_turn_state(first.id,TurnState.RUNNING,
+            lease_owner=old.instance_id,recovery_generation=claim.recovery_generation)
+        main=await old_pool.acquire(thread_id=first.thread_id,turn_id=first.id,
+            harness=first.harness,environment={})
+        duplicate=await backend.create(first.harness,'',{
+            'sandbox-harness.io/thread':first.thread_id,
+            'sandbox-harness.io/turn':first.id,
+            'sandbox-harness.io/harness':first.harness.value}, {})
+        duplicate.health_state='failed';duplicate.health_error='opensandbox_failed'
+        await store.request_turn_cancel(first.id)
+        await store.release_turn_lease(first.id,old.instance_id,claim.recovery_generation)
+        await old_pool.close(preserve_sandbox_ids={main.id,duplicate.id})
+        new_pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness})
+        replacement=Broker(settings,store,ObjectStore(tmp_path/'objects'),new_pool,runtime,HarnessCatalog())
+        try:
+            await replacement.reconcile();await wait_state(store,first.id,TurnState.CANCELLED)
+            assert runtime.messages==[] and runtime.cancelled==1
+            assert await backend.find_by_turn(first.id)==[]
+            assert not await new_pool.managed_sandbox_ids()
+        finally:
+            await replacement.close();await new_pool.close()
+    finally:
+        await old.close();await store.close()
+
+
 async def test_queued_stop_is_atomic_with_claim_and_completion_cannot_override_stop(tmp_path):
     store,pool,runtime,(one,two)=await setup(tmp_path)
     try:

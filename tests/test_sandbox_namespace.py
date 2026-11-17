@@ -68,6 +68,62 @@ async def test_opensandbox_lookup_sends_namespace_and_rejects_unscoped_rows():
         await backend.client.aclose()
 
 
+async def test_opensandbox_turn_inventory_classifies_failed_and_ready_matches_independently():
+    metadata=lambda turn:{'sandbox-harness.io/namespace':'sandbox-harness',
+        'sandbox-harness.io/turn':turn,'sandbox-harness.io/harness':'codex'}
+    rows=[{'id':'failed','metadata':metadata('turn'),'image':{'uri':'image'}},
+        {'id':'healthy','metadata':metadata('turn'),'image':{'uri':'image'}}]
+    def respond(request:httpx.Request):
+        if request.url.path=='/v1/sandboxes':return httpx.Response(200,json={'items':rows})
+        if request.url.path=='/v1/sandboxes/failed':
+            return httpx.Response(200,json={**rows[0],'status':{'state':'Failed'}})
+        if request.url.path=='/v1/sandboxes/healthy':
+            return httpx.Response(200,json={**rows[1],'status':{'state':'Running'}})
+        if request.url.path=='/v1/sandboxes/healthy/endpoints/8080':
+            return httpx.Response(200,json={'endpoint':'http://runtime'})
+        if request.url.host=='runtime' and request.url.path=='/health':
+            return httpx.Response(200,json={'status':'ok'})
+        return httpx.Response(404)
+    backend=OpenSandboxBackend('http://opensandbox','',3600,'sandbox-harness')
+    await backend.client.aclose();backend.client=httpx.AsyncClient(
+        base_url='http://opensandbox',transport=httpx.MockTransport(respond))
+    try:
+        matches=await backend.find_by_turn('turn')
+        assert [(value.id,value.health_state) for value in matches]==[
+            ('failed','failed'),('healthy','ready')]
+        rows.reverse()
+        matches=await backend.find_by_turn('turn')
+        assert [(value.id,value.health_state) for value in matches]==[
+            ('healthy','ready'),('failed','failed')]
+    finally:await backend.client.aclose()
+
+
+async def test_opensandbox_turn_inventory_keeps_health_timeout_and_other_ready_match():
+    metadata={'sandbox-harness.io/namespace':'sandbox-harness',
+        'sandbox-harness.io/turn':'turn','sandbox-harness.io/harness':'codex'}
+    rows=[{'id':'timeout','metadata':metadata,'image':{'uri':'image'}},
+        {'id':'ready','metadata':metadata,'image':{'uri':'image'}}]
+    def respond(request:httpx.Request):
+        if request.url.path=='/v1/sandboxes':return httpx.Response(200,json={'items':rows})
+        if request.url.path in {'/v1/sandboxes/timeout','/v1/sandboxes/ready'}:
+            row=rows[0] if request.url.path.endswith('timeout') else rows[1]
+            return httpx.Response(200,json={**row,'status':{'state':'Running'}})
+        if request.url.path.endswith('/endpoints/8080'):
+            identity=request.url.path.split('/')[-3]
+            return httpx.Response(200,json={'endpoint':'http://'+identity})
+        if request.url.host=='timeout':raise httpx.ConnectError('health timeout',request=request)
+        if request.url.host=='ready':return httpx.Response(200,json={'status':'ok'})
+        return httpx.Response(404)
+    backend=OpenSandboxBackend('http://opensandbox','',3600,'sandbox-harness')
+    await backend.client.aclose();backend.client=httpx.AsyncClient(
+        base_url='http://opensandbox',transport=httpx.MockTransport(respond))
+    try:
+        matches=await backend.find_by_turn('turn')
+        assert [(value.id,value.health_state) for value in matches]==[
+            ('timeout','unhealthy'),('ready','ready')]
+    finally:await backend.client.aclose()
+
+
 async def test_namespace_scan_skips_sandbox_deleted_between_list_and_detail():
     def respond(request: httpx.Request):
         if request.url.path == "/v1/sandboxes":
@@ -194,6 +250,52 @@ async def test_reacquiring_attached_sandbox_cancels_expiration():
     assert sandbox.id in backend.items
     await pool.release(sandbox, keep_attached=False)
     await pool.close()
+
+
+async def test_attached_bind_failure_preserves_expiry_idle_and_capacity_for_retry():
+    class Backend(FakeSandboxBackend):
+        fail=True
+        async def bind(self,sandbox,thread_id,turn_id):
+            if self.fail:raise RuntimeError('temporary bind failure')
+            await super().bind(sandbox,thread_id,turn_id)
+    import pytest
+    backend=Backend();pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness},
+        max_sandboxes=1)
+    sandbox=await pool.acquire(thread_id='thread',turn_id='one',harness=Harness.CLAUDE,environment={})
+    await pool.release(sandbox,keep_attached=True,keepalive_seconds=60)
+    expiry=pool._expiry['thread'];idle=pool._idle_since['thread']
+    with pytest.raises(RuntimeError,match='temporary bind failure'):
+        await pool.acquire(thread_id='thread',turn_id='two',harness=Harness.CLAUDE,environment={})
+    assert pool._attached['thread'] is sandbox
+    assert pool._expiry['thread'] is expiry and not expiry.cancelled()
+    assert pool._idle_since['thread']==idle
+    backend.fail=False
+    assert await pool.acquire(thread_id='thread',turn_id='two',harness=Harness.CLAUDE,
+        environment={}) is sandbox
+    await pool.release(sandbox,keep_attached=True,keepalive_seconds=60)
+    other=await asyncio.wait_for(pool.acquire(thread_id='other',turn_id='other',
+        harness=Harness.CLAUDE,environment={}),1)
+    assert sandbox.id not in backend.items and other.id in backend.items
+    await pool.release(other,keep_attached=False);await pool.close()
+
+
+async def test_cancellation_during_attached_bind_keeps_expiry_tracking():
+    class Backend(FakeSandboxBackend):
+        block=False
+        entered=asyncio.Event()
+        async def bind(self,sandbox,thread_id,turn_id):
+            if self.block:
+                self.entered.set();await asyncio.Event().wait()
+            await super().bind(sandbox,thread_id,turn_id)
+    backend=Backend();pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness})
+    sandbox=await pool.acquire(thread_id='thread',turn_id='one',harness=Harness.CLAUDE,environment={})
+    await pool.release(sandbox,keep_attached=True,keepalive_seconds=60);backend.block=True
+    task=asyncio.create_task(pool.acquire(thread_id='thread',turn_id='two',
+        harness=Harness.CLAUDE,environment={}))
+    await backend.entered.wait();task.cancel();await asyncio.gather(task,return_exceptions=True)
+    assert pool._attached['thread'] is sandbox
+    assert 'thread' in pool._expiry and 'thread' in pool._idle_since
+    await pool.discard_thread('thread');await pool.close()
 
 
 async def test_frozen_image_does_not_reuse_attached_sandbox_from_another_release():
