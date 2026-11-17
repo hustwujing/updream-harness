@@ -91,6 +91,9 @@ class JobCoordinator:
                 continue
             if not self.profile_resolver:
                 raise ValueError("Harness delegation ProfileResolver is unavailable")
+            if (request.adapter!="child-harness" or request.descriptor_id!="delegate.harness"
+                    or request.descriptor_version!="1" or request.descriptor_digest!="d"*64):
+                raise ValueError("Harness Job must use the frozen delegation Descriptor")
             harness=str(request.parameters.get("harness", ""))
             resources=request.resource_requirements
             resolved=self.profile_resolver.resolve(harness,request.child_profile_id,request.skill_ids,

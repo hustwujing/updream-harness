@@ -126,7 +126,9 @@ class JobRequest(BaseModel):
     @classmethod
     def resolve_internal_adapter(cls,value):
         if isinstance(value,dict) and not value.get("adapter") and value.get("descriptor_id"):
-            return {**value,"adapter":value["descriptor_id"]}
+            adapter=("child-harness" if value.get("kind")==JobKind.HARNESS
+                or value.get("kind")==JobKind.HARNESS.value else value["descriptor_id"])
+            return {**value,"adapter":adapter}
         return value
 
     @model_validator(mode="after")

@@ -206,3 +206,47 @@ async def test_harness_infrastructure_fields_are_resolved_by_host_not_manager(tm
         assert 'node_id' not in frozen.resource_requirements and 'gpu_ids' not in frozen.resource_requirements
         assert frozen.resource_requirements['delegation_depth']==1
     finally:await store.close()
+
+
+async def test_harness_missing_adapter_resolves_to_registered_child_adapter(tmp_path):
+    import hashlib,json
+    from pathlib import Path
+    from sandbox_harness.profiles import ProfileResolver
+    root=Path(__file__).resolve().parents[1]
+    raw=(root/'deploy/profile-catalog.example.json').read_text()
+    resolver=ProfileResolver.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest(),
+        skill_manifest=json.loads((root/'runtime/skills/manifest.json').read_text()))
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'harness-adapter.db'));await store.initialize()
+    coordinator=JobCoordinator(store,catalog(),profile_resolver=resolver)
+    try:
+        child=JobRequest.model_validate({'local_job_id':'child','kind':'harness',
+            'descriptor_id':'delegate.harness','descriptor_version':'1','descriptor_digest':'d'*64,
+            'idempotency_key':'child-adapter-key','parameters':{'harness':'codex','objective':'write plan'},
+            'child_profile_id':'child-general'})
+        assert child.adapter=='child-harness'
+        prepared=await coordinator.prepare_group('owner',JobGroupCreate(thread_id='a'*32,
+            origin_turn_id='b'*32,idempotency_key='child-adapter-group',jobs=[child]))
+        frozen=await store.get_job_request(prepared.jobs[0].id)
+        assert frozen.adapter=='child-harness'
+    finally:await store.close()
+
+
+async def test_harness_descriptor_identity_is_frozen(tmp_path):
+    import hashlib,json
+    from pathlib import Path
+    from sandbox_harness.profiles import ProfileResolver
+    root=Path(__file__).resolve().parents[1]
+    raw=(root/'deploy/profile-catalog.example.json').read_text()
+    resolver=ProfileResolver.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest(),
+        skill_manifest=json.loads((root/'runtime/skills/manifest.json').read_text()))
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'harness-descriptor.db'));await store.initialize()
+    coordinator=JobCoordinator(store,catalog(),profile_resolver=resolver)
+    try:
+        child=JobRequest(local_job_id='child',kind=JobKind.HARNESS,adapter='child-harness',
+            descriptor_id='invented.harness',descriptor_version='1',descriptor_digest='d'*64,
+            idempotency_key='child-descriptor-key',parameters={'harness':'codex','objective':'write plan'},
+            child_profile_id='child-general')
+        with pytest.raises(ValueError,match='Harness Job must use the frozen delegation Descriptor'):
+            await coordinator.prepare_group('owner',JobGroupCreate(thread_id='a'*32,
+                origin_turn_id='b'*32,idempotency_key='child-descriptor-group',jobs=[child]))
+    finally:await store.close()
