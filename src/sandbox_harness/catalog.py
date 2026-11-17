@@ -115,7 +115,8 @@ class HarnessCatalog:
                 "parameter_schema":row.parameter_schema,
                 "input_roles": list(row.input_roles), "output_roles": list(row.output_roles),
                 "resources":row.resources,"billable":row.billable,"side_effects":row.side_effects,
-                "runtime_profile_id":row.runtime_profile_id,"runtime_harness":row.runtime_harness}
+                "runtime_profile_id":row.runtime_profile_id,"runtime_harness":row.runtime_harness,
+                "guidance":row.guidance}
                 for row in self.job_catalog.payload.operations],
             "capabilities": [{"id": row.id, "version": row.version,
                 "digest": row.digest, "operations": list(row.operations),

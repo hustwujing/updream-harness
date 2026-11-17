@@ -50,6 +50,7 @@ class OperationDescriptor(BaseModel):
     review_policy: Literal["disabled", "optional", "required"] = "disabled"
     runtime_profile_id: str = ""
     runtime_harness: Literal["codex","claude","deepseek"] = "codex"
+    guidance: str = Field(default="",max_length=2000)
 
     @model_validator(mode="after")
     def valid_execution_boundary(self):

@@ -95,3 +95,6 @@ def test_example_job_catalog_is_parseable_and_digest_verified():
     concat=value.operation('media.concat_sequence','1','e'*64)
     assert concat.input_roles==('source','music') and concat.output_roles==(
         'rendered_media','compiler_report')
+    assert 'original registered source video' in concat.guidance
+    exposed_concat=next(row for row in public['operations'] if row['id']=='media.concat_sequence')
+    assert exposed_concat['guidance']==concat.guidance

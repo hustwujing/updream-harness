@@ -81,7 +81,8 @@
       "cancellation_policy": {"supported": false},
       "reconciliation_policy": {"supported": false},
       "runtime_profile_id": "media-cpu",
-      "runtime_harness": "codex"
+      "runtime_harness": "codex",
+      "guidance": "Bind source to the original registered source video and music to the original registered music Artifact. The Operation itself cuts, labels, orders, and concatenates segment_count segments; never pass a locally created segments ZIP as source. A requested ZIP/manifest is separate evidence and may be produced independently. Declare rendered_media and compiler_report as delivery when they are final user-facing outputs."
     }
   ],
   "capabilities": [
