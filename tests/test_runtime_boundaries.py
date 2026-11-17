@@ -46,6 +46,36 @@ async def test_background_inventory_exposes_only_transitively_unresolved_failure
     value=await inventory()
     assert [row['id'] for row in value['items']]==[failed.id,replacement.id,unrelated.id]
     assert [row['id'] for row in value['unresolved']]==[unrelated.id]
+    assert [row['id'] for row in value['replacement_targets']]==[unrelated.id]
+
+
+async def test_background_start_requires_latest_unresolved_leaf_as_replacement(tmp_path,monkeypatch):
+    app=runtime(tmp_path,monkeypatch,'import sys,time\nsys.stdin.readline()\ntime.sleep(60)\n')
+    await endpoint(app,'/v1/turns')(runtime_app.TurnRequest(message='hello'))
+    execution=app.state.execution
+    root=runtime_app.BackgroundJob(id='a'*32,name='root',argv=['false'],
+        cwd=str(tmp_path/'workspace/project'),execution_id=execution.id,status='failed',returncode=1)
+    leaf=runtime_app.BackgroundJob(id='b'*32,name='leaf',argv=['false'],
+        cwd=str(tmp_path/'workspace/project'),execution_id=execution.id,replaces=root.id,
+        status='failed',returncode=1)
+    app.state.background_jobs={root.id:root,leaf.id:leaf}
+    start=endpoint(app,'/v1/background-jobs')
+    try:
+        with pytest.raises(HTTPException) as missing:
+            await start(runtime_app.BackgroundJobCreate(name='unlinked',argv=['true'],
+                cwd=str(tmp_path/'workspace/project')))
+        assert missing.value.status_code==409
+        assert missing.value.detail['replacement_target_ids']==[leaf.id]
+        with pytest.raises(HTTPException) as branched:
+            await start(runtime_app.BackgroundJobCreate(name='branched',argv=['true'],
+                cwd=str(tmp_path/'workspace/project'),replaces=root.id))
+        assert branched.value.status_code==409
+        replacement=await start(runtime_app.BackgroundJobCreate(name='replacement',argv=['true'],
+            cwd=str(tmp_path/'workspace/project'),replaces=leaf.id))
+        await app.state.background_jobs[replacement['id']].task
+        assert runtime_app.unresolved_background_jobs(list(app.state.background_jobs.values()))==[]
+    finally:
+        await endpoint(app,'/v1/cancel')();await completed(app)
 
 
 async def test_concurrent_start_submits_once_and_replays_after_completion(tmp_path, monkeypatch):

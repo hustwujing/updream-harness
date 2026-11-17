@@ -297,6 +297,12 @@ def unresolved_background_jobs(jobs: list[BackgroundJob]) -> list[BackgroundJob]
     return [job for job in jobs if job.status != "completed" and not recovered(job.id, set())]
 
 
+def unresolved_replacement_targets(jobs:list[BackgroundJob])->list[BackgroundJob]:
+    unresolved=unresolved_background_jobs(jobs)
+    parents={job.replaces for job in jobs if job.replaces}
+    return [job for job in unresolved if job.id not in parents]
+
+
 @dataclass
 class Execution:
     id: str
@@ -1465,6 +1471,12 @@ def create_app() -> FastAPI:
             execution = app.state.execution
             if execution is None or execution.result is not None or not execution.accepting_inputs:
                 raise HTTPException(409, "No active Harness execution")
+            execution_jobs=[job for job in app.state.background_jobs.values()
+                if job.execution_id==execution.id]
+            replacement_targets=unresolved_replacement_targets(execution_jobs)
+            if replacement_targets and value.replaces not in {job.id for job in replacement_targets}:
+                raise HTTPException(409,{"code":"background_replacement_required",
+                    "replacement_target_ids":[job.id for job in replacement_targets]})
             if value.replaces:
                 previous = app.state.background_jobs.get(value.replaces)
                 if not previous or previous.execution_id != execution.id:
@@ -1535,7 +1547,9 @@ def create_app() -> FastAPI:
         jobs=list(app.state.background_jobs.values())
         return {"items":[job.public(log_tail=job_log_tail(job)) for job in jobs],
             "unresolved":[job.public(log_tail=job_log_tail(job))
-                for job in unresolved_background_jobs(jobs)]}
+                for job in unresolved_background_jobs(jobs)],
+            "replacement_targets":[job.public(log_tail=job_log_tail(job))
+                for job in unresolved_replacement_targets(jobs)]}
 
     @app.post("/v1/background-jobs/{job_id}/cancel")
     async def cancel_background_job(job_id: str):

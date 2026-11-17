@@ -40,6 +40,15 @@ def test_background_failure_requires_successful_explicit_replacement():
     assert runtime_app.unresolved_background_jobs([failed, unrelated, replacement]) == []
 
 
+def test_background_replacement_targets_only_unresolved_leaves():
+    root=runtime_app.BackgroundJob(id="a"*32,name="root",argv=["false"],cwd="/workspace/project",
+        execution_id="execution",status="failed",returncode=1)
+    child=runtime_app.BackgroundJob(id="b"*32,name="child",argv=["false"],cwd="/workspace/project",
+        execution_id="execution",replaces=root.id,status="failed",returncode=1)
+    assert runtime_app.unresolved_background_jobs([root,child])==[root,child]
+    assert runtime_app.unresolved_replacement_targets([root,child])==[child]
+
+
 def test_runtime_configuration_freezes_turn_harness_and_model(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
     monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")
