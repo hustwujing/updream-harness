@@ -791,8 +791,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except RuntimeError as exc:
             if str(exc) != "username_taken":
                 raise HTTPException(409, str(exc))
+            replay = await store.registration_replay_user(request.state.owner_id, username)
+            if not replay:
+                raise HTTPException(409, "username_taken")
             account = await account_auth.authenticate(value.username, value.password)
-            if not account:
+            if not account or account.id != replay.id:
                 raise HTTPException(409, "username_taken")
             token, _ = await account_auth.create_session(account.id)
         response = JSONResponse({"authenticated": True, "user": account.model_dump(mode="json")})
@@ -1124,10 +1127,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 except httpx.TransportError:
                     # The Runtime may have accepted the input before the reply
                     # was lost. Do not retry it as a fresh execution.
-                    await store.set_input_status(result.id, "unknown", "delivery_unconfirmed")
+                    await store.set_input_status(result.id, "unknown", "delivery_unconfirmed",
+                        execution_id=turn.runtime_execution_id)
                     event("input.delivery.unknown",level=logging.WARNING,turn_id=turn_id,input_id=result.id)
                 except Exception as exc:
-                    await store.set_input_status(result.id, "failed", "delivery_failed")
+                    await store.set_input_status(result.id, "failed", "delivery_failed",
+                        execution_id=turn.runtime_execution_id)
                     raise HTTPException(409, "input_delivery_failed") from exc
             return await store.get_turn_input(result.id)
         except RuntimeError as exc:

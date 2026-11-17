@@ -64,8 +64,11 @@ owner-bearing table is absent from this migration set. Registration is rejected
 while that owner has an active Turn, generic Job, pending reference upload,
 Sandbox takeover, pause/resume saga, media Job or site deployment. Replaying the
 same username and password after response loss logs into the account that was
-already committed instead of returning a false `username_taken`. FRPC
-registration starts with an empty owner.
+already committed instead of returning a false `username_taken`, but only when
+the retry carries the same signed anonymous owner. This binding is a bounded
+24-hour registration intent; submitting credentials for an unrelated existing
+account remains `username_taken` and preserves the current anonymous Cookie and
+data. FRPC registration starts with an empty owner.
 The CLI reads new passwords from a mode-0600 file so credentials do not appear
 in command arguments or logs. Password files must be mode 0600 and are not tracked.
 

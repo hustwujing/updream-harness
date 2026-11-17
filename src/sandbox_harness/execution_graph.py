@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from .domain import TERMINAL, TurnState
 from .store import (InteractionRow, JobActivityRow, JobArtifactRow, JobAttemptRow, JobGroupDraftRow, JobGroupRow, JobRow,
-    ResourceReservationRow, ThreadRow, TurnRow, utc_datetime)
+    ResourceReservationRow, ThreadRow, TurnOrderRow, TurnRow, utc_datetime)
 
 
 RUNNING_JOB_STATES={'CREATED','QUEUED','RUNNING','WAITING_EXTERNAL','CANCELLING','PAUSING'}
@@ -31,8 +31,9 @@ class ExecutionGraphProjector:
             thread=(await db.execute(select(ThreadRow).where(ThreadRow.id==thread_id,
                 ThreadRow.owner_id==owner_id))).scalar_one_or_none()
             if not thread:raise KeyError('thread_not_found')
-            turns=list((await db.execute(select(TurnRow).where(TurnRow.thread_id==thread_id)
-                .order_by(TurnRow.created_at,TurnRow.id))).scalars().all())
+            turns=list((await db.execute(select(TurnRow).join(TurnOrderRow,
+                TurnOrderRow.turn_id==TurnRow.id).where(TurnRow.thread_id==thread_id)
+                .order_by(TurnOrderRow.sequence))).scalars().all())
             if not include_history and len(turns)>5:
                 active={row.id for row in turns if TurnState(row.state) not in TERMINAL}
                 keep={row.id for row in turns[-5:]}|active

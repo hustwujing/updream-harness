@@ -279,7 +279,10 @@ class Broker:
                 # An HTTP acceptance is not a completion receipt. The result's
                 # explicit input_ids determine whether this input was applied.
                 if current and current.state in {TurnState.RUNNING, TurnState.AWAITING_USER}:
-                    await self.store.set_input_status(value.id, "delivered", delivery_mode)
+                    await self.store.set_input_status(value.id, "delivered", delivery_mode,
+                        execution_id=turn.runtime_execution_id,
+                        lease_owner=self.instance_id,
+                        recovery_generation=self.leases.get(value.turn_id))
             return bool(delivery_mode)
 
     @observed("interaction.respond")
@@ -781,11 +784,15 @@ class Broker:
                             await self._state(turn.id, TurnState.DRAINING_INPUTS, sandbox_id=sandbox.id)
                     if current_input_id:
                         await self.store.set_input_status(current_input_id,
-                            "applied" if result.status in ("completed", "waiting_user") else "failed")
+                            "applied" if result.status in ("completed", "waiting_user") else "failed",
+                            execution_id=execution_id, lease_owner=self.instance_id,
+                            recovery_generation=generation)
                     for input_id in result.input_ids:
                         if input_id != turn.id:
                             await self.store.set_input_status(input_id,
-                                "applied" if result.status in ("completed", "waiting_user") else "failed")
+                                "applied" if result.status in ("completed", "waiting_user") else "failed",
+                                execution_id=execution_id, lease_owner=self.instance_id,
+                                recovery_generation=generation)
                     if result.status not in ("completed", "waiting_user"):
                         break
                     native_thread_id = result.native_thread_id or native_thread_id
@@ -803,7 +810,8 @@ class Broker:
                         current_input_id = pending.id
                         await self._state(turn.id, TurnState.RUNNING, sandbox_id=sandbox.id)
                     except Exception:
-                        await self.store.set_input_status(pending.id, "failed")
+                        await self.store.set_input_status(pending.id, "failed",
+                            lease_owner=self.instance_id, recovery_generation=generation)
                         raise
                 if result.status in ("completed", "waiting_user"):
                     await self._state(turn.id, TurnState.CHECKPOINTING, sandbox_id=sandbox.id)

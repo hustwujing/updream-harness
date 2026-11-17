@@ -231,6 +231,44 @@ def test_registration_response_loss_can_replay_same_credentials(tmp_path):
         assert [value['id'] for value in client.get('/api/threads').json()]==[thread['id']]
 
 
+def test_register_with_existing_account_credentials_never_discards_current_anonymous_owner(tmp_path):
+    settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'register-existing.db'),
+        redis_url='',backend='fake',object_backend='local',model_catalog_discovery=False,
+        session_signing_key='register-existing-secret')
+    with TestClient(create_app(settings)) as first:
+        first.get('/api/session')
+        assert first.post('/api/auth/register',json={
+            'username':'existing.user','password':'existing password'}).status_code==200
+        assert first.post('/api/auth/logout').status_code==200
+    with TestClient(create_app(settings)) as anonymous:
+        anonymous.get('/api/session');anonymous_cookie=anonymous.cookies.get(COOKIE)
+        thread=anonymous.post('/api/threads',json={'harness':'codex','model':'gpt-5.6',
+            'reasoning_level':'standard','title':'Must remain anonymous'}).json()
+        rejected=anonymous.post('/api/auth/register',json={
+            'username':'existing.user','password':'existing password'})
+        assert rejected.status_code==409 and rejected.json()['detail']=='username_taken'
+        assert anonymous.cookies.get(COOKIE)==anonymous_cookie
+        assert [value['id'] for value in anonymous.get('/api/threads').json()]==[thread['id']]
+
+
+def test_registration_intent_is_bound_to_one_anonymous_owner(tmp_path):
+    settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'register-two-owners.db'),
+        redis_url='',backend='fake',object_backend='local',model_catalog_discovery=False,
+        session_signing_key='register-two-owners-secret')
+    with TestClient(create_app(settings)) as first:
+        first.get('/api/session')
+        assert first.post('/api/auth/register',json={
+            'username':'shared.user','password':'shared password'}).status_code==200
+    with TestClient(create_app(settings)) as second:
+        second.get('/api/session')
+        thread=second.post('/api/threads',json={'harness':'codex','model':'gpt-5.6',
+            'reasoning_level':'standard','title':'Second owner'}).json()
+        rejected=second.post('/api/auth/register',json={
+            'username':'shared.user','password':'shared password'})
+        assert rejected.status_code==409
+        assert [value['id'] for value in second.get('/api/threads').json()]==[thread['id']]
+
+
 def test_direct_registration_waits_for_active_anonymous_work(tmp_path):
     database='sqlite+aiosqlite:///'+str(tmp_path/'register-active.db')
     settings=Settings(data_root=tmp_path,database_url=database,redis_url='',backend='fake',object_backend='local',

@@ -114,7 +114,7 @@ async def test_thread_turn_items_and_idempotency(tmp_path):
         assert input_event.kind == EventKind.ITEM_UPDATED
         assert input_event.payload == {"item_id": input_event.item_id,
             "status":"completed", "input_id":claimed.id,
-            "input_status":"applied", "delivery_mode":""}
+            "input_status":"applied", "delivery_mode":"native_stream"}
         agent = await store.append_agent_delta(thread.id, turn.id, "hel")
         agent = await store.append_agent_delta(thread.id, turn.id, "lo")
         assert agent.summary == "hello"
