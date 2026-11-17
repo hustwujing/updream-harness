@@ -316,6 +316,20 @@ async def test_runtime_checkpoint_restore_accepts_multichunk_without_request_bod
     assert list(run.glob(".checkpoint-restore-*")) == []
 
 
+async def test_runtime_project_file_accepts_proxy_stream_without_content_length(tmp_path,monkeypatch):
+    workspace=tmp_path/"workspace";workspace.mkdir();monkeypatch.setattr(runtime_app,"WORKSPACE",workspace)
+    app=runtime_app.create_app();endpoint=next(route.endpoint for route in app.routes
+        if getattr(route,"path",None)=="/v1/project-files/file" and "PUT" in route.methods)
+    request,delivered=chunked_request("/v1/project-files/file",[b"first-",b"second"])
+    result=await endpoint(request,path="assets/reference.bin",size=12)
+    assert result["bytes"]==12 and delivered()==2
+    assert (workspace/"project/assets/reference.bin").read_bytes()==b"first-second"
+    short,_=chunked_request("/v1/project-files/file",[b"short"])
+    with pytest.raises(Exception) as captured:await endpoint(short,path="assets/short.bin",size=6)
+    assert captured.value.status_code==400 and captured.value.detail=="Project file length mismatch"
+    assert not (workspace/"project/assets/short.bin").exists()
+
+
 @pytest.mark.parametrize("model", [TurnCreate, TurnInputCreate])
 def test_turn_inputs_reject_duplicate_canonical_attachment_names(model):
     first = Attachment(name="same.txt", object_ref="sha256:first", sha256="1" * 64,

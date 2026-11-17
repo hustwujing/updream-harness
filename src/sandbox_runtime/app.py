@@ -1115,7 +1115,7 @@ def create_app() -> FastAPI:
         return {"path": "/workspace/inbox/" + name, "bytes": len(data)}
 
     @app.put("/v1/project-files/file")
-    async def put_project_file(request: Request, path: str):
+    async def put_project_file(request: Request, path: str, size: int):
         try:
             relative = safe_relative(path)
             if relative.parts[0] not in {"assets", "artifacts"}:
@@ -1128,18 +1128,20 @@ def create_app() -> FastAPI:
         except ValueError:
             raise HTTPException(400, "Invalid managed project path")
         maximum=2*1024*1024*1024
-        try:declared=int(request.headers.get("content-length", "-1"))
-        except ValueError:raise HTTPException(400,"Invalid Content-Length")
-        if declared<0 or declared>maximum:raise HTTPException(413,"Project file too large")
+        if size<0 or size>maximum:raise HTTPException(413,"Project file too large")
+        if "content-length" in request.headers:
+            try:declared=int(request.headers["content-length"])
+            except ValueError:raise HTTPException(400,"Invalid Content-Length")
+            if declared!=size:raise HTTPException(400,"Project file length mismatch")
         temporary = target.with_name("." + target.name + ".tmp")
         written=0;digest=hashlib.sha256()
         try:
             with temporary.open("wb") as stream:
                 async for data in request.stream():
                     written+=len(data)
-                    if written>declared or written>maximum:raise HTTPException(413,"Project file too large")
+                    if written>size or written>maximum:raise HTTPException(413,"Project file too large")
                     digest.update(data);stream.write(data)
-            if written!=declared:raise HTTPException(400,"Project file length mismatch")
+            if written!=size:raise HTTPException(400,"Project file length mismatch")
             os.chmod(temporary, 0o600);temporary.replace(target)
         finally:temporary.unlink(missing_ok=True)
         return {"path": "/workspace/project/" + relative.as_posix(), "bytes": written,

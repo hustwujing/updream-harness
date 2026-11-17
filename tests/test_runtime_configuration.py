@@ -451,7 +451,7 @@ def test_runtime_materializes_only_managed_project_file_namespaces(tmp_path, mon
     monkeypatch.setattr(runtime_app, "PERSISTENT", ("project", "state"))
     app = runtime_app.create_app()
     with TestClient(app) as client:
-        response = client.put("/v1/project-files/file", params={"path":"assets/reference.txt"},
+        response = client.put("/v1/project-files/file", params={"path":"assets/reference.txt","size":10},
             content=b"persistent")
         assert response.status_code == 200
         assert (tmp_path / "workspace/project/assets/reference.txt").read_bytes() == b"persistent"
@@ -465,7 +465,7 @@ def test_runtime_materializes_only_managed_project_file_namespaces(tmp_path, mon
         assert preserved["items"][0]["path"]=="work/recovered-managed/test/assets/reference.txt"
         assert (tmp_path/"workspace/project/work/recovered-managed/test/assets/reference.txt").read_bytes()==b"persistent"
         for path in ("../escape", "state/private", "artifacts/../../escape"):
-            assert client.put("/v1/project-files/file", params={"path":path}, content=b"x").status_code == 400
+            assert client.put("/v1/project-files/file", params={"path":path,"size":1}, content=b"x").status_code == 400
         assert client.post("/v1/project-files/reset").status_code == 200
         assert not (tmp_path / "workspace/project/assets/reference.txt").exists()
 

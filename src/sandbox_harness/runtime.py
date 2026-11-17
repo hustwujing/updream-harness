@@ -208,8 +208,8 @@ class RuntimeClient:
     async def put_project_file(self, sandbox: Sandbox, path: str, data: bytes, mime: str) -> None:
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()},
             timeout=300, trust_env=False) as client:
-            response = await client.put("/v1/project-files/file", params={"path": path}, content=data,
-                headers={"Content-Type": mime})
+            response = await client.put("/v1/project-files/file", params={"path": path,"size":len(data)},
+                content=data,headers={"Content-Type": mime})
             response.raise_for_status()
 
     async def put_project_file_stream(self, sandbox: Sandbox, path: str, content,
@@ -217,7 +217,7 @@ class RuntimeClient:
         async with httpx.AsyncClient(base_url=sandbox.runtime_url,
                 headers={**sandbox.runtime_headers,**carrier()},timeout=300,
                 trust_env=False,transport=self.transport) as client:
-            response=await client.put("/v1/project-files/file",params={"path":path},content=content,
+            response=await client.put("/v1/project-files/file",params={"path":path,"size":size},content=content,
                 headers={"Content-Type":mime,"Content-Length":str(size)})
             response.raise_for_status()
             return response.json()

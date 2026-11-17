@@ -27,6 +27,7 @@ async def test_runtime_project_file_upload_streams_with_explicit_length():
     await runtime.put_project_file_stream(sandbox,"assets/inputs/report",content(),
         size=12,mime="application/octet-stream")
     assert requests[0].headers["content-length"]=="12"
+    assert requests[0].url.params["size"]=="12"
     assert requests[0].content==b"first-second"
 
 
