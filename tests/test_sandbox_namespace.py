@@ -269,6 +269,7 @@ async def test_attached_bind_failure_preserves_expiry_idle_and_capacity_for_retr
     assert pool._attached['thread'] is sandbox
     assert pool._expiry['thread'] is expiry and not expiry.cancelled()
     assert pool._idle_since['thread']==idle
+    assert not await pool.execution_available()
     backend.fail=False
     assert await pool.acquire(thread_id='thread',turn_id='two',harness=Harness.CLAUDE,
         environment={}) is sandbox
@@ -296,6 +297,59 @@ async def test_cancellation_during_attached_bind_keeps_expiry_tracking():
     assert pool._attached['thread'] is sandbox
     assert 'thread' in pool._expiry and 'thread' in pool._idle_since
     await pool.discard_thread('thread');await pool.close()
+
+
+async def test_execution_availability_rejects_and_retires_stale_attached_and_warm_objects():
+    backend=FakeSandboxBackend();targets={h:(1 if h==Harness.CODEX else 0) for h in Harness}
+    pool=SandboxPool(backend,{h:'' for h in Harness},targets,max_sandboxes=2)
+    await pool.fill();warm=pool._warm[Harness.CODEX][0]
+    await backend.delete(warm)
+    assert not await pool.execution_available()
+    assert not pool._warm[Harness.CODEX]
+    attached=await pool.acquire(thread_id='thread',turn_id='turn',harness=Harness.CODEX,environment={})
+    await pool.release(attached,keep_attached=True,keepalive_seconds=60)
+    await backend.delete(attached)
+    assert not await pool.execution_available()
+    assert 'thread' not in pool._attached
+    replacement=await asyncio.wait_for(pool.acquire(thread_id='other',turn_id='other',
+        harness=Harness.CODEX,environment={}),1)
+    await pool.release(replacement,keep_attached=False);await pool.close()
+
+
+async def test_concurrent_retire_merges_user_slot_and_releases_exactly_once():
+    class Backend(FakeSandboxBackend):
+        entered=asyncio.Event();release=asyncio.Event()
+        async def delete(self,sandbox):
+            self.entered.set();await self.release.wait();await super().delete(sandbox)
+    backend=Backend();pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness},
+        max_sandboxes=1)
+    sandbox=await pool.acquire(thread_id='thread',turn_id='turn',harness=Harness.CODEX,environment={})
+    first=asyncio.create_task(pool.retire(sandbox));await backend.entered.wait()
+    second=asyncio.create_task(pool.retire(sandbox));await asyncio.sleep(.01)
+    assert pool._retiring[sandbox.id][1] is True
+    backend.release.set();await asyncio.gather(first,second)
+    assert not await pool.managed_sandbox_ids()
+    replacement=await asyncio.wait_for(pool.acquire(thread_id='other',turn_id='other',
+        harness=Harness.CODEX,environment={}),1)
+    await pool.release(replacement,keep_attached=False);await pool.close()
+
+
+async def test_cancelled_retire_keeps_slot_bit_for_idempotent_retry():
+    class Backend(FakeSandboxBackend):
+        entered=asyncio.Event();block=True
+        async def delete(self,sandbox):
+            if self.block:self.entered.set();await asyncio.Event().wait()
+            await super().delete(sandbox)
+    backend=Backend();pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness},
+        max_sandboxes=1)
+    sandbox=await pool.acquire(thread_id='thread',turn_id='turn',harness=Harness.CODEX,environment={})
+    task=asyncio.create_task(pool.retire(sandbox));await backend.entered.wait();task.cancel()
+    await asyncio.gather(task,return_exceptions=True)
+    assert pool._retiring[sandbox.id][1] is True
+    backend.block=False;await pool.retry_deletions()
+    replacement=await asyncio.wait_for(pool.acquire(thread_id='other',turn_id='other',
+        harness=Harness.CODEX,environment={}),1)
+    await pool.release(replacement,keep_attached=False);await pool.close()
 
 
 async def test_frozen_image_does_not_reuse_attached_sandbox_from_another_release():

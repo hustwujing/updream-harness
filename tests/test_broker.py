@@ -616,6 +616,48 @@ async def test_reconciliation_lease_loss_cancels_stalled_external_work_before_ta
         await old.close();await new.close();await old_pool.close();await new_pool.close();await store.close()
 
 
+async def test_graceful_shutdown_releases_stalled_reconciliation_lease_immediately(tmp_path):
+    class Backend(FakeSandboxBackend):
+        entered=asyncio.Event();calls=0
+        async def find_by_turn(self,turn_id):
+            self.calls+=1
+            if self.calls==1:self.entered.set();await asyncio.Event().wait()
+            return await super().find_by_turn(turn_id)
+    settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'reconcile-shutdown.db'),
+        backend='fake',gateway_signing_key='k'*32,gateway_url='http://127.0.0.1:9',
+        session_keepalive_seconds=0,recovery_scan_seconds=300,turn_lease_seconds=30)
+    store=Store(settings.database_url);await store.initialize();objects=ObjectStore(tmp_path/'objects')
+    backend=Backend();old_pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness})
+    new_pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness})
+    catalog=HarnessCatalog();profile=catalog.resolve('codex','gpt-5.6','standard');owner='a'*64
+    thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+        reasoning_level='standard',title='Reconcile shutdown'),profile,owner)
+    turn,_,_=await store.create_turn(thread.id,TurnCreate(message='recover',
+        idempotency_key='reconcile-shutdown-turn'),profile,owner)
+    seed_claim=await store.claim_turn(turn.id,'dead',30);execution_id=turn.id+':'+turn.id
+    await store.start_runtime_execution(turn.id,execution_id,'dead',seed_claim.recovery_generation)
+    sandbox=await backend.create(Harness.CODEX,'',{'sandbox-harness.io/turn':turn.id,
+        'sandbox-harness.io/thread':thread.id,'sandbox-harness.io/harness':'codex'}, {})
+    await store.set_turn_state(turn.id,TurnState.RUNNING,sandbox_id=sandbox.id,
+        lease_owner='dead',recovery_generation=seed_claim.recovery_generation)
+    await store.release_turn_lease(turn.id,'dead',seed_claim.recovery_generation)
+    old=Broker(settings,store,objects,old_pool,RecoverableRuntime(),catalog)
+    new=Broker(settings,store,objects,new_pool,RecoverableRuntime(),catalog)
+    try:
+        stalled=asyncio.create_task(old.reconcile());await backend.entered.wait()
+        await old.close();await asyncio.wait_for(stalled,1)
+        released=await store.get_turn(turn.id)
+        assert released.lease_owner=='' and released.lease_expires_at is None
+        await new.reconcile()
+        for _ in range(200):
+            current=await store.get_turn(turn.id)
+            if current.state==TurnState.COMPLETED and turn.id not in new.tasks:break
+            await asyncio.sleep(.01)
+        assert current.state==TurnState.COMPLETED and sandbox.id not in backend.items
+    finally:
+        await old.close();await new.close();await old_pool.close();await new_pool.close();await store.close()
+
+
 async def test_primary_execution_failure_survives_cleanup_failure_and_saves_partial_workspace(tmp_path, monkeypatch):
     settings = Settings(data_root=tmp_path,
         database_url="sqlite+aiosqlite:///" + str(tmp_path / "primary-failure.db"),

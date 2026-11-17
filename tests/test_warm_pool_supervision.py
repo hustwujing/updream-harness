@@ -23,14 +23,19 @@ async def test_warm_pool_retries_initial_and_partial_failure_then_recovers():
             if self.calls==1:raise RuntimeError('codex target unavailable')
             await release.wait()
     pool=Pool();task=asyncio.create_task(supervise_warm_pool(
-        app,pool,initial_delay=.01,maximum_delay=.02))
+        app,pool,initial_delay=.01,maximum_delay=.02,probe_interval=.02))
     for _ in range(100):
         if app.state.pool_status=='degraded' and pool.calls>=2:break
         await asyncio.sleep(.005)
     assert app.state.pool_status=='degraded'
     assert app.state.pool_attempts==2 and app.state.pool_last_error=='RuntimeError'
-    release.set();await asyncio.wait_for(task,1)
+    release.set()
+    for _ in range(100):
+        if app.state.pool_status=='ready':break
+        await asyncio.sleep(.005)
     assert app.state.pool_status=='ready' and app.state.pool_last_error==''
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):await task
 
 
 async def test_warm_pool_repeated_failure_has_backoff_and_clean_shutdown():
@@ -40,7 +45,7 @@ async def test_warm_pool_repeated_failure_has_backoff_and_clean_shutdown():
         async def execution_available(self):return False
         async def fill(self):self.calls+=1;raise ConnectionError('offline')
     pool=Pool();task=asyncio.create_task(supervise_warm_pool(
-        app,pool,initial_delay=.02,maximum_delay=.04))
+        app,pool,initial_delay=.02,maximum_delay=.04,probe_interval=.02))
     await asyncio.sleep(.07)
     assert 2<=pool.calls<=4
     assert app.state.pool_status=='unavailable' and app.state.pool_last_error=='ConnectionError'

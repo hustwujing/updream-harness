@@ -190,6 +190,11 @@ class Broker:
                 try:
                     await self._reconcile_turn(value)
                 except asyncio.CancelledError:
+                    generation=self.leases.get(value.id)
+                    if (generation is not None and await self.store.owns_turn_lease(
+                            value.id,self.instance_id,generation)):
+                        await asyncio.shield(self.store.release_turn_lease(
+                            value.id,self.instance_id,generation))
                     self.leases.pop(value.id,None)
                     event("turn.reconciliation.cancelled",level=logging.WARNING,
                         turn_id=value.id)

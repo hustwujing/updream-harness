@@ -55,11 +55,15 @@ Warm-pool health is not automatically optional. A failed convergence attempt is
 Sandbox; otherwise the execution backend is `unavailable` and `/api/health`
 returns 503. Retry/backoff continues until a fill succeeds. This distinguishes a
 missing optional slot for one Harness from a control-plane/authentication/image
-failure that prevents every Turn.
+failure that prevents every Turn. Verification is continuous: Pool entries are
+boundedly re-read through the backend and Runtime health, confirmed missing
+entries are retired, and a post-startup outage changes readiness back to 503.
 
 All recovery deletion goes through `SandboxPool.retire`. It removes matching
 attachment/expiry/idle ownership, preserves a failed deletion in `_retiring`,
 and releases exactly one user slot only after backend absence is confirmed.
+The ownership transfer and `_retiring.user_slot` OR-merge happen under one lock,
+so concurrent/cancelled retirement cannot lose the capacity-release bit.
 Direct backend deletion is reserved for namespace objects proven not to be
 owned by this Pool.
 

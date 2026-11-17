@@ -186,7 +186,8 @@ def components(settings: Settings):
 
 
 async def supervise_warm_pool(app, pool, *, initial_delay: float = .5,
-                               maximum_delay: float = 30) -> None:
+                               maximum_delay: float = 30,
+                               probe_interval: float = 30) -> None:
     delay = initial_delay
     while True:
         app.state.pool_attempts += 1
@@ -203,10 +204,12 @@ async def supervise_warm_pool(app, pool, *, initial_delay: float = .5,
             await asyncio.sleep(delay)
             delay = min(delay * 2, maximum_delay)
         else:
-            app.state.pool_status = "ready"
-            app.state.execution_backend_available = True
+            available = await pool.execution_available()
+            app.state.pool_status = "ready" if available else "unavailable"
+            app.state.execution_backend_available = available
             app.state.pool_last_error = ""
-            return
+            delay = initial_delay
+            await asyncio.sleep(probe_interval if available else delay)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

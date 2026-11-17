@@ -65,11 +65,26 @@ class SandboxPool:
 
     async def execution_available(self) -> bool:
         async with self._lock:
-            return bool(self._attached or any(self._warm.values()))
+            values=list(self._attached.values())+[sandbox for rows in self._warm.values()
+                for sandbox in rows]
+        available=False
+        for sandbox in values:
+            if sandbox.health_state != "ready":
+                continue
+            try:
+                await asyncio.wait_for(self.backend.get(sandbox.id),timeout=5)
+                available=True
+            except SandboxNotFound:
+                try:await self.retire(sandbox)
+                except Exception:pass
+            except (asyncio.TimeoutError,Exception):
+                continue
+        return available
 
     async def retire(self, sandbox: Sandbox) -> None:
         expiry = None
         user_slot = False
+        delete_owner = False
         async with self._lock:
             attached = next((thread_id for thread_id,value in self._attached.items()
                 if value.id == sandbox.id), None)
@@ -78,12 +93,19 @@ class SandboxPool:
                 self._idle_since.pop(attached, None)
                 expiry = self._expiry.pop(attached, None)
                 user_slot = True
+            for harness,rows in self._warm.items():
+                self._warm[harness]=[value for value in rows if value.id!=sandbox.id]
             existing = self._retiring.get(sandbox.id)
             if existing:
-                user_slot = existing[1]
+                user_slot = user_slot or existing[1]
+                sandbox = existing[0]
+            self._retiring[sandbox.id]=(sandbox,user_slot)
+            if sandbox.id not in self._deleting:
+                self._deleting.add(sandbox.id);delete_owner=True
         if expiry:
             expiry.cancel()
-        await self._delete_tracked(sandbox, user_slot=user_slot)
+        if delete_owner:
+            await self._perform_tracked_delete(sandbox)
 
     async def get_attached(self, thread_id: str) -> Sandbox | None:
         async with self._lock:
@@ -91,11 +113,17 @@ class SandboxPool:
 
     @observed("sandbox.delete_tracked")
     async def _delete_tracked(self, sandbox: Sandbox, *, user_slot: bool = True) -> None:
+        delete_owner=False
         async with self._lock:
-            self._retiring.setdefault(sandbox.id, (sandbox, user_slot))
-            if sandbox.id in self._deleting:
-                return
-            self._deleting.add(sandbox.id)
+            existing=self._retiring.get(sandbox.id)
+            self._retiring[sandbox.id]=(existing[0] if existing else sandbox,
+                user_slot or bool(existing and existing[1]))
+            if sandbox.id not in self._deleting:
+                self._deleting.add(sandbox.id);delete_owner=True
+        if delete_owner:
+            await self._perform_tracked_delete(sandbox)
+
+    async def _perform_tracked_delete(self,sandbox:Sandbox)->None:
         try:
             await self.backend.delete(sandbox)
         except BaseException:
@@ -182,6 +210,8 @@ class SandboxPool:
                         expiry.cancel()
                     attached.turn_id = turn_id
                     attached.reused = True
+                    attached.health_state = "ready"
+                    attached.health_error = ""
                     return attached
                 except SandboxNotFound:
                     async with self._lock:
@@ -193,6 +223,10 @@ class SandboxPool:
                         expiry.cancel()
                     self._user_slots.release()
                     attached = None
+                except BaseException as exc:
+                    attached.health_state="unhealthy"
+                    attached.health_error=type(exc).__name__
+                    raise
 
             while not slot_reserved:
                 evict = None
