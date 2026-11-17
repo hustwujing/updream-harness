@@ -4,7 +4,7 @@ import hashlib
 import json
 from datetime import datetime, timezone
 
-from sqlalchemy import case,func,select
+from sqlalchemy import case,func,or_,select
 
 from .domain import TERMINAL, TurnState
 from .store import (InteractionRow, JobActivityRow, JobArtifactRow, JobAttemptRow, JobGroupDraftRow, JobGroupRow, JobRow,
@@ -56,18 +56,22 @@ class ExecutionGraphProjector:
             turns=sorted({row.id:row for row in recent+active}.values(),key=lambda row:row.created_at)
             turn_ids={row.id for row in turns}
             all_drafts=list((await db.execute(select(JobGroupDraftRow).where(
-                JobGroupDraftRow.thread_id==thread_id).order_by(JobGroupDraftRow.created_at.desc())
-                .limit(MAX_DRAFTS))).scalars().all())
+                JobGroupDraftRow.thread_id==thread_id,or_(
+                    JobGroupDraftRow.origin_turn_id.in_(turn_ids or {''}),
+                    JobGroupDraftRow.state.in_(['DRAFT','AWAITING_CONFIRMATION'])))
+                .order_by(JobGroupDraftRow.created_at.desc()).limit(MAX_DRAFTS))).scalars().all())
             drafts=list(reversed(all_drafts))
             groups=list(reversed(list((await db.execute(select(JobGroupRow).where(
-                JobGroupRow.thread_id==thread_id).order_by(JobGroupRow.created_at.desc())
+                JobGroupRow.thread_id==thread_id,or_(JobGroupRow.origin_turn_id.in_(turn_ids or {''}),
+                    JobGroupRow.state.in_(['COMMITTED','RUNNING'])))
+                .order_by(JobGroupRow.created_at.desc())
                 .limit(MAX_GROUPS))).scalars().all())))
-            if not include_history:
-                drafts=[row for row in drafts if row.origin_turn_id in turn_ids
-                    or row.state in {'DRAFT','AWAITING_CONFIRMATION'}]
-                groups=[row for row in groups if row.origin_turn_id in turn_ids
-                    or row.state in {'COMMITTED','RUNNING'}]
             draft_by_id={row.id:row for row in all_drafts}
+            referenced={row.draft_id for row in groups if row.draft_id}-set(draft_by_id)
+            if referenced:
+                for row in (await db.execute(select(JobGroupDraftRow).where(
+                        JobGroupDraftRow.id.in_(referenced)))).scalars().all():
+                    draft_by_id[row.id]=row
             for group in groups:
                 if group.draft_id and group.draft_id in draft_by_id:
                     drafts.append(draft_by_id[group.draft_id])
@@ -84,10 +88,12 @@ class ExecutionGraphProjector:
                     JobRow.local_job_id).limit(MAX_JOBS))).scalars().all())))
             job_ids={row.id for row in jobs}
             interactions=list((await db.execute(select(InteractionRow).where(
-                InteractionRow.thread_id==thread_id).order_by(InteractionRow.created_at.desc())
+                InteractionRow.thread_id==thread_id,or_(
+                    InteractionRow.turn_id.in_(turn_ids or {''}),
+                    InteractionRow.status.in_(['pending','responding'])))
+                .order_by(InteractionRow.created_at.desc())
                 .limit(MAX_INTERACTIONS))).scalars().all())
             interactions=list(reversed(interactions))
-            if not include_history:interactions=[row for row in interactions if row.turn_id in turn_ids]
             reservations=list((await db.execute(select(ResourceReservationRow).where(
                 ResourceReservationRow.job_id.in_(job_ids or {''})))).scalars().all())
             activity_rows=(await db.execute(select(JobActivityRow.job_id,func.count()).where(

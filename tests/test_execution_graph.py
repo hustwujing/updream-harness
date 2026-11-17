@@ -4,7 +4,7 @@ import json
 from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.domain import EventKind,Harness,ItemType,ThreadCreate,TurnCreate,TurnState,now
 from sandbox_harness.execution_graph import ExecutionGraphProjector
-from sandbox_harness.job_contracts import JobGroupCreate,JobGroupDraftCreate,JobKind,JobRequest
+from sandbox_harness.job_contracts import JobGroupCreate,JobGroupDraftCreate,JobKind,JobRequest,JobState
 from sandbox_harness.store import JobActivityRow,JobArtifactRow,ReviewGateRow,Store,TurnRow
 from sqlalchemy import update
 
@@ -199,10 +199,23 @@ async def test_history_before_pages_are_stable_and_nonoverlapping(tmp_path):
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
         thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
             reasoning_level='standard',title='Paged history'),profile,'owner')
+        turns=[]
         for index in range(120):
             turn,_,_=await store.create_turn(thread.id,TurnCreate(message=f'turn {index}',
-                idempotency_key=f'paged-turn-{index}'),profile,'owner')
+                idempotency_key=f'paged-turn-{index}'),profile,'owner');turns.append(turn)
             await store.set_turn_state(turn.id,TurnState.COMPLETED)
+            request=JobRequest(local_job_id=f'job-{index}',kind=JobKind.OPERATION,adapter='fake',
+                descriptor_id='fake',descriptor_version='1',descriptor_digest='a'*64,
+                idempotency_key=f'paged-job-{index}')
+            _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id=thread.id,
+                origin_turn_id=turn.id,idempotency_key=f'paged-group-{index}',jobs=[request]))
+            await store.transition_job(jobs[0].id,JobState.SUCCEEDED,
+                expected_generation=0,result={'index':index})
+        active_request=JobRequest(local_job_id='active-old',kind=JobKind.OPERATION,adapter='fake',
+            descriptor_id='fake',descriptor_version='1',descriptor_digest='a'*64,
+            idempotency_key='paged-active-old')
+        await store.create_job_group('owner',JobGroupCreate(thread_id=thread.id,
+            origin_turn_id=turns[0].id,idempotency_key='paged-active-group',jobs=[active_request]))
         projector=ExecutionGraphProjector(store);before='';pages=[]
         for _ in range(3):
             page=await projector.snapshot(thread.id,'owner',include_history=True,
@@ -210,7 +223,9 @@ async def test_history_before_pages_are_stable_and_nonoverlapping(tmp_path):
             before=page['metadata']['next_history_before'] or ''
         turn_sets=[{node['turn_id'] for node in page['nodes'] if node['type']=='primary_harness'}
             for page in pages]
-        assert [len(values) for values in turn_sets]==[50,50,20]
-        assert not (turn_sets[0]&turn_sets[1] or turn_sets[1]&turn_sets[2] or turn_sets[0]&turn_sets[2])
+        live={turns[0].id};historical=[values-live for values in turn_sets]
+        assert [len(values) for values in turn_sets]==[51,51,20]
+        assert not (historical[0]&historical[1] or historical[1]&historical[2] or historical[0]&historical[2])
+        assert all(live<=values for values in turn_sets)
         assert pages[-1]['metadata']['next_history_before'] is None
     finally:await store.close()
