@@ -350,6 +350,23 @@ def test_related_log_query_scans_each_file_once_and_retains_missing_ids(tmp_path
     assert counts and all(value==1 for value in counts.values())
 
 
+@pytest.mark.parametrize("target_index",[0,10025,20050])
+def test_related_log_query_keeps_target_across_large_archive(tmp_path,target_index):
+    paths=[tmp_path/"first.telemetry.jsonl",tmp_path/"second.telemetry.jsonl"]
+    streams=[path.open("w") for path in paths]
+    try:
+        for index in range(20051):
+            attrs={"updream.turn_id":"target-turn" if index==target_index else f"turn-{index}"}
+            if index==target_index:attrs["updream.request_id"]="target-request"
+            row={"signal":"log","timestamp":f"2026-01-01T00:{index//60%60:02d}:{index%60:02d}Z",
+                "event_name":f"event.{index}","attributes":attrs}
+            streams[index%2].write(json.dumps(row)+"\n")
+    finally:
+        for stream in streams:stream.close()
+    rows,malformed=query(tmp_path,{"request_id":"target-request"},related=True,limit=10)
+    assert malformed==0 and any(row["event_name"]==f"event.{target_index}" for row in rows)
+
+
 async def test_reused_runtime_configuration_logs_the_new_turn_not_the_previous_one(telemetry,tmp_path,monkeypatch):
     import sandbox_runtime.app as runtime
     monkeypatch.setattr(runtime,'WORKSPACE',tmp_path/'workspace');monkeypatch.setattr(runtime,'RUN',tmp_path/'run')

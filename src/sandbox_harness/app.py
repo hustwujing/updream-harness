@@ -1112,10 +1112,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/threads/{thread_id}/execution-graph")
     async def thread_execution_graph(thread_id: str, request: Request, cursor: str = "",
-                                     include_history: bool = False):
+                                     include_history: bool = False, history_before: str = ""):
         try:
             return await execution_graph.snapshot(thread_id, request.state.owner_id,
-                cursor=cursor, include_history=include_history)
+                cursor=cursor, include_history=include_history,history_before=history_before)
         except KeyError:
             raise HTTPException(404, "Thread not found")
 

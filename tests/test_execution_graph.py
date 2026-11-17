@@ -117,7 +117,7 @@ async def test_expired_draft_projects_terminal_warning_and_is_idempotent(tmp_pat
     finally:await store.close()
 
 
-async def test_collapsed_graph_keeps_active_group_ancestor_closure_and_gate(tmp_path):
+async def test_collapsed_graph_keeps_active_group_ancestor_closure_and_gate(tmp_path,monkeypatch):
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'closure-graph.db'));await store.initialize()
     try:
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
@@ -142,11 +142,17 @@ async def test_collapsed_graph_keeps_active_group_ancestor_closure_and_gate(tmp_
                 source_generation=0,artifact_role='report',artifact_ids_json='[]',
                 artifact_digests_json='[]',required=False,state='optional_warning',
                 receipt_json='{}',warning='optional_review_unavailable',created_at=now(),updated_at=now()))
+        await store.upsert_interaction(thread.id,turns[-1].id,'execution','pending-decision',
+            'approval',{'prompt':'确认后续操作'})
+        monkeypatch.setattr('sandbox_harness.execution_graph.MAX_NODES',10)
         graph=await ExecutionGraphProjector(store).snapshot(thread.id,'owner')
         ids={node['id'] for node in graph['nodes']}
         assert f'turn:{turns[0].id}:primary' in ids and 'group:'+group.id in ids
         gate=next(node for node in graph['nodes'] if node['type']=='review_gate')
         assert gate['state']=='OPTIONAL_WARNING' and gate['warning']
+        assert graph['metadata']['truncated'] is True
+        assert any(node.get('job_id')==jobs[1].id for node in graph['nodes'])
+        assert any(node['type']=='interaction' and node['state']=='pending' for node in graph['nodes'])
         assert all(edge['from'] in ids and edge['to'] in ids for edge in graph['edges'])
     finally:await store.close()
 
@@ -184,4 +190,27 @@ async def test_graph_uses_aggregate_counts_and_bounded_artifact_summaries(tmp_pa
         assert len(graph['nodes'])<=graph['metadata']['node_limit']
         assert len(graph['edges'])<=graph['metadata']['edge_limit']
         assert len(json.dumps(graph,default=str).encode())<1024*1024
+    finally:await store.close()
+
+
+async def test_history_before_pages_are_stable_and_nonoverlapping(tmp_path):
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'paged-history.db'));await store.initialize()
+    try:
+        profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level='standard',title='Paged history'),profile,'owner')
+        for index in range(120):
+            turn,_,_=await store.create_turn(thread.id,TurnCreate(message=f'turn {index}',
+                idempotency_key=f'paged-turn-{index}'),profile,'owner')
+            await store.set_turn_state(turn.id,TurnState.COMPLETED)
+        projector=ExecutionGraphProjector(store);before='';pages=[]
+        for _ in range(3):
+            page=await projector.snapshot(thread.id,'owner',include_history=True,
+                history_before=before);pages.append(page)
+            before=page['metadata']['next_history_before'] or ''
+        turn_sets=[{node['turn_id'] for node in page['nodes'] if node['type']=='primary_harness'}
+            for page in pages]
+        assert [len(values) for values in turn_sets]==[50,50,20]
+        assert not (turn_sets[0]&turn_sets[1] or turn_sets[1]&turn_sets[2] or turn_sets[0]&turn_sets[2])
+        assert pages[-1]['metadata']['next_history_before'] is None
     finally:await store.close()

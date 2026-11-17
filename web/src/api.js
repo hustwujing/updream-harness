@@ -47,7 +47,7 @@ export const listTurns=id=>api(`threads/${id}/turns`);
 export async function listItems(id,after=0){const items=[];let cursor=after;while(true){const page=await api(`threads/${id}/items?after=${cursor}&limit=500`);items.push(...page);if(page.length<500)return items;const next=page.at(-1).sequence;if(next<=cursor)throw new Error('会话记录分页未能继续');cursor=next;}}
 export const listProjectFiles=id=>api(`threads/${id}/project-files`);
 export const listInteractions=id=>api(`threads/${id}/interactions`);
-export const getExecutionGraph=(id,cursor='',history=false)=>api(`threads/${id}/execution-graph?cursor=${encodeURIComponent(cursor)}&include_history=${history}`);
+export const getExecutionGraph=(id,cursor='',history=false,before='')=>api(`threads/${id}/execution-graph?cursor=${encodeURIComponent(cursor)}&include_history=${history}&history_before=${encodeURIComponent(before)}`);
 export const listJobActivities=(id,after=0)=>api(`jobs/${id}/activities?after=${after}&limit=500`);
 export const respondInteraction=(id,value)=>api(`interactions/${id}/respond`,{method:'POST',body:JSON.stringify(value)});
 export const projectFileHistory=(id,path)=>api(`threads/${id}/project-files/history?path=${encodeURIComponent(path)}`);

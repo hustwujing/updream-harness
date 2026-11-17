@@ -28,17 +28,28 @@ def duration_ms(start,end):
 class ExecutionGraphProjector:
     def __init__(self,store):self.store=store
 
-    async def snapshot(self,thread_id:str,owner_id:str,*,cursor:str='',include_history:bool=False)->dict:
+    async def snapshot(self,thread_id:str,owner_id:str,*,cursor:str='',include_history:bool=False,
+                       history_before:str='')->dict:
         async with self.store.connections() as db:
             thread=(await db.execute(select(ThreadRow).where(ThreadRow.id==thread_id,
                 ThreadRow.owner_id==owner_id))).scalar_one_or_none()
             if not thread:raise KeyError('thread_not_found')
             total_turns=int((await db.execute(select(func.count()).select_from(TurnRow).where(
                 TurnRow.thread_id==thread_id))).scalar_one())
-            recent=list((await db.execute(select(TurnRow).join(TurnOrderRow,
-                TurnOrderRow.turn_id==TurnRow.id).where(TurnRow.thread_id==thread_id)
-                .order_by(TurnOrderRow.sequence.desc()).limit(MAX_TURNS if include_history else 5)))
-                .scalars().all())
+            turn_query=select(TurnRow).join(TurnOrderRow,TurnOrderRow.turn_id==TurnRow.id).where(
+                TurnRow.thread_id==thread_id)
+            if include_history and history_before:
+                boundary=select(TurnOrderRow.sequence).where(
+                    TurnOrderRow.turn_id==history_before).scalar_subquery()
+                turn_query=turn_query.where(TurnOrderRow.sequence<boundary)
+            recent=list((await db.execute(turn_query.order_by(TurnOrderRow.sequence.desc())
+                .limit(MAX_TURNS if include_history else 5))).scalars().all())
+            has_older=False
+            if include_history and recent:
+                oldest_sequence=select(TurnOrderRow.sequence).where(
+                    TurnOrderRow.turn_id==recent[-1].id).scalar_subquery()
+                has_older=bool((await db.execute(select(func.count()).select_from(TurnOrderRow).where(
+                    TurnOrderRow.thread_id==thread_id,TurnOrderRow.sequence<oldest_sequence))).scalar_one())
             active=list((await db.execute(select(TurnRow).where(TurnRow.thread_id==thread_id,
                 TurnRow.state.not_in([state.value for state in TERMINAL])).limit(MAX_TURNS)))
                 .scalars().all())
@@ -68,8 +79,9 @@ class ExecutionGraphProjector:
                 turns=sorted({row.id:row for row in turns+ancestors}.values(),key=lambda row:row.created_at)
                 turn_ids={row.id for row in turns}
             group_ids={row.id for row in groups}
-            jobs=list((await db.execute(select(JobRow).where(JobRow.group_id.in_(group_ids or {''}))
-                .order_by(JobRow.created_at,JobRow.local_job_id).limit(MAX_JOBS))).scalars().all())
+            jobs=list(reversed(list((await db.execute(select(JobRow).where(
+                JobRow.group_id.in_(group_ids or {''})).order_by(JobRow.created_at.desc(),
+                    JobRow.local_job_id).limit(MAX_JOBS))).scalars().all())))
             job_ids={row.id for row in jobs}
             interactions=list((await db.execute(select(InteractionRow).where(
                 InteractionRow.thread_id==thread_id).order_by(InteractionRow.created_at.desc())
@@ -187,13 +199,32 @@ class ExecutionGraphProjector:
                 'retries':0,'activity_count':0,'turn_id':interaction.turn_id})
             edges.append({'from':f'turn:{interaction.turn_id}:primary','to':identity,'kind':'requested_interaction'})
         original_nodes=len(nodes);original_edges=len(edges)
-        nodes=nodes[:MAX_NODES];node_ids={node['id'] for node in nodes}
+        active_states=RUNNING_JOB_STATES|{'COMMITTED','DRAFT','AWAITING_CONFIRMATION','pending','responding','PENDING','REVIEW_BLOCKED','OPTIONAL_WARNING','REQUIRED_UNAVAILABLE'}
+        type_priority={'interaction':0,'review_gate':1,'job':2,'job_group':3,
+            'job_group_draft':4,'primary_harness':5,'user_turn':6,'continuation':6}
+        node_by_id={node['id']:node for node in nodes};parents={}
+        for edge in edges:parents.setdefault(edge['to'],[]).append(edge['from'])
+        seeds=sorted((node for node in nodes if node.get('state') in active_states),key=lambda node:(
+            type_priority.get(node.get('type'),9),str(node.get('started_at') or '')),reverse=False)
+        selected=[];selected_ids=set()
+        def retain(identity):
+            if identity in selected_ids or identity not in node_by_id or len(selected)>=MAX_NODES:return
+            for parent in parents.get(identity,[]):retain(parent)
+            if identity not in selected_ids and len(selected)<MAX_NODES:
+                selected_ids.add(identity);selected.append(node_by_id[identity])
+        for node in seeds:retain(node['id'])
+        for node in sorted(nodes,key=lambda value:str(value.get('started_at') or ''),reverse=True):
+            if len(selected)>=MAX_NODES:break
+            retain(node['id'])
+        nodes=[node for node in nodes if node['id'] in selected_ids]
+        node_ids={node['id'] for node in nodes}
         edges=[edge for edge in edges if edge['from'] in node_ids and edge['to'] in node_ids][:MAX_EDGES]
         metadata={'truncated':original_nodes>len(nodes) or original_edges>len(edges),
             'node_limit':MAX_NODES,'edge_limit':MAX_EDGES,
             'artifact_summary_limit':MAX_ARTIFACT_SUMMARIES,
             'history_turn_limit':MAX_TURNS,
-            'next_history_before':turns[0].id if include_history and total_turns>len(turns) else None}
+            'next_history_before':recent[-1].id if include_history and has_older else None,
+            'history_before':history_before or None}
         payload={'nodes':nodes,'edges':edges,'metadata':metadata}
         graph_cursor=hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':'),default=str).encode()).hexdigest()
         if cursor==graph_cursor:return {'cursor':graph_cursor,'reset':False,'nodes':[],'edges':[]}

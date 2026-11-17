@@ -102,7 +102,10 @@ exposes writer and loss counters.
 Authenticated Runtime telemetry always inherits non-empty Turn, Thread and
 Sandbox identities from its capability after mismatch rejection. Local related
 timeline queries scan each telemetry segment once, deduplicate with stable
-fallback identities and expand related Turns in memory under one global limit.
+fallback identities and build a temporary SQLite correlation index under the
+configured data root. Direct/related filtering happens after the scan, so old
+matches are not discarded by newer unrelated records; one global result limit
+still bounds output.
 
 Execution Graph projection uses SQL aggregate counts and bounded summaries. It
 limits history, nodes, edges and Artifact details, returns truncation/continuation
@@ -110,6 +113,10 @@ metadata, and removes every edge whose endpoint is absent. Active nodes retain
 their ancestor closure. Review Gate nodes expose the publication outcome rather
 than inferring it from Reviewer Job state. Turn retries are takeovers after the
 first claim, not raw lease generation.
+History uses a stable `history_before` cursor and frontend merge/load-more
+without duplicate nodes. When node ceilings apply, pending interactions,
+required/warning Review Gates, active Jobs and their ancestors are retained
+before terminal history; truncation is visible in the UI.
 
 ## Runtime child durability
 
