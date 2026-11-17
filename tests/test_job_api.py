@@ -167,3 +167,28 @@ def test_thread_stop_all_cancels_current_turn_and_every_nonterminal_job(tmp_path
         response=client.post(f"/api/threads/{thread['id']}/stop-all")
         assert response.status_code==200 and response.json()['accepted']
         assert response.json()['jobs'][0]['state']=='CANCELLING'
+
+
+def test_thread_pause_and_resume_are_idempotent_and_visible(tmp_path):
+    app=create_app(settings(tmp_path))
+    with TestClient(app) as client:
+        thread=client.post('/api/threads',json={'harness':'codex','model':'gpt-5.6',
+            'reasoning_level':'standard','title':'Pause'}).json()
+        app.state.broker._schedule=lambda turn_id:None
+        turn=client.post(f"/api/threads/{thread['id']}/turns",json={
+            'message':'run later','idempotency_key':'pause-api-origin'}).json()
+        first=client.post(f"/api/threads/{thread['id']}/pause")
+        second=client.post(f"/api/threads/{thread['id']}/pause")
+        assert first.status_code==200 and first.json()['state']=='PAUSED'
+        assert first.json()['operation_id']==second.json()['operation_id']
+        assert first.json()['participants'][0]['participant_id']==turn['id']
+        status=client.get(f"/api/threads/{thread['id']}/pause").json()
+        assert status['state']=='PAUSED' and status['generation']==1
+        blocked=client.post(f"/api/threads/{thread['id']}/turns",json={
+            'message':'must wait','idempotency_key':'pause-api-blocked'})
+        assert blocked.status_code==409 and blocked.json()['detail']=='thread_paused'
+        resumed=client.post(f"/api/threads/{thread['id']}/resume")
+        assert resumed.status_code==200 and resumed.json()['state']=='RUNNING'
+        accepted=client.post(f"/api/threads/{thread['id']}/turns",json={
+            'message':'continue','idempotency_key':'pause-api-resumed'})
+        assert accepted.status_code==200

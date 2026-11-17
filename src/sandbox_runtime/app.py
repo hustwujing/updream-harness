@@ -1368,7 +1368,9 @@ def create_app() -> FastAPI:
                 await finish_execution(execution, {"status": "cancelled", "error_code": "cancelled",
                     "native_thread_id": execution.native_thread_id,
                     "input_ids": list(execution.pending_input_ids)})
-            return {"cancelled": True}
+            return {"cancelled": True,
+                "native_thread_id": execution.native_thread_id if execution else "",
+                "execution_id": execution.id if execution else ""}
 
     @app.post("/v1/operations/media-render")
     async def media_render_operation(value:MediaRenderOperation):

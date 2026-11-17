@@ -100,6 +100,16 @@ class JobWorker:
         )
         external_id = context.previous_external_execution_id
         try:
+            participant = await self.store.get_pause_participant(job.thread_id,
+                "child_harness", job.id)
+            if participant and participant.state.value == "REQUESTED":
+                await self._pause(adapter, context, external_id, participant.generation)
+                return
+            if participant and participant.state.value == "RESUMED":
+                accepted = None
+                external_id = ""
+                context = replace(context, previous_external_execution_id="",
+                    previous_acceptance_receipt={})
             if job.cancel_requested:
                 if not external_id:
                     await self.store.transition_job(job.id, JobState.CANCELLED,
@@ -198,6 +208,11 @@ class JobWorker:
                 await self.store.release_job_lease(context.job.id,self.worker_id,context.generation)
                 return
             current=await self.store.get_job(context.job.id)
+            participant=await self.store.get_pause_participant(context.job.thread_id,
+                "child_harness",context.job.id)
+            if participant and participant.state.value == "REQUESTED":
+                await self._pause(adapter,context,external_id,participant.generation)
+                return
             status=(await adapter.cancel(context,external_id) if current and current.cancel_requested
                 else await adapter.status(context,external_id))
         await self._finish(adapter,context,external_id,status)
@@ -209,6 +224,30 @@ class JobWorker:
         await self.store.transition_job(context.job.id, state,
             expected_generation=context.generation, result=result)
         await self._cleanup(adapter, context, external_id)
+        participant=await self.store.get_pause_participant(context.job.thread_id,
+            "child_harness",context.job.id)
+        if participant and participant.state.value == "REQUESTED":
+            await self.store.complete_pause_participant(context.job.thread_id,
+                participant.generation,"child_harness",context.job.id,
+                external_execution_id=external_id,detail={"completed_at_pause_boundary":True})
+
+    async def _pause(self,adapter:JobAdapter,context:JobExecutionContext,
+                     external_id:str,generation:int)->None:
+        detail={};failed=False
+        if external_id:
+            try:
+                detail=await adapter.pause(context,external_id)
+            except Exception as exc:
+                failed=True;detail={"error":type(exc).__name__+": "+str(exc)}
+        try:
+            await self.store.complete_pause_participant(context.job.thread_id,generation,
+                "child_harness",context.job.id,
+                checkpoint_ref=str(detail.get("checkpoint_ref", "")),
+                native_thread_id=str(detail.get("native_thread_id", "")),
+                external_execution_id=external_id,detail=detail,failed=failed)
+        finally:
+            if external_id:
+                await self._cleanup(adapter,context,external_id)
 
     @staticmethod
     async def _cleanup(adapter: JobAdapter, context: JobExecutionContext, external_id: str) -> None:

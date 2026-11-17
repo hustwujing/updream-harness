@@ -17,7 +17,7 @@ from dotenv import dotenv_values
 
 ROOT=Path(__file__).resolve().parents[1]
 TERMINAL_JOBS={'SUCCEEDED','FAILED','CANCELLED','BLOCKED','UNKNOWN'}
-TERMINAL_TURNS={'COMPLETED','FAILED','CANCELLED','WAITING_USER'}
+TERMINAL_TURNS={'COMPLETED','FAILED','CANCELLED','WAITING_USER','PAUSED'}
 
 
 def require(response:httpx.Response)->httpx.Response:
@@ -518,15 +518,72 @@ async def case_p20(client,args):
         'one_primary_continuation':True,'group_id':committed['group']['id']}
 
 
+async def case_p21(client,args):
+    thread,turn=await origin(client,args,'P21')
+    jobs=[harness_job(index,args,objective=(
+        f'Use a shell command to sleep 30 seconds, then return the exact durable pause marker child-{index}. '
+        'After a restored session, continue from the checkpoint and do not delegate.')) for index in range(2)]
+    response=await prepare(client,thread,turn,jobs,'P21');require(response);prepared=response.json()
+    if prepared.get('mode')=='draft':
+        response=require(await client.post(
+            f"api/job-group-drafts/{prepared['draft']['id']}/confirm"));prepared=response.json()
+    members=prepared['jobs']
+    deadline=time.monotonic()+180
+    while time.monotonic()<deadline:
+        states=[require(await client.get(f"api/jobs/{item['id']}")).json()['state'] for item in members]
+        if all(state in {'RUNNING','WAITING_EXTERNAL'} for state in states):break
+        await asyncio.sleep(.25)
+    else:raise TimeoutError('pause_agents_never_started:'+json.dumps(states))
+    await asyncio.to_thread(subprocess.run,['systemctl','stop',
+        'sandbox-harness-parallel-job-worker.service'],check=True)
+    paused=require(await client.post(f"api/threads/{thread['id']}/pause")).json()
+    if paused['state'] not in {'PAUSING','PAUSED'}:raise AssertionError('pause_not_accepted')
+    await asyncio.to_thread(subprocess.run,['systemctl','restart',
+        'sandbox-harness-parallel-api.service'],check=True)
+    for _ in range(200):
+        try:
+            if (await client.get('api/session')).status_code==200:break
+        except httpx.TransportError:pass
+        await asyncio.sleep(.1)
+    else:raise TimeoutError('api_restart_timeout')
+    await asyncio.to_thread(subprocess.run,['systemctl','start',
+        'sandbox-harness-parallel-job-worker.service'],check=True)
+    deadline=time.monotonic()+240
+    while time.monotonic()<deadline:
+        control=require(await client.get(f"api/threads/{thread['id']}/pause")).json()
+        if control['state']=='PAUSED':break
+        await asyncio.sleep(.5)
+    else:raise TimeoutError('pause_reconciliation_timeout')
+    child=[value for value in control['participants'] if value['kind']=='child_harness']
+    if len(child)!=2 or any(value['state'] not in {'PAUSED','FAILED'} for value in child):
+        raise AssertionError('child_pause_participants_invalid:'+json.dumps(child))
+    if any(value['state']=='FAILED' for value in child):
+        raise AssertionError('child_pause_checkpoint_degraded:'+json.dumps(child))
+    require(await client.post(f"api/threads/{thread['id']}/resume"))
+    results=await wait_jobs(client,members,600)
+    continued=require(await client.post(f"api/threads/{thread['id']}/turns",json={
+        'message':'继续并简短确认并行子任务已恢复。','attachments':[],
+        'idempotency_key':'protocol-resume-P21-'+uuid.uuid4().hex,
+        'delivery_mode':'queue'})).json()
+    final=await wait_turn(client,continued['id'],300)
+    if final['state']!='COMPLETED':raise AssertionError('primary_resume_turn_failed')
+    return {'classification':'success','thread_id':thread['id'],'pause_generation':control['generation'],
+        'child_harnesses':len(child),'api_restarted':True,'worker_restarted':True,
+        'checkpoints':[value['checkpoint_ref'] for value in child],
+        'resumed_states':[value['state'] for value in results],
+        'primary_resume_state':final['state']}
+
+
 HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case_p05,
     'P06':case_p06,'P07':case_p07,'P08':case_p08,'P09':case_p09,'P10':case_p10,
     'P11':case_p11,'P12':case_p12,'P13':case_p13,'P14':case_p14,'P15':case_p15,
-    'P16':case_p16,'P17':case_p17,'P18':case_p18,'P19':case_p19,'P20':case_p20}
+    'P16':case_p16,'P17':case_p17,'P18':case_p18,'P19':case_p19,'P20':case_p20,
+    'P21':case_p21}
 
 
 async def main():
     parser=argparse.ArgumentParser();parser.add_argument('--base-url',default='http://127.0.0.1:24766/')
-    parser.add_argument('--case',required=True,choices=[f'P{value:02d}' for value in range(1,21)])
+    parser.add_argument('--case',required=True,choices=[f'P{value:02d}' for value in range(1,22)])
     parser.add_argument('--report',type=Path,required=True);parser.add_argument('--harness',default='codex')
     parser.add_argument('--model',default='gpt-5.6-sol');parser.add_argument('--reasoning',default='deep')
     args=parser.parse_args();value={}

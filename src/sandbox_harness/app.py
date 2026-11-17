@@ -1051,6 +1051,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(409, str(exc))
         return {"accepted": True}
 
+    @app.get("/api/threads/{thread_id}/pause")
+    async def thread_pause_status(thread_id: str, request: Request):
+        try:
+            control = await store.get_thread_control(thread_id, request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404, "Thread not found")
+        participants = await store.list_pause_participants(thread_id, control.generation)
+        return {**control.model_dump(mode="json"),
+            "participants": [value.model_dump(mode="json") for value in participants]}
+
+    @app.post("/api/threads/{thread_id}/pause")
+    async def pause_thread_work(thread_id: str, request: Request):
+        try:
+            control = await broker.pause_thread(thread_id, request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404, "Thread not found")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+        participants = await store.list_pause_participants(thread_id, control.generation)
+        return {**control.model_dump(mode="json"),
+            "participants": [value.model_dump(mode="json") for value in participants]}
+
+    @app.post("/api/threads/{thread_id}/resume")
+    async def resume_thread_work(thread_id: str, request: Request):
+        try:
+            return await store.resume_thread(thread_id, request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404, "Thread not found")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+
     @app.post("/api/threads/{thread_id}/stop-all")
     async def stop_all_thread_work(thread_id: str, request: Request):
         thread = await store.get_thread(thread_id, request.state.owner_id)
@@ -1132,7 +1163,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     cursor = event.sequence
                     yield f"id: {event.sequence}\nevent: {event.kind.value}\ndata: {json.dumps(event.payload, ensure_ascii=False)}\n\n"
                 turn = await store.get_turn(turn_id)
-                if turn and turn.state.value in {"COMPLETED", "WAITING_USER", "FAILED", "CANCELLED"} and not rows:
+                if turn and turn.state.value in {"COMPLETED", "WAITING_USER", "FAILED", "CANCELLED", "PAUSED"} and not rows:
                     return
                 if store.events:
                     await store.events.wait(turn_id, cursor)

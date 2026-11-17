@@ -37,10 +37,28 @@ class TurnState(StrEnum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
+    PAUSED = "PAUSED"
     CLEANING = "CLEANING"
 
 
-TERMINAL = {TurnState.WAITING_USER, TurnState.COMPLETED, TurnState.FAILED, TurnState.CANCELLED}
+TERMINAL = {TurnState.WAITING_USER, TurnState.COMPLETED, TurnState.FAILED,
+    TurnState.CANCELLED, TurnState.PAUSED}
+
+
+class ThreadControlState(StrEnum):
+    RUNNING = "RUNNING"
+    PAUSING = "PAUSING"
+    PAUSED = "PAUSED"
+    RESUMING = "RESUMING"
+
+
+class PauseParticipantState(StrEnum):
+    REQUESTED = "REQUESTED"
+    QUIESCED = "QUIESCED"
+    CHECKPOINTED = "CHECKPOINTED"
+    PAUSED = "PAUSED"
+    RESUMED = "RESUMED"
+    FAILED = "FAILED"
 
 
 class EventKind(StrEnum):
@@ -160,6 +178,33 @@ class ThreadView(BaseModel):
     created_at: datetime
     updated_at: datetime
     owner_id: str = Field(default="", exclude=True)
+
+
+class ThreadControlView(BaseModel):
+    thread_id: str
+    state: ThreadControlState
+    generation: int = Field(ge=0)
+    operation_id: str = ""
+    degraded: bool = False
+    detail: dict[str, Any] = Field(default_factory=dict)
+    requested_at: datetime | None = None
+    completed_at: datetime | None = None
+    updated_at: datetime
+
+
+class PauseParticipantView(BaseModel):
+    id: str
+    thread_id: str
+    generation: int = Field(ge=1)
+    kind: Literal["primary_harness", "child_harness"]
+    participant_id: str
+    state: PauseParticipantState
+    checkpoint_ref: str = ""
+    native_thread_id: str = ""
+    external_execution_id: str = ""
+    detail: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
 
 
 class Attachment(BaseModel):

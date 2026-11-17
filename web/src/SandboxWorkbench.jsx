@@ -31,7 +31,7 @@ function TerminalView({threadId,enabled,onError}){
 
 export default function SandboxWorkbench({thread,turn,onControlChange}){
  const [tab,setTab]=useState('overview'),[status,setStatus]=useState(null),[files,setFiles]=useState([]),[fileChildren,setFileChildren]=useState({}),[expanded,setExpanded]=useState([]),[root,setRoot]=useState('project'),[processes,setProcesses]=useState([]),[ports,setPorts]=useState([]),[audit,setAudit]=useState([]),[busy,setBusy]=useState(''),[error,setError]=useState(''),[editor,setEditor]=useState(null),[preview,setPreview]=useState(null),[managedChanges,setManagedChanges]=useState(null);
- const threadId=thread?.id,controlled=status?.control_state==='user_controlled',active=Boolean(turn&&!['COMPLETED','WAITING_USER','FAILED','CANCELLED'].includes(turn.state));
+ const threadId=thread?.id,controlled=status?.control_state==='user_controlled',active=Boolean(turn&&!['COMPLETED','WAITING_USER','FAILED','CANCELLED','PAUSED'].includes(turn.state));
  const fail=useCallback(value=>setError(value?.message||'沙箱操作失败'),[]);
  const refreshStatus=useCallback(async()=>{if(!threadId)return;try{setStatus(await getSandbox(threadId))}catch(value){fail(value)}},[threadId,fail]);
  const refreshTab=useCallback(async(name=tab)=>{if(!threadId)return;try{if(name==='files'){setFiles((await listSandboxFiles(threadId,root,1)).items||[]);setFileChildren({});setExpanded([])}if(name==='processes')setProcesses((await listSandboxProcesses(threadId)).items||[]);if(name==='ports')setPorts((await listSandboxPorts(threadId)).items||[]);if(name==='audit')setAudit((await listSandboxAudit(threadId)).items||[])}catch(value){fail(value)}},[threadId,tab,root,fail]);

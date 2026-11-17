@@ -131,6 +131,10 @@ class HarnessJobAdapter(BaseJobAdapter):
         return await self.backend.cancel(context,external_execution_id,
             context.previous_acceptance_receipt)
 
+    async def pause(self,context:JobExecutionContext,external_execution_id:str)->dict[str,Any]:
+        return await self.backend.pause(context,external_execution_id,
+            context.previous_acceptance_receipt)
+
     async def cleanup(self,context:JobExecutionContext,external_execution_id:str)->None:
         receipt=context.previous_acceptance_receipt
         await self.backend.cleanup(context,external_execution_id,receipt)
@@ -184,6 +188,9 @@ class OpenSandboxChildBackend:
         sandbox=await self.pool.acquire(thread_id=self._thread_id(context.job.id),turn_id=context.job.id,
             harness=harness,environment={},image=image)
         token,claims=await self.token_factory(context,reservation,sandbox.id)
+        paused=await self.store.get_pause_participant(context.job.thread_id,
+            'child_harness',context.job.id)
+        restoring=bool(paused and paused.checkpoint_ref and paused.state.value=='RESUMED')
         try:
             await self.runtime.inject(sandbox,capability_token=token,gateway_url=self.settings.gateway_url,
                 proxy_url=self.settings.public_proxy_url,harness=harness.value,
@@ -195,7 +202,11 @@ class OpenSandboxChildBackend:
                 runtime_profile_id=reservation.runtime_profile_id,
                 skill_ids=list(context.request.skill_ids),
                 skill_digests=dict(context.request.parameters.get('skill_digests',{})),
-                child_mode=True,delegation_depth=1)
+                defer_skill_install=restoring,child_mode=True,delegation_depth=1)
+            if restoring:
+                archive=await __import__('asyncio').to_thread(self.objects.get,
+                    paused.checkpoint_ref,maximum=self.settings.max_checkpoint_bytes)
+                await self.runtime.restore(sandbox,archive)
             for item in context.request.input_artifacts:
                 artifact=await self.store.get_artifact(item.artifact_id)
                 if not artifact:raise RuntimeError('child_input_artifact_missing')
@@ -204,9 +215,13 @@ class OpenSandboxChildBackend:
                 await self.runtime.put_project_file(sandbox,
                     f"assets/inputs/{item.artifact_role}-{artifact.id}",data,artifact.mime)
             execution_id=context.job.id+':'+str(context.generation)
+            message=HarnessJobAdapter.execution_prompt(context.request)
+            if restoring:
+                message=('Continue the interrupted Job from its durable checkpoint. Preserve completed '
+                    'work, do not repeat external side effects, and finish this frozen objective:\n\n'+message)
             accepted=await self.runtime.start_execution(sandbox,
-                message=HarnessJobAdapter.execution_prompt(context.request),
-                attachments=[],native_thread_id='',reasoning_effort=str(
+                message=message, attachments=[],native_thread_id=(
+                    paused.native_thread_id if restoring else ''),reasoning_effort=str(
                     context.request.parameters.get('reasoning_effort','high')),
                 execution_id=execution_id,input_id=context.job.id)
             self.sessions[context.job.id]=sandbox
@@ -263,6 +278,18 @@ class OpenSandboxChildBackend:
                      receipt:dict[str,Any])->AdapterStatus:
         sandbox=await self._sandbox(context,receipt);await self.runtime.cancel(sandbox)
         return AdapterStatus(True,JobState.CANCELLED,{'cancelled':True})
+
+    async def pause(self,context:JobExecutionContext,external_execution_id:str,
+                    receipt:dict[str,Any])->dict[str,Any]:
+        sandbox=await self._sandbox(context,receipt)
+        stopped=await self.runtime.cancel(sandbox)
+        archive=await self.runtime.checkpoint(sandbox)
+        if len(archive)>self.settings.max_checkpoint_bytes:
+            raise ValueError('Checkpoint exceeds byte limit')
+        checkpoint_ref,_=await __import__('asyncio').to_thread(self.objects.put,archive)
+        return {'checkpoint_ref':checkpoint_ref,
+            'native_thread_id':str(stopped.get('native_thread_id') or ''),
+            'external_execution_id':external_execution_id}
 
     async def collect(self,context:JobExecutionContext,external_execution_id:str,
                       status:AdapterStatus,receipt:dict[str,Any])->dict[str,Any]:

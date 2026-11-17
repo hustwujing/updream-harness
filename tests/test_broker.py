@@ -28,7 +28,22 @@ class Runtime:
     async def checkpoint(self, sandbox): return b"checkpoint"
     async def artifacts(self, sandbox, expected_batch_id): return [{"path": "result.txt", "mime": "text/plain"}]
     async def artifact(self, sandbox, path): return b"result"
-    async def cancel(self, sandbox): pass
+    async def cancel(self, sandbox): return {"cancelled": True, "native_thread_id": "native-1"}
+
+
+class PausableRuntime(Runtime):
+    def __init__(self):
+        super().__init__(); self.started = asyncio.Event(); self.cancelled = 0
+
+    async def run(self, sandbox, **kwargs):
+        self.started.set()
+        await asyncio.Event().wait()
+        yield RuntimeResult(status="completed", native_thread_id="native-pause")
+
+    async def cancel(self, sandbox):
+        self.cancelled += 1
+        return {"cancelled": True, "native_thread_id": "native-pause",
+            "execution_id": "paused-execution"}
 
 
 class FailingRuntime(Runtime):
@@ -162,6 +177,94 @@ async def test_terminal_turn_cannot_be_cancelled(tmp_path):
         await store.set_turn_state(turn.id, TurnState.COMPLETED)
         with pytest.raises(RuntimeError, match="already_terminal"):
             await broker.cancel(turn.id)
+    finally:
+        await broker.close(); await pool.close(); await store.close()
+
+
+async def test_broker_pause_quiesces_and_checkpoints_primary_harness(tmp_path):
+    settings = Settings(data_root=tmp_path,
+        database_url="sqlite+aiosqlite:///" + str(tmp_path / "pause-primary.db"),
+        backend="fake", gateway_signing_key="k" * 32,
+        gateway_url="http://127.0.0.1:9", session_keepalive_seconds=0)
+    store = Store(settings.database_url); await store.initialize()
+    objects = ObjectStore(tmp_path / "objects"); backend = FakeSandboxBackend()
+    pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
+    catalog = HarnessCatalog(); runtime = PausableRuntime()
+    broker = Broker(settings, store, objects, pool, runtime, catalog)
+    owner = "a" * 64
+    try:
+        profile = catalog.resolve("codex", "gpt-5.6", "standard")
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CODEX,
+            model=profile.model, reasoning_level="standard", title="Pause primary"),
+            profile, owner)
+        turn = await broker.submit(thread.id, TurnCreate(message="long task",
+            idempotency_key="pause-primary-turn"))
+        await asyncio.wait_for(runtime.started.wait(), 3)
+        control = await broker.pause_thread(thread.id, owner)
+        assert control.state.value == "PAUSING"
+        for _ in range(300):
+            current = await store.get_turn(turn.id)
+            control = await store.get_thread_control(thread.id)
+            if current.state == TurnState.PAUSED and control.state.value == "PAUSED":
+                break
+            await asyncio.sleep(.01)
+        saved = await store.get_thread(thread.id)
+        participant = await store.get_pause_participant(thread.id,
+            "primary_harness", turn.id, control.generation)
+        assert current.state == TurnState.PAUSED
+        assert current.error_code == "paused"
+        assert control.state.value == "PAUSED" and not control.degraded
+        assert participant.checkpoint_ref == saved.checkpoint_ref
+        assert saved.checkpoint_ref.startswith("sha256:")
+        assert saved.native_thread_id == "native-pause"
+        assert runtime.cancelled == 1 and not backend.items
+    finally:
+        await broker.close(); await pool.close(); await store.close()
+
+
+async def test_broker_restart_finishes_committed_pause_without_resuming_business_execution(tmp_path):
+    settings = Settings(data_root=tmp_path,
+        database_url="sqlite+aiosqlite:///" + str(tmp_path / "pause-restart.db"),
+        backend="fake", gateway_signing_key="k" * 32,
+        gateway_url="http://127.0.0.1:9", session_keepalive_seconds=0,
+        recovery_scan_seconds=300)
+    store = Store(settings.database_url); await store.initialize()
+    objects = ObjectStore(tmp_path / "objects"); backend = FakeSandboxBackend()
+    pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
+    catalog = HarnessCatalog(); runtime = PausableRuntime(); owner = "a" * 64
+    profile = catalog.resolve("codex", "gpt-5.6", "standard")
+    thread = await store.create_thread(ThreadCreate(harness=Harness.CODEX,
+        model=profile.model, reasoning_level="standard", title="Pause restart"), profile, owner)
+    turn, _, _ = await store.create_turn(thread.id, TurnCreate(message="long task",
+        idempotency_key="pause-restart-turn"), profile, owner)
+    claimed = await store.claim_turn(turn.id, "dead-broker", 30)
+    execution_id = turn.id + ":" + turn.id
+    await store.start_runtime_execution(turn.id, execution_id, "dead-broker",
+        claimed.recovery_generation)
+    sandbox = await backend.create(Harness.CODEX, "", {
+        "sandbox-harness.io/turn": turn.id,
+        "sandbox-harness.io/thread": thread.id,
+        "sandbox-harness.io/harness": Harness.CODEX.value,
+    }, {})
+    await store.set_turn_state(turn.id, TurnState.RUNNING, sandbox_id=sandbox.id,
+        lease_owner="dead-broker", recovery_generation=claimed.recovery_generation)
+    control = await store.request_thread_pause(thread.id, owner)
+    await store.release_turn_lease(turn.id, "dead-broker", claimed.recovery_generation)
+    broker = Broker(settings, store, objects, pool, runtime, catalog)
+    try:
+        await broker.start()
+        for _ in range(300):
+            current = await store.get_turn(turn.id)
+            control = await store.get_thread_control(thread.id)
+            if (current.state == TurnState.PAUSED and control.state.value == "PAUSED"
+                    and turn.id not in broker.tasks and sandbox.id not in backend.items):
+                break
+            await asyncio.sleep(.01)
+        assert current.state == TurnState.PAUSED
+        assert control.generation == 1 and control.state.value == "PAUSED"
+        assert runtime.cancelled == 1
+        assert (await store.get_thread(thread.id)).native_thread_id == "native-pause"
+        assert sandbox.id not in backend.items
     finally:
         await broker.close(); await pool.close(); await store.close()
 

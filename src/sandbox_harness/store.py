@@ -16,7 +16,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .observability import observed
-from .domain import AccountView, RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, TurnProjectFileSnapshot, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, TERMINAL, identifier, now, MediaDraftView, MediaJobView, MediaJobOutputView, MediaReferenceUploadView, SiteDeployJobView, SiteDraftView, SiteProjectView, SiteVersionView
+from .domain import AccountView, RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, TurnProjectFileSnapshot, ThreadCreate, ThreadView, ThreadControlState, ThreadControlView, PauseParticipantState, PauseParticipantView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, TERMINAL, identifier, now, MediaDraftView, MediaJobView, MediaJobOutputView, MediaReferenceUploadView, SiteDeployJobView, SiteDraftView, SiteProjectView, SiteVersionView
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
 from .media_errors import media_error_guidance
@@ -73,6 +73,39 @@ class ThreadRow(Base):
     last_read_turn_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
     next_item_sequence: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ThreadControlRow(Base):
+    __tablename__ = "thread_controls"
+    thread_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    state: Mapped[str] = mapped_column(String(24), index=True)
+    generation: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    operation_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    degraded: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    detail_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PauseParticipantRow(Base):
+    __tablename__ = "pause_participants"
+    __table_args__ = (UniqueConstraint("thread_id", "generation", "kind", "participant_id"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    generation: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(32))
+    participant_id: Mapped[str] = mapped_column(String(32), index=True)
+    state: Mapped[str] = mapped_column(String(24), index=True)
+    checkpoint_ref: Mapped[str] = mapped_column(Text, default="", server_default="")
+    native_thread_id: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    external_execution_id: Mapped[str] = mapped_column(Text, default="", server_default="")
+    detail_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -951,6 +984,218 @@ class Store:
             created_at=utc_datetime(row.created_at),
         )
 
+    async def get_thread_control(self, thread_id: str, owner_id: str | None = None) -> ThreadControlView:
+        async with self.connections() as db:
+            query = select(ThreadControlRow).where(ThreadControlRow.thread_id == thread_id)
+            if owner_id is not None:
+                query = query.where(ThreadControlRow.owner_id == owner_id)
+            row = (await db.execute(query)).scalar_one_or_none()
+            if row:
+                return self.thread_control_view(row)
+            thread = await db.get(ThreadRow, thread_id)
+            if not thread or owner_id is not None and thread.owner_id != owner_id:
+                raise KeyError("thread_not_found")
+            timestamp = utc_datetime(thread.updated_at)
+            return ThreadControlView(thread_id=thread_id, state=ThreadControlState.RUNNING,
+                generation=0, updated_at=timestamp)
+
+    async def list_pause_participants(self, thread_id: str, generation: int | None = None
+                                      ) -> list[PauseParticipantView]:
+        async with self.connections() as db:
+            query = select(PauseParticipantRow).where(PauseParticipantRow.thread_id == thread_id)
+            if generation is not None:
+                query = query.where(PauseParticipantRow.generation == generation)
+            rows = (await db.execute(query.order_by(PauseParticipantRow.created_at,
+                PauseParticipantRow.id))).scalars().all()
+            return [self.pause_participant_view(row) for row in rows]
+
+    async def get_pause_participant(self, thread_id: str, kind: str, participant_id: str,
+                                    generation: int | None = None) -> PauseParticipantView | None:
+        async with self.connections() as db:
+            query = select(PauseParticipantRow).where(PauseParticipantRow.thread_id == thread_id,
+                PauseParticipantRow.kind == kind,
+                PauseParticipantRow.participant_id == participant_id)
+            if generation is not None:
+                query = query.where(PauseParticipantRow.generation == generation)
+            row = (await db.execute(query.order_by(
+                PauseParticipantRow.generation.desc()).limit(1))).scalar_one_or_none()
+            return self.pause_participant_view(row) if row else None
+
+    async def request_thread_pause(self, thread_id: str, owner_id: str) -> ThreadControlView:
+        async with self.job_lock(f"thread-pause:{thread_id}"):
+            async with self.connections.begin() as db:
+                thread = (await db.execute(select(ThreadRow).where(ThreadRow.id == thread_id,
+                    ThreadRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
+                if not thread:
+                    raise KeyError("thread_not_found")
+                control = await db.get(ThreadControlRow, thread_id, with_for_update=True)
+                if control and control.state in {ThreadControlState.PAUSING.value,
+                        ThreadControlState.PAUSED.value}:
+                    return self.thread_control_view(control)
+                if control and control.state == ThreadControlState.RESUMING.value:
+                    raise RuntimeError("thread_resume_in_progress")
+                timestamp = now()
+                generation = (control.generation if control else 0) + 1
+                if not control:
+                    control = ThreadControlRow(thread_id=thread_id, owner_id=owner_id,
+                        state=ThreadControlState.PAUSING.value, generation=generation,
+                        operation_id=identifier(), degraded=False, detail_json="{}",
+                        requested_at=timestamp, completed_at=None,
+                        created_at=timestamp, updated_at=timestamp)
+                    db.add(control)
+                else:
+                    control.state = ThreadControlState.PAUSING.value
+                    control.generation = generation
+                    control.operation_id = identifier()
+                    control.degraded = False
+                    control.detail_json = "{}"
+                    control.requested_at = timestamp
+                    control.completed_at = None
+                    control.updated_at = timestamp
+                participants = 0
+                active = await db.get(TurnRow, thread.active_turn_id) if thread.active_turn_id else None
+                if active and TurnState(active.state) not in TERMINAL:
+                    state = (PauseParticipantState.PAUSED if active.state == TurnState.QUEUED.value
+                        else PauseParticipantState.REQUESTED)
+                    db.add(PauseParticipantRow(id=identifier(), owner_id=owner_id,
+                        thread_id=thread_id, generation=generation, kind="primary_harness",
+                        participant_id=active.id, state=state.value, checkpoint_ref="",
+                        native_thread_id=thread.native_thread_id,
+                        external_execution_id=active.runtime_execution_id, detail_json="{}",
+                        created_at=timestamp, updated_at=timestamp))
+                    participants += 1
+                    if state == PauseParticipantState.PAUSED:
+                        active.state = TurnState.PAUSED.value
+                        active.error_code = "paused"
+                        active.error_detail = "Turn paused before execution"
+                        await self._finish_turn_records(db, active.id)
+                jobs = list((await db.execute(select(JobRow).where(
+                    JobRow.thread_id == thread_id, JobRow.kind == JobKind.HARNESS.value,
+                    JobRow.state.not_in([state.value for state in TERMINAL_JOB_STATES]),
+                ).with_for_update())).scalars().all())
+                for job in jobs:
+                    queued = JobState(job.state) in {JobState.CREATED, JobState.QUEUED}
+                    state = PauseParticipantState.PAUSED if queued else PauseParticipantState.REQUESTED
+                    acceptance = (await db.execute(select(JobAttemptRow).where(
+                        JobAttemptRow.job_id == job.id,
+                        JobAttemptRow.accepted_at.is_not(None),
+                    ).order_by(JobAttemptRow.generation.desc()).limit(1))).scalar_one_or_none()
+                    db.add(PauseParticipantRow(id=identifier(), owner_id=owner_id,
+                        thread_id=thread_id, generation=generation, kind="child_harness",
+                        participant_id=job.id, state=state.value, checkpoint_ref="",
+                        native_thread_id="", external_execution_id=(
+                            acceptance.external_execution_id if acceptance else ""),
+                        detail_json="{}", created_at=timestamp, updated_at=timestamp))
+                    job.state = (JobState.PAUSED if queued else JobState.PAUSING).value
+                    job.updated_at = timestamp
+                    participants += 1
+                if not participants or all(row.state == PauseParticipantState.PAUSED.value
+                        for row in await self._pause_rows_locked(db, thread_id, generation)):
+                    control.state = ThreadControlState.PAUSED.value
+                    control.completed_at = timestamp
+                await db.flush()
+                return self.thread_control_view(control)
+
+    @staticmethod
+    async def _pause_rows_locked(db, thread_id: str, generation: int) -> list[PauseParticipantRow]:
+        return list((await db.execute(select(PauseParticipantRow).where(
+            PauseParticipantRow.thread_id == thread_id,
+            PauseParticipantRow.generation == generation).with_for_update())).scalars().all())
+
+    async def complete_pause_participant(self, thread_id: str, generation: int, kind: str,
+                                         participant_id: str, *, checkpoint_ref: str = "",
+                                         native_thread_id: str = "",
+                                         external_execution_id: str = "",
+                                         detail: dict | None = None,
+                                         failed: bool = False) -> PauseParticipantView:
+        async with self.job_lock(f"thread-pause:{thread_id}"):
+            async with self.connections.begin() as db:
+                control = await db.get(ThreadControlRow, thread_id, with_for_update=True)
+                if not control or control.generation != generation or control.state not in {
+                        ThreadControlState.PAUSING.value, ThreadControlState.PAUSED.value}:
+                    raise RuntimeError("stale_pause_generation")
+                row = (await db.execute(select(PauseParticipantRow).where(
+                    PauseParticipantRow.thread_id == thread_id,
+                    PauseParticipantRow.generation == generation,
+                    PauseParticipantRow.kind == kind,
+                    PauseParticipantRow.participant_id == participant_id,
+                ).with_for_update())).scalar_one_or_none()
+                if not row:
+                    raise KeyError("pause_participant_not_found")
+                timestamp = now()
+                row.state = (PauseParticipantState.FAILED if failed
+                    else PauseParticipantState.PAUSED).value
+                row.checkpoint_ref = checkpoint_ref or row.checkpoint_ref
+                row.native_thread_id = native_thread_id or row.native_thread_id
+                row.external_execution_id = external_execution_id or row.external_execution_id
+                row.detail_json = canonical_json(detail or {})
+                row.updated_at = timestamp
+                if kind == "child_harness":
+                    job = await db.get(JobRow, participant_id, with_for_update=True)
+                    if job and JobState(job.state) not in TERMINAL_JOB_STATES:
+                        job.state = JobState.PAUSED.value
+                        job.updated_at = timestamp
+                        lease = await db.get(JobLeaseRow, participant_id, with_for_update=True)
+                        if lease:
+                            attempt = await db.get(JobAttemptRow, lease.attempt_id, with_for_update=True)
+                            if attempt and not attempt.finished_at:
+                                attempt.finished_at = timestamp
+                                attempt.outcome = JobState.PAUSED.value
+                            await db.delete(lease)
+                rows = await self._pause_rows_locked(db, thread_id, generation)
+                if all(value.state in {PauseParticipantState.PAUSED.value,
+                        PauseParticipantState.FAILED.value} for value in rows):
+                    control.state = ThreadControlState.PAUSED.value
+                    control.degraded = any(value.state == PauseParticipantState.FAILED.value for value in rows)
+                    control.detail_json = canonical_json({"participants": len(rows),
+                        "failed": sum(value.state == PauseParticipantState.FAILED.value for value in rows)})
+                    control.completed_at = timestamp
+                    control.updated_at = timestamp
+                await db.flush()
+                return self.pause_participant_view(row)
+
+    async def resume_thread(self, thread_id: str, owner_id: str) -> ThreadControlView:
+        async with self.job_lock(f"thread-pause:{thread_id}"):
+            async with self.connections.begin() as db:
+                thread = (await db.execute(select(ThreadRow).where(ThreadRow.id == thread_id,
+                    ThreadRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
+                if not thread:
+                    raise KeyError("thread_not_found")
+                control = await db.get(ThreadControlRow, thread_id, with_for_update=True)
+                if not control:
+                    timestamp = now()
+                    control = ThreadControlRow(thread_id=thread_id, owner_id=owner_id,
+                        state=ThreadControlState.RUNNING.value, generation=0,
+                        operation_id="", degraded=False, detail_json="{}",
+                        requested_at=None, completed_at=timestamp,
+                        created_at=timestamp, updated_at=timestamp)
+                    db.add(control);await db.flush();return self.thread_control_view(control)
+                if control.state == ThreadControlState.RUNNING.value:
+                    return self.thread_control_view(control)
+                if control.state == ThreadControlState.PAUSING.value:
+                    raise RuntimeError("thread_pause_in_progress")
+                control.state = ThreadControlState.RESUMING.value
+                control.updated_at = now()
+                rows = await self._pause_rows_locked(db, thread_id, control.generation)
+                for row in rows:
+                    if row.kind == "child_harness":
+                        job = await db.get(JobRow, row.participant_id, with_for_update=True)
+                        if job and job.state == JobState.PAUSED.value:
+                            job.state = JobState.QUEUED.value
+                            job.updated_at = now()
+                    row.state = PauseParticipantState.RESUMED.value
+                    row.updated_at = now()
+                control.state = ThreadControlState.RUNNING.value
+                control.detail_json = canonical_json({
+                    "resume_context_required": True,
+                    "degraded": control.degraded,
+                    "generation": control.generation,
+                })
+                control.completed_at = now()
+                control.updated_at = now()
+                await db.flush()
+                return self.thread_control_view(control)
+
     async def configure_budget(self, owner_id: str, thread_id: str, budget_key: str,
                                *, limit: int) -> BudgetAccountView:
         if limit < 0:
@@ -1487,12 +1732,18 @@ class Store:
                                    adapters: set[str] | None = None) -> list[JobAttemptReceipt]:
         timestamp = now()
         async with self.connections() as db:
-            query = select(JobRow.id).outerjoin(JobLeaseRow, JobLeaseRow.job_id == JobRow.id).where(
-                JobRow.state.in_([JobState.CREATED.value, JobState.QUEUED.value,
-                    JobState.RUNNING.value, JobState.WAITING_EXTERNAL.value,
-                    JobState.CANCELLING.value]),
-                or_(JobLeaseRow.job_id.is_(None), JobLeaseRow.expires_at < timestamp),
-            )
+            query = (select(JobRow.id)
+                .outerjoin(JobLeaseRow, JobLeaseRow.job_id == JobRow.id)
+                .outerjoin(ThreadControlRow, ThreadControlRow.thread_id == JobRow.thread_id)
+                .where(or_(JobRow.state == JobState.PAUSING.value,
+                    and_(JobRow.kind == JobKind.PROVIDER.value,
+                        JobRow.state == JobState.WAITING_EXTERNAL.value), and_(
+                    or_(ThreadControlRow.thread_id.is_(None),
+                        ThreadControlRow.state == ThreadControlState.RUNNING.value),
+                    JobRow.state.in_([JobState.CREATED.value, JobState.QUEUED.value,
+                        JobState.RUNNING.value, JobState.WAITING_EXTERNAL.value,
+                        JobState.CANCELLING.value]))),
+                    or_(JobLeaseRow.job_id.is_(None), JobLeaseRow.expires_at < timestamp)))
             if adapters:
                 query = query.where(JobRow.adapter.in_(adapters))
             identities = (await db.execute(query.order_by(
@@ -1527,7 +1778,14 @@ class Store:
                 attempt.outcome = "PRE_ACCEPT_RETRY" if retry else JobState.FAILED.value
                 attempt.error_code = error_code
                 attempt.error_detail = error_detail
-                job.state = JobState.QUEUED.value if retry else JobState.RUNNING.value
+                pause = (await db.execute(select(PauseParticipantRow.id).where(
+                    PauseParticipantRow.thread_id == job.thread_id,
+                    PauseParticipantRow.kind == "child_harness",
+                    PauseParticipantRow.participant_id == job.id,
+                    PauseParticipantRow.state == PauseParticipantState.REQUESTED.value,
+                ).limit(1))).scalar_one_or_none()
+                job.state = (JobState.PAUSING.value if pause else
+                    JobState.QUEUED.value if retry else JobState.RUNNING.value)
                 job.updated_at = now()
                 await db.delete(lease)
                 await db.flush()
@@ -1545,7 +1803,13 @@ class Store:
                 if (not job or not lease or job.generation != generation
                         or lease.generation != generation or lease.worker_id != worker_id):
                     raise RuntimeError("stale_job_generation")
-                job.state = JobState.WAITING_EXTERNAL.value
+                pause = (await db.execute(select(PauseParticipantRow.id).where(
+                    PauseParticipantRow.thread_id == job.thread_id,
+                    PauseParticipantRow.kind == "child_harness",
+                    PauseParticipantRow.participant_id == job.id,
+                    PauseParticipantRow.state == PauseParticipantState.REQUESTED.value,
+                ).limit(1))).scalar_one_or_none()
+                job.state = (JobState.PAUSING if pause else JobState.WAITING_EXTERNAL).value
                 job.updated_at = now()
                 await db.delete(lease)
                 await db.flush()
@@ -1604,6 +1868,12 @@ class Store:
                     raise KeyError("job_not_found")
                 if JobState(job.state) in TERMINAL_JOB_STATES:
                     raise RuntimeError("job_terminal")
+                control = await db.get(ThreadControlRow, job.thread_id)
+                if (control and control.state != ThreadControlState.RUNNING.value
+                        and job.state != JobState.PAUSING.value
+                        and not (job.kind == JobKind.PROVIDER.value
+                            and job.state == JobState.WAITING_EXTERNAL.value)):
+                    raise RuntimeError("thread_paused")
                 job.generation += 1
                 job.state = JobState.RUNNING.value
                 job.updated_at = now()
@@ -1721,7 +1991,13 @@ class Store:
                 attempt.accepted_at = now()
                 attempt.external_execution_id = external_execution_id
                 attempt.acceptance_receipt_json = encoded
-                job.state = JobState.WAITING_EXTERNAL.value
+                pause = (await db.execute(select(PauseParticipantRow.id).where(
+                    PauseParticipantRow.thread_id == job.thread_id,
+                    PauseParticipantRow.kind == "child_harness",
+                    PauseParticipantRow.participant_id == job.id,
+                    PauseParticipantRow.state == PauseParticipantState.REQUESTED.value,
+                ).limit(1))).scalar_one_or_none()
+                job.state = (JobState.PAUSING if pause else JobState.WAITING_EXTERNAL).value
                 job.updated_at = now()
                 await db.flush()
                 return self.job_attempt_view(attempt)
@@ -1837,7 +2113,10 @@ class Store:
                                      max_groups: int = 32, max_jobs: int = 100,
                                      max_bytes: int = 1024 * 1024) -> list[dict]:
         async with self.connections.begin() as db:
-            candidates = list((await db.execute(select(JobOutboxRow).where(
+            candidates = list((await db.execute(select(JobOutboxRow)
+                .outerjoin(ThreadControlRow, ThreadControlRow.thread_id == JobOutboxRow.thread_id)
+                .where(or_(ThreadControlRow.thread_id.is_(None),
+                    ThreadControlRow.state == ThreadControlState.RUNNING.value),
                 or_(JobOutboxRow.state == "ready", and_(
                     JobOutboxRow.state == "claimed", JobOutboxRow.claim_expires_at < now())),
             ).order_by(JobOutboxRow.created_at, JobOutboxRow.id).limit(max_groups * 4)
@@ -1908,6 +2187,13 @@ class Store:
                 ).with_for_update())).scalar_one_or_none()
                 if not thread:
                     raise KeyError("thread_not_found")
+                control = await db.get(ThreadControlRow, thread_id, with_for_update=True)
+                if control and control.state != ThreadControlState.RUNNING.value:
+                    control.state = ThreadControlState.RUNNING.value
+                    control.detail_json = canonical_json({"hard_cancelled": True,
+                        "generation": control.generation})
+                    control.completed_at = now()
+                    control.updated_at = now()
                 groups = list((await db.execute(select(JobGroupRow).where(
                     JobGroupRow.thread_id == thread_id,
                     JobGroupRow.state.in_([JobGroupState.COMMITTED.value,
@@ -2115,6 +2401,25 @@ class Store:
     @staticmethod
     def thread_view(row: ThreadRow) -> ThreadView:
         return ThreadView.model_validate({key: getattr(row, key) for key in ThreadView.model_fields})
+
+    @staticmethod
+    def thread_control_view(row: ThreadControlRow) -> ThreadControlView:
+        return ThreadControlView(thread_id=row.thread_id, state=ThreadControlState(row.state),
+            generation=row.generation, operation_id=row.operation_id, degraded=row.degraded,
+            detail=json.loads(row.detail_json),
+            requested_at=utc_datetime(row.requested_at) if row.requested_at else None,
+            completed_at=utc_datetime(row.completed_at) if row.completed_at else None,
+            updated_at=utc_datetime(row.updated_at))
+
+    @staticmethod
+    def pause_participant_view(row: PauseParticipantRow) -> PauseParticipantView:
+        return PauseParticipantView(id=row.id, thread_id=row.thread_id,
+            generation=row.generation, kind=row.kind, participant_id=row.participant_id,
+            state=PauseParticipantState(row.state), checkpoint_ref=row.checkpoint_ref,
+            native_thread_id=row.native_thread_id,
+            external_execution_id=row.external_execution_id,
+            detail=json.loads(row.detail_json), created_at=utc_datetime(row.created_at),
+            updated_at=utc_datetime(row.updated_at))
 
     @staticmethod
     def account_view(row: UserRow) -> AccountView:
@@ -2363,6 +2668,7 @@ class Store:
     async def set_thread_archived(self, thread_id: str, owner_id: str, *, archived: bool) -> ThreadView:
         terminal = {state.value for state in {
             TurnState.COMPLETED, TurnState.WAITING_USER, TurnState.FAILED, TurnState.CANCELLED,
+            TurnState.PAUSED,
         }}
         async with self.connections.begin() as db:
             thread = (await db.execute(select(ThreadRow).where(
@@ -2382,6 +2688,7 @@ class Store:
     async def delete_thread(self, thread_id: str, owner_id: str) -> list[str]:
         terminal = {state.value for state in {
             TurnState.COMPLETED, TurnState.WAITING_USER, TurnState.FAILED, TurnState.CANCELLED,
+            TurnState.PAUSED,
         }}
         async with self.connections.begin() as db:
             thread = (await db.execute(select(ThreadRow).where(
@@ -2430,6 +2737,10 @@ class Store:
             await db.execute(delete(SiteDraftRow).where(SiteDraftRow.thread_id == thread_id))
             await db.execute(delete(SiteProjectRow).where(SiteProjectRow.thread_id == thread_id))
             await db.execute(delete(InteractionRow).where(InteractionRow.thread_id == thread_id))
+            await db.execute(delete(PauseParticipantRow).where(
+                PauseParticipantRow.thread_id == thread_id))
+            await db.execute(delete(ThreadControlRow).where(
+                ThreadControlRow.thread_id == thread_id))
             await db.execute(delete(ProjectFileRow).where(ProjectFileRow.thread_id == thread_id))
             await db.execute(delete(ItemRow).where(ItemRow.thread_id == thread_id))
             if turn_ids:
@@ -2650,14 +2961,38 @@ class Store:
                         or existing.network_access != network_access or existing.internal != internal):
                     raise RuntimeError("idempotency_conflict")
                 return self.turn_view(existing), False, thread.active_turn_id == existing.id
+            control = await db.get(ThreadControlRow, thread_id)
+            if control and control.state != ThreadControlState.RUNNING.value:
+                raise RuntimeError("thread_paused")
+            runtime_message = value.message
+            consume_resume_context = False
+            if control:
+                pause_detail = json.loads(control.detail_json)
+                if pause_detail.get("resume_context_required"):
+                    previous = (await db.execute(select(TurnRow).where(
+                        TurnRow.thread_id == thread_id, TurnRow.internal == False,
+                    ).order_by(TurnRow.created_at.desc(), TurnRow.id.desc()).limit(1)
+                        .with_for_update())).scalar_one_or_none()
+                    paths = list((await db.execute(select(ProjectFileRow.path).where(
+                        ProjectFileRow.thread_id == thread_id,
+                        ProjectFileRow.deleted == False).distinct().order_by(
+                            ProjectFileRow.path))).scalars().all())
+                    runtime_message = ("[pause_resume_context] Resume the interrupted Thread from its "
+                        "durable state. Do not repeat completed external side effects. "
+                        + canonical_json({"generation": control.generation,
+                            "degraded": bool(pause_detail.get("degraded")),
+                            "previous_user_objective": previous.public_message if previous else "",
+                            "durable_project_files": paths})
+                        + "\n\n[current_user_message]\n" + value.message)
+                    consume_resume_context = True
             active_running = False
             if thread.active_turn_id:
                 active = await db.get(TurnRow, thread.active_turn_id)
-                if active and TurnState(active.state) not in {TurnState.COMPLETED, TurnState.WAITING_USER, TurnState.FAILED, TurnState.CANCELLED}:
+                if active and TurnState(active.state) not in TERMINAL:
                     active_running = True
             if not active_running:
                 queued = (await db.execute(select(TurnRow).where(TurnRow.thread_id == thread_id,
-                    TurnRow.state.not_in(["COMPLETED", "WAITING_USER", "FAILED", "CANCELLED"]))
+                    TurnRow.state.not_in([state.value for state in TERMINAL]))
                     .order_by(TurnRow.created_at, TurnRow.id).limit(1))).scalar_one_or_none()
                 if queued:
                     thread.active_turn_id = queued.id
@@ -2667,9 +3002,13 @@ class Store:
             if value.delivery_mode == "steer":
                 raise RuntimeError("steer_requires_active_turn_endpoint")
             timestamp = now()
+            if consume_resume_context:
+                control.detail_json = canonical_json({
+                    **pause_detail, "resume_context_required": False})
+                control.updated_at = timestamp
             row = TurnRow(
                 id=identifier(), thread_id=thread_id, idempotency_key=value.idempotency_key,
-                message=value.message, public_message=value.message,
+                message=runtime_message, public_message=value.message,
                 attachments_json=json.dumps([a.model_dump(mode="json") for a in value.attachments]),
                 harness=resolved.harness.value, model=resolved.model, reasoning_level=resolved.reasoning_level,
                 reasoning_effort=resolved.reasoning_effort, delivery_mode=value.delivery_mode,
@@ -2696,6 +3035,11 @@ class Store:
             thread = await db.get(ThreadRow, thread_id, with_for_update=True)
             if not thread or thread.active_turn_id != completed_turn_id:
                 return None
+            control = await db.get(ThreadControlRow, thread_id)
+            if control and control.state != ThreadControlState.RUNNING.value:
+                thread.active_turn_id = ""
+                thread.updated_at = now()
+                return None
             row = (await db.execute(select(TurnRow).where(TurnRow.thread_id == thread_id,
                 TurnRow.state == TurnState.QUEUED.value, TurnRow.id != completed_turn_id).order_by(TurnRow.created_at).limit(1))).scalar_one_or_none()
             thread.active_turn_id = row.id if row else ""
@@ -2715,7 +3059,7 @@ class Store:
         return self.turn_view(row) if row else None
 
     async def repair_thread_heads(self) -> None:
-        terminal = [state.value for state in (TurnState.COMPLETED, TurnState.WAITING_USER, TurnState.FAILED, TurnState.CANCELLED)]
+        terminal = [state.value for state in TERMINAL]
         async with self.connections() as db:
             candidates = (await db.execute(select(ThreadRow.id, ThreadRow.active_turn_id)
                 .outerjoin(TurnRow, TurnRow.id == ThreadRow.active_turn_id)
@@ -2738,7 +3082,7 @@ class Store:
         # Repair the crash window between committing a terminal Turn and advancing
         # its Thread, before selecting work. Queued followers are never claimable.
         await self.repair_thread_heads()
-        terminal = [state.value for state in (TurnState.WAITING_USER, TurnState.COMPLETED, TurnState.FAILED, TurnState.CANCELLED)]
+        terminal = [state.value for state in TERMINAL]
         async with self.connections() as db:
             rows = (await db.execute(select(TurnRow).join(ThreadRow,
                 ThreadRow.active_turn_id == TurnRow.id).where(TurnRow.state.not_in(terminal),
@@ -2748,7 +3092,7 @@ class Store:
 
     async def nonterminal_turn_ids(self) -> set[str]:
         terminal = [state.value for state in {
-            TurnState.WAITING_USER, TurnState.COMPLETED, TurnState.FAILED, TurnState.CANCELLED,
+            *TERMINAL,
         }]
         async with self.connections() as db:
             rows = (await db.execute(select(TurnRow.id).where(TurnRow.state.not_in(terminal)))).scalars().all()
@@ -2756,7 +3100,7 @@ class Store:
 
     async def claim_turn(self, turn_id: str, owner: str, lease_seconds: int) -> TurnView | None:
         timestamp = now()
-        terminal = [state.value for state in (TurnState.WAITING_USER, TurnState.COMPLETED, TurnState.FAILED, TurnState.CANCELLED)]
+        terminal = [state.value for state in TERMINAL]
         async with self.connections.begin() as db:
             row = (await db.execute(update(TurnRow).where(
                 TurnRow.id == turn_id, TurnRow.state.not_in(terminal),
@@ -3012,7 +3356,7 @@ class Store:
     @observed("db.turn.cancel")
     async def request_turn_cancel(self, turn_id: str) -> TurnView:
         terminal = [state.value for state in (TurnState.COMPLETED, TurnState.WAITING_USER,
-            TurnState.FAILED, TurnState.CANCELLED)]
+            TurnState.FAILED, TurnState.CANCELLED, TurnState.PAUSED)]
         async with self.connections.begin() as db:
             # Conditional UPDATE serializes cancellation with completion and lease claims
             # on PostgreSQL and SQLite alike.
@@ -3049,7 +3393,7 @@ class Store:
                 row.sandbox_id = sandbox_id
             row.error_code = error_code
             row.error_detail = error_detail[:4000]
-            if state in {TurnState.WAITING_USER, TurnState.COMPLETED, TurnState.FAILED, TurnState.CANCELLED}:
+            if state in TERMINAL:
                 row.pending_final_state = ""
                 await self._finish_turn_records(db, turn_id)
             row.updated_at = now()

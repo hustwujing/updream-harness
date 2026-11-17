@@ -3,7 +3,7 @@ import {ChevronDown,CircleAlert,CircleCheck,Clock3,LoaderCircle,MapPin,X} from '
 import {apiUrl,getExecutionGraph,listJobActivities} from './api';
 import {formatDuration} from './activity-time';
 
-const terminal=new Set(['COMPLETED','FAILED','CANCELLED','WAITING_USER','SUCCEEDED','BLOCKED','UNKNOWN','TERMINAL','CONTINUED','CONFIRMED','REJECTED','EXPIRED','responded','expired']);
+const terminal=new Set(['COMPLETED','FAILED','CANCELLED','PAUSED','WAITING_USER','SUCCEEDED','BLOCKED','UNKNOWN','TERMINAL','CONTINUED','CONFIRMED','REJECTED','EXPIRED','responded','expired']);
 const activityTypes=new Set(['reasoning','plan','command','tool','file_change','warning','error']);
 const stateLabels={CREATED:'已创建',QUEUED:'等待调度',RUNNING:'执行中',WAITING_EXTERNAL:'等待外部结果',CANCELLING:'正在取消',SUCCEEDED:'已完成',FAILED:'失败',CANCELLED:'已取消',BLOCKED:'等待父任务处理',UNKNOWN:'结果待对账',COMMITTED:'已提交',TERMINAL:'已结束',CONTINUED:'已续接',AWAITING_CONFIRMATION:'等待确认',CONFIRMED:'已确认',COMPLETED:'已完成',WAITING_USER:'等待用户'};
 

@@ -11,7 +11,7 @@ from .store import (InteractionRow, JobActivityRow, JobArtifactRow, JobAttemptRo
     ResourceReservationRow, ThreadRow, TurnRow, utc_datetime)
 
 
-RUNNING_JOB_STATES={'CREATED','QUEUED','RUNNING','WAITING_EXTERNAL','CANCELLING'}
+RUNNING_JOB_STATES={'CREATED','QUEUED','RUNNING','WAITING_EXTERNAL','CANCELLING','PAUSING'}
 
 
 def iso(value):return utc_datetime(value).isoformat() if value else None

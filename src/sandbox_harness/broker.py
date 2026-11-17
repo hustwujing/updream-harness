@@ -194,6 +194,12 @@ class Broker:
         try:
             if claimed.cancel_requested and claimed.state != TurnState.CLEANING:
                 self._schedule(turn.id); return
+            control = await self.store.get_thread_control(turn.thread_id)
+            participant = (await self.store.get_pause_participant(turn.thread_id,
+                "primary_harness", turn.id, control.generation)
+                if control.state.value == "PAUSING" else None)
+            if participant and participant.state.value == "REQUESTED":
+                self._schedule(turn.id); return
             if claimed.state == TurnState.QUEUED:
                 self._schedule(turn.id); return
             if claimed.state == TurnState.CLEANING and claimed.pending_final_state:
@@ -398,6 +404,19 @@ class Broker:
             if next_turn:
                 self._schedule(next_turn.id)
 
+    async def pause_thread(self, thread_id: str, owner_id: str):
+        control = await self.store.request_thread_pause(thread_id, owner_id)
+        participants = await self.store.list_pause_participants(thread_id, control.generation)
+        for participant in participants:
+            if participant.kind != "primary_harness" or participant.state.value != "REQUESTED":
+                continue
+            await self.store.append_event(participant.participant_id, EventKind.WARNING,
+                {"code": "pause_requested", "generation": control.generation})
+            task = self.tasks.get(participant.participant_id)
+            if task and not task.cancelling():
+                task.cancel()
+        return await self.store.get_thread_control(thread_id, owner_id)
+
     async def _state(self, turn_id: str, state: TurnState, **kwargs) -> TurnView:
         generation = self.leases.get(turn_id)
         turn = await self.store.set_turn_state(turn_id, state, **kwargs,
@@ -487,7 +506,7 @@ class Broker:
 
     @observed("workspace.save")
     async def _save_workspace(self, sandbox, thread_id: str, turn_id: str,
-                              native_thread_id: str, *, partial: bool = False) -> None:
+                              native_thread_id: str, *, partial: bool = False) -> str:
         generation = self.leases.get(turn_id)
         archive = await self.runtime.checkpoint(sandbox)
         if len(archive) > self.settings.max_checkpoint_bytes:
@@ -544,6 +563,7 @@ class Broker:
                 except ValueError as exc:
                     event("site.draft.auto_skipped",level=logging.WARNING,turn_id=turn_id,
                         error_code=str(exc)[:100])
+        return checkpoint_ref
 
     async def _collect_runtime_logs(self, sandbox) -> None:
         target=telemetry()
@@ -614,6 +634,18 @@ class Broker:
                     await self.store.record_turn_trace(turn_id,carrier().get("traceparent", ""),self.instance_id,generation)
                 except Exception as exc:
                     event("turn.trace.persist_failed",level=logging.WARNING,exc=exc)
+                control = await self.store.get_thread_control(thread.id)
+                participant = (await self.store.get_pause_participant(thread.id,
+                    "primary_harness", turn.id, control.generation)
+                    if control.state.value == "PAUSING" else None)
+                if participant and participant.state.value == "REQUESTED":
+                    matches = await self.pool.backend.find_by_turn(turn.id)
+                    if matches:
+                        sandbox = await self.pool.adopt(matches[0], thread_id=thread.id,
+                            turn_id=turn.id)
+                        self.active_sandboxes[turn.id] = sandbox
+                        extra_sandboxes = matches[1:]
+                    raise asyncio.CancelledError()
                 if turn.cancel_requested:
                     matches = await self.pool.backend.find_by_turn(turn.id)
                     if matches:
@@ -800,15 +832,42 @@ class Broker:
                 event("turn.processing.abandoned",turn_id=turn.id,reason="broker_shutdown")
                 abandoned = True
                 return
-            final_state = TurnState.CANCELLED
-            error_code = "cancelled"
-            error_detail = "Turn was cancelled"
             lost_lease = not await self.store.owns_turn_lease(turn.id, self.instance_id, generation)
-            if sandbox and not lost_lease:
+            control = await self.store.get_thread_control(thread.id)
+            participant = (await self.store.get_pause_participant(thread.id,
+                "primary_harness", turn.id, control.generation)
+                if control.state.value == "PAUSING" else None)
+            if participant and participant.state.value == "REQUESTED":
+                checkpoint_ref = ""
+                native_thread_id = thread.native_thread_id
+                pause_error = ""
                 try:
-                    await self.runtime.cancel(sandbox)
-                except Exception:
-                    pass
+                    if not sandbox or lost_lease:
+                        raise RuntimeError("pause_sandbox_unavailable")
+                    stopped = await self.runtime.cancel(sandbox)
+                    native_thread_id = str(stopped.get("native_thread_id") or native_thread_id)
+                    checkpoint_ref = await self._save_workspace(sandbox, thread.id, turn.id,
+                        native_thread_id, partial=True)
+                except Exception as exc:
+                    pause_error = type(exc).__name__ + ": " + str(exc)
+                await self.store.complete_pause_participant(thread.id, control.generation,
+                    "primary_harness", turn.id, checkpoint_ref=checkpoint_ref,
+                    native_thread_id=native_thread_id,
+                    external_execution_id=turn.runtime_execution_id,
+                    detail={"error": pause_error} if pause_error else {}, failed=bool(pause_error))
+                final_state = TurnState.PAUSED
+                error_code = "pause_degraded" if pause_error else "paused"
+                error_detail = ("Paused at the last durable checkpoint: " + pause_error
+                    if pause_error else "Turn paused with a durable checkpoint")
+            else:
+                final_state = TurnState.CANCELLED
+                error_code = "cancelled"
+                error_detail = "Turn was cancelled"
+                if sandbox and not lost_lease:
+                    try:
+                        await self.runtime.cancel(sandbox)
+                    except Exception:
+                        pass
         except Exception as exc:
             error_code = type(exc).__name__
             error_detail = str(exc)

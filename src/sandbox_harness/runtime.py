@@ -364,7 +364,8 @@ class RuntimeClient:
             return response.json()
 
     @observed("runtime.cancel")
-    async def cancel(self, sandbox: Sandbox) -> None:
+    async def cancel(self, sandbox: Sandbox) -> dict:
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()}, timeout=10, trust_env=False) as client:
             response = await client.post("/v1/cancel")
             response.raise_for_status()
+            return response.json()
