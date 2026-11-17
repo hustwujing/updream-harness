@@ -10,7 +10,7 @@ from .job_adapters import (
     SubmissionOutcomeUnknown,
 )
 from .job_contracts import JobKind, JobState, TERMINAL_JOB_STATES
-from .observability import event
+from .observability import event,sanitize
 
 
 class JobDeadlineExceeded(TimeoutError):
@@ -224,9 +224,11 @@ class JobWorker:
                     deterministic = bool(request.retry_policy.get("deterministic"))
                     if request.kind == JobKind.OPERATION and deterministic:
                         maximum = int(request.retry_policy.get("max_pre_accept_attempts", 1))
+                        detail=sanitize({"error.type":f"{type(exc).__name__}: {exc}"}).get(
+                            "error.type",type(exc).__name__)
                         await self.store.finish_pre_accept_attempt(job.id, self.worker_id,
                             attempt.generation, retry=attempt.generation < max(1, maximum),
-                            error_code="operation_start_failed", error_detail=type(exc).__name__)
+                            error_code="operation_start_failed", error_detail=detail)
                     else:
                         await self.store.record_job_acceptance(job.id, self.worker_id,
                             attempt.generation, external_execution_id="",

@@ -16,6 +16,11 @@ from sandbox_harness.store import NodeRow,Store
 ROOT=Path(__file__).resolve().parents[1]
 
 
+def test_job_service_entrypoint_configures_dedicated_telemetry():
+    source=(ROOT/"src/sandbox_harness/job_service.py").read_text()
+    assert 'configure("job-worker",settings.data_root/"logs")' in source
+
+
 def runtime_profile(identity="general-cpu",reference=True):
     digests={"codex":"a"*64,"claude":"b"*64,"deepseek":"c"*64}
     refs={harness:f"registry/{identity}-{harness}@sha256:{digest}"

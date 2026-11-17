@@ -19,6 +19,7 @@ from .media_catalog import MediaCatalog
 from .media_job_adapter import MediaProviderJobAdapter
 from .media_render_adapter import MediaRenderOperationAdapter
 from .objects import object_store
+from .observability import configure
 from .pool import SandboxPool
 from .profiles import ProfileResolver
 from .reviewer import ReviewerCoordinator,ReviewerJobAdapter,ReviewSubmission,ReviewTrigger
@@ -141,4 +142,5 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
 
 
 def run() -> None:
-    asyncio.run(serve(load_settings()))
+    settings=load_settings();configure("job-worker",settings.data_root/"logs")
+    asyncio.run(serve(settings))

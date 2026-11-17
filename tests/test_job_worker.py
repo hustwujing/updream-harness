@@ -5,7 +5,8 @@ from sandbox_harness.job_adapters import (
 )
 from sandbox_harness.job_contracts import JobGroupCreate, JobKind, JobRequest, JobState
 from sandbox_harness.job_worker import JobWorker
-from sandbox_harness.store import Store
+from sandbox_harness.store import JobAttemptRow,Store
+from sqlalchemy import select
 
 
 class FakeAdapter(BaseJobAdapter):
@@ -197,6 +198,11 @@ async def test_non_idempotent_provider_exception_is_unknown_but_deterministic_op
     operation_worker=JobWorker(operation_store,{'fake':operation},node_id='node',worker_id='operation-worker')
     try:
         await operation_worker.run_once();assert (await operation_store.get_job(operation_job.id)).state==JobState.QUEUED
+        async with operation_store.connections() as db:
+            attempt=(await db.execute(select(JobAttemptRow).where(
+                JobAttemptRow.job_id==operation_job.id))).scalar_one()
+        assert attempt.error_code=='operation_start_failed'
+        assert attempt.error_detail=='RuntimeError: process did not start'
         await operation_worker.run_once();assert (await operation_store.get_job(operation_job.id)).state==JobState.SUCCEEDED
     finally:await operation_store.close()
 
