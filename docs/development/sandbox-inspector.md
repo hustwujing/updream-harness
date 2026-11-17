@@ -78,6 +78,11 @@ activity and live terminal traffic renew it; closing the Workbench stops
 renewal. Expired state is never reported as active. `releasing` rows are scanned
 immediately regardless of expiry and resume from their persisted action/phase;
 takeover cannot replace an unfinished release generation.
+Checkpoint transport, object-write or database failure remains at
+`managed_resolved`, retains the attached Sandbox/capability and is retryable.
+Only a definitively missing Sandbox advances to `checkpoint_unavailable`; the
+user must explicitly confirm release with the previous checkpoint before the
+capability is revoked and the control row is removed.
 
 Normal PTY exit is terminal and never reconnects automatically. Transient
 disconnect uses bounded exponential retries; authorization/expired-control

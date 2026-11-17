@@ -466,7 +466,7 @@ class SandboxInspector:
             response.raise_for_status()
 
     async def release(self, thread_id: str, owner_id: str, *, expired: bool = False,
-                      managed_action: str = "") -> dict:
+                      managed_action: str = "", allow_checkpoint_loss:bool=False) -> dict:
         async with self._lock(thread_id):
             raw = await self.store.get_sandbox_control(thread_id, owner_id)
             if not raw:
@@ -522,19 +522,25 @@ class SandboxInspector:
                     checkpointed = True
                     await self.pool.release(sandbox, keep_attached=True,
                         keepalive_seconds=self.settings.session_keepalive_seconds)
-                except (httpx.HTTPError, SandboxNotFound):
-                    try:
-                        await self.pool.release(sandbox, keep_attached=False)
-                    except Exception as exc:
-                        event("sandbox.control.broken_delete_failed", level=40,
-                            thread_id=thread_id, sandbox_id=control["sandbox_id"],
-                            exception_type=type(exc).__name__)
-                        raise RuntimeError("sandbox_release_cleanup_pending") from exc
-                control=await self.store.advance_sandbox_release_phase(thread_id,owner_id,
-                    "managed_resolved","checkpointed");phase="checkpointed"
+                except SandboxNotFound:
+                    control=await self.store.advance_sandbox_release_phase(thread_id,owner_id,
+                        "managed_resolved","checkpoint_unavailable");phase="checkpoint_unavailable"
+                    sandbox=None
+                except Exception as exc:
+                    event("sandbox.control.checkpoint_failed",level=40,thread_id=thread_id,
+                        sandbox_id=control["sandbox_id"],exception_type=type(exc).__name__)
+                    raise RuntimeError("sandbox_checkpoint_retryable") from exc
+                if phase=="managed_resolved":
+                    control=await self.store.advance_sandbox_release_phase(thread_id,owner_id,
+                        "managed_resolved","checkpointed");phase="checkpointed"
             elif phase=="managed_resolved":
                 control=await self.store.advance_sandbox_release_phase(thread_id,owner_id,
-                    "managed_resolved","checkpointed");phase="checkpointed"
+                    "managed_resolved","checkpoint_unavailable");phase="checkpoint_unavailable"
+            if phase=="checkpoint_unavailable":
+                if not allow_checkpoint_loss:
+                    raise RuntimeError("sandbox_checkpoint_unavailable")
+                control=await self.store.advance_sandbox_release_phase(thread_id,owner_id,
+                    "checkpoint_unavailable","checkpointed");phase="checkpointed"
             if phase=="checkpointed":
                 nonce=await self.store.sandbox_control_nonce(thread_id,owner_id)
                 await self._revoke(nonce,thread_id,control["sandbox_id"])
@@ -542,11 +548,13 @@ class SandboxInspector:
                     "checkpointed","revoked");phase="revoked"
             await self.store.add_sandbox_audit(thread_id, owner_id, control["sandbox_id"],
                 "control.expired" if expired else "control.released", {"checkpointed": checkpointed,
+                    "checkpoint_unavailable":not checkpointed,
                     "managed_action": change_result["action"], "managed_change_count": change_result["count"]})
             await self.store.finish_sandbox_control(thread_id, owner_id)
             event("sandbox.control.released", thread_id=thread_id,
                 sandbox_id=control["sandbox_id"], checkpointed=checkpointed, expired=expired)
             return {"released": True, "checkpointed": checkpointed,
+                "checkpoint_unavailable":not checkpointed,
                 "managed_changes": change_result}
 
     async def terminal_ticket(self, thread_id: str, owner_id: str) -> dict:

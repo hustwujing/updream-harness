@@ -168,9 +168,12 @@ async def test_inspector_restore_takeover_terminal_port_and_release(tmp_path, mo
         assert await store.get_sandbox_control(thread.id,owner) is None
         await inspector.takeover(thread.id,owner,network_access="restricted")
         runtime.fail_checkpoint=True;runtime.legacy_manifest=True
-        broken=await inspector.release(thread.id,owner)
-        assert broken["released"] and not broken["checkpointed"]
-        assert broken["managed_changes"]["action"]=="managed_manifest_unavailable"
+        with pytest.raises(RuntimeError,match="checkpoint_retryable"):
+            await inspector.release(thread.id,owner)
+        assert (await store.get_sandbox_control(thread.id,owner))["release_phase"]=="managed_resolved"
+        runtime.fail_checkpoint=False
+        recovered=await inspector.release(thread.id,owner)
+        assert recovered["released"] and recovered["checkpointed"]
         assert await store.get_sandbox_control(thread.id,owner) is None
     finally:
         await pool.close(); await store.close()
@@ -346,6 +349,49 @@ async def test_releasing_control_is_immediately_reconciled_after_revoke_failure(
         assert any(item["thread_id"]==thread.id for item in await store.expired_sandbox_controls())
         await inspector.release(thread.id,owner,expired=True)
         assert await store.get_sandbox_control(thread.id,owner) is None and calls==2
+    finally:await pool.close();await store.close()
+
+
+async def test_checkpoint_transport_failure_stays_retryable_and_retains_sandbox(tmp_path,monkeypatch):
+    store,pool,runtime,objects,inspector,owner,thread=await review17_environment(tmp_path,"checkpoint-retry")
+    revokes=0
+    async def revoke(*args):
+        nonlocal revokes;revokes+=1
+    monkeypatch.setattr(inspector,"_revoke",revoke)
+    try:
+        control=await inspector.takeover(thread.id,owner,network_access="restricted")
+        runtime.fail_checkpoint=True
+        with pytest.raises(RuntimeError,match="checkpoint_retryable"):
+            await inspector.release(thread.id,owner,managed_action="discard")
+        pending=await store.get_sandbox_control(thread.id,owner)
+        assert pending["release_phase"]=="managed_resolved" and revokes==0
+        assert (await pool.get_attached(thread.id)).id==control["sandbox_id"]
+        assert (await store.get_thread(thread.id,owner)).checkpoint_ref==""
+        runtime.fail_checkpoint=False
+        result=await inspector.release(thread.id,owner,managed_action="discard")
+        assert result["checkpointed"] is True and revokes==1
+        checkpoint=(await store.get_thread(thread.id,owner)).checkpoint_ref
+        assert objects.get(checkpoint,maximum=1024)==b"checkpoint"
+    finally:await pool.close();await store.close()
+
+
+async def test_missing_sandbox_requires_explicit_checkpoint_loss_confirmation(tmp_path,monkeypatch):
+    store,pool,runtime,objects,inspector,owner,thread=await review17_environment(tmp_path,"checkpoint-missing")
+    revokes=0
+    async def revoke(*args):
+        nonlocal revokes;revokes+=1
+    monkeypatch.setattr(inspector,"_revoke",revoke)
+    try:
+        control=await inspector.takeover(thread.id,owner,network_access="restricted")
+        sandbox=await pool.get_attached(thread.id);await pool.release(sandbox,keep_attached=False)
+        with pytest.raises(RuntimeError,match="checkpoint_unavailable"):
+            await inspector.release(thread.id,owner,managed_action="discard")
+        pending=await store.get_sandbox_control(thread.id,owner)
+        assert pending["release_phase"]=="checkpoint_unavailable" and revokes==0
+        result=await inspector.release(thread.id,owner,managed_action="discard",
+            allow_checkpoint_loss=True)
+        assert result["checkpointed"] is False and result["checkpoint_unavailable"] is True
+        assert revokes==1 and await store.get_sandbox_control(thread.id,owner) is None
     finally:await pool.close();await store.close()
 
 

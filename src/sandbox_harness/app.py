@@ -1395,7 +1395,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def sandbox_release(thread_id: str, request: Request,
                               value: SandboxReleaseRequest = SandboxReleaseRequest()):
         return await sandbox_api(inspector.release(thread_id, request.state.owner_id,
-            managed_action=value.managed_action))
+            managed_action=value.managed_action,allow_checkpoint_loss=value.allow_checkpoint_loss))
 
     @app.post("/api/threads/{thread_id}/sandbox/terminal-ticket")
     async def sandbox_terminal_ticket(thread_id: str, request: Request):

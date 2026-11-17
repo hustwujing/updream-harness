@@ -362,6 +362,7 @@ class ProjectFileRename(BaseModel):
 
 class SandboxReleaseRequest(BaseModel):
     managed_action: Literal["", "discard", "preserve_work", "save_versions"] = ""
+    allow_checkpoint_loss: bool = False
 
 
 class Interaction(BaseModel):
