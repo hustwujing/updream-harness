@@ -132,6 +132,10 @@ Continuation outboxes contain only bounded Job facts: identity, state, result
 digest, result availability, stable error code and compact Review Gate
 state/warning. Arbitrary Adapter result bodies remain addressable by Job ID and
 are never copied into the bounded continuation batch.
+The continuation prompt defines `result_available=true` as an intentional
+omission and names the one-shot `sandbox-job job --job-id` / `sandbox-job group
+--group-id` reads. Harnesses must wait for continuation before reading; they do
+not poll Job state in a model loop.
 
 A digest-bound `PASS` atomically promotes candidates and publishes late
 delivery Items if the source group already terminated. `REVISE`,

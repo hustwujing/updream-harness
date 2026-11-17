@@ -13,7 +13,7 @@ class StoreBroker:
         thread=await self.store.get_thread(thread_id);profile=self.catalog.resolve(thread.harness,thread.model,thread.reasoning_level)
         turn,created,_=await self.store.create_turn(thread_id,value,profile,thread.owner_id,
             network_access=network_access,internal=internal)
-        self.submissions.append((turn.id,created,value.idempotency_key))
+        self.submissions.append((turn.id,created,value.idempotency_key,value.message))
         return turn
 
 
@@ -47,6 +47,8 @@ async def test_user_turn_queued_before_completion_precedes_factual_continuation(
         await terminal_group(store,thread,origin,'later')
         dispatcher=ContinuationDispatcher(store,StoreBroker(store))
         assert await dispatcher.run_once()==1
+        assert "result_available=true" in dispatcher.broker.submissions[-1][3]
+        assert "sandbox-job job --job-id JOB_ID" in dispatcher.broker.submissions[-1][3]
         turns=await store.list_turns(thread.id,'owner')
         continuation=next(value for value in turns if value.internal)
         assert [value.id for value in turns]==[origin.id,user.id,continuation.id]
@@ -103,11 +105,13 @@ async def test_oversized_job_results_use_bounded_outbox_facts_without_suppressio
         for job in jobs:
             await store.transition_job(job.id,JobState.SUCCEEDED,expected_generation=0,
                 result={"payload":"x"*(700*1024),"stable":"fact"})
-        claimed=await store.claim_job_outbox_batch("dispatcher",max_groups=1,max_jobs=10,
-            max_bytes=1024*1024)
-        assert len(claimed)==1 and claimed[0]["group_id"]==group.id
-        assert len(claimed[0]["results"])==3
-        assert all(item["result_available"] is True and "payload" not in item
-            for item in claimed[0]["results"])
-        assert (await store.get_job_outbox(group.id)).state=="claimed"
+        broker=StoreBroker(store);dispatcher=ContinuationDispatcher(store,broker,max_groups=1,
+            max_jobs=10,max_bytes=1024*1024)
+        assert await dispatcher.run_once()==1
+        message=broker.submissions[-1][3]
+        assert len(message.encode())<1024*1024
+        assert "result_available=true" in message
+        assert "sandbox-job group --group-id GROUP_ID" in message
+        assert "x"*100 not in message
+        assert (await store.get_job_outbox(group.id)).state=="delivered"
     finally:await store.close()

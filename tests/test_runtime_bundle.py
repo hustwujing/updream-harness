@@ -56,6 +56,9 @@ def test_runtime_bundle_build_is_deterministic_and_activation_is_atomic(tmp_path
     assert (Path(activated["root"]) / "skills/manifest.json").is_file()
     monkeypatch.setenv("SANDBOX_RUNTIME_BUNDLE_ROOT", activated["root"])
     assert runtime_instructions() == RUNTIME_INSTRUCTIONS
+    assert "sandbox-job job --job-id JOB_ID" in RUNTIME_INSTRUCTIONS
+    assert "sandbox-job group --group-id GROUP_ID" in RUNTIME_INSTRUCTIONS
+    assert "Do not poll in a model loop" in RUNTIME_INSTRUCTIONS
     assert bundle_root() == Path(activated["root"]) / "skills"
 
 

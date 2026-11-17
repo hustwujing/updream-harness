@@ -35,6 +35,10 @@ class ContinuationDispatcher:
             "results": item["results"]} for item in batch]
         message = ("[job_groups_completed] Factual terminal results from durable parallel groups. "
             "Do not assume they still satisfy later user intent; inspect and decide what to do next. "
+            "A row with result_available=true intentionally omits the full durable result to keep this "
+            "continuation bounded. Now that continuation has arrived, fetch details once with "
+            "`sandbox-job job --job-id JOB_ID` or fetch the group with "
+            "`sandbox-job group --group-id GROUP_ID` before deciding; never guess omitted output. "
             + json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
         thread_id = batch[0]["thread_id"]
         try:
