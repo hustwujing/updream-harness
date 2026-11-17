@@ -47,6 +47,7 @@ INTERVENTIONS={
 INTERVENTION_ASSETS={"intervention_replace_source":["poster.png"]}
 AFTER_ARTIFACT_INTERVENTIONS={"intervention_thumbnail","intervention_new_goal",
     "intervention_chain","intervention_scope_successor"}
+INPUT_ACCEPTING={"QUEUED","RESTORING","STARTING","RUNNING","AWAITING_USER"}
 
 
 def now():return datetime.now(timezone.utc).isoformat()
@@ -200,6 +201,33 @@ async def wait_turn(client,turn_id,running,identity,timeout):
     raise TimeoutError("turn_timeout")
 
 
+async def deliver_intervention(client,thread,turn,message,attachments):
+    response=await client.get(f"api/turns/{turn['id']}");response.raise_for_status();current=response.json()
+    if current["state"] in INPUT_ACCEPTING:
+        if current["state"]=="AWAITING_USER":
+            response=await client.get(f"api/threads/{thread['id']}/interactions");response.raise_for_status()
+            pending=[row for row in response.json()
+                if row["turn_id"]==turn["id"] and row["status"]=="pending"]
+            if len(pending)==1:
+                interaction=pending[0];questions=interaction.get("request",{}).get("questions") or []
+                answers={str(row.get("id") or "answer"):message for row in questions} or {"answer":message}
+                action="answer" if interaction["kind"]=="question" else "reject"
+                response=await client.post(f"api/interactions/{interaction['id']}/respond",json={
+                    "idempotency_key":"campaign-interaction-"+uuid.uuid4().hex,
+                    "action":action,"answers":answers})
+                response.raise_for_status()
+                if not attachments:return {"mode":"interaction","turn_id":turn["id"]}
+        if current["state"]!="AWAITING_USER":
+            response=await client.post(f"api/turns/{turn['id']}/inputs",json={"message":message,
+                "attachments":attachments,"idempotency_key":"campaign-intervention-"+uuid.uuid4().hex})
+            response.raise_for_status();return {"mode":"input","turn_id":turn["id"],
+                "input_id":response.json()["id"]}
+    response=await client.post(f"api/threads/{thread['id']}/turns",json={"message":message,
+        "attachments":attachments,"idempotency_key":"campaign-intervention-"+uuid.uuid4().hex,
+        "delivery_mode":"queue"})
+    response.raise_for_status();return {"mode":"turn","turn_id":response.json()["id"]}
+
+
 async def settle_media_workflow(client,thread_id,initial_final,running,identity,timeout,
                                 *,allow_external):
     """Drive confirmation cards and wait for every durable continuation Turn."""
@@ -302,17 +330,19 @@ async def primary_case(client,case,args,running):
         if not message:return
         intervention_attachments=[await upload(client,ROOT/"tests/real_cases/assets"/name)
             for name in INTERVENTION_ASSETS.get(intervention,[])]
-        value=await client.post(f"api/threads/{thread['id']}/turns",json={"message":message,
-            "attachments":intervention_attachments,
-            "idempotency_key":"campaign-intervention-"+case["id"]+"-"+uuid.uuid4().hex,
-            "delivery_mode":"queue"})
-        value.raise_for_status();identity=value.json()["id"]
-        running[case["id"]]["intervention_turn_id"]=identity;return identity
+        delivery=await deliver_intervention(client,thread,turn,message,intervention_attachments)
+        running[case["id"]]["intervention_delivery"]=delivery;return delivery
     intervention_task=asyncio.create_task(send_intervention())
     final=await wait_turn(client,turn["id"],running,case["id"],args.timeout)
-    intervention_turn=await intervention_task
-    if intervention_turn:
-        final=await wait_turn(client,intervention_turn,running,case["id"],args.timeout)
+    intervention_delivery=await intervention_task
+    if intervention_delivery and intervention_delivery["mode"]=="turn":
+        final=await wait_turn(client,intervention_delivery["turn_id"],running,case["id"],args.timeout)
+    elif intervention_delivery and final["state"]=="AWAITING_USER":
+        for _ in range(100):
+            await asyncio.sleep(.1)
+            current=(await client.get(f"api/turns/{turn['id']}")).json()
+            if current["state"]!="AWAITING_USER":break
+        final=await wait_turn(client,turn["id"],running,case["id"],args.timeout)
     final,media_jobs=await settle_media_workflow(client,thread["id"],final,running,case["id"],
         args.timeout,allow_external=bool(case.get("allowed_external_operations")))
     items=await list_all_items(client,thread['id'])

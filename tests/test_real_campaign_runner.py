@@ -21,10 +21,11 @@ def test_campaign_runner_has_bounded_parallel_stop_and_resume_protocol():
 
 def test_intervention_cases_use_messages_not_product_keyword_rules():
     source=(ROOT/"tests/run_real_campaign.py").read_text()
-    assert "INTERVENTIONS" in source and "delivery_mode\":\"queue" in source
+    assert "INTERVENTIONS" in source and "/inputs" in source and "/interactions/" in source
     assert "re.compile" not in source and "regex" not in source.lower()
     assert 'INTERVENTION_ASSETS={"intervention_replace_source":["poster.png"]}' in source
-    assert '"attachments":intervention_attachments' in source
+    assert 'deliver_intervention(client,thread,turn,message,intervention_attachments)' in source
+    assert '"attachments":attachments' in source
     assert 'AFTER_ARTIFACT_INTERVENTIONS' in source and "intervention_artifact_timeout" in source
 
 
@@ -74,6 +75,40 @@ class Response:
     def __init__(self,value):self.value=value;self.content=value if isinstance(value,bytes) else b"";self.status_code=200
     def json(self):return self.value
     def raise_for_status(self):pass
+
+
+class InterventionClient:
+    def __init__(self,state,interaction=None):
+        self.state=state;self.interaction=interaction;self.posts=[]
+    async def get(self,path,params=None):
+        if path=="api/turns/turn":return Response({"id":"turn","state":self.state})
+        if path=="api/threads/thread/interactions":return Response([self.interaction] if self.interaction else [])
+        raise AssertionError(path)
+    async def post(self,path,json):
+        self.posts.append((path,json))
+        if path.endswith("/inputs"):return Response({"id":"input"})
+        if "/interactions/" in path:return Response({"status":"responded"})
+        if path.endswith("/turns"):return Response({"id":"successor"})
+        raise AssertionError(path)
+
+
+@pytest.mark.asyncio
+async def test_intervention_uses_active_input_structured_response_and_terminal_successor():
+    campaign=campaign_module();thread={"id":"thread"};turn={"id":"turn"}
+    running=InterventionClient("RUNNING")
+    value=await campaign.deliver_intervention(running,thread,turn,"change",[])
+    assert value["mode"]=="input" and running.posts[0][0]=="api/turns/turn/inputs"
+    interaction={"id":"decision","turn_id":"turn","status":"pending","kind":"question",
+        "request":{"questions":[{"id":"choice"}]}}
+    waiting=InterventionClient("AWAITING_USER",interaction)
+    value=await campaign.deliver_intervention(waiting,thread,turn,"new direction",[])
+    assert value["mode"]=="interaction"
+    assert waiting.posts[0][1]["action"]=="answer" and waiting.posts[0][1]["answers"]=={
+        "choice":"new direction"}
+    completed=InterventionClient("COMPLETED")
+    value=await campaign.deliver_intervention(completed,thread,turn,"next",[])
+    assert value=={"mode":"turn","turn_id":"successor"}
+    assert completed.posts[0][1]["delivery_mode"]=="queue"
 
 
 class MediaClient:
