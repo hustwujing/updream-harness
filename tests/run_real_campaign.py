@@ -21,7 +21,7 @@ from PIL import Image
 
 
 ROOT=Path(__file__).resolve().parents[1]
-TERMINAL={"COMPLETED","FAILED","CANCELLED","WAITING_USER"}
+TERMINAL={"COMPLETED","FAILED","CANCELLED","AWAITING_USER","WAITING_USER"}
 DEFECT_CLASSES={"program_failure","optimizable_prompt"}
 MEDIA_SUFFIXES={"video":{'.mp4','.mov','.mkv','.webm'},"audio":{'.wav','.mp3','.m4a','.aac','.flac','.ogg'},
     "image":{'.png','.jpg','.jpeg','.webp','.gif','.bmp','.tiff'}}
@@ -80,7 +80,8 @@ def classify(final,artifacts,media_jobs=None):
             return "non_program_failure",code
         return "program_failure",code or "media_job_failed"
     if state=="COMPLETED":return "optimizable_prompt","completed_without_artifact"
-    if state=="WAITING_USER":return "optimizable_prompt",final.get("error_detail") or "unclear_user_intervention"
+    if state in {"AWAITING_USER","WAITING_USER"}:
+        return "optimizable_prompt",final.get("error_detail") or "unclear_user_intervention"
     if code.startswith(("provider_","model_","upstream_")) or code in {
             "budget_exhausted","content_policy_rejected","no_target_found"}:
         return "non_program_failure",code

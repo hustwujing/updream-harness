@@ -174,6 +174,13 @@ def test_media_provider_failure_is_not_prompt_failure():
             "program_failure","artifact_registration_failed")
 
 
+def test_authoritative_awaiting_user_is_a_terminal_prompt_outcome():
+    campaign=campaign_module()
+    assert "AWAITING_USER" in campaign.TERMINAL
+    assert campaign.classify({"state":"AWAITING_USER","error_detail":""},[]) == (
+        "optimizable_prompt","unclear_user_intervention")
+
+
 def test_silence_gate_accepts_codec_floor_but_rejects_audible_signal():
     campaign=campaign_module()
     assert campaign.volume_is_silent("mean_volume: -91.0 dB\nmax_volume: -91.0 dB")
