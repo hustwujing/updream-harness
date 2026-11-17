@@ -54,6 +54,8 @@ class JobCoordinator:
                 if request.kind==JobKind.OPERATION and descriptor.execution_mode=='inline':
                     raise ValueError("inline Operation cannot be submitted as a Durable Job")
                 if request.adapter!=descriptor.id:raise ValueError('Job adapter must match Descriptor identity')
+                if request.reconciles_job_id and descriptor.reconciliation_policy.get('supported') is not True:
+                    raise ValueError('Descriptor does not support reconciliation')
                 try:Draft202012Validator(descriptor.parameter_schema).validate(request.parameters)
                 except ValidationError as exc:
                     path='.'.join(str(value) for value in exc.absolute_path)
@@ -78,6 +80,7 @@ class JobCoordinator:
                     updates={'runtime_profile_id':runtime.id,'child_profile_id':'operation-controlled'}
                 jobs.append(JobRequest.model_validate({**request.model_dump(),
                     'network_origins':list(descriptor.network_origins),'resource_requirements':resources,
+                    'timeout_seconds':descriptor.timeout_seconds,
                     'retry_policy':descriptor.retry_policy,'cancellation_policy':descriptor.cancellation_policy,
                     'reconciliation_policy':descriptor.reconciliation_policy,**updates}))
                 continue

@@ -727,6 +727,24 @@ class JobLeaseRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class JobCleanupRow(Base):
+    __tablename__ = "job_cleanups"
+    __table_args__ = (UniqueConstraint("job_id","generation"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(32), index=True)
+    adapter: Mapped[str] = mapped_column(String(160))
+    generation: Mapped[int] = mapped_column(Integer)
+    external_execution_id: Mapped[str] = mapped_column(Text)
+    acceptance_receipt_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    state: Mapped[str] = mapped_column(String(24), default="pending", server_default="pending", index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_error: Mapped[str] = mapped_column(Text, default="", server_default="")
+    claim_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class JobArtifactRow(Base):
     __tablename__ = "job_artifacts"
     __table_args__ = (UniqueConstraint("job_id", "artifact_role", "item_key"),)
@@ -1754,6 +1772,15 @@ class Store:
                 JobRow.group_id == existing.id).order_by(JobRow.created_at, JobRow.local_job_id))).scalars().all()
             return existing, list(jobs)
         timestamp = now()
+        for request in value.jobs:
+            if request.reconciles_job_id:
+                source=await db.get(JobRow,request.reconciles_job_id,with_for_update=True)
+                if (not source or source.owner_id!=owner_id or source.thread_id!=value.thread_id
+                        or JobState(source.state) not in TERMINAL_JOB_STATES):
+                    raise RuntimeError("reconciliation_lineage_invalid")
+                source_request=JobRequest.model_validate_json(source.request_json)
+                if source_request.reconciliation_policy.get("supported") is not True:
+                    raise RuntimeError("reconciliation_not_supported")
         snapshot_json = canonical_json(value.authorization_snapshot)
         snapshot = AuthorizationSnapshotRow(
             id=identifier(), owner_id=owner_id, thread_id=value.thread_id,
@@ -2024,8 +2051,16 @@ class Store:
                 if not row:
                     raise KeyError("job_not_found")
                 if JobState(row.state) not in TERMINAL_JOB_STATES:
+                    request=JobRequest.model_validate_json(row.request_json)
+                    accepted=(await db.execute(select(JobAttemptRow.id).where(
+                        JobAttemptRow.job_id==row.id,JobAttemptRow.accepted_at.is_not(None))
+                        .limit(1))).scalar_one_or_none()
                     row.cancel_requested = True
-                    row.state = JobState.CANCELLING.value
+                    if accepted and request.cancellation_policy.get("supported") is False:
+                        row.state=JobState.WAITING_EXTERNAL.value
+                        row.result_json=canonical_json({"cancel_mode":"soft",
+                            "detail":"Provider does not support cancellation; monitoring continues."})
+                    else:row.state = JobState.CANCELLING.value
                     row.updated_at = now()
                 await db.flush()
                 return self.job_view(row)
@@ -2046,8 +2081,14 @@ class Store:
                 timestamp = now()
                 for row in rows:
                     if JobState(row.state) not in TERMINAL_JOB_STATES:
+                        request=JobRequest.model_validate_json(row.request_json)
+                        accepted=(await db.execute(select(JobAttemptRow.id).where(
+                            JobAttemptRow.job_id==row.id,JobAttemptRow.accepted_at.is_not(None))
+                            .limit(1))).scalar_one_or_none()
                         row.cancel_requested = True
-                        row.state = JobState.CANCELLING.value
+                        row.state=(JobState.WAITING_EXTERNAL.value if accepted and
+                            request.cancellation_policy.get("supported") is False
+                            else JobState.CANCELLING.value)
                         row.updated_at = timestamp
                 await db.flush()
                 return [self.job_view(row) for row in rows]
@@ -2124,6 +2165,106 @@ class Store:
                 JobLeaseRow.generation == generation,
             ).values(expires_at=now()+timedelta(seconds=lease_seconds),updated_at=now()))
             return bool(result.rowcount)
+
+    async def mark_job_submission_started(self, job_id: str, worker_id: str,
+                                          generation: int) -> None:
+        async with self.connections.begin() as db:
+            lease = await db.get(JobLeaseRow, job_id, with_for_update=True)
+            attempt = (await db.execute(select(JobAttemptRow).where(
+                JobAttemptRow.job_id == job_id, JobAttemptRow.generation == generation,
+            ).with_for_update())).scalar_one_or_none()
+            if (not lease or not attempt or lease.worker_id != worker_id
+                    or lease.generation != generation or attempt.accepted_at is not None):
+                raise RuntimeError("stale_job_generation")
+            if attempt.outcome not in {"", "SUBMITTING"}:
+                raise RuntimeError("job_submission_intent_conflict")
+            attempt.outcome = "SUBMITTING"
+
+    async def unresolved_job_submission(self, job_id: str, generation: int) -> bool:
+        async with self.connections() as db:
+            return bool((await db.execute(select(JobAttemptRow.id).where(
+                JobAttemptRow.job_id == job_id, JobAttemptRow.generation < generation,
+                JobAttemptRow.outcome == "SUBMITTING", JobAttemptRow.accepted_at.is_(None),
+            ).limit(1))).scalar_one_or_none())
+
+    async def job_deadline(self, job_id: str, timeout_seconds: int) -> datetime | None:
+        async with self.connections() as db:
+            started = (await db.execute(select(func.min(JobAttemptRow.started_at)).where(
+                JobAttemptRow.job_id == job_id))).scalar_one_or_none()
+        return utc_datetime(started)+timedelta(seconds=timeout_seconds) if started else None
+
+    async def enqueue_job_cleanup(self, job_id: str, generation: int) -> bool:
+        async with self.connections.begin() as db:
+            job = await db.get(JobRow, job_id, with_for_update=True)
+            attempt = (await db.execute(select(JobAttemptRow).where(
+                JobAttemptRow.job_id == job_id, JobAttemptRow.generation == generation,
+                JobAttemptRow.accepted_at.is_not(None)).with_for_update())).scalar_one_or_none()
+            if not attempt:
+                attempt=(await db.execute(select(JobAttemptRow).where(
+                    JobAttemptRow.job_id==job_id,JobAttemptRow.accepted_at.is_not(None))
+                    .order_by(JobAttemptRow.generation.desc()).limit(1).with_for_update()
+                    )).scalar_one_or_none()
+            if not job or not attempt or not attempt.external_execution_id:
+                return False
+            existing = (await db.execute(select(JobCleanupRow).where(
+                JobCleanupRow.job_id==job_id,JobCleanupRow.generation==attempt.generation)
+                .with_for_update())).scalar_one_or_none()
+            if existing:
+                return True
+            timestamp=now();db.add(JobCleanupRow(id=identifier(),job_id=job.id,adapter=job.adapter,
+                generation=generation,external_execution_id=attempt.external_execution_id,
+                acceptance_receipt_json=attempt.acceptance_receipt_json,state="pending",
+                attempt_count=0,last_error="",claim_owner="",claim_expires_at=None,
+                created_at=timestamp,updated_at=timestamp))
+            return True
+
+    async def claim_job_cleanups(self, owner: str, lease_seconds: int,
+                                 *, limit: int = 10) -> list[dict]:
+        async with self.connections.begin() as db:
+            rows=list((await db.execute(select(JobCleanupRow).where(or_(
+                JobCleanupRow.state=="pending",and_(JobCleanupRow.state=="running",
+                    JobCleanupRow.claim_expires_at < now()))).order_by(
+                JobCleanupRow.updated_at,JobCleanupRow.job_id).limit(limit)
+                .with_for_update(skip_locked=True))).scalars().all())
+            expires=now()+timedelta(seconds=lease_seconds)
+            result=[]
+            for row in rows:
+                row.state="running";row.claim_owner=owner;row.claim_expires_at=expires
+                row.attempt_count+=1;row.updated_at=now()
+                result.append({"cleanup_id":row.id,"job_id":row.job_id,"adapter":row.adapter,
+                    "generation":row.generation,"external_execution_id":row.external_execution_id,
+                    "acceptance_receipt":json.loads(row.acceptance_receipt_json),
+                    "attempt_count":row.attempt_count})
+            return result
+
+    async def finish_job_cleanup(self, cleanup_id: str, owner: str, *,
+                                 succeeded: bool, error: str = "") -> None:
+        async with self.connections.begin() as db:
+            row=await db.get(JobCleanupRow,cleanup_id,with_for_update=True)
+            if not row or row.claim_owner!=owner or row.state!="running":
+                raise RuntimeError("stale_job_cleanup_claim")
+            row.state="completed" if succeeded else "pending"
+            row.last_error="" if succeeded else error[:2000]
+            row.claim_owner="";row.claim_expires_at=None;row.updated_at=now()
+
+    async def renew_job_cleanup(self, cleanup_id: str, owner: str,
+                                lease_seconds: int) -> bool:
+        async with self.connections.begin() as db:
+            result=await db.execute(update(JobCleanupRow).where(
+                JobCleanupRow.id==cleanup_id,JobCleanupRow.claim_owner==owner,
+                JobCleanupRow.state=="running").values(
+                    claim_expires_at=now()+timedelta(seconds=lease_seconds),updated_at=now()))
+            return bool(result.rowcount)
+
+    async def get_job_cleanup(self, job_id: str) -> dict | None:
+        async with self.connections() as db:
+            rows=list((await db.execute(select(JobCleanupRow).where(
+                JobCleanupRow.job_id==job_id).order_by(JobCleanupRow.generation))).scalars().all())
+        row=next((value for value in reversed(rows) if value.state!="completed"),rows[-1] if rows else None)
+        return ({"state":row.state,"attempt_count":row.attempt_count,
+            "last_error":row.last_error,"generation":row.generation,
+            "completed_count":sum(value.state=="completed" for value in rows),
+            "updated_at":utc_datetime(row.updated_at)} if row else None)
 
     async def record_job_acceptance(self, job_id: str, worker_id: str, generation: int, *,
                                     external_execution_id: str, receipt: dict) -> JobAttemptReceipt:
@@ -2202,6 +2343,42 @@ class Store:
                 await db.flush()
                 return self.job_attempt_view(attempt)
 
+    async def _release_group_budgets_locked(self, db: AsyncSession, group_id: str) -> None:
+        reservations=list((await db.execute(select(BudgetReservationRow).where(
+            BudgetReservationRow.group_id==group_id).order_by(
+            BudgetReservationRow.account_id,BudgetReservationRow.budget_key)
+            .with_for_update())).scalars().all())
+        accounts={identity:await db.get(BudgetAccountRow,identity,with_for_update=True)
+            for identity in sorted({row.account_id for row in reservations})}
+        for row in reservations:
+            key=f"group-terminal:{group_id}:{row.budget_key}"
+            existing=(await db.execute(select(BudgetLedgerRow).where(
+                BudgetLedgerRow.reservation_id==row.id,
+                BudgetLedgerRow.idempotency_key==key))).scalar_one_or_none()
+            if existing:continue
+            amount=row.reserved-row.consumed-row.released;timestamp=now()
+            if amount:
+                row.released+=amount;accounts[row.account_id].reserved-=amount
+                accounts[row.account_id].updated_at=timestamp
+                db.add(BudgetLedgerRow(id=identifier(),reservation_id=row.id,
+                    group_id=group_id,job_id="",action="release",amount=amount,
+                    idempotency_key=key,detail_json="{}",created_at=timestamp))
+            row.state="released" if row.consumed==0 else "closed";row.updated_at=timestamp
+
+    async def reconcile_terminal_group_budgets(self) -> int:
+        async with self.connections() as db:
+            identities=list((await db.execute(select(JobGroupRow.id).join(BudgetReservationRow,
+                BudgetReservationRow.group_id==JobGroupRow.id).where(
+                JobGroupRow.state.in_([JobGroupState.TERMINAL.value,
+                    JobGroupState.CONTINUED.value]),
+                BudgetReservationRow.consumed+BudgetReservationRow.released <
+                    BudgetReservationRow.reserved).distinct())).scalars().all())
+        for group_id in identities:
+            async with self.job_lock(f"group:{group_id}"):
+                async with self.connections.begin() as db:
+                    await self._release_group_budgets_locked(db,group_id)
+        return len(identities)
+
     async def transition_job(self, job_id: str, state: JobState, *, expected_generation: int,
                              result: dict | None = None) -> JobView:
         async with self.connections() as lookup:
@@ -2211,7 +2388,7 @@ class Store:
             raise KeyError("job_not_found")
         encoded = canonical_json(result or {})
         digest = hashlib.sha256(encoded.encode()).hexdigest()
-        release_group_budget=False;view=None
+        view=None
         async with self.job_lock(f"group:{group_id}"):
             async with self.connections.begin() as db:
                 group = await db.get(JobGroupRow, group_id, with_for_update=True)
@@ -2220,8 +2397,9 @@ class Store:
                     raise RuntimeError("stale_job_generation")
                 if JobState(job.state) in TERMINAL_JOB_STATES:
                     if job.state == state.value and job.result_digest == digest:
-                        view=self.job_view(job);release_group_budget=(group.state in {
-                            JobGroupState.TERMINAL.value,JobGroupState.CONTINUED.value})
+                        view=self.job_view(job)
+                        if group.state in {JobGroupState.TERMINAL.value,JobGroupState.CONTINUED.value}:
+                            await self._release_group_budgets_locked(db,group_id)
                     else:raise RuntimeError("job_already_terminal")
                 else:
                     job.state = state.value
@@ -2237,6 +2415,18 @@ class Store:
                         if attempt:
                             attempt.finished_at = now()
                             attempt.outcome = state.value
+                            if attempt.accepted_at and attempt.external_execution_id:
+                                cleanup=(await db.execute(select(JobCleanupRow).where(
+                                    JobCleanupRow.job_id==job.id,
+                                    JobCleanupRow.generation==job.generation)
+                                    .with_for_update())).scalar_one_or_none()
+                                if not cleanup:
+                                    db.add(JobCleanupRow(id=identifier(),job_id=job.id,adapter=job.adapter,
+                                        generation=job.generation,
+                                        external_execution_id=attempt.external_execution_id,
+                                        acceptance_receipt_json=attempt.acceptance_receipt_json,
+                                        state="pending",attempt_count=0,last_error="",claim_owner="",
+                                        claim_expires_at=None,created_at=now(),updated_at=now()))
                         await db.execute(delete(JobLeaseRow).where(JobLeaseRow.job_id == job.id))
                     if group.state == JobGroupState.COMMITTED.value:
                         group.state = JobGroupState.RUNNING.value
@@ -2254,7 +2444,8 @@ class Store:
                         result_digest = hashlib.sha256(result_json.encode()).hexdigest()
                         group.state = JobGroupState.TERMINAL.value
                         group.terminal_at = group.terminal_at or now()
-                        group.updated_at = now();release_group_budget=True
+                        group.updated_at = now()
+                        await self._release_group_budgets_locked(db,group.id)
                         delivery_rows=(await db.execute(select(JobArtifactRow,JobRow).join(
                             JobRow,JobRow.id==JobArtifactRow.job_id).where(
                             JobRow.group_id==group.id,
@@ -2278,12 +2469,14 @@ class Store:
                                 created_at=timestamp,updated_at=timestamp))
                             visible_ids.add(artifact_row.artifact_id)
                         all_cancelled = all(member.state == JobState.CANCELLED.value for member in jobs)
+                        thread=await db.get(ThreadRow,group.thread_id,with_for_update=True)
                         outbox = (await db.execute(select(JobOutboxRow).where(
                             JobOutboxRow.group_id == group.id).with_for_update())).scalar_one_or_none()
                         if not outbox:
                             db.add(JobOutboxRow(
                                 id=identifier(), group_id=group.id, thread_id=group.thread_id,
-                                state="suppressed" if group.suppress_continuation or all_cancelled else "ready",
+                                state=("suppressed" if group.suppress_continuation or all_cancelled
+                                    else "blocked" if thread and thread.archived_at is not None else "ready"),
                                 result_digest=result_digest, result_json=result_json,
                                 claim_owner="", claim_batch_digest="", claim_expires_at=None,
                                 continuation_turn_id="",
@@ -2291,10 +2484,6 @@ class Store:
                             ))
                     await db.flush()
                     view=self.job_view(job)
-        if release_group_budget:
-            for reservation in await self.get_budget_reservations_for_group(group_id):
-                await self.release_budget(reservation.id,
-                    idempotency_key=f'group-terminal:{group_id}:{reservation.budget_key}')
         return view
 
     async def get_job_outbox(self, group_id: str) -> JobOutboxView | None:
@@ -2314,8 +2503,9 @@ class Store:
                                      max_bytes: int = 1024 * 1024) -> list[dict]:
         async with self.connections.begin() as db:
             candidates = list((await db.execute(select(JobOutboxRow)
+                .join(ThreadRow,ThreadRow.id==JobOutboxRow.thread_id)
                 .outerjoin(ThreadControlRow, ThreadControlRow.thread_id == JobOutboxRow.thread_id)
-                .where(or_(ThreadControlRow.thread_id.is_(None),
+                .where(ThreadRow.archived_at.is_(None),or_(ThreadControlRow.thread_id.is_(None),
                     ThreadControlRow.state == ThreadControlState.RUNNING.value),
                 or_(JobOutboxRow.state == "ready", and_(
                     JobOutboxRow.state == "claimed", JobOutboxRow.claim_expires_at < now())),
@@ -2357,7 +2547,7 @@ class Store:
 
     async def finish_job_outbox_batch(self, outbox_ids: list[str], owner: str, *,
                                       continuation_turn_id: str, delivered: bool,
-                                      error: str = "") -> None:
+                                      error: str = "", permanent: bool = False) -> None:
         if not outbox_ids:
             return
         async with self.connections.begin() as db:
@@ -2376,7 +2566,8 @@ class Store:
                     group.continued_at = timestamp; group.updated_at = timestamp
             else:
                 for row in rows:
-                    row.state = "ready"; row.claim_owner = ""; row.claim_expires_at = None
+                    row.state = "blocked" if permanent else "ready"
+                    row.claim_owner = ""; row.claim_expires_at = None
                     row.updated_at = timestamp
 
     async def stop_all_jobs(self, thread_id: str, owner_id: str) -> list[JobView]:
@@ -2927,9 +3118,22 @@ class Store:
                 states = (await db.execute(select(TurnRow.state).where(TurnRow.thread_id == thread_id))).scalars().all()
                 if any(state not in terminal for state in states):
                     raise RuntimeError("active_thread_cannot_be_archived")
+                active_job=(await db.execute(select(JobRow.id).where(JobRow.thread_id==thread_id,
+                    JobRow.state.not_in([state.value for state in TERMINAL_JOB_STATES])).limit(1))).scalar_one_or_none()
+                active_group=(await db.execute(select(JobGroupRow.id).where(
+                    JobGroupRow.thread_id==thread_id,JobGroupRow.state.in_([
+                        JobGroupState.COMMITTED.value,JobGroupState.RUNNING.value])).limit(1))).scalar_one_or_none()
+                pending_outbox=(await db.execute(select(JobOutboxRow.id).where(
+                    JobOutboxRow.thread_id==thread_id,JobOutboxRow.state.in_(["ready","claimed"])
+                    ).limit(1))).scalar_one_or_none()
+                if any((active_job,active_group,pending_outbox)):
+                    raise RuntimeError("active_jobs_prevent_archival")
             timestamp = now()
             thread.archived_at = timestamp if archived else None
             thread.updated_at = timestamp
+            if not archived:
+                await db.execute(update(JobOutboxRow).where(JobOutboxRow.thread_id==thread_id,
+                    JobOutboxRow.state=="blocked").values(state="ready",updated_at=timestamp))
         return self.thread_view(thread)
 
     async def delete_thread(self, thread_id: str, owner_id: str) -> list[str]:

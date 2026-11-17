@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import replace
+from datetime import datetime,timezone
 
 from .job_adapters import (
     AdapterStatus, JobAdapter, JobExecutionContext, PreAcceptFailure,
@@ -10,6 +11,10 @@ from .job_adapters import (
 )
 from .job_contracts import JobKind, JobState, TERMINAL_JOB_STATES
 from .observability import event
+
+
+class JobDeadlineExceeded(TimeoutError):
+    pass
 
 
 class JobWorker:
@@ -26,13 +31,15 @@ class JobWorker:
         self.stop_event = asyncio.Event()
 
     async def run_once(self) -> int:
+        cleanups=await self.run_cleanup_once(limit=self.concurrency)
         attempts = await self.store.claim_available_jobs(
             self.worker_id, self.node_id, self.lease_seconds,
             limit=self.concurrency, adapters=set(self.adapters),
         )
         if attempts:
             await asyncio.gather(*(self.process(attempt) for attempt in attempts))
-        return len(attempts)
+        await self.store.reconcile_terminal_group_budgets()
+        return len(attempts)+cleanups
 
     async def run(self) -> None:
         tasks: set[asyncio.Task] = set()
@@ -42,6 +49,7 @@ class JobWorker:
             tasks-=completed
             capacity=max(0,self.concurrency-len(tasks));attempts=[]
             if capacity:
+                await self.run_cleanup_once(limit=capacity)
                 attempts=await self.store.claim_available_jobs(
                     self.worker_id,self.node_id,self.lease_seconds,limit=capacity,
                     adapters=set(self.adapters))
@@ -67,15 +75,39 @@ class JobWorker:
             except RuntimeError as stale:
                 if str(stale)!='stale_job_generation':raise
                 return
-            accepted=await self.store.latest_job_acceptance(job.id)
-            request=await self.store.get_job_request(job.id);adapter=self.adapters.get(job.adapter)
-            if accepted and request and adapter:
-                context=JobExecutionContext(job=job,request=request,generation=attempt.generation,
-                    previous_external_execution_id=accepted.external_execution_id,
-                    previous_acceptance_receipt=accepted.acceptance_receipt)
-                await self._cleanup(adapter,context,accepted.external_execution_id)
+            await self.run_cleanup_once(limit=1)
 
     async def process(self, attempt, *, continuous: bool = False) -> None:
+        lost=asyncio.Event();owner=asyncio.current_task()
+        async def heartbeat():
+            while True:
+                await asyncio.sleep(max(.1,self.lease_seconds/3))
+                if not await self.store.renew_job_lease(attempt.job_id,self.worker_id,
+                        attempt.generation,self.lease_seconds):
+                    lost.set();owner.cancel();return
+        task=asyncio.create_task(heartbeat(),name="job-heartbeat-"+attempt.job_id)
+        try:
+            await self._process_claimed(attempt,continuous=continuous)
+        except asyncio.CancelledError:
+            if not lost.is_set():raise
+            event("job.worker.lease_lost",level=30,job_id=attempt.job_id,
+                generation=attempt.generation)
+        finally:
+            task.cancel();await asyncio.gather(task,return_exceptions=True)
+        await self.run_cleanup_once(limit=1)
+
+    @staticmethod
+    async def _before_deadline(awaitable,deadline):
+        remaining=(deadline-datetime.now(timezone.utc)).total_seconds()
+        if remaining<=0:
+            if hasattr(awaitable,"close"):awaitable.close()
+            raise JobDeadlineExceeded("job_timeout")
+        try:return await asyncio.wait_for(awaitable,timeout=remaining)
+        except TimeoutError as exc:
+            if deadline<=datetime.now(timezone.utc):raise JobDeadlineExceeded("job_timeout") from exc
+            raise
+
+    async def _process_claimed(self, attempt, *, continuous: bool = False) -> None:
         job = await self.store.get_job(attempt.job_id)
         request = await self.store.get_job_request(attempt.job_id)
         if not job or not request:
@@ -99,7 +131,10 @@ class JobWorker:
             previous_acceptance_receipt=accepted.acceptance_receipt if accepted else {},
         )
         external_id = context.previous_external_execution_id
+        deadline=await self.store.job_deadline(job.id,request.timeout_seconds)
+        submission_started=False
         try:
+            if deadline and deadline<=datetime.now(timezone.utc):raise JobDeadlineExceeded("job_timeout")
             participant = await self.store.get_pause_participant(job.thread_id,
                 "child_harness", job.id)
             if participant and participant.state.value == "REQUESTED":
@@ -116,20 +151,35 @@ class JobWorker:
                         expected_generation=attempt.generation,
                         result={"cancelled_before_acceptance": True})
                     return
-                status = await adapter.cancel(context, external_id)
-                await self._finish_or_defer(adapter,context,external_id,status,continuous)
+                operation=(adapter.cancel(context,external_id)
+                    if request.cancellation_policy.get("supported") is not False
+                    else adapter.status(context,external_id))
+                status=await self._before_deadline(operation,deadline)
+                await self._finish_or_defer(adapter,context,external_id,status,continuous,deadline)
                 return
             if request.reconciles_job_id:
-                status = await adapter.reconcile(context, external_id)
+                if request.reconciliation_policy.get("supported") is not True:
+                    await self.store.finish_pre_accept_attempt(job.id,self.worker_id,
+                        attempt.generation,retry=False,error_code="reconciliation_not_supported",
+                        error_detail="Descriptor does not support reconciliation")
+                    return
+                status = await self._before_deadline(adapter.reconcile(context, external_id),deadline)
                 receipt = {"reconciles_job_id": request.reconciles_job_id,
                     "external_execution_id": external_id}
                 await self.store.record_job_acceptance(job.id, self.worker_id, attempt.generation,
                     external_execution_id=external_id, receipt=receipt)
-                await self._finish_or_defer(adapter,context,external_id,status,continuous)
+                await self._finish_or_defer(adapter,context,external_id,status,continuous,deadline)
                 return
             if not accepted:
+                if await self.store.unresolved_job_submission(job.id,attempt.generation):
+                    await self.store.transition_job(job.id,JobState.UNKNOWN,
+                        expected_generation=attempt.generation,result={
+                            "error_code":"submission_outcome_unknown_after_worker_loss"})
+                    return
+                await self.store.mark_job_submission_started(job.id,self.worker_id,attempt.generation)
+                submission_started=True
                 try:
-                    submission = await adapter.submit(context)
+                    submission = await self._before_deadline(adapter.submit(context),deadline)
                 except PreAcceptFailure as exc:
                     maximum = int(request.retry_policy.get("max_pre_accept_attempts", 1))
                     retry = attempt.generation < max(1, maximum)
@@ -143,15 +193,18 @@ class JobWorker:
                     if exc.external_execution_id:
                         context=replace(context,previous_external_execution_id=exc.external_execution_id,
                             previous_acceptance_receipt=exc.acceptance_receipt)
-                        status=await adapter.status(context,exc.external_execution_id)
+                        status=await self._before_deadline(
+                            adapter.status(context,exc.external_execution_id),deadline)
                         await self._finish_or_defer(adapter,context,exc.external_execution_id,
-                            status,continuous)
+                            status,continuous,deadline)
                     else:
                         await self.store.transition_job(job.id, JobState.UNKNOWN,
                             expected_generation=attempt.generation,
                             result={"error_code": "submission_outcome_unknown",
                                 "error_detail": str(exc)[:2000]})
                     return
+                except JobDeadlineExceeded:
+                    raise
                 except Exception as exc:
                     deterministic = bool(request.retry_policy.get("deterministic"))
                     if request.kind == JobKind.OPERATION and deterministic:
@@ -173,14 +226,15 @@ class JobWorker:
                 context = replace(context, previous_external_execution_id=external_id,
                     previous_acceptance_receipt=submission.acceptance_receipt)
                 if submission.completed:
-                    result=await adapter.collect(context,external_id,AdapterStatus(
-                        True,JobState.SUCCEEDED,submission.result))
+                    result=await self._before_deadline(adapter.collect(context,external_id,AdapterStatus(
+                        True,JobState.SUCCEEDED,submission.result)),deadline)
                     await self.store.transition_job(job.id, JobState.SUCCEEDED,
                         expected_generation=attempt.generation, result=result)
-                    await self._cleanup(adapter, context, external_id)
                     return
-            status = await adapter.status(context, external_id)
-            await self._finish_or_defer(adapter,context,external_id,status,continuous)
+            status = await self._before_deadline(adapter.status(context, external_id),deadline)
+            await self._finish_or_defer(adapter,context,external_id,status,continuous,deadline)
+        except JobDeadlineExceeded:
+            await self._timeout(adapter,context,external_id,submission_started)
         except RuntimeError as exc:
             if str(exc) == "stale_job_generation":
                 event("job.worker.stale_generation", level=30, job_id=job.id,
@@ -189,7 +243,7 @@ class JobWorker:
             raise
 
     async def _finish_or_defer(self,adapter:JobAdapter,context:JobExecutionContext,
-                               external_id:str,status:AdapterStatus,continuous:bool)->None:
+                               external_id:str,status:AdapterStatus,continuous:bool,deadline)->None:
         while not status.terminal:
             if not continuous:
                 await self.store.defer_accepted_job(context.job.id,self.worker_id,context.generation)
@@ -213,17 +267,21 @@ class JobWorker:
             if participant and participant.state.value == "REQUESTED":
                 await self._pause(adapter,context,external_id,participant.generation)
                 return
-            status=(await adapter.cancel(context,external_id) if current and current.cancel_requested
-                else await adapter.status(context,external_id))
-        await self._finish(adapter,context,external_id,status)
+            operation=(adapter.cancel(context,external_id) if current and current.cancel_requested
+                and context.request.cancellation_policy.get("supported") is not False
+                else adapter.status(context,external_id))
+            status=await self._before_deadline(operation,deadline)
+        await self._finish(adapter,context,external_id,status,deadline)
 
     async def _finish(self, adapter: JobAdapter, context: JobExecutionContext,
-                      external_id: str, status: AdapterStatus) -> None:
-        result = await adapter.collect(context, external_id, status)
+                      external_id: str, status: AdapterStatus, deadline) -> None:
+        result = await self._before_deadline(adapter.collect(context, external_id, status),deadline)
+        current=await self.store.get_job(context.job.id)
+        if current and current.cancel_requested and context.request.cancellation_policy.get("supported") is False:
+            result={**result,"soft_cancel_requested":True}
         state = status.state if status.state in TERMINAL_JOB_STATES else JobState.FAILED
         await self.store.transition_job(context.job.id, state,
             expected_generation=context.generation, result=result)
-        await self._cleanup(adapter, context, external_id)
         participant=await self.store.get_pause_participant(context.job.thread_id,
             "child_harness",context.job.id)
         if participant and participant.state.value == "REQUESTED":
@@ -247,12 +305,55 @@ class JobWorker:
                 external_execution_id=external_id,detail=detail,failed=failed)
         finally:
             if external_id:
-                await self._cleanup(adapter,context,external_id)
+                await self.store.enqueue_job_cleanup(context.job.id,context.generation)
 
-    @staticmethod
-    async def _cleanup(adapter: JobAdapter, context: JobExecutionContext, external_id: str) -> None:
-        try:
-            await adapter.cleanup(context, external_id)
-        except Exception as exc:
-            event("job.worker.cleanup_failed", level=30, job_id=context.job.id,
-                exception_type=type(exc).__name__)
+    async def _timeout(self,adapter,context,external_id,submission_started=False):
+        if not external_id:
+            await self.store.transition_job(context.job.id,
+                JobState.UNKNOWN if submission_started else JobState.FAILED,
+                expected_generation=context.generation,result={"error_code":(
+                    "job_timeout_submission_outcome_unknown" if submission_started
+                    else "job_timeout_before_submission")})
+            return
+        if context.request.cancellation_policy.get("supported") is not False:
+            try:
+                status=await asyncio.wait_for(adapter.cancel(context,external_id),timeout=5)
+                if status.terminal:
+                    result=await adapter.collect(context,external_id,status)
+                    await self.store.transition_job(context.job.id,status.state,
+                        expected_generation=context.generation,result=result);return
+            except Exception:pass
+        await self.store.transition_job(context.job.id,JobState.UNKNOWN,
+            expected_generation=context.generation,result={"error_code":"job_timeout_outcome_unknown",
+                "soft_cancel":context.request.cancellation_policy.get("supported") is False})
+
+    async def run_cleanup_once(self,*,limit:int=10)->int:
+        rows=await self.store.claim_job_cleanups(self.worker_id,self.lease_seconds,limit=limit)
+        for row in rows:
+            owner=asyncio.current_task();lost=asyncio.Event()
+            async def heartbeat():
+                while True:
+                    await asyncio.sleep(max(.1,self.lease_seconds/3))
+                    if not await self.store.renew_job_cleanup(row["cleanup_id"],self.worker_id,
+                            self.lease_seconds):
+                        lost.set();owner.cancel();return
+            heartbeat_task=asyncio.create_task(heartbeat(),name="cleanup-heartbeat-"+row["job_id"])
+            try:
+                job=await self.store.get_job(row["job_id"]);request=await self.store.get_job_request(row["job_id"])
+                adapter=self.adapters.get(row["adapter"])
+                if not job or not request or not adapter:raise RuntimeError("cleanup_adapter_unavailable")
+                context=JobExecutionContext(job=job,request=request,generation=row["generation"],
+                    previous_external_execution_id=row["external_execution_id"],
+                    previous_acceptance_receipt=row["acceptance_receipt"])
+                await adapter.cleanup(context,row["external_execution_id"])
+                await self.store.finish_job_cleanup(row["cleanup_id"],self.worker_id,succeeded=True)
+            except asyncio.CancelledError:
+                if not lost.is_set():raise
+            except Exception as exc:
+                event("job.worker.cleanup_failed",level=30,job_id=row["job_id"],
+                    exception_type=type(exc).__name__)
+                await self.store.finish_job_cleanup(row["cleanup_id"],self.worker_id,
+                    succeeded=False,error=type(exc).__name__+": "+str(exc))
+            finally:
+                heartbeat_task.cancel();await asyncio.gather(heartbeat_task,return_exceptions=True)
+        return len(rows)

@@ -52,8 +52,11 @@ class ContinuationDispatcher:
                 group_count=len(batch), job_count=sum(len(item["results"]) for item in batch))
             return len(batch)
         except Exception as exc:
+            permanent=isinstance(exc,RuntimeError) and str(exc) in {
+                "thread_archived","active_jobs_prevent_archival"}
             await self.store.finish_job_outbox_batch(outbox_ids, self.owner,
-                continuation_turn_id="", delivered=False, error=type(exc).__name__)
+                continuation_turn_id="", delivered=False, error=type(exc).__name__,
+                permanent=permanent)
             raise
 
     async def run(self) -> None:

@@ -88,6 +88,22 @@ Failed or degraded publication atomically marks every Artifact and visible
 Artifact Item from that Turn partial. The state is monotonic within one Turn;
 a successful retry in a new Turn retains separate historical evidence.
 
+Durable Jobs write a pre-submit `SUBMITTING` intent under the active Job lease
+before any external call. A heartbeat covers submit, status, reconcile,
+cancel, collect and pause. If a process dies after intent but before acceptance,
+a replacement generation records an unknown outcome and never replays submit.
+Descriptor timeout is frozen into `JobRequest` and measured from the first
+Attempt across restarts. Unsupported cancellation becomes a soft cancel that
+continues observing the accepted execution; unsupported reconciliation is
+rejected before group commit.
+
+The business Job outcome and cleanup are separate durable facts.
+`job_cleanups` retains the immutable adapter/external acceptance receipt,
+claim lease, retry count and last error. A successful Job remains successful
+while cleanup is pending; workers retry idempotent revoke/Sandbox/resource
+release across restart until completed. Group terminalization releases unused
+budget and creates its continuation outbox in the same transaction.
+
 Before first materialization a leased worker freezes `turn_project_files` and
 sets `turns.project_files_frozen`, even for an empty manifest. Recovery and
 normal execution must use that snapshot rather than the Thread's later current

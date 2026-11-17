@@ -114,6 +114,7 @@ class JobRequest(BaseModel):
     resource_requirements: dict[str, Any] = Field(default_factory=dict)
     network_origins: tuple[str, ...] = ()
     budget_requirements: dict[str, int] = Field(default_factory=dict)
+    timeout_seconds: int = Field(default=3600, ge=1, le=86400)
     retry_policy: dict[str, Any] = Field(default_factory=dict)
     cancellation_policy: dict[str, Any] = Field(default_factory=dict)
     reconciliation_policy: dict[str, Any] = Field(default_factory=dict)
@@ -127,6 +128,10 @@ class JobRequest(BaseModel):
         roles = [output.artifact_role for output in self.expected_outputs]
         if len(roles) != len(set(roles)):
             raise ValueError("expected output artifact roles must be unique")
+        for label, policy in (("cancellation",self.cancellation_policy),
+                              ("reconciliation",self.reconciliation_policy)):
+            if policy and not isinstance(policy.get("supported"),bool):
+                raise ValueError(label+" policy requires boolean supported")
         return self
 
     @property

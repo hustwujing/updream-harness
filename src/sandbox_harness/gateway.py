@@ -479,7 +479,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         value = await activity_store.get_job(job_id)
         if not value or value.thread_id != claims.thread_id:
             raise HTTPException(404, "Job not found")
-        return value
+        return {**value.model_dump(mode="json"),"cleanup":await activity_store.get_job_cleanup(job_id)}
 
     @app.post("/v1/jobs/{job_id}/cancel")
     async def runtime_cancel_job(job_id: str, request: Request):

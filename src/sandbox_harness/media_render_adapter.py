@@ -123,6 +123,8 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
 
     async def cleanup(self,context:JobExecutionContext,external_execution_id:str)->None:
         receipt=context.previous_acceptance_receipt;sandbox=await self._sandbox(context,receipt)
+        await self.scheduler.release(str(receipt['reservation_id']),str(receipt['node_id']),
+            int(receipt['node_generation']))
         nonce=str(receipt.get('capability_nonce',''))
         if nonce:
             async with httpx.AsyncClient(timeout=10,trust_env=False) as client:
@@ -133,5 +135,3 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
                         'X-Updream-Sandbox-Id':sandbox.id})
                 response.raise_for_status()
         await self.pool.release(sandbox,keep_attached=False);self.sessions.pop(context.job.id,None)
-        await self.scheduler.release(str(receipt['reservation_id']),str(receipt['node_id']),
-            int(receipt['node_generation']))

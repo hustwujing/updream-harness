@@ -508,7 +508,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         value = await store.get_job_for_owner(job_id, request.state.owner_id)
         if not value:
             raise HTTPException(404, "Job not found")
-        return value
+        return {**value.model_dump(mode="json"),"cleanup":await store.get_job_cleanup(job_id)}
 
     @app.post("/api/jobs/{job_id}/cancel")
     async def cancel_job(job_id: str, request: Request):

@@ -30,6 +30,19 @@ Cleanup retains capacity ownership until delete converges. OpenSandbox DELETE
 must be followed by absence confirmation. Namespace cleanup never touches
 resources without the product namespace.
 
+Job execution has two leases. The business lease is heartbeated across every
+adapter call and is fenced by generation. A persisted pre-submit intent makes
+process death conservative: a replacement may reconcile or report unknown but
+cannot resubmit. Terminal business state atomically creates a cleanup
+obligation. The cleanup lease is independently heartbeated and retried across
+restart; cleanup degradation is visible without changing a successful result.
+
+Thread archival is a durable barrier: active Jobs/Groups and ready or claimed
+continuation outboxes prevent archive. The final Job transaction locks the
+Thread while creating its outbox, closing the archive race. Legacy blocked
+outboxes remain quiescent while archived and return to ready on unarchive;
+permanent dispatcher errors never hot-loop.
+
 Once a Harness result is known, `begin_turn_cleanup` durably records the
 original `pending_final_state`. A revoke/delete failure leaves the Turn in
 `CLEANING`; it does not rewrite a successful result to `cleanup_failed` and it

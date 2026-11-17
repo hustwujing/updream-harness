@@ -27,6 +27,7 @@ def catalog() -> JobCatalog:
         "cancellation_policy":{"supported":False},"reconciliation_policy":{"supported":False}
     }],"capabilities":[{
         "id":"image.generate","version":"1","digest":"c"*64,"operations":["submit","status"],
+        "timeout_seconds":300,
         "parameter_schema":{"type":"object","properties":{"prompt":{"type":"string"}},"additionalProperties":False},
         "input_roles":[],"output_roles":["images"],"network_origins":["image-provider"],
         "resources":{"cpu":1,"memory_mb":128,"gpu":0},"billable":True,"side_effects":True,

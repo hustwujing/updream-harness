@@ -89,6 +89,7 @@
       "id": "image.generate",
       "version": "1",
       "digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "timeout_seconds": 7200,
       "operations": ["submit", "status", "cancel", "collect", "reconcile", "cleanup"],
       "parameter_schema": {"type": "object", "properties": {"kind": {"const": "image"}, "model": {"type": "string", "minLength": 1}, "generation_mode": {"enum": ["text_to_image", "reference_image"]}, "parameters": {"type": "object"}, "reference_bindings": {"type": "object"}}, "required": ["kind", "model", "generation_mode", "parameters"], "additionalProperties": false},
       "input_roles": ["reference"],

@@ -1,0 +1,222 @@
+import asyncio
+
+import pytest
+
+from sandbox_harness.domain import Harness, ThreadCreate, TurnCreate
+from sandbox_harness.catalog import HarnessCatalog
+from sandbox_harness.job_adapters import AdapterStatus,AdapterSubmission,BaseJobAdapter
+from sandbox_harness.job_contracts import JobGroupCreate,JobKind,JobRequest,JobState
+from sandbox_harness.job_worker import JobWorker
+from sandbox_harness.store import (BudgetAccountRow,BudgetLedgerRow,BudgetReservationRow,
+    JobOutboxRow,Store)
+
+
+def request(local="job",**updates):
+    value=dict(local_job_id=local,kind=JobKind.PROVIDER,adapter="provider",
+        descriptor_id="provider",descriptor_version="1",descriptor_digest="a"*64,
+        idempotency_key=local+"-durable-key",parameters={},timeout_seconds=10,
+        retry_policy={"max_pre_accept_attempts":1},cancellation_policy={"supported":True},
+        reconciliation_policy={"supported":True})
+    value.update(updates);return JobRequest(**value)
+
+
+async def setup(tmp_path,value=None,snapshot=None):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/((value.local_job_id if value else "job")+".db")))
+    await store.initialize();group,jobs=await store.create_job_group("owner",JobGroupCreate(
+        thread_id="b"*32,origin_turn_id="c"*32,idempotency_key="group-"+(value.local_job_id if value else "job"),
+        jobs=[value or request()],authorization_snapshot=snapshot or {}))
+    return store,group,jobs[0]
+
+
+class BlockingAdapter(BaseJobAdapter):
+    def __init__(self):
+        self.started=asyncio.Event();self.release=asyncio.Event();self.submit_calls=0;self.cleanup_calls=0
+    async def submit(self,context):
+        self.submit_calls+=1;self.started.set();await self.release.wait()
+        return AdapterSubmission("external",{"id":"external"},completed=True,result={"ok":True})
+    async def collect(self,context,external,status):return status.result
+    async def cleanup(self,context,external):self.cleanup_calls+=1
+
+
+async def test_submit_heartbeat_prevents_second_worker_duplicate(tmp_path):
+    store,_,job=await setup(tmp_path);adapter=BlockingAdapter()
+    first=JobWorker(store,{"provider":adapter},node_id="node",worker_id="first",lease_seconds=1)
+    second=JobWorker(store,{"provider":adapter},node_id="node",worker_id="second",lease_seconds=1)
+    try:
+        task=asyncio.create_task(first.run_once());await adapter.started.wait();await asyncio.sleep(1.2)
+        assert await second.run_once()==0 and adapter.submit_calls==1
+        adapter.release.set();await task
+        assert (await store.get_job(job.id)).state==JobState.SUCCEEDED
+    finally:adapter.release.set();await store.close()
+
+
+async def test_process_death_after_submit_intent_never_resubmits(tmp_path):
+    store,_,job=await setup(tmp_path,request("death"));adapter=BlockingAdapter()
+    dead=JobWorker(store,{"provider":adapter},node_id="node",worker_id="dead",lease_seconds=1)
+    replacement=JobWorker(store,{"provider":adapter},node_id="node",worker_id="replacement",lease_seconds=1)
+    try:
+        task=asyncio.create_task(dead.run_once());await adapter.started.wait()
+        task.cancel();await asyncio.gather(task,return_exceptions=True);await asyncio.sleep(1.1)
+        adapter.release.set();assert await replacement.run_once()==1
+        current=await store.get_job(job.id)
+        assert adapter.submit_calls==1 and current.state==JobState.UNKNOWN
+        assert current.result["error_code"]=="submission_outcome_unknown_after_worker_loss"
+    finally:adapter.release.set();await store.close()
+
+
+async def test_cooperative_lease_loss_cancels_stale_submit_and_replacement_does_not_replay(tmp_path,monkeypatch):
+    store,_,job=await setup(tmp_path,request("lease-loss"));adapter=BlockingAdapter()
+    stale=JobWorker(store,{"provider":adapter},node_id="node",worker_id="stale",lease_seconds=1)
+    replacement=JobWorker(store,{"provider":adapter},node_id="node",worker_id="replacement",lease_seconds=1)
+    original=store.renew_job_lease
+    async def lose(job_id,worker_id,generation,seconds):
+        if worker_id=="stale":return False
+        return await original(job_id,worker_id,generation,seconds)
+    monkeypatch.setattr(store,"renew_job_lease",lose)
+    try:
+        task=asyncio.create_task(stale.run_once());await adapter.started.wait();await task
+        await asyncio.sleep(1.1);adapter.release.set();await replacement.run_once()
+        assert adapter.submit_calls==1
+        assert (await store.get_job(job.id)).state==JobState.UNKNOWN
+    finally:adapter.release.set();await store.close()
+
+
+class CleanupAdapter(BaseJobAdapter):
+    def __init__(self):self.cleanup_calls=0;self.fail=True
+    async def submit(self,context):return AdapterSubmission("external",{"sandbox":"one"},
+        completed=True,result={"ok":True})
+    async def collect(self,context,external,status):return status.result
+    async def cleanup(self,context,external):
+        self.cleanup_calls+=1
+        if self.fail:raise RuntimeError("release failed")
+
+
+async def test_cleanup_failure_is_durable_and_retried_after_worker_restart(tmp_path):
+    store,_,job=await setup(tmp_path,request("cleanup"));adapter=CleanupAdapter()
+    first=JobWorker(store,{"provider":adapter},node_id="node",worker_id="first")
+    try:
+        await first.run_once();current=await store.get_job(job.id);cleanup=await store.get_job_cleanup(job.id)
+        assert current.state==JobState.SUCCEEDED
+        assert cleanup["state"]=="pending" and cleanup["attempt_count"]==1
+        adapter.fail=False
+        restarted=JobWorker(store,{"provider":adapter},node_id="node",worker_id="restarted")
+        assert await restarted.run_once()>=1
+        cleanup=await store.get_job_cleanup(job.id)
+        assert cleanup["state"]=="completed" and cleanup["attempt_count"]==2
+        assert adapter.cleanup_calls==2
+    finally:await store.close()
+
+
+class SoftCancelAdapter(BaseJobAdapter):
+    def __init__(self):self.cancel_calls=0;self.status_calls=0
+    async def submit(self,context):return AdapterSubmission("external",{"id":"external"})
+    async def status(self,context,external):
+        self.status_calls+=1
+        return (AdapterStatus(False) if self.status_calls==1 else
+            AdapterStatus(True,JobState.SUCCEEDED,{"asset":"late-success"}))
+    async def cancel(self,context,external):self.cancel_calls+=1;return AdapterStatus(False)
+    async def collect(self,context,external,status):return status.result
+
+
+async def test_unsupported_cancel_is_soft_and_late_success_is_collected(tmp_path):
+    value=request("soft",cancellation_policy={"supported":False})
+    store,_,job=await setup(tmp_path,value);adapter=SoftCancelAdapter()
+    worker=JobWorker(store,{"provider":adapter},node_id="node",worker_id="worker")
+    try:
+        await worker.run_once();await store.request_job_cancel(job.id,"owner");await worker.run_once()
+        current=await store.get_job(job.id)
+        assert adapter.cancel_calls==0 and current.state==JobState.SUCCEEDED
+        assert current.result=={"asset":"late-success","soft_cancel_requested":True}
+    finally:await store.close()
+
+
+async def test_timeout_is_durable_across_worker_restart_before_submission(tmp_path):
+    value=request("timeout",timeout_seconds=1);store,_,job=await setup(tmp_path,value)
+    adapter=BlockingAdapter();first=await store.claim_job(job.id,"dead","node",1)
+    await store.release_job_lease(job.id,"dead",first.generation);await asyncio.sleep(1.1)
+    worker=JobWorker(store,{"provider":adapter},node_id="node",worker_id="replacement")
+    try:
+        await worker.run_once();current=await store.get_job(job.id)
+        assert adapter.submit_calls==0 and current.state==JobState.FAILED
+        assert current.result["error_code"]=="job_timeout_before_submission"
+    finally:adapter.release.set();await store.close()
+
+
+async def test_timeout_during_submission_is_unknown_and_never_retried(tmp_path):
+    value=request("submit-timeout",timeout_seconds=1);store,_,job=await setup(tmp_path,value)
+    adapter=BlockingAdapter();worker=JobWorker(store,{"provider":adapter},node_id="node",worker_id="worker")
+    try:
+        await worker.run_once();current=await store.get_job(job.id)
+        assert adapter.submit_calls==1 and current.state==JobState.UNKNOWN
+        assert current.result["error_code"]=="job_timeout_submission_outcome_unknown"
+    finally:adapter.release.set();await store.close()
+
+
+async def test_reconciliation_policy_and_lineage_are_enforced_before_commit(tmp_path):
+    source=request("source",reconciliation_policy={"supported":False})
+    store,_,job=await setup(tmp_path,source)
+    try:
+        attempt=await store.claim_job(job.id,"worker","node",30)
+        await store.transition_job(job.id,JobState.UNKNOWN,
+            expected_generation=attempt.generation,result={"unknown":True})
+        reconcile=request("reconcile",reconciles_job_id=job.id,
+            reconciliation_policy={"supported":True})
+        with pytest.raises(RuntimeError,match="reconciliation_not_supported"):
+            await store.create_job_group("owner",JobGroupCreate(thread_id="b"*32,
+                origin_turn_id="c"*32,idempotency_key="reconcile-policy-group",jobs=[reconcile]))
+    finally:await store.close()
+
+
+async def test_group_terminal_releases_budget_in_same_transaction_and_repair_is_idempotent(tmp_path):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"budget.db"));await store.initialize()
+    account=await store.configure_budget("owner","b"*32,"submissions",limit=10)
+    snapshot={"budget_reservations":[{"account_id":account.id,"amount":2}]}
+    group,jobs=await store.create_job_group("owner",JobGroupCreate(thread_id="b"*32,
+        origin_turn_id="c"*32,idempotency_key="budget-group",jobs=[request("budget",
+            budget_requirements={"submissions":1})],authorization_snapshot=snapshot))
+    try:
+        attempt=await store.claim_job(jobs[0].id,"worker","node",30)
+        await store.record_job_acceptance(jobs[0].id,"worker",attempt.generation,
+            external_execution_id="external",receipt={"accepted":True})
+        await store.transition_job(jobs[0].id,JobState.SUCCEEDED,
+            expected_generation=attempt.generation,result={"ok":True})
+        reservation=(await store.get_budget_reservations_for_group(group.id))[0]
+        current=await store.get_budget_account(account.id)
+        assert (reservation.consumed,reservation.released,current.reserved,current.consumed)==(1,1,0,1)
+        async with store.connections.begin() as db:
+            row=await db.get(BudgetReservationRow,reservation.id,with_for_update=True)
+            account_row=await db.get(BudgetAccountRow,account.id,with_for_update=True)
+            row.released=0;row.state="partial";account_row.reserved=1
+            await db.execute(__import__('sqlalchemy').delete(BudgetLedgerRow).where(
+                BudgetLedgerRow.reservation_id==reservation.id,BudgetLedgerRow.action=="release"))
+        await store.reconcile_terminal_group_budgets();await store.reconcile_terminal_group_budgets()
+        repaired=(await store.get_budget_reservations_for_group(group.id))[0]
+        current=await store.get_budget_account(account.id)
+        assert (repaired.released,current.reserved,current.consumed)==(1,0,1)
+    finally:await store.close()
+
+
+async def test_archive_blocks_active_jobs_and_pending_continuation_then_unarchive_recovers(tmp_path):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"archive.db"));await store.initialize()
+    profile=HarnessCatalog().resolve("codex","gpt-5.6","standard")
+    thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+        reasoning_level="standard",title="Archive"),profile,"owner")
+    group,jobs=await store.create_job_group("owner",JobGroupCreate(thread_id=thread.id,
+        origin_turn_id="c"*32,idempotency_key="archive-group",jobs=[request("archive")]))
+    job=jobs[0]
+    try:
+        with pytest.raises(RuntimeError,match="active_jobs_prevent_archival"):
+            await store.set_thread_archived(thread.id,"owner",archived=True)
+        attempt=await store.claim_job(job.id,"worker","node",30)
+        await store.transition_job(job.id,JobState.SUCCEEDED,
+            expected_generation=attempt.generation,result={"ok":True})
+        with pytest.raises(RuntimeError,match="active_jobs_prevent_archival"):
+            await store.set_thread_archived(thread.id,"owner",archived=True)
+        async with store.connections.begin() as db:
+            outbox=await db.get(JobOutboxRow,(await store.get_job_outbox(group.id)).id,
+                with_for_update=True);outbox.state="blocked"
+        await store.set_thread_archived(thread.id,"owner",archived=True)
+        assert await store.claim_job_outbox_batch("dispatcher")==[]
+        await store.set_thread_archived(thread.id,"owner",archived=False)
+        assert (await store.get_job_outbox(group.id)).state=="ready"
+    finally:await store.close()

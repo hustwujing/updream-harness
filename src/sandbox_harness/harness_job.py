@@ -149,11 +149,11 @@ class HarnessJobAdapter(BaseJobAdapter):
 
     async def cleanup(self,context:JobExecutionContext,external_execution_id:str)->None:
         receipt=context.previous_acceptance_receipt
-        await self.backend.cleanup(context,external_execution_id,receipt)
         reservation_id=str(receipt.get('reservation_id',''))
         if reservation_id:
             await self.scheduler.release(reservation_id,str(receipt.get('node_id','')),
                 int(receipt.get('node_generation') or 0))
+        await self.backend.cleanup(context,external_execution_id,receipt)
 
     async def collect(self,context:JobExecutionContext,external_execution_id:str,
                       status:AdapterStatus)->dict[str,Any]:

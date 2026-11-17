@@ -28,7 +28,8 @@ class FakeAdapter(BaseJobAdapter):
 def request(local_id='job',kind=JobKind.PROVIDER,**updates):
     value=dict(local_job_id=local_id,kind=kind,adapter='fake',descriptor_id='fake',
         descriptor_version='1',descriptor_digest='a'*64,idempotency_key=f'{local_id}-request-key',
-        parameters={},retry_policy={'max_pre_accept_attempts':2})
+        parameters={},retry_policy={'max_pre_accept_attempts':2},
+        cancellation_policy={'supported':True},reconciliation_policy={'supported':True})
     value.update(updates);return JobRequest(**value)
 
 
