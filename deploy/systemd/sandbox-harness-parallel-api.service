@@ -16,6 +16,7 @@ Environment=PIP_CACHE_DIR=/data2/wujing03/sandbox-harness-platform-parallel/.dat
 Environment=UV_CACHE_DIR=/data2/wujing03/sandbox-harness-platform-parallel/.data/uv-cache
 Environment=npm_config_cache=/data2/wujing03/sandbox-harness-platform-parallel/.data/npm-cache
 Environment=PLAYWRIGHT_BROWSERS_PATH=/data2/wujing03/sandbox-harness-platform-parallel/.data/playwright-browsers
+ExecStartPre=+/usr/bin/install -d -o sandbox-harness -g sandbox-harness -m 0750 /data2/wujing03/sandbox-harness-platform-parallel/.data/tmp/runtime-downloads
 ExecStart=/data2/wujing03/sandbox-harness-platform-parallel/.venv/bin/sandbox-harness-parallel-api
 Restart=on-failure
 RestartSec=3

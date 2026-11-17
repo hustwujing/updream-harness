@@ -91,6 +91,15 @@ def test_service_account_can_read_descriptors_and_schema_startup_is_serialized()
     assert "SCHEMA_INITIALIZATION_LOCK_ID" in store
 
 
+def test_runtime_download_staging_is_owned_before_api_and_job_worker_start():
+    installer=(ROOT/"deploy/install-units.sh").read_text()
+    assert '0750 "$root/.data/tmp/runtime-downloads"' in installer
+    command=("ExecStartPre=+/usr/bin/install -d -o sandbox-harness -g sandbox-harness -m 0750 "
+        "/data2/wujing03/sandbox-harness-platform-parallel/.data/tmp/runtime-downloads")
+    for name in ("sandbox-harness-parallel-api.service","sandbox-harness-parallel-job-worker.service"):
+        assert command in (ROOT/"deploy/systemd"/name).read_text()
+
+
 def test_configure_local_inherits_provider_configuration_but_not_storage_identity():
     module=load_configure_local()
     route_key="CUSTOM_MODEL_ROUTE_KEY"

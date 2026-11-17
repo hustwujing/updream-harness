@@ -8,6 +8,12 @@ from sandbox_harness.runtime import RuntimeClient
 from sandbox_harness.sandbox import Sandbox
 
 
+def test_runtime_client_does_not_create_staging_until_a_transfer(tmp_path):
+    staging=tmp_path/"runtime-downloads"
+    RuntimeClient(staging_root=staging)
+    assert not staging.exists()
+
+
 async def test_runtime_client_rejects_outputs_from_another_turn_batch():
     runtime=RuntimeClient(transport=httpx.MockTransport(lambda request:httpx.Response(200,
         json={"batch_id":"old-turn","items":[{"path":"stale.txt"}]})))

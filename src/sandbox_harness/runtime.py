@@ -79,13 +79,13 @@ class RuntimeClient:
         self.default_code_bundle_digest = default_code_bundle_digest
         self.transport = transport
         self.staging_root = (staging_root or Path.cwd() / ".data" / "tmp" / "runtime-downloads").resolve()
-        _reap_stale_downloads(self.staging_root)
         self.process_start = _process_start(os.getpid()) or "unknown"
 
     async def _download(self, sandbox: Sandbox, path: str, *, maximum: int,
                         error_code: str, params: dict | None = None) -> StagedRuntimeObject:
         if maximum < 0:
             raise RuntimeTransferError(error_code)
+        _reap_stale_downloads(self.staging_root)
         temporary: Path | None = None
         try:
             async with httpx.AsyncClient(base_url=sandbox.runtime_url,
