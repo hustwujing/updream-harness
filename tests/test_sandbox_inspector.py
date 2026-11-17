@@ -12,7 +12,8 @@ from sandbox_harness.domain import Harness, ThreadCreate, TurnCreate, TurnState,
 from sandbox_harness.pool import SandboxPool
 from sandbox_harness.sandbox import FakeSandboxBackend
 from sandbox_harness.sandbox_inspector import SandboxInspector, TerminalTicketCodec, websocket_endpoint_headers
-from sandbox_harness.store import Store
+from sandbox_harness.store import SandboxControlRow,Store
+from sqlalchemy import update
 from sandbox_harness.runtime import StagedRuntimeObject
 from sandbox_runtime import app as runtime_app
 
@@ -76,6 +77,9 @@ class FakeRuntime:
         self.restored=b''.join([chunk async for chunk in archive])
     async def reset_project_files(self, sandbox): self.materialized=[]
     async def put_project_file(self, sandbox, path, data, mime): self.materialized.append((path,data,mime))
+    async def put_project_file_stream(self,sandbox,path,content,*,size,mime):
+        data=b"".join([chunk async for chunk in content]);self.materialized.append((path,data,mime))
+        return {"bytes":len(data),"sha256":__import__('hashlib').sha256(data).hexdigest()}
     async def inject(self, sandbox, **kwargs): self.injected += 1
     async def inspect_overview(self, sandbox): return {"execution":"idle","cpu_percent":1,
         "cpu_count":4,"memory_used":10,"memory_total":100,"disk_used":20,"disk_total":200,"process_count":3}
@@ -108,6 +112,14 @@ class FakeRuntime:
 class FakeBroker:
     def __init__(self): self.active_sandboxes={};self.cancelled=[]
     async def cancel(self, turn_id): self.cancelled.append(turn_id)
+
+
+def inspector_settings():
+    return SimpleNamespace(max_checkpoint_bytes=1024*1024,max_artifact_bytes=8*1024*1024,
+        session_keepalive_seconds=60,sandbox_control_ttl_seconds=120,sandbox_terminal_ticket_seconds=60,
+        sandbox_port_grant_ttl_seconds=3600,sandbox_inspect_max_file_bytes=1024*1024,
+        gateway_signing_key="g"*32,session_signing_key="s"*32,gateway_url="http://gateway.test",
+        public_proxy_url="http://proxy.test",capability_public_request_limit=100,gateway_control_key="c"*32)
 
 
 @pytest.mark.asyncio
@@ -276,3 +288,76 @@ def test_sandbox_api_status_is_thread_owner_scoped(tmp_path):
         released=first.post(f"/api/threads/{thread['id']}/sandbox/release")
         assert released.status_code==200 and released.json()=={"released":True,"checkpointed":False}
         assert second.get(f"/api/threads/{thread['id']}/sandbox").status_code==404
+
+
+async def review17_environment(tmp_path,name):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/(name+".db")));await store.initialize()
+    backend=FakeSandboxBackend();pool=SandboxPool(backend,
+        {h:"test@sha256:"+"1"*64 for h in Harness},{h:0 for h in Harness},max_sandboxes=2)
+    runtime=FakeRuntime();objects=FakeObjects();broker=FakeBroker()
+    inspector=SandboxInspector(inspector_settings(),store,objects,pool,runtime,broker)
+    owner="a"*64;profile=HarnessCatalog().resolve("codex","gpt-5.6","standard")
+    thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+        reasoning_level="standard",title=name),profile,owner)
+    return store,pool,runtime,objects,inspector,owner,thread
+
+
+async def test_inspector_materializes_managed_files_as_streams(tmp_path):
+    store,pool,runtime,objects,inspector,owner,thread=await review17_environment(tmp_path,"stream")
+    data=b"a"*(1024*1024)+b"b"*(1024*1024)+b"tail";reference,digest=objects.put(data)
+    await store.register_project_file(thread.id,path="assets/large.bin",source_type="upload",
+        source_turn_id="",sha256=digest,size=len(data),mime="application/octet-stream",object_ref=reference)
+    def forbidden(*args,**kwargs):raise AssertionError("full object buffering is forbidden")
+    objects.get=forbidden
+    objects.iter_bytes=lambda value,**kwargs:(chunk for chunk in (data[:1024*1024],data[1024*1024:]))
+    try:
+        await inspector.takeover(thread.id,owner,network_access="restricted")
+        assert runtime.materialized==[("assets/large.bin",data,"application/octet-stream")]
+    finally:await pool.close();await store.close()
+
+
+async def test_control_activity_renews_lease_and_expired_status_is_not_active(tmp_path):
+    store,pool,runtime,objects,inspector,owner,thread=await review17_environment(tmp_path,"lease")
+    try:
+        await inspector.takeover(thread.id,owner,network_access="restricted")
+        before=(await store.get_sandbox_control(thread.id,owner))["expires_at"]
+        await inspector.status(thread.id,owner);after=(await store.get_sandbox_control(thread.id,owner))["expires_at"]
+        assert after>=before
+        async with store.connections.begin() as db:
+            await db.execute(update(SandboxControlRow).where(SandboxControlRow.thread_id==thread.id)
+                .values(expires_at=now()-timedelta(seconds=1)))
+        status=await inspector.status(thread.id,owner)
+        assert status["control_state"]=="expired" and status["capabilities"]["terminal"] is False
+    finally:await pool.close();await store.close()
+
+
+async def test_releasing_control_is_immediately_reconciled_after_revoke_failure(tmp_path,monkeypatch):
+    store,pool,runtime,objects,inspector,owner,thread=await review17_environment(tmp_path,"release")
+    calls=0
+    async def flaky(*args):
+        nonlocal calls;calls+=1
+        if calls==1:raise httpx.ConnectError("gateway unavailable")
+    monkeypatch.setattr(inspector,"_revoke",flaky)
+    try:
+        await inspector.takeover(thread.id,owner,network_access="restricted")
+        with pytest.raises(httpx.ConnectError):await inspector.release(thread.id,owner,managed_action="discard")
+        control=await store.get_sandbox_control(thread.id,owner)
+        assert control["state"]=="releasing" and control["release_phase"]=="checkpointed"
+        assert any(item["thread_id"]==thread.id for item in await store.expired_sandbox_controls())
+        await inspector.release(thread.id,owner,expired=True)
+        assert await store.get_sandbox_control(thread.id,owner) is None and calls==2
+    finally:await pool.close();await store.close()
+
+
+async def test_port_grant_rejects_reused_sandbox_and_revokes_grant(tmp_path):
+    store,pool,runtime,objects,inspector,owner,thread=await review17_environment(tmp_path,"grant")
+    try:
+        sandbox=await pool.acquire(thread_id=thread.id,turn_id="inspect-"+thread.id,
+            harness=Harness.CODEX,environment={})
+        grant=await store.create_sandbox_port_grant(thread.id,owner,sandbox.id,3000,
+            now()+timedelta(minutes=5))
+        sandbox.thread_id="other-thread";sandbox.metadata["sandbox-harness.io/thread"]="other-thread"
+        with pytest.raises(KeyError,match="preview_expired"):
+            await inspector.port_endpoint(grant["id"],owner)
+        assert await store.get_sandbox_port_grant(grant["id"],owner) is None
+    finally:await pool.close();await store.close()

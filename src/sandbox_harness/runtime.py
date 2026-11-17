@@ -220,6 +220,7 @@ class RuntimeClient:
             response=await client.put("/v1/project-files/file",params={"path":path},content=content,
                 headers={"Content-Type":mime,"Content-Length":str(size)})
             response.raise_for_status()
+            return response.json()
 
     async def reset_project_files(self, sandbox: Sandbox) -> None:
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()},

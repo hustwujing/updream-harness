@@ -563,6 +563,8 @@ class SandboxControlRow(Base):
     generation: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     capability_nonce: Mapped[str] = mapped_column(String(64), default="", server_default="")
     pty_session_id: Mapped[str] = mapped_column(String(160), default="", server_default="")
+    release_phase: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    release_action: Mapped[str] = mapped_column(String(32), default="", server_default="")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -1044,6 +1046,16 @@ class Store:
                 except OperationalError as exc:
                     if (connection.dialect.name!="sqlite"
                             or "duplicate column name: request_digest" not in str(exc).lower()):raise
+            control_columns=await connection.run_sync(lambda value:{column["name"] for column in
+                sqlalchemy_inspect(value).get_columns("sandbox_controls")})
+            for column in ("release_phase","release_action"):
+                if column not in control_columns:
+                    suffix=" IF NOT EXISTS" if connection.dialect.name=="postgresql" else ""
+                    try:await connection.execute(text(
+                        f"ALTER TABLE sandbox_controls ADD COLUMN{suffix} {column} VARCHAR(32) NOT NULL DEFAULT ''"))
+                    except OperationalError as exc:
+                        if (connection.dialect.name!="sqlite" or
+                                f"duplicate column name: {column}" not in str(exc).lower()):raise
             await connection.execute(text("""
                 INSERT INTO turn_order (turn_id, thread_id, sequence, created_at)
                 SELECT t.id, t.thread_id, MIN(i.sequence), t.created_at
@@ -3604,6 +3616,7 @@ class Store:
     def sandbox_control_view(row: SandboxControlRow) -> dict:
         return {"thread_id": row.thread_id, "sandbox_id": row.sandbox_id, "state": row.state,
             "generation": row.generation, "pty_session_id": row.pty_session_id,
+            "release_phase":row.release_phase,"release_action":row.release_action,
             "expires_at": utc_datetime(row.expires_at), "created_at": row.created_at,
             "updated_at": row.updated_at}
 
@@ -3641,6 +3654,7 @@ class Store:
             elif row:
                 row.owner_id = owner_id; row.sandbox_id = sandbox_id; row.state = "user_controlled"
                 row.generation += 1; row.capability_nonce = capability_nonce; row.pty_session_id = ""
+                row.release_phase="";row.release_action=""
                 row.expires_at = expires_at; row.created_at = timestamp; row.updated_at = timestamp
             else:
                 row = SandboxControlRow(thread_id=thread_id, owner_id=owner_id,
@@ -3674,14 +3688,32 @@ class Store:
             row.pty_session_id = pty_session_id; row.updated_at = now()
         return self.sandbox_control_view(row)
 
-    async def mark_sandbox_control_releasing(self, thread_id: str, owner_id: str) -> dict:
+    async def mark_sandbox_control_releasing(self, thread_id: str, owner_id: str,
+                                              managed_action:str="") -> dict:
         async with self.connections.begin() as db:
             row = (await db.execute(select(SandboxControlRow).where(
                 SandboxControlRow.thread_id == thread_id,
                 SandboxControlRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
             if not row:
                 raise RuntimeError("sandbox_control_not_active")
-            row.state = "releasing"; row.updated_at = now()
+            if row.state!="releasing":
+                row.state="releasing";row.release_phase="starting"
+                row.release_action=managed_action
+            elif managed_action and row.release_action and row.release_action!=managed_action:
+                raise RuntimeError("sandbox_release_action_conflict")
+            elif managed_action and not row.release_action:row.release_action=managed_action
+            row.updated_at = now()
+        return self.sandbox_control_view(row)
+
+    async def advance_sandbox_release_phase(self,thread_id:str,owner_id:str,
+                                            expected:str,next_phase:str)->dict:
+        async with self.connections.begin() as db:
+            row=(await db.execute(select(SandboxControlRow).where(
+                SandboxControlRow.thread_id==thread_id,SandboxControlRow.owner_id==owner_id,
+                SandboxControlRow.state=="releasing",SandboxControlRow.release_phase==expected)
+                .with_for_update())).scalar_one_or_none()
+            if not row:raise RuntimeError("stale_sandbox_release_phase")
+            row.release_phase=next_phase;row.updated_at=now()
         return self.sandbox_control_view(row)
 
     async def finish_sandbox_control(self, thread_id: str, owner_id: str) -> None:
@@ -3716,7 +3748,8 @@ class Store:
     async def expired_sandbox_controls(self, limit: int = 20) -> list[dict]:
         async with self.connections() as db:
             rows = (await db.execute(select(SandboxControlRow).where(
-                SandboxControlRow.expires_at <= now()).order_by(SandboxControlRow.expires_at)
+                or_(SandboxControlRow.state=="releasing",SandboxControlRow.expires_at <= now()))
+                .order_by(SandboxControlRow.updated_at)
                 .limit(limit))).scalars().all()
         return [self.sandbox_control_view(row) | {"owner_id": row.owner_id,
             "capability_nonce": row.capability_nonce} for row in rows]

@@ -1538,7 +1538,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             connection = await inspector.terminal_connection(ticket, owner_id, since)
             async with connection as upstream:
                 await websocket.accept()
-                await relay_websockets(websocket, upstream)
+                async def heartbeat():
+                    while True:
+                        await asyncio.sleep(max(1,settings.sandbox_control_ttl_seconds/3))
+                        await inspector.heartbeat(thread_id,owner_id)
+                heartbeat_task=asyncio.create_task(heartbeat(),name="sandbox-terminal-heartbeat")
+                try:await relay_websockets(websocket, upstream)
+                finally:
+                    heartbeat_task.cancel()
+                    await asyncio.gather(heartbeat_task,return_exceptions=True)
         except (ValueError, KeyError) as exc:
             event("sandbox.terminal.rejected", level=logging.WARNING,
                 thread_id=thread_id, reason=str(exc))

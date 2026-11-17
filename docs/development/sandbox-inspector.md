@@ -20,6 +20,9 @@ Browser -> owner-scoped API/WebSocket -> SandboxInspector
 The logical Thread workspace remains authoritative. A live Sandbox is an
 attachment that can be deleted and restored from `threads.checkpoint_ref` plus
 managed ProjectFiles.
+Managed files stream from the object store to Runtime with declared size and
+digest verification; takeover/restore never materializes a full valid file in
+API memory.
 
 ## Protected boundaries
 
@@ -41,7 +44,9 @@ managed ProjectFiles.
   Sandbox disk resource limit is configured and must not be rendered as zero
   capacity or a filesystem sentinel total.
 - Ports below 1024 and Runtime, Execd, Gateway and proxy ports are never
-  previewable. A grant is owner-, Thread-, Sandbox- and expiry-bound.
+  previewable. A grant is owner-, Thread-, Sandbox- and expiry-bound. Every
+  proxy resolution revalidates the Sandbox's current Thread metadata; browser
+  close/unmount revokes the grant.
 - A terminal ticket is HMAC-signed, short lived and bound to owner, Thread,
   Sandbox and PTY session. The browser connects only to the host WebSocket.
 - A user-controlled capability permits public proxy access according to account
@@ -53,7 +58,7 @@ managed ProjectFiles.
 ## Takeover lifecycle
 
 ```text
-observer -> user_controlled -> releasing -> observer
+observer -> user_controlled -> releasing(starting -> managed_resolved -> checkpointed -> revoked) -> observer
 ```
 
 Takeover cancels an active Turn when explicitly requested and waits for normal
@@ -67,6 +72,18 @@ the previous checkpoint with `checkpointed=false`.
 all unfinished controls, including expired rows; the Inspector expiry loop then
 checkpoints/releases them. Execd owns bounded PTY replay by byte offset, so
 terminal output is not duplicated into PostgreSQL or Redis.
+
+Control uses an idle lease. Authenticated Workbench status/file/process/port
+activity and live terminal traffic renew it; closing the Workbench stops
+renewal. Expired state is never reported as active. `releasing` rows are scanned
+immediately regardless of expiry and resume from their persisted action/phase;
+takeover cannot replace an unfinished release generation.
+
+Normal PTY exit is terminal and never reconnects automatically. Transient
+disconnect uses bounded exponential retries; authorization/expired-control
+closes stop immediately. The user explicitly creates a new terminal afterward.
+Workbench polling retains last-known-good rows with per-slice stale/error/last
+success state and clears warnings after successful convergence.
 
 ## Required checks
 

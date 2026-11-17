@@ -81,5 +81,6 @@ export const takeoverSandbox=(id,interrupt=false)=>api(`threads/${id}/sandbox/ta
 export const releaseSandbox=(id,managedAction='')=>api(`threads/${id}/sandbox/release`,{method:'POST',body:JSON.stringify({managed_action:managedAction})});
 export const createTerminalTicket=id=>api(`threads/${id}/sandbox/terminal-ticket`,{method:'POST'});
 export const createPortGrant=(id,port)=>api(`threads/${id}/sandbox/ports/${port}/grant`,{method:'POST'});
+export const revokePortGrant=id=>api(`sandbox-preview/${id}`,{method:'DELETE'});
 export function terminalSocketUrl(id,ticket,since=0){const url=new URL(apiUrl(`threads/${id}/sandbox/terminal`));url.protocol=url.protocol==='https:'?'wss:':'ws:';url.searchParams.set('ticket',ticket);url.searchParams.set('since',String(since));return url.toString()}
 export async function upload(file){return api(`uploads?name=${encodeURIComponent(file.name)}&mime=${encodeURIComponent(file.type||'application/octet-stream')}`,{method:'POST',body:file,headers:{'Content-Type':file.type||'application/octet-stream'}});}

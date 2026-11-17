@@ -1132,17 +1132,18 @@ def create_app() -> FastAPI:
         except ValueError:raise HTTPException(400,"Invalid Content-Length")
         if declared<0 or declared>maximum:raise HTTPException(413,"Project file too large")
         temporary = target.with_name("." + target.name + ".tmp")
-        written=0
+        written=0;digest=hashlib.sha256()
         try:
             with temporary.open("wb") as stream:
                 async for data in request.stream():
                     written+=len(data)
                     if written>declared or written>maximum:raise HTTPException(413,"Project file too large")
-                    stream.write(data)
+                    digest.update(data);stream.write(data)
             if written!=declared:raise HTTPException(400,"Project file length mismatch")
             os.chmod(temporary, 0o600);temporary.replace(target)
         finally:temporary.unlink(missing_ok=True)
-        return {"path": "/workspace/project/" + relative.as_posix(), "bytes": written}
+        return {"path": "/workspace/project/" + relative.as_posix(), "bytes": written,
+            "sha256":digest.hexdigest()}
 
     def managed_project_target(path: str) -> Path:
         relative = safe_relative(path)

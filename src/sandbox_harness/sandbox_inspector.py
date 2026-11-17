@@ -150,6 +150,8 @@ class SandboxInspector:
         control = await self.store.get_sandbox_control(thread_id, owner_id)
         if not control or control["state"] not in {"user_controlled", "releasing"}:
             return None, control
+        if control["state"]=="user_controlled" and control["expires_at"]<=now():
+            return None,control
         try:
             sandbox = await self.pool.get_attached(thread_id)
             if sandbox and sandbox.id == control["sandbox_id"]:
@@ -168,14 +170,31 @@ class SandboxInspector:
         controlled, _ = await self._controlled_sandbox(thread_id, owner_id)
         return controlled
 
+    async def heartbeat(self,thread_id:str,owner_id:str)->dict|None:
+        control=await self.store.get_sandbox_control(thread_id,owner_id)
+        if not control or control["state"]!="user_controlled":return control
+        if control["expires_at"]<=now():return control
+        return await self.store.touch_sandbox_control(thread_id,owner_id,
+            now()+timedelta(seconds=self.settings.sandbox_control_ttl_seconds))
+
     async def _materialize_managed(self, thread, sandbox: Sandbox) -> None:
         await self.runtime.reset_project_files(sandbox)
         for value in await self.store.current_project_files(thread.id, thread.owner_id):
-            data = await asyncio.to_thread(self.objects.get, value.object_ref,
+            size=await asyncio.to_thread(self.objects.size,value.object_ref,
                 maximum=self.settings.max_artifact_bytes)
-            if len(data) != value.size or hashlib.sha256(data).hexdigest() != value.sha256:
+            if size!=value.size:
                 raise ValueError("Project file does not match its immutable record")
-            await self.runtime.put_project_file(sandbox, value.path, data, value.mime)
+            iterator=self.objects.iter_bytes(value.object_ref,maximum=self.settings.max_artifact_bytes,chunk_size=1024*1024)
+            sentinel=object()
+            async def chunks(iterator=iterator,sentinel=sentinel):
+                while True:
+                    chunk=await asyncio.to_thread(next,iterator,sentinel)
+                    if chunk is sentinel:return
+                    yield chunk
+            result=await self.runtime.put_project_file_stream(sandbox,value.path,chunks(),
+                size=value.size,mime=value.mime)
+            if result.get("bytes")!=value.size or result.get("sha256")!=value.sha256:
+                raise ValueError("Project file does not match its immutable record")
 
     async def _restore_new(self, thread, sandbox: Sandbox) -> None:
         if thread.checkpoint_ref and not sandbox.reused:
@@ -213,8 +232,8 @@ class SandboxInspector:
 
     async def status(self, thread_id: str, owner_id: str) -> dict:
         thread = await self._thread(thread_id, owner_id)
+        control = await self.heartbeat(thread_id,owner_id)
         sandbox = await self.live_sandbox(thread_id, owner_id)
-        control = await self.store.get_sandbox_control(thread_id, owner_id)
         turns = await self.store.list_turns(thread_id, owner_id)
         active = next((turn for turn in reversed(turns) if turn.state not in TERMINAL), None)
         overview = None
@@ -228,15 +247,20 @@ class SandboxInspector:
             "sandbox_id": sandbox.id if sandbox else "", "harness": thread.harness.value,
             "image": sandbox.image.rsplit("@", 1)[-1] if sandbox else "",
             "turn_state": active.state.value if active else "idle",
-            "control_state": control["state"] if control else "observer",
+            "control_state": ("expired" if control and control["state"]=="user_controlled"
+                and control["expires_at"]<=now() else control["state"] if control else "observer"),
+            "release_phase":control.get("release_phase","") if control else "",
+            "release_action":control.get("release_action","") if control else "",
             "control_expires_at": control["expires_at"] if control else None,
             "checkpoint_available": bool(thread.checkpoint_ref),
             "persistent_file_count": len(files), "overview": overview,
             "capabilities": {"files": bool(overview), "processes": bool(overview),
                 "metrics": bool(overview), "ports": bool(overview),
-                "terminal": bool(control and control["state"] == "user_controlled")}}
+                "terminal": bool(control and control["state"] == "user_controlled"
+                    and control["expires_at"]>now())}}
 
     async def files(self, thread_id: str, owner_id: str, path: str, depth: int) -> dict:
+        await self.heartbeat(thread_id,owner_id)
         sandbox = await self.live_sandbox(thread_id, owner_id)
         if sandbox:
             return await self.runtime.inspect_files(sandbox, path, depth)
@@ -250,6 +274,7 @@ class SandboxInspector:
                 "modified_at": value.created_at} for value in values]}
 
     async def file(self, thread_id: str, owner_id: str, path: str) -> tuple[bytes, str]:
+        await self.heartbeat(thread_id,owner_id)
         sandbox = await self.live_sandbox(thread_id, owner_id)
         if not sandbox:
             raise RuntimeError("sandbox_not_running")
@@ -257,6 +282,7 @@ class SandboxInspector:
 
     async def write_file(self, thread_id: str, owner_id: str, path: str,
                          data: bytes, mime: str) -> dict:
+        await self.heartbeat(thread_id,owner_id)
         if len(data) > self.settings.sandbox_inspect_max_file_bytes:
             raise ValueError("sandbox_file_too_large")
         normalized = path.strip().replace("\\", "/").strip("/")
@@ -272,12 +298,14 @@ class SandboxInspector:
         return value
 
     async def processes(self, thread_id: str, owner_id: str) -> dict:
+        await self.heartbeat(thread_id,owner_id)
         sandbox = await self.live_sandbox(thread_id, owner_id)
         if not sandbox:
             return {"items": []}
         return await self.runtime.inspect_processes(sandbox)
 
     async def stop_process(self, thread_id: str, owner_id: str, pid: int) -> dict:
+        await self.heartbeat(thread_id,owner_id)
         sandbox, control = await self._controlled_sandbox(thread_id, owner_id)
         if not sandbox or not control or control["state"] != "user_controlled":
             raise RuntimeError("sandbox_takeover_required")
@@ -287,12 +315,14 @@ class SandboxInspector:
         return value
 
     async def ports(self, thread_id: str, owner_id: str) -> dict:
+        await self.heartbeat(thread_id,owner_id)
         sandbox = await self.live_sandbox(thread_id, owner_id)
         if not sandbox:
             return {"items": []}
         return await self.runtime.inspect_ports(sandbox)
 
     async def managed_changes(self, thread_id: str, owner_id: str) -> dict:
+        await self.heartbeat(thread_id,owner_id)
         thread = await self._thread(thread_id, owner_id)
         sandbox = await self.live_sandbox(thread_id, owner_id)
         if not sandbox:
@@ -347,7 +377,7 @@ class SandboxInspector:
         destination = ""
         existing_paths = [item["path"] for item in changes["items"] if item["kind"] != "missing"]
         if action == "preserve_work":
-            destination = f"work/recovered-managed/control-{generation}-{identifier()[:8]}"
+            destination = f"work/recovered-managed/control-{generation}"
             if existing_paths:
                 await self.runtime.preserve_project_files(sandbox, existing_paths, destination)
         elif action == "save_versions":
@@ -393,6 +423,8 @@ class SandboxInspector:
                 else:
                     raise RuntimeError("sandbox_takeover_waiting_for_turn_cleanup")
             control = await self.store.get_sandbox_control(thread_id, owner_id)
+            if control and control["state"]=="releasing":
+                raise RuntimeError("sandbox_release_in_progress")
             if control and control["state"] == "user_controlled" and control["expires_at"] > now():
                 return control
             sandbox = await self.pool.acquire(thread_id=thread_id,
@@ -459,24 +491,26 @@ class SandboxInspector:
                             thread_id=thread_id, sandbox_id=raw["sandbox_id"],
                             exception_type=type(exc).__name__)
                         raise RuntimeError("sandbox_release_cleanup_pending") from exc
-            change_result = {"action": "none", "count": 0, "destination": ""}
-            control = raw; terminal_closed = False
-            if sandbox and (managed_action or expired):
-                control = await self.store.mark_sandbox_control_releasing(thread_id, owner_id)
-                if control.get("pty_session_id"):
-                    await self.delete_terminal(sandbox, control["pty_session_id"])
-                    terminal_closed = True
-            if sandbox:
-                changes = await self.managed_changes(thread_id, owner_id)
-                change_result = await self._resolve_managed_changes(thread, sandbox, owner_id,
-                    changes, managed_action or ("preserve_work" if expired else ""), raw["generation"])
-            if control["state"] != "releasing":
-                control = await self.store.mark_sandbox_control_releasing(thread_id, owner_id)
-            checkpointed = False
-            if sandbox:
+            action=raw.get("release_action") or managed_action or ("preserve_work" if expired else "")
+            changes=None
+            if sandbox and raw["state"]!="releasing":
+                changes=await self.managed_changes(thread_id,owner_id)
+                if changes["dirty"] and not action:raise RuntimeError("managed_files_modified")
+            control=await self.store.mark_sandbox_control_releasing(thread_id,owner_id,action)
+            phase=control.get("release_phase") or "starting"
+            change_result={"action":action or "none","count":0,"destination":""}
+            if phase=="starting":
+                if sandbox and control.get("pty_session_id"):
+                    await self.delete_terminal(sandbox,control["pty_session_id"])
+                if sandbox:
+                    changes=changes or await self.managed_changes(thread_id,owner_id)
+                    change_result=await self._resolve_managed_changes(thread,sandbox,owner_id,
+                        changes,action,raw["generation"])
+                control=await self.store.advance_sandbox_release_phase(thread_id,owner_id,
+                    "starting","managed_resolved");phase="managed_resolved"
+            checkpointed=phase in {"checkpointed","revoked"}
+            if phase=="managed_resolved" and sandbox:
                 try:
-                    if control.get("pty_session_id") and not terminal_closed:
-                        await self.delete_terminal(sandbox, control["pty_session_id"])
                     archive = await self.runtime.checkpoint(sandbox,
                         maximum=self.settings.max_checkpoint_bytes)
                     try:
@@ -496,13 +530,16 @@ class SandboxInspector:
                             thread_id=thread_id, sandbox_id=control["sandbox_id"],
                             exception_type=type(exc).__name__)
                         raise RuntimeError("sandbox_release_cleanup_pending") from exc
-            current = await self.store.get_sandbox_control(thread_id, owner_id)
-            nonce = ""
-            if current:
-                # The public control view omits the nonce; read it from the expiry query only
-                # when expiring, otherwise resolve it through the row-specific helper below.
-                nonce = await self.store.sandbox_control_nonce(thread_id, owner_id)
-            await self._revoke(nonce, thread_id, control["sandbox_id"])
+                control=await self.store.advance_sandbox_release_phase(thread_id,owner_id,
+                    "managed_resolved","checkpointed");phase="checkpointed"
+            elif phase=="managed_resolved":
+                control=await self.store.advance_sandbox_release_phase(thread_id,owner_id,
+                    "managed_resolved","checkpointed");phase="checkpointed"
+            if phase=="checkpointed":
+                nonce=await self.store.sandbox_control_nonce(thread_id,owner_id)
+                await self._revoke(nonce,thread_id,control["sandbox_id"])
+                control=await self.store.advance_sandbox_release_phase(thread_id,owner_id,
+                    "checkpointed","revoked");phase="revoked"
             await self.store.add_sandbox_audit(thread_id, owner_id, control["sandbox_id"],
                 "control.expired" if expired else "control.released", {"checkpointed": checkpointed,
                     "managed_action": change_result["action"], "managed_change_count": change_result["count"]})
@@ -573,6 +610,7 @@ class SandboxInspector:
             open_timeout=20, ping_interval=20, ping_timeout=20)
 
     async def create_port_grant(self, thread_id: str, owner_id: str, port: int) -> dict:
+        await self.heartbeat(thread_id,owner_id)
         if port in BLOCKED_PREVIEW_PORTS or not 1024 <= port <= 65535:
             raise ValueError("sandbox_port_not_previewable")
         sandbox = await self.live_sandbox(thread_id, owner_id)
@@ -591,6 +629,13 @@ class SandboxInspector:
         grant = await self.store.get_sandbox_port_grant(grant_id, owner_id)
         if not grant:
             raise KeyError("sandbox_port_grant_not_found")
-        sandbox = await self.pool.backend.get(grant["sandbox_id"])
+        try:sandbox = await self.pool.backend.get(grant["sandbox_id"])
+        except SandboxNotFound as exc:
+            await self.store.revoke_sandbox_port_grant(grant_id,owner_id)
+            raise KeyError("sandbox_port_preview_expired") from exc
+        if (sandbox.thread_id!=grant["thread_id"] and
+                sandbox.metadata.get("sandbox-harness.io/thread")!=grant["thread_id"]):
+            await self.store.revoke_sandbox_port_grant(grant_id,owner_id)
+            raise KeyError("sandbox_port_preview_expired")
         endpoint, headers = await self.pool.backend.endpoint(sandbox, grant["port"])
         return grant, endpoint, headers
