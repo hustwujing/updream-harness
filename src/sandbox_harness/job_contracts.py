@@ -101,7 +101,7 @@ class JobRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     local_job_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
     kind: JobKind
-    adapter: str = Field(min_length=1, max_length=160)
+    adapter: str = Field(default="", max_length=160)
     descriptor_id: str = Field(min_length=1, max_length=160)
     descriptor_version: str = Field(min_length=1, max_length=64)
     descriptor_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -121,6 +121,13 @@ class JobRequest(BaseModel):
     reconciliation_policy: dict[str, Any] = Field(default_factory=dict)
     replaces_job_id: str = Field(default="", pattern=r"^$|^[0-9a-f]{32}$")
     reconciles_job_id: str = Field(default="", pattern=r"^$|^[0-9a-f]{32}$")
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_internal_adapter(cls,value):
+        if isinstance(value,dict) and not value.get("adapter") and value.get("descriptor_id"):
+            return {**value,"adapter":value["descriptor_id"]}
+        return value
 
     @model_validator(mode="after")
     def valid_lineage(self):

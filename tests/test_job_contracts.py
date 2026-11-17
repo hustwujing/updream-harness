@@ -62,6 +62,13 @@ def test_request_digest_is_canonical_and_request_is_frozen():
     assert changed.request_digest != first.request_digest
 
 
+def test_internal_adapter_defaults_to_frozen_descriptor_identity():
+    payload=request().model_dump();payload.pop("adapter")
+    resolved=JobRequest.model_validate(payload)
+    assert resolved.adapter==resolved.descriptor_id=="media.render"
+    assert "adapter" not in JobRequest.model_json_schema()["required"]
+
+
 def test_group_has_default_and_hard_member_bounds_and_no_dependencies():
     jobs = [request(f"job-{index}") for index in range(33)]
     group = JobGroupCreate(
