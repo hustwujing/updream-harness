@@ -23,7 +23,7 @@ const {chromium}=require('playwright');const assert=require('node:assert/strict'
  state='COMPLETED';await page.waitForFunction(()=>!document.querySelector('.thread-status.running'),null,{timeout:5000});await page.waitForTimeout(150);
  assert.equal(read,'turn-2');assert.equal(await page.locator('.thread-status.done').count(),0);
  await page.locator('.new-thread').click();generation=3;await page.waitForSelector('.thread-status.done',{timeout:5000});
- itemDelay=250;const previous=reads;await page.getByRole('button',{name:/Unread test/}).click();await page.locator('.new-thread').click();await page.waitForTimeout(400);
+ itemDelay=250;const previous=reads;await page.getByRole('button',{name:/Unread test/}).click();await page.waitForTimeout(25);assert.equal(await page.locator('.new-thread').isEnabled(),true);await page.locator('.new-thread').click();await page.waitForTimeout(400);
  assert.equal(reads,previous);assert.equal(await page.locator('.thread-status.done').count(),1);
  await page.getByRole('button',{name:/Unread test/}).click();await page.waitForFunction(()=>!document.querySelector('.thread-status.done'));assert.equal(read,'turn-3');
  assert.deepEqual(errors,[]);console.log(JSON.stringify({passed:true,open_marks_read:true,reload_preserves:true,running_not_preread:true,visible_completion_read:true,new_completion_unread:true,late_fetch_does_not_mark_read:true}));

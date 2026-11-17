@@ -269,10 +269,13 @@ async def test_daemonized_setsid_descendant_keeps_job_running_until_supervisor_c
     value=await endpoint(app,'/v1/background-jobs')(runtime_app.BackgroundJobCreate(
         name='daemonizes',argv=[sys.executable,'-c',source],
         cwd=str(tmp_path/'workspace/project')))
+    daemon=None
     for _ in range(200):
-        if pidfile.is_file():break
-        await asyncio.sleep(.01)
-    daemon=int(pidfile.read_text());await asyncio.sleep(.1)
+        try:daemon=int(pidfile.read_text().strip())
+        except (FileNotFoundError,ValueError):await asyncio.sleep(.01)
+        else:break
+    assert daemon is not None
+    await asyncio.sleep(.1)
     job=app.state.background_jobs[value['id']]
     assert job.status=='running' and job.process.returncode is None
     os.kill(daemon,0)
