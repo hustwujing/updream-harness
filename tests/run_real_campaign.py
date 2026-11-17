@@ -46,7 +46,7 @@ INTERVENTIONS={
 }
 INTERVENTION_ASSETS={"intervention_replace_source":["poster.png"]}
 AFTER_ARTIFACT_INTERVENTIONS={"intervention_thumbnail","intervention_new_goal",
-    "intervention_chain","intervention_scope_successor"}
+    "intervention_chain","intervention_scope_successor","intervention_feedback"}
 INPUT_ACCEPTING={"QUEUED","RESTORING","STARTING","RUNNING","AWAITING_USER"}
 
 
