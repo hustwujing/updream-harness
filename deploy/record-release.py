@@ -57,6 +57,34 @@ def primary_runtime_images(catalog: Path) -> dict[str,str]:
     return references
 
 
+def ensure_release_clean(code_root: Path) -> None:
+    subprocess.run(['git','diff','--quiet'],cwd=code_root,check=True)
+    subprocess.run(['git','diff','--cached','--quiet'],cwd=code_root,check=True)
+    untracked=subprocess.check_output(['git','ls-files','--others','--exclude-standard','--',
+        'src','runtime','deploy','web'],cwd=code_root,text=True).splitlines()
+    if untracked:raise ValueError('Untracked deployable files: '+', '.join(sorted(untracked)))
+
+
+def directory_digest(root: Path) -> str:
+    files=sorted(path for path in root.rglob('*') if path.is_file())
+    if not files:raise ValueError('Frontend distribution is empty')
+    digest=hashlib.sha256()
+    for path in files:
+        relative=path.relative_to(root).as_posix().encode()
+        digest.update(len(relative).to_bytes(4,'big'));digest.update(relative)
+        size=path.stat().st_size;digest.update(size.to_bytes(8,'big'))
+        with path.open('rb') as stream:
+            for chunk in iter(lambda:stream.read(1024*1024),b''):digest.update(chunk)
+    return digest.hexdigest()
+
+
+def build_frontend(code_root: Path) -> str:
+    subprocess.run(['npm','--prefix',str(code_root/'web'),'run','build'],cwd=code_root,check=True)
+    output=code_root/'web'/'dist'
+    if not (output/'index.html').is_file():raise ValueError('Frontend build did not produce index.html')
+    return directory_digest(output)
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--env-file',default='/data2/wujing03/sandbox-harness-platform-parallel/.data/config/platform.env')
@@ -68,10 +96,10 @@ def main():
     root=Path(__file__).resolve().parents[1]
     code_root=(args.code_root or root).resolve()
     if not (code_root/'src/sandbox_harness/main.py').is_file():raise ValueError('Invalid code root')
-    subprocess.run(['git','diff','--quiet'],cwd=code_root,check=True)
-    subprocess.run(['git','diff','--cached','--quiet'],cwd=code_root,check=True)
+    ensure_release_clean(code_root)
     revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=code_root,text=True).strip()
     if not re.fullmatch('[0-9a-f]{40}',revision):raise ValueError('Invalid Git revision')
+    web_dist_digest=build_frontend(code_root)
     bundle_dir=root/'.data'/'runtime-bundles'
     bundle_dir.mkdir(parents=True,exist_ok=True)
     os.chmod(bundle_dir,0o755)
@@ -91,7 +119,8 @@ def main():
     profile_catalog_path,profile_catalog_digest,profile_signature_digest=publish_profile_catalog(
         profile_source,root/'.data'/'profile-catalogs',code_root/'runtime'/'bundle_public_key.pem')
     images=primary_runtime_images(profile_catalog_path)
-    for key,value in {'SANDBOX_HARNESS_RELEASE':revision[:12],'PYTHONPATH':str(code_root/'src'),
+    for key,value in {'SANDBOX_HARNESS_RELEASE':revision[:12],
+            'SANDBOX_HARNESS_WEB_DIST_DIGEST':web_dist_digest,'PYTHONPATH':str(code_root/'src'),
             'SANDBOX_HARNESS_RUNTIME_BUNDLE_DIR':str(bundle_dir),
             'SANDBOX_HARNESS_RUNTIME_BUNDLE_DIGEST':bundle['sha256'],
             'SANDBOX_HARNESS_RUNTIME_CODE_BUNDLE_DIR':str(code_bundle_dir),
@@ -119,6 +148,7 @@ def main():
         'job_catalog_digest':job_catalog_digest,
         'profile_catalog_digest':profile_catalog_digest,
         'profile_catalog_signature_digest':profile_signature_digest,
+        'web_dist_digest':web_dist_digest,
         'recorded_at':datetime.now(timezone.utc).isoformat()},indent=2))
     print('Service version pinned to '+revision[:12]+' runtime_code_bundle='+code_bundle['sha256']
         +' runtime_bundle='+bundle['sha256'])

@@ -1043,6 +1043,11 @@ class Store:
             await self.events.close()
         await self.engine.dispose()
 
+    async def healthcheck(self) -> bool:
+        async with self.connections() as db:
+            await db.execute(text("SELECT 1"))
+        return True
+
     async def _ensure_capability_locked(self, db: AsyncSession, claims: CapabilityClaims,
                                         *, parent: bool = False) -> CapabilityLedgerRow:
         timestamp = now(); digest = "" if parent else canonical_digest(claims.model_dump(mode="json"))

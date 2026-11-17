@@ -133,6 +133,8 @@ class Settings(BaseSettings):
     site_job_lease_seconds: int = Field(default=60, ge=10, le=600)
     site_job_max_attempts: int = Field(default=4, ge=1, le=20)
     site_job_retry_base_seconds: int = Field(default=5, ge=1, le=300)
+    supervisor_retry_initial_seconds: float = Field(default=.5, ge=.01, le=30)
+    supervisor_retry_max_seconds: float = Field(default=30, ge=.02, le=300)
     site_draft_ttl_seconds: int = Field(default=24 * 3600, ge=600, le=7 * 86400)
     site_public_base_path: str = Field(default="/sandbox-harness-platform-parallel/sites",
         pattern=r"^/[A-Za-z0-9/_-]+$")

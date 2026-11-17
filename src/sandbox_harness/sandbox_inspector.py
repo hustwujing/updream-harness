@@ -83,11 +83,15 @@ class SandboxInspector:
         self.locks: dict[str, asyncio.Lock] = {}
         self.cleanup_task: asyncio.Task | None = None
         self.stop_event = asyncio.Event()
+        self.cleanup_status = "stopped"
+        self.cleanup_last_error = ""
+        self.cleanup_failures = 0
 
     def _lock(self, thread_id: str) -> asyncio.Lock:
         return self.locks.setdefault(thread_id, asyncio.Lock())
 
     async def start(self) -> None:
+        self.cleanup_status = "running"
         self.cleanup_task = asyncio.create_task(self._cleanup_loop(), name="sandbox-inspector-cleanup")
 
     async def close(self) -> None:
@@ -95,10 +99,30 @@ class SandboxInspector:
         if self.cleanup_task:
             self.cleanup_task.cancel()
             await asyncio.gather(self.cleanup_task, return_exceptions=True)
+        self.cleanup_status = "stopped"
 
     async def _cleanup_loop(self) -> None:
+        delay = float(getattr(self.settings,"supervisor_retry_initial_seconds",1.0))
+        maximum_delay = float(getattr(self.settings,"supervisor_retry_max_seconds",30.0))
         while not self.stop_event.is_set():
-            for control in await self.store.expired_sandbox_controls():
+            try:
+                controls = await self.store.expired_sandbox_controls()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.cleanup_status = "degraded"; self.cleanup_last_error = type(exc).__name__
+                self.cleanup_failures += 1
+                event("sandbox.control.expiry_scan_failed", level=40,
+                    exception_type=type(exc).__name__, failures=self.cleanup_failures)
+                try:
+                    await asyncio.wait_for(self.stop_event.wait(), timeout=delay)
+                except asyncio.TimeoutError:
+                    pass
+                delay = min(delay * 2, maximum_delay)
+                continue
+            self.cleanup_status = "running"; self.cleanup_last_error = ""
+            delay = float(getattr(self.settings,"supervisor_retry_initial_seconds",1.0))
+            for control in controls:
                 try:
                     await self.release(control["thread_id"], control["owner_id"], expired=True)
                 except Exception as exc:

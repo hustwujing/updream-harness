@@ -73,7 +73,14 @@ Runtime export endpoint/credential is replaced on configure using the sandbox's 
 
 ## Deploying a logging change
 
-After tests and committing tracked changes, run `bash deploy/check-service-access.sh` and `python3 deploy/record-release.py` before restarting API/Gateway. The latter atomically pins the release and `PYTHONPATH` code root in the existing env file, preserves its permissions, and records `.data/release.json`. Use `--code-root /path/to/clean-checkout` for a frozen release while another window edits the primary workspace; with no flag, it explicitly returns execution to the current repository. The selected checkout must be clean and its frontend must be built. A custom `--record-file` allows testing deployment metadata without changing the live manifest. It refuses dirty tracked code. The service account does not need access to `.git`; deployment verification must reject an `unknown` version. Runtime image revisions remain independently pinned in their image environment and digest.
+After tests and committing tracked changes, run `bash deploy/check-service-access.sh` and `python3 deploy/record-release.py` before restarting API/Gateway. The latter atomically pins the release and `PYTHONPATH` code root in the existing env file, preserves its permissions, builds and hashes that checkout's exact `web/dist`, and records `.data/release.json`. Use `--code-root /path/to/clean-checkout` for a frozen release while another window edits the primary workspace; with no flag, it explicitly returns execution to the current repository. A custom `--record-file` allows testing deployment metadata without changing the live manifest. It refuses dirty tracked code and untracked files under deployable `src`, `runtime`, `deploy`, or `web` paths; ignored `.data` state remains allowed. The service account does not need access to `.git`; deployment verification must reject an `unknown` version. Runtime image revisions remain independently pinned in their image environment and digest.
+
+API readiness requires PostgreSQL, the selected execution backend and every
+required API-owned supervisor. Warm-pool target shortfall is optional only while
+execution itself remains available. Gateway readiness requires PostgreSQL;
+Redis is an explicitly degraded cache/notification dependency and is probed for
+recovery without preventing startup. Health payloads expose dependency and
+supervisor status rather than reporting a process-only liveness result.
 
 ## Troubleshooting
 

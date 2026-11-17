@@ -16,7 +16,7 @@ from pydantic import ValidationError
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from redis.asyncio import Redis
 import uvicorn
 
@@ -142,6 +142,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     public_connections: dict[str, set[asyncio.Task]] = defaultdict(set)
     timing_finalizers: set[asyncio.Task] = set()
     clients: dict[str, httpx.AsyncClient] = {}
+    telemetry_fallback: dict[str, tuple[int,int]] = {}
     model_routes = ModelRoutes(settings)
     activity_store = Store(settings.database_url, settings.redis_url, settings.redis_prefix)
     job_catalog_raw = settings.job_catalog_path.read_text()
@@ -174,7 +175,13 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        await redis.ping()
+        try:
+            await asyncio.wait_for(redis.ping(),timeout=1)
+            app.state.redis_available=True;app.state.redis_last_error=""
+        except Exception as exc:
+            app.state.redis_available=False;app.state.redis_last_error=type(exc).__name__
+            event("gateway.redis.degraded_start",level=logging.WARNING,
+                exception_type=type(exc).__name__)
         await activity_store.initialize()
 
         async def authorize_public(token: str):
@@ -210,13 +217,30 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="Sandbox Capability Gateway", lifespan=lifespan)
     app.add_middleware(RequestLoggingMiddleware,service="gateway")
+    app.state.store=activity_store
+    app.state.redis=redis
 
     @app.get("/health")
     async def health():
-        return {"status": "ok","observability":telemetry().status() if telemetry() else {"enabled":False},
+        try:
+            await asyncio.wait_for(activity_store.healthcheck(),timeout=1)
+            database={"available":True,"error":""}
+        except Exception as exc:
+            database={"available":False,"error":type(exc).__name__}
+        try:
+            await asyncio.wait_for(redis.ping(),timeout=1)
+            app.state.redis_available=True;app.state.redis_last_error=""
+        except Exception as exc:
+            app.state.redis_available=False;app.state.redis_last_error=type(exc).__name__
+        payload={"status": "ok" if database["available"] and app.state.redis_available else "degraded",
+            "ready":database["available"],"database":database,
+            "redis":{"available":app.state.redis_available,"required_for_readiness":False,
+                "error":app.state.redis_last_error},
+            "observability":telemetry().status() if telemetry() else {"enabled":False},
             "public_proxy_policy":{"restricted_mode":"allowlist" if public_policy.allowlist else "public",
                 "frpc_mode":"public", "allowlist_rules":len(public_policy.allowlist),
                 "denylist_rules":len(public_policy.denylist)}}
+        return JSONResponse(payload,status_code=200 if database["available"] else 503)
 
     @app.post("/internal/revoke/{nonce}")
     async def revoke(nonce: str, request: Request):
@@ -255,7 +279,16 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         except ValueError:raise HTTPException(401,"Telemetry capability revoked")
         except Exception:raise HTTPException(503,"capability_authority_unavailable")
         key=settings.redis_prefix+"telemetry:rate:"+claims.nonce+":"+str(int(time.time())//60)
-        count=await redis.eval("local n=redis.call('INCR',KEYS[1]);redis.call('EXPIRE',KEYS[1],120);return n",1,key)
+        try:
+            count=await redis.eval("local n=redis.call('INCR',KEYS[1]);redis.call('EXPIRE',KEYS[1],120);return n",1,key)
+            app.state.redis_available=True;app.state.redis_last_error=""
+        except Exception as exc:
+            app.state.redis_available=False;app.state.redis_last_error=type(exc).__name__
+            window=int(time.time())//60;previous=telemetry_fallback.get(claims.nonce,(window,0))
+            count=(previous[1]+1) if previous[0]==window else 1
+            telemetry_fallback[claims.nonce]=(window,count)
+            event("telemetry.rate_limit_fallback",level=logging.WARNING,
+                exception_type=type(exc).__name__)
         if count>600:raise HTTPException(429,"Telemetry rate exceeded")
         body=bytearray()
         async for part in request.stream():

@@ -80,3 +80,26 @@ def test_release_derives_primary_runtime_images_from_signed_catalog(tmp_path):
     images=release_module().primary_runtime_images(target)
     assert set(images)=={"codex","claude","deepseek"}
     assert all("primary-" in value and "@sha256:" in value for value in images.values())
+
+
+def test_release_rebuilds_and_hashes_exact_frontend(tmp_path,monkeypatch):
+    module=release_module();web=tmp_path/"web";dist=web/"dist";dist.mkdir(parents=True)
+    (dist/"index.html").write_text("stale")
+    stale=module.directory_digest(dist);calls=[]
+    def run(command,**kwargs):
+        calls.append(command);(dist/"index.html").write_text("fresh");(dist/"assets").mkdir()
+        (dist/"assets"/"app.js").write_text("current")
+        return subprocess.CompletedProcess(command,0)
+    monkeypatch.setattr(module.subprocess,"run",run)
+    current=module.build_frontend(tmp_path)
+    assert current!=stale and current==module.directory_digest(dist)
+    assert calls==[["npm","--prefix",str(web),"run","build"]]
+
+
+def test_release_rejects_untracked_deployable_source(tmp_path,monkeypatch):
+    module=release_module()
+    monkeypatch.setattr(module.subprocess,"run",lambda *args,**kwargs:subprocess.CompletedProcess(args[0],0))
+    monkeypatch.setattr(module.subprocess,"check_output",
+        lambda command,**kwargs:"src/sandbox_harness/untracked.py\n")
+    with pytest.raises(ValueError,match="Untracked deployable files"):
+        module.ensure_release_clean(tmp_path)

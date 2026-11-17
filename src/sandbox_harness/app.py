@@ -192,23 +192,35 @@ async def supervise_warm_pool(app, pool, *, initial_delay: float = .5,
     delay = initial_delay
     while True:
         app.state.pool_attempts += 1
+        fill_error = None
         try:
             await pool.fill()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            available = await pool.execution_available()
-            app.state.execution_backend_available = available
-            app.state.pool_status = "degraded" if available else "unavailable"
-            app.state.pool_last_error = type(exc).__name__
+            fill_error = exc
             logger.exception("OpenSandbox warm pool convergence failed; retrying")
+        try:
+            available = await pool.execution_available()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            app.state.execution_backend_available = False
+            app.state.pool_status = "unavailable"
+            app.state.pool_last_error = "probe:" + type(exc).__name__
+            logger.exception("OpenSandbox availability probe failed; retrying")
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, maximum_delay)
+            continue
+        app.state.execution_backend_available = available
+        if fill_error:
+            app.state.pool_status = "degraded" if available else "unavailable"
+            app.state.pool_last_error = type(fill_error).__name__
             await asyncio.sleep(delay)
             delay = min(delay * 2, maximum_delay)
         else:
-            available = await pool.execution_available()
             app.state.pool_status = "ready" if available else "unavailable"
-            app.state.execution_backend_available = available
-            app.state.pool_last_error = ""
+            app.state.pool_last_error = "" if available else "execution_unavailable"
             delay = initial_delay
             await asyncio.sleep(probe_interval if available else delay)
 
@@ -282,8 +294,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 idempotency_key=f"media-continuation-{turn_id}", delivery_mode="queue"),
                 network_access=origin.network_access if origin else "restricted", internal=True)
         async def dispatch_media_outbox():
+            initial_delay=settings.supervisor_retry_initial_seconds
+            delay = initial_delay
             while not media_outbox_stop.is_set():
-                for batch in await store.claim_media_batches(media_outbox_owner):
+                try:
+                    batches = await store.claim_media_batches(media_outbox_owner)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    app.state.media_outbox_status="degraded"
+                    app.state.media_outbox_last_error=type(exc).__name__
+                    app.state.media_outbox_failures+=1
+                    event("media.outbox.claim_failed",level=40,
+                        exception_type=type(exc).__name__,failures=app.state.media_outbox_failures)
+                    try:await asyncio.wait_for(media_outbox_stop.wait(),timeout=delay)
+                    except asyncio.TimeoutError:pass
+                    delay=min(delay*2,settings.supervisor_retry_max_seconds)
+                    continue
+                app.state.media_outbox_status="running";app.state.media_outbox_last_error="";delay=initial_delay
+                for batch in batches:
                     try:
                         await continue_media(batch)
                     except Exception as exc:
@@ -296,6 +325,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     await asyncio.wait_for(media_outbox_stop.wait(), timeout=2)
                 except asyncio.TimeoutError:
                     pass
+        app.state.media_outbox_status="running";app.state.media_outbox_last_error=""
+        app.state.media_outbox_failures=0
         media_outbox_task = asyncio.create_task(dispatch_media_outbox(), name="media-outbox-dispatcher")
         pool_task = None
         catalog_task = None
@@ -324,6 +355,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.execution_backend_available = True
             app.state.pool_attempts = 0
             app.state.pool_last_error = ""
+        app.state.required_tasks={"job_continuation":continuation_task,
+            "media_outbox":media_outbox_task,"sandbox_expiry":inspector.cleanup_task,
+            "turn_recovery":broker.recovery_task,"orphan_reaper":broker.reaper_task}
+        if pool_task:app.state.required_tasks["warm_pool_supervisor"]=pool_task
         yield
         if catalog_task:
             catalog_task.cancel()
@@ -404,15 +439,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health():
         pool_status = app.state.pool_status
         available=app.state.execution_backend_available
-        payload = {"status": "ok" if available else "degraded",
+        try:
+            await asyncio.wait_for(store.healthcheck(),timeout=1)
+            database={"available":True,"error":""}
+        except Exception as exc:
+            database={"available":False,"error":type(exc).__name__}
+        supervisors={name:bool(task and not task.done())
+            for name,task in getattr(app.state,"required_tasks",{}).items()}
+        supervisors_ready=bool(supervisors) and all(supervisors.values())
+        ready=available and database["available"] and supervisors_ready
+        payload = {"status": "ok" if ready else "degraded",
                    "backend": settings.backend, "execution_backend_available":available,
+                   "database":database,"supervisors":supervisors,
+                   "media_outbox":{"status":app.state.media_outbox_status,
+                       "last_error":app.state.media_outbox_last_error,
+                       "failures":app.state.media_outbox_failures},
+                   "sandbox_expiry":{"status":inspector.cleanup_status,
+                       "last_error":inspector.cleanup_last_error,
+                       "failures":inspector.cleanup_failures},
                    "warm_pool": pool_status,
                    "warm_pool_optional_degraded": pool_status == "degraded" and available,
                    "warm_pool_attempts": app.state.pool_attempts,
                    "warm_pool_last_error": app.state.pool_last_error,
                    "broker": broker.status(),
                    "model_catalog": discovery.status(),"observability":telemetry().status() if telemetry() else {"enabled":False}}
-        return JSONResponse(payload,status_code=200 if available else 503)
+        return JSONResponse(payload,status_code=200 if ready else 503)
 
 
     @app.get("/api/catalog/harnesses")

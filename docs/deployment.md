@@ -70,7 +70,10 @@ Before service start:
 
 1. Build the complete Profile/Harness image matrix and signed Profile Catalog.
 2. Build the frontend and run `deploy/check-service-access.sh`.
-3. Run `deploy/record-release.py` to freeze revision, Code Bundle, Skill Bundle and catalogs.
+3. Run `deploy/record-release.py` to freeze revision, the freshly built
+   `web/dist` digest, Code Bundle, Skill Bundle and catalogs. The command builds
+   the frontend from the selected `code_root`; a pre-existing dist is never
+   trusted as release evidence.
 4. Initialize the fresh database and start only the parallel-prefixed units.
 5. Verify API/Gateway health, Job Worker node heartbeat, Nginx HTTP/SSE/WebSocket, file previews,
    terminal/takeover and restart recovery.

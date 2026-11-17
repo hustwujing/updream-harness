@@ -38,8 +38,9 @@ object storage as part of this product's release.
    `Host: updream-lab.bilibili.co`; bare `127.0.0.1` selects a different server.
 10. Run a focused deployed case and confirm state, logs and cleanup.
 
-`record-release.py` refuses staged or unstaged changes to tracked files in the
-selected checkout; it does not detect untracked files. Inspect `git status`
+`record-release.py` refuses staged or unstaged changes to tracked files and
+untracked deployable files in the selected checkout. Ignored `.data` evidence
+is allowed. It rebuilds and hashes the selected checkout's frontend. Inspect `git status`
 yourself. When another window owns uncommitted work, create a clean detached
 worktree under `.data/releases`, build its frontend, grant the service user read
 access and deploy with `--code-root`. Do not commit, discard or deploy another
