@@ -103,6 +103,18 @@ claim lease, retry count and last error. A successful Job remains successful
 while cleanup is pending; workers retry idempotent revoke/Sandbox/resource
 release across restart until completed. Group terminalization releases unused
 budget and creates its continuation outbox in the same transaction.
+Resource reservations remain capacity-authoritative while their state is
+`reserved` or `running`; TTL expiry alone never makes an exclusive GPU reusable.
+Adapter start/status/collect/pause/cancel/cleanup heartbeats the reservation.
+Cleanup confirms capability revocation and external Sandbox absence before the
+Scheduler release, which is always the last step.
+
+Thread deletion uses the same Thread row barrier as the last Job transition.
+It rejects nonterminal Jobs, incomplete cleanup, active resource reservations,
+open budget and pending continuation. Once all obligations are closed it
+deletes Job activities, Artifacts, cleanups, leases, Attempts, reservations,
+outboxes, budgets, snapshots, drafts, groups and Jobs in dependency order; no
+generic execution row may outlive its Thread.
 
 Before first materialization a leased worker freezes `turn_project_files` and
 sets `turns.project_files_frozen`, even for an empty manifest. Recovery and

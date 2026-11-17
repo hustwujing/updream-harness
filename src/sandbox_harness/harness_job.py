@@ -122,8 +122,13 @@ class HarnessJobAdapter(BaseJobAdapter):
 
     async def submit(self,context:JobExecutionContext)->AdapterSubmission:
         reservation=await self.scheduler.reserve(context.job.id,context.generation,self._resources(context))
-        execution_id,receipt=await self.backend.start(context,reservation)
-        await self.scheduler.mark_running(reservation.id,reservation.node_id,reservation.node_generation)
+        try:
+            async with self.scheduler.hold(reservation.id,reservation.node_id,reservation.node_generation):
+                execution_id,receipt=await self.backend.start(context,reservation)
+                await self.scheduler.mark_running(reservation.id,reservation.node_id,reservation.node_generation)
+        except BaseException:
+            await self.scheduler.release(reservation.id,reservation.node_id,reservation.node_generation)
+            raise
         return AdapterSubmission(external_execution_id=execution_id,acceptance_receipt={
             'executor':'harness','reservation_id':reservation.id,'node_id':reservation.node_id,
             'node_generation':reservation.node_generation,'runtime_profile_id':reservation.runtime_profile_id,
@@ -131,36 +136,43 @@ class HarnessJobAdapter(BaseJobAdapter):
 
     async def status(self,context:JobExecutionContext,external_execution_id:str)->AdapterStatus:
         receipt=context.previous_acceptance_receipt
-        await self.scheduler.renew(str(receipt.get('reservation_id','')),
-            str(receipt.get('node_id','')),int(receipt.get('node_generation') or 0))
-        return await self.backend.status(context,external_execution_id,
-            receipt)
+        async with self.scheduler.hold(str(receipt.get('reservation_id','')),
+                str(receipt.get('node_id','')),int(receipt.get('node_generation') or 0)):
+            return await self.backend.status(context,external_execution_id,receipt)
 
     async def reconcile(self,context:JobExecutionContext,external_execution_id:str)->AdapterStatus:
         return await self.status(context,external_execution_id)
 
     async def cancel(self,context:JobExecutionContext,external_execution_id:str)->AdapterStatus:
-        return await self.backend.cancel(context,external_execution_id,
-            context.previous_acceptance_receipt)
+        receipt=context.previous_acceptance_receipt
+        async with self.scheduler.hold(str(receipt.get('reservation_id','')),
+                str(receipt.get('node_id','')),int(receipt.get('node_generation') or 0)):
+            return await self.backend.cancel(context,external_execution_id,receipt)
 
     async def pause(self,context:JobExecutionContext,external_execution_id:str)->dict[str,Any]:
-        return await self.backend.pause(context,external_execution_id,
-            context.previous_acceptance_receipt)
+        receipt=context.previous_acceptance_receipt
+        async with self.scheduler.hold(str(receipt.get('reservation_id','')),
+                str(receipt.get('node_id','')),int(receipt.get('node_generation') or 0)):
+            return await self.backend.pause(context,external_execution_id,receipt)
 
     async def cleanup(self,context:JobExecutionContext,external_execution_id:str)->None:
         receipt=context.previous_acceptance_receipt
         reservation_id=str(receipt.get('reservation_id',''))
-        if reservation_id:
-            await self.scheduler.release(reservation_id,str(receipt.get('node_id','')),
-                int(receipt.get('node_generation') or 0))
-        await self.backend.cleanup(context,external_execution_id,receipt)
+        if not reservation_id:
+            await self.backend.cleanup(context,external_execution_id,receipt);return
+        node_id=str(receipt.get('node_id',''));generation=int(receipt.get('node_generation') or 0)
+        async with self.scheduler.hold(reservation_id,node_id,generation):
+            await self.backend.cleanup(context,external_execution_id,receipt)
+        await self.scheduler.release(reservation_id,node_id,generation)
 
     async def collect(self,context:JobExecutionContext,external_execution_id:str,
                       status:AdapterStatus)->dict[str,Any]:
         collector=getattr(self.backend,'collect',None)
         if collector:
-            result=await collector(context,external_execution_id,status,
-                context.previous_acceptance_receipt)
+            receipt=context.previous_acceptance_receipt
+            async with self.scheduler.hold(str(receipt.get('reservation_id','')),
+                    str(receipt.get('node_id','')),int(receipt.get('node_generation') or 0)):
+                result=await collector(context,external_execution_id,status,receipt)
         elif status.state==JobState.BLOCKED:
             return {'blocked':True,**status.result}
         else:result=status.result
@@ -364,7 +376,19 @@ class OpenSandboxChildBackend:
 
     async def cleanup(self,context:JobExecutionContext,external_execution_id:str,
                       receipt:dict[str,Any])->None:
-        sandbox=await self._sandbox(context,receipt)
+        sandbox=None;identity=str(receipt.get('sandbox_id',''))
+        if identity:
+            try:sandbox=await self._sandbox(context,receipt)
+            except RuntimeError as exc:
+                if str(exc)!='child_sandbox_unavailable':raise
+        else:
+            matches=[value for value in await self.pool.backend.list_namespace()
+                if value.turn_id==context.job.id or value.metadata.get(
+                    'sandbox-harness.io/turn')==context.job.id]
+            for match in matches:
+                adopted=await self.pool.adopt(match,thread_id=self._thread_id(context.job.id),
+                    turn_id=context.job.id)
+                await self.pool.release(adopted,keep_attached=False)
         collector=self.collectors.pop(context.job.id,None)
         if collector:
             try:await asyncio.wait_for(asyncio.shield(collector),timeout=5)
@@ -377,7 +401,7 @@ class OpenSandboxChildBackend:
                     headers={'X-Sandbox-Harness-Control':self.settings.gateway_control_key,
                         'X-Updream-Thread-Id':context.job.thread_id,
                         'X-Updream-Turn-Id':context.job.origin_turn_id,
-                        'X-Updream-Sandbox-Id':sandbox.id})
+                        'X-Updream-Sandbox-Id':sandbox.id if sandbox else identity})
                 response.raise_for_status()
-        await self.pool.release(sandbox,keep_attached=False)
+        if sandbox:await self.pool.release(sandbox,keep_attached=False)
         self.sessions.pop(context.job.id,None)

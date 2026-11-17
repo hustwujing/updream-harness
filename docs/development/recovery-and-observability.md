@@ -36,6 +36,9 @@ process death conservative: a replacement may reconcile or report unknown but
 cannot resubmit. Terminal business state atomically creates a cleanup
 obligation. The cleanup lease is independently heartbeated and retried across
 restart; cleanup degradation is visible without changing a successful result.
+Scheduler ownership is released only after external absence is confirmed.
+Reservation expiry is diagnostic, not permission to double-allocate a live
+exclusive GPU; the durable cleanup obligation is the recovery authority.
 
 Thread archival is a durable barrier: active Jobs/Groups and ready or claimed
 continuation outboxes prevent archive. The final Job transaction locks the

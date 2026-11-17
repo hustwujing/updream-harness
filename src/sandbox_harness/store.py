@@ -737,6 +737,7 @@ class JobCleanupRow(Base):
     external_execution_id: Mapped[str] = mapped_column(Text)
     acceptance_receipt_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
     state: Mapped[str] = mapped_column(String(24), default="pending", server_default="pending", index=True)
+    phase: Mapped[str] = mapped_column(String(40), default="external_quiescence", server_default="external_quiescence")
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     last_error: Mapped[str] = mapped_column(Text, default="", server_default="")
     claim_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
@@ -2212,8 +2213,8 @@ class Store:
             if existing:
                 return True
             timestamp=now();db.add(JobCleanupRow(id=identifier(),job_id=job.id,adapter=job.adapter,
-                generation=generation,external_execution_id=attempt.external_execution_id,
-                acceptance_receipt_json=attempt.acceptance_receipt_json,state="pending",
+                generation=attempt.generation,external_execution_id=attempt.external_execution_id,
+                acceptance_receipt_json=attempt.acceptance_receipt_json,state="pending",phase="external_quiescence",
                 attempt_count=0,last_error="",claim_owner="",claim_expires_at=None,
                 created_at=timestamp,updated_at=timestamp))
             return True
@@ -2244,6 +2245,7 @@ class Store:
             if not row or row.claim_owner!=owner or row.state!="running":
                 raise RuntimeError("stale_job_cleanup_claim")
             row.state="completed" if succeeded else "pending"
+            row.phase="completed" if succeeded else "external_quiescence"
             row.last_error="" if succeeded else error[:2000]
             row.claim_owner="";row.claim_expires_at=None;row.updated_at=now()
 
@@ -2261,7 +2263,7 @@ class Store:
             rows=list((await db.execute(select(JobCleanupRow).where(
                 JobCleanupRow.job_id==job_id).order_by(JobCleanupRow.generation))).scalars().all())
         row=next((value for value in reversed(rows) if value.state!="completed"),rows[-1] if rows else None)
-        return ({"state":row.state,"attempt_count":row.attempt_count,
+        return ({"state":row.state,"phase":row.phase,"attempt_count":row.attempt_count,
             "last_error":row.last_error,"generation":row.generation,
             "completed_count":sum(value.state=="completed" for value in rows),
             "updated_at":utc_datetime(row.updated_at)} if row else None)
@@ -2425,7 +2427,25 @@ class Store:
                                         generation=job.generation,
                                         external_execution_id=attempt.external_execution_id,
                                         acceptance_receipt_json=attempt.acceptance_receipt_json,
-                                        state="pending",attempt_count=0,last_error="",claim_owner="",
+                                        state="pending",phase="external_quiescence",attempt_count=0,last_error="",claim_owner="",
+                                        claim_expires_at=None,created_at=now(),updated_at=now()))
+                            elif not attempt.accepted_at:
+                                reservation=(await db.execute(select(ResourceReservationRow).where(
+                                    ResourceReservationRow.job_id==job.id,
+                                    ResourceReservationRow.job_generation==job.generation)
+                                    .with_for_update())).scalar_one_or_none()
+                                cleanup=(await db.execute(select(JobCleanupRow).where(
+                                    JobCleanupRow.job_id==job.id,
+                                    JobCleanupRow.generation==job.generation)
+                                    .with_for_update())).scalar_one_or_none()
+                                if reservation and not cleanup:
+                                    receipt=canonical_json({"reservation_id":reservation.id,
+                                        "node_id":reservation.node_id,
+                                        "node_generation":reservation.node_generation})
+                                    db.add(JobCleanupRow(id=identifier(),job_id=job.id,
+                                        adapter=job.adapter,generation=job.generation,
+                                        external_execution_id="",acceptance_receipt_json=receipt,
+                                        state="pending",phase="external_quiescence",attempt_count=0,last_error="",claim_owner="",
                                         claim_expires_at=None,created_at=now(),updated_at=now()))
                         await db.execute(delete(JobLeaseRow).where(JobLeaseRow.job_id == job.id))
                     if group.state == JobGroupState.COMMITTED.value:
@@ -3162,6 +3182,26 @@ class Store:
                 SiteProjectRow.thread_id == thread_id))).scalars().all()
             if any(project.status == "active" for project in site_projects):
                 raise RuntimeError("published_site_prevents_thread_delete")
+            groups=list((await db.execute(select(JobGroupRow).where(
+                JobGroupRow.thread_id==thread_id).with_for_update())).scalars().all())
+            group_ids=[group.id for group in groups]
+            jobs=list((await db.execute(select(JobRow).where(
+                JobRow.group_id.in_(group_ids or [""])).with_for_update())).scalars().all())
+            job_ids=[job.id for job in jobs]
+            cleanups=list((await db.execute(select(JobCleanupRow).where(
+                JobCleanupRow.job_id.in_(job_ids or [""])).with_for_update())).scalars().all())
+            resource_rows=list((await db.execute(select(ResourceReservationRow).where(
+                ResourceReservationRow.job_id.in_(job_ids or [""])).with_for_update())).scalars().all())
+            reservations=list((await db.execute(select(BudgetReservationRow).where(
+                BudgetReservationRow.group_id.in_(group_ids or [""])).with_for_update())).scalars().all())
+            outboxes=list((await db.execute(select(JobOutboxRow).where(
+                JobOutboxRow.group_id.in_(group_ids or [""])).with_for_update())).scalars().all())
+            if (any(JobState(job.state) not in TERMINAL_JOB_STATES for job in jobs)
+                    or any(row.state!="completed" for row in cleanups)
+                    or any(row.state!="released" for row in resource_rows)
+                    or any(row.consumed+row.released<row.reserved for row in reservations)
+                    or any(row.state in {"ready","claimed","blocked"} for row in outboxes)):
+                raise RuntimeError("active_jobs_prevent_thread_delete")
             turn_ids = [turn.id for turn in turns]
             await db.execute(delete(SandboxAuditRow).where(SandboxAuditRow.thread_id == thread_id))
             await db.execute(delete(SandboxPortGrantRow).where(SandboxPortGrantRow.thread_id == thread_id))
@@ -3187,6 +3227,28 @@ class Store:
             await db.execute(delete(SiteDeployJobRow).where(SiteDeployJobRow.thread_id == thread_id))
             await db.execute(delete(SiteDraftRow).where(SiteDraftRow.thread_id == thread_id))
             await db.execute(delete(SiteProjectRow).where(SiteProjectRow.thread_id == thread_id))
+            if job_ids:
+                await db.execute(delete(JobActivityRow).where(JobActivityRow.job_id.in_(job_ids)))
+                await db.execute(delete(JobArtifactRow).where(JobArtifactRow.job_id.in_(job_ids)))
+                await db.execute(delete(JobCleanupRow).where(JobCleanupRow.job_id.in_(job_ids)))
+                await db.execute(delete(JobLeaseRow).where(JobLeaseRow.job_id.in_(job_ids)))
+                await db.execute(delete(JobAttemptRow).where(JobAttemptRow.job_id.in_(job_ids)))
+                await db.execute(delete(ResourceReservationRow).where(
+                    ResourceReservationRow.job_id.in_(job_ids)))
+                await db.execute(delete(JobRow).where(JobRow.id.in_(job_ids)))
+            if group_ids:
+                reservation_ids=[row.id for row in reservations]
+                if reservation_ids:
+                    await db.execute(delete(BudgetLedgerRow).where(
+                        BudgetLedgerRow.reservation_id.in_(reservation_ids)))
+                    await db.execute(delete(BudgetReservationRow).where(
+                        BudgetReservationRow.id.in_(reservation_ids)))
+                await db.execute(delete(JobOutboxRow).where(JobOutboxRow.group_id.in_(group_ids)))
+                await db.execute(delete(JobGroupRow).where(JobGroupRow.id.in_(group_ids)))
+            await db.execute(delete(BudgetAccountRow).where(BudgetAccountRow.thread_id==thread_id))
+            await db.execute(delete(AuthorizationSnapshotRow).where(
+                AuthorizationSnapshotRow.thread_id==thread_id))
+            await db.execute(delete(JobGroupDraftRow).where(JobGroupDraftRow.thread_id==thread_id))
             await db.execute(delete(InteractionRow).where(InteractionRow.thread_id == thread_id))
             await db.execute(delete(PauseParticipantRow).where(
                 PauseParticipantRow.thread_id == thread_id))

@@ -69,12 +69,13 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
                 role=str(recipe.pop('input_role'))
                 if role not in inputs:raise ValueError('operation_input_role_missing')
                 runtime_value={**recipe,'input_path':inputs[role]}
-            value=await self.runtime.media_render(sandbox,runtime_value)
-            self.sessions[context.job.id]=sandbox
-            receipt={'sandbox_id':sandbox.id,'capability_nonce':claims.nonce,
-                'reservation_id':reservation.id,'node_id':reservation.node_id,
-                'node_generation':reservation.node_generation,'operation_completed':True,'output':value}
-            await self.scheduler.mark_running(reservation.id,reservation.node_id,reservation.node_generation)
+            async with self.scheduler.hold(reservation.id,reservation.node_id,reservation.node_generation):
+                value=await self.runtime.media_render(sandbox,runtime_value)
+                self.sessions[context.job.id]=sandbox
+                receipt={'sandbox_id':sandbox.id,'capability_nonce':claims.nonce,
+                    'reservation_id':reservation.id,'node_id':reservation.node_id,
+                    'node_generation':reservation.node_generation,'operation_completed':True,'output':value}
+                await self.scheduler.mark_running(reservation.id,reservation.node_id,reservation.node_generation)
             return AdapterSubmission(external_execution_id='operation:'+context.job.id,
                 acceptance_receipt=receipt,completed=True,result=value)
         except BaseException:
@@ -92,6 +93,7 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
                       status:AdapterStatus)->dict[str,Any]:
         if status.state!=JobState.SUCCEEDED:return status.result
         sandbox=await self._sandbox(context,context.previous_acceptance_receipt)
+        receipt=context.previous_acceptance_receipt
         contracts={value.artifact_role:value for value in context.request.expected_outputs}
         values=status.result.get('outputs') or ([{"role":next(iter(contracts),""),
             "path":status.result.get('path',''),"mime":status.result.get('mime','application/octet-stream'),
@@ -100,38 +102,52 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
         if not contracts or {str(value.get('role','')) for value in values}!=set(contracts):
             raise RuntimeError('operation_output_roles_mismatch')
         artifacts=[];collections=[]
-        for value in values:
-            role=str(value['role']);contract=contracts[role];path=str(value.get('path',''))
-            staged=await self.runtime.artifact(sandbox,path,maximum=self.settings.max_artifact_bytes)
-            try:
-                if value.get('size') != staged.size or value.get('sha256') != staged.sha256:
-                    raise ValueError('runtime_artifact_identity_mismatch')
-                artifact=await self.artifacts.emit(ArtifactEmission(job_id=context.job.id,
-                    generation=context.generation,artifact_role=role,item_key='primary',position=0,
-                    filename=Path(path).name,output_disposition=contract.output_disposition,
-                    declared_mime=str(value.get('mime','application/octet-stream'))),
-                    staged_file_chunks(staged.path))
-            finally:staged.remove()
-            artifacts.append(artifact.model_dump(mode='json'))
-            receipts=[]
-            for receipt in value.get('validation_receipts',[]):
-                current=dict(receipt);current.setdefault('artifact_digests',[artifact.sha256]);receipts.append(current)
-            collections.append(await self.store.finalize_job_artifact_collection(
-                context.job.id,context.generation,role,validation_receipts=receipts))
+        async with self.scheduler.hold(str(receipt['reservation_id']),str(receipt['node_id']),
+                int(receipt['node_generation'])):
+            for value in values:
+                role=str(value['role']);contract=contracts[role];path=str(value.get('path',''))
+                staged=await self.runtime.artifact(sandbox,path,maximum=self.settings.max_artifact_bytes)
+                try:
+                    if value.get('size') != staged.size or value.get('sha256') != staged.sha256:
+                        raise ValueError('runtime_artifact_identity_mismatch')
+                    artifact=await self.artifacts.emit(ArtifactEmission(job_id=context.job.id,
+                        generation=context.generation,artifact_role=role,item_key='primary',position=0,
+                        filename=Path(path).name,output_disposition=contract.output_disposition,
+                        declared_mime=str(value.get('mime','application/octet-stream'))),
+                        staged_file_chunks(staged.path))
+                finally:staged.remove()
+                artifacts.append(artifact.model_dump(mode='json'))
+                validations=[]
+                for validation in value.get('validation_receipts',[]):
+                    current=dict(validation);current.setdefault('artifact_digests',[artifact.sha256]);validations.append(current)
+                collections.append(await self.store.finalize_job_artifact_collection(
+                    context.job.id,context.generation,role,validation_receipts=validations))
         return {'operation':context.request.parameters['recipe']['operation'],
             'artifacts':artifacts,'collections':collections}
 
     async def cleanup(self,context:JobExecutionContext,external_execution_id:str)->None:
-        receipt=context.previous_acceptance_receipt;sandbox=await self._sandbox(context,receipt)
-        await self.scheduler.release(str(receipt['reservation_id']),str(receipt['node_id']),
-            int(receipt['node_generation']))
+        receipt=context.previous_acceptance_receipt;sandbox=None;identity=str(receipt.get('sandbox_id',''))
+        if identity:
+            try:sandbox=await self._sandbox(context,receipt)
+            except RuntimeError as exc:
+                if str(exc)!='operation_sandbox_unavailable':raise
+        else:
+            matches=[value for value in await self.pool.backend.list_namespace()
+                if value.turn_id==context.job.id or value.metadata.get('sandbox-harness.io/turn')==context.job.id]
+            for match in matches:
+                adopted=await self.pool.adopt(match,thread_id=self._thread_id(context.job.id),turn_id=context.job.id)
+                await self.pool.release(adopted,keep_attached=False)
+        reservation_id=str(receipt['reservation_id']);node_id=str(receipt['node_id']);generation=int(receipt['node_generation'])
         nonce=str(receipt.get('capability_nonce',''))
-        if nonce:
-            async with httpx.AsyncClient(timeout=10,trust_env=False) as client:
-                response=await client.post(self.settings.gateway_url.rstrip('/')+'/internal/revoke/'+nonce,
-                    headers={'X-Sandbox-Harness-Control':self.settings.gateway_control_key,
-                        'X-Updream-Thread-Id':context.job.thread_id,
-                        'X-Updream-Turn-Id':context.job.origin_turn_id,
-                        'X-Updream-Sandbox-Id':sandbox.id})
-                response.raise_for_status()
-        await self.pool.release(sandbox,keep_attached=False);self.sessions.pop(context.job.id,None)
+        async with self.scheduler.hold(reservation_id,node_id,generation):
+            if nonce:
+                async with httpx.AsyncClient(timeout=10,trust_env=False) as client:
+                    response=await client.post(self.settings.gateway_url.rstrip('/')+'/internal/revoke/'+nonce,
+                        headers={'X-Sandbox-Harness-Control':self.settings.gateway_control_key,
+                            'X-Updream-Thread-Id':context.job.thread_id,
+                            'X-Updream-Turn-Id':context.job.origin_turn_id,
+                            'X-Updream-Sandbox-Id':sandbox.id if sandbox else identity})
+                    response.raise_for_status()
+            if sandbox:await self.pool.release(sandbox,keep_attached=False)
+            self.sessions.pop(context.job.id,None)
+        await self.scheduler.release(reservation_id,node_id,generation)

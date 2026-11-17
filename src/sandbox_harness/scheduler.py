@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -122,8 +124,8 @@ class Scheduler:
                 NodeRow.heartbeat_at>now()-timedelta(seconds=self.node_ttl_seconds))
                 .order_by(NodeRow.id).with_for_update())).scalars().all())
             active=list((await db.execute(select(ResourceReservationRow).where(
-                ResourceReservationRow.state.in_(["reserved","running"]),
-                ResourceReservationRow.expires_at>now()).with_for_update())).scalars().all())
+                ResourceReservationRow.state.in_(["reserved","running"])
+                ).with_for_update())).scalars().all())
             candidates=[]
             for node in nodes:
                 inventory=NodeInventory.model_validate_json(node.inventory_json)
@@ -175,6 +177,25 @@ class Scheduler:
                 raise RuntimeError('stale_resource_reservation')
             row.expires_at=now()+timedelta(seconds=self.reservation_seconds)
             await db.flush();return self._view(row)
+
+    @asynccontextmanager
+    async def hold(self,reservation_id:str,node_id:str,node_generation:int):
+        await self.renew(reservation_id,node_id,node_generation)
+        owner=asyncio.current_task();lost=asyncio.Event()
+        async def heartbeat():
+            while True:
+                await asyncio.sleep(max(.1,self.reservation_seconds/3))
+                try:await self.renew(reservation_id,node_id,node_generation)
+                except Exception:
+                    lost.set();owner.cancel();return
+        task=asyncio.create_task(heartbeat(),name="resource-heartbeat-"+reservation_id)
+        try:
+            yield
+        except asyncio.CancelledError as exc:
+            if lost.is_set():raise RuntimeError("resource_reservation_lost") from exc
+            raise
+        finally:
+            task.cancel();await asyncio.gather(task,return_exceptions=True)
 
     async def release(self,reservation_id: str,node_id: str,node_generation: int)->bool:
         async with self.store.connections.begin() as db:

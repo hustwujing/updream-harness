@@ -9,6 +9,7 @@ from sandbox_harness.job_contracts import JobGroupCreate,JobKind,JobRequest,JobS
 from sandbox_harness.job_worker import JobWorker
 from sandbox_harness.store import (BudgetAccountRow,BudgetLedgerRow,BudgetReservationRow,
     JobOutboxRow,Store)
+from sandbox_harness.scheduler import GPUInventory,NodeInventory,NodeProfile,ResourceRequest,Scheduler
 
 
 def request(local="job",**updates):
@@ -219,4 +220,52 @@ async def test_archive_blocks_active_jobs_and_pending_continuation_then_unarchiv
         assert await store.claim_job_outbox_batch("dispatcher")==[]
         await store.set_thread_archived(thread.id,"owner",archived=False)
         assert (await store.get_job_outbox(group.id)).state=="ready"
+    finally:await store.close()
+
+
+async def test_resource_hold_covers_ttl_and_releases_exclusive_gpu_last(tmp_path):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"resource-hold.db"));await store.initialize()
+    scheduler=Scheduler(store,reservation_seconds=.3)
+    await scheduler.register_node(NodeInventory(node_id="gpu-node",generation=1,cpu_total=8,
+        memory_mb_total=16000,disk_mb_total=100000,profiles=(NodeProfile(
+            runtime_profile_id="gpu",harness="codex",image_digest="d"*64),),
+        gpus=(GPUInventory(id="gpu0",type="A100",memory_mb=40000),)))
+    request_value=ResourceRequest(child_profile_id="child",runtime_profile_id="gpu",
+        harness="codex",image_digest="d"*64,gpu_count=1,gpu_type="A100")
+    first=await scheduler.reserve("1"*32,1,request_value)
+    try:
+        async with scheduler.hold(first.id,first.node_id,first.node_generation):
+            await asyncio.sleep(.75)
+            with pytest.raises(RuntimeError,match="no_compatible_node_capacity"):
+                await scheduler.reserve("2"*32,1,request_value)
+        assert await scheduler.release(first.id,first.node_id,first.node_generation)
+        assert not await scheduler.release(first.id,first.node_id,first.node_generation)
+        second=await scheduler.reserve("2"*32,1,request_value)
+        assert second.gpu_ids==("gpu0",)
+    finally:await store.close()
+
+
+async def test_thread_delete_blocks_generic_cleanup_then_removes_complete_job_history(tmp_path):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"delete-jobs.db"));await store.initialize()
+    profile=HarnessCatalog().resolve("codex","gpt-5.6","standard")
+    thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+        reasoning_level="standard",title="Delete jobs"),profile,"owner")
+    group,jobs=await store.create_job_group("owner",JobGroupCreate(thread_id=thread.id,
+        origin_turn_id="c"*32,idempotency_key="delete-job-group",jobs=[request("delete")],
+        suppress_continuation=True));job=jobs[0]
+    try:
+        with pytest.raises(RuntimeError,match="active_jobs_prevent_thread_delete"):
+            await store.delete_thread(thread.id,"owner")
+        attempt=await store.claim_job(job.id,"worker","node",30)
+        await store.record_job_acceptance(job.id,"worker",attempt.generation,
+            external_execution_id="external",receipt={"accepted":True})
+        await store.transition_job(job.id,JobState.SUCCEEDED,
+            expected_generation=attempt.generation,result={"ok":True})
+        with pytest.raises(RuntimeError,match="active_jobs_prevent_thread_delete"):
+            await store.delete_thread(thread.id,"owner")
+        cleanup=(await store.claim_job_cleanups("cleanup",30,limit=1))[0]
+        await store.finish_job_cleanup(cleanup["cleanup_id"],"cleanup",succeeded=True)
+        await store.delete_thread(thread.id,"owner")
+        assert await store.get_thread(thread.id) is None
+        assert await store.get_job(job.id) is None and await store.get_job_group(group.id) is None
     finally:await store.close()
