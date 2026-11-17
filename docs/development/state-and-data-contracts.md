@@ -88,6 +88,14 @@ Failed or degraded publication atomically marks every Artifact and visible
 Artifact Item from that Turn partial. The state is monotonic within one Turn;
 a successful retry in a new Turn retains separate historical evidence.
 
+Checkpoint restore streams into bounded staging storage and exposes stable
+public error codes. Invalid tar data, unsafe member paths and attempts to
+traverse an existing workspace link all return `checkpoint_archive_invalid`;
+the Runtime must not expose parser- or host-specific exception text. Tests for
+these cases must also assert that no workspace or image-managed Skill bytes
+were modified. Size framing failures use `checkpoint_content_length_invalid`,
+`checkpoint_size_mismatch` or `checkpoint_too_large` as applicable.
+
 Durable Jobs write a pre-submit `SUBMITTING` intent under the active Job lease
 before any external call. A heartbeat covers submit, status, reconcile,
 cancel, collect and pause. If a process dies after intent but before acceptance,

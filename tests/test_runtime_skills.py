@@ -121,7 +121,7 @@ def test_checkpoint_restore_never_writes_through_materialized_skill_link(tmp_pat
             'proxy_url':'http://172.31.0.1:28601','skill_ids':['anatomy']})
         assert configured.status_code==200
         restored=client.put('/v1/checkpoint',content=archive.getvalue())
-        assert restored.status_code==400 and restored.json()['detail']=='Checkpoint member traverses a link'
+        assert restored.status_code==400 and restored.json()['detail']=='checkpoint_archive_invalid'
     assert (ROOT/'runtime/skills/anatomy/SKILL.md').read_bytes()==original
 
 
