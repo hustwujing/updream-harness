@@ -2670,7 +2670,7 @@ class Store:
                 or_(JobOutboxRow.state == "ready", and_(
                     JobOutboxRow.state == "claimed", JobOutboxRow.claim_expires_at < now())),
             ).order_by(JobOutboxRow.created_at, JobOutboxRow.id).limit(max_groups * 4)
-                .with_for_update(skip_locked=True))).scalars().all())
+                .with_for_update(skip_locked=True,of=JobOutboxRow))).scalars().all())
             if not candidates:
                 return []
             thread_id = candidates[0].thread_id

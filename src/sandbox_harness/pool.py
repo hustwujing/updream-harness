@@ -125,11 +125,10 @@ class SandboxPool:
 
     async def _perform_tracked_delete(self,sandbox:Sandbox)->None:
         try:
-            await self.backend.delete(sandbox)
-        except BaseException:
-            # Keep both the object and its capacity reservation for retry.
-            raise
-        else:
+            try:
+                await self.backend.delete(sandbox)
+            except SandboxNotFound:
+                pass
             async with self._lock:
                 retired = self._retiring.pop(sandbox.id, None)
             if retired and retired[1]:

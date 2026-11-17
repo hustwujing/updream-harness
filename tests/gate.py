@@ -42,6 +42,7 @@ def port_free(port):
 @contextmanager
 def postgres():
     root=DATA/"gate-postgresql";data=root/"data";run=root/"run";log=root/"postgresql.log"
+    database="gate_"+uuid.uuid4().hex
     root.mkdir(parents=True,exist_ok=True);run.mkdir(exist_ok=True)
     database_user="sandbox-harness-db";uid=int(subprocess.check_output(["id","-u",database_user],text=True))
     gid=int(subprocess.check_output(["id","-g",database_user],text=True))
@@ -53,8 +54,16 @@ def postgres():
     options=f"-h 127.0.0.1 -p 28433 -k {run}"
     subprocess.run(["runuser","-u",database_user,"--","/usr/lib/postgresql/16/bin/pg_ctl",
         "-D",str(data),"-l",str(log),"-o",options,"-w","start"],check=True)
-    try:yield "postgresql+asyncpg://sandbox-harness-db@127.0.0.1:28433/postgres"
+    created=False
+    try:
+        subprocess.run(["runuser","-u",database_user,"--","/usr/lib/postgresql/16/bin/createdb",
+            "-h","127.0.0.1","-p","28433",database],check=True)
+        created=True
+        yield f"postgresql+asyncpg://sandbox-harness-db@127.0.0.1:28433/{database}"
     finally:
+        if created:
+            subprocess.run(["runuser","-u",database_user,"--","/usr/lib/postgresql/16/bin/dropdb",
+                "-h","127.0.0.1","-p","28433","--force",database],check=False)
         subprocess.run(["runuser","-u",database_user,"--","/usr/lib/postgresql/16/bin/pg_ctl",
             "-D",str(data),"-m","fast","-w","stop"],check=False)
 

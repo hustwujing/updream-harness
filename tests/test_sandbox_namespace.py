@@ -5,7 +5,7 @@ import time
 import httpx
 
 from sandbox_harness.domain import Harness
-from sandbox_harness.sandbox import FakeSandboxBackend, OpenSandboxBackend
+from sandbox_harness.sandbox import FakeSandboxBackend, OpenSandboxBackend, SandboxNotFound
 from sandbox_harness.pool import SandboxPool
 
 
@@ -350,6 +350,24 @@ async def test_cancelled_retire_keeps_slot_bit_for_idempotent_retry():
     replacement=await asyncio.wait_for(pool.acquire(thread_id='other',turn_id='other',
         harness=Harness.CODEX,environment={}),1)
     await pool.release(replacement,keep_attached=False);await pool.close()
+
+
+async def test_concurrent_retire_after_external_delete_is_success_and_releases_slot_once():
+    class Backend(FakeSandboxBackend):
+        async def delete(self,sandbox):
+            if sandbox.id not in self.items:
+                raise SandboxNotFound('already absent')
+            await super().delete(sandbox)
+    backend=Backend();pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness},
+        max_sandboxes=1)
+    sandbox=await pool.acquire(thread_id='thread',turn_id='turn',harness=Harness.CODEX,environment={})
+    await backend.delete(sandbox)
+    await asyncio.gather(pool.retire(sandbox),pool.retire(sandbox))
+    assert not await pool.managed_sandbox_ids()
+    replacement=await asyncio.wait_for(pool.acquire(thread_id='replacement',turn_id='replacement',
+        harness=Harness.CODEX,environment={}),1)
+    await pool.release(replacement,keep_attached=False)
+    await pool.close()
 
 
 async def test_frozen_image_does_not_reuse_attached_sandbox_from_another_release():
