@@ -19,7 +19,7 @@ from .media_catalog import MediaCatalog
 from .media_job_adapter import MediaProviderJobAdapter
 from .media_render_adapter import MediaRenderOperationAdapter
 from .objects import object_store
-from .observability import configure
+from .observability import configure,event
 from .pool import SandboxPool
 from .profiles import ProfileResolver
 from .reviewer import ReviewerCoordinator,ReviewerJobAdapter,ReviewSubmission,ReviewTrigger
@@ -118,6 +118,16 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
         cached_bundle_digests=tuple(value for value in (settings.runtime_bundle_digest,
             settings.runtime_code_bundle_digest) if value))
     await store.initialize();await node.run_once()
+    try:
+        namespace=await pool.backend.list_namespace()
+        live_job_ids={value.turn_id or value.metadata.get("sandbox-harness.io/turn","")
+            for value in namespace}
+        released=await scheduler.reap_stale_reservations(
+            node.node_id,node.generation,{value for value in live_job_ids if value})
+        if released:event("scheduler.stale_reservations.released",count=len(released),node_id=node.node_id)
+    except Exception as exc:
+        event("scheduler.stale_reservations.reconcile_failed",level=40,node_id=node.node_id,
+            exception_type=type(exc).__name__)
     stop=stop_event or asyncio.Event();loop=asyncio.get_running_loop()
     if stop_event is None:
         for name in (signal.SIGTERM,signal.SIGINT):

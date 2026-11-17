@@ -1,7 +1,11 @@
 import pytest
+from sqlalchemy import update
 
 from sandbox_harness.scheduler import NodeInventory,ResourceRequest,Scheduler
-from sandbox_harness.store import Store
+from sandbox_harness.job_contracts import JobGroupCreate,JobKind,JobRequest,JobState
+from sandbox_harness.store import ResourceReservationRow,Store
+from sandbox_harness.domain import now
+from datetime import timedelta
 
 
 def node(node_id='node-a',generation=1,load=.2,warm=1,gpus=()):
@@ -68,4 +72,33 @@ async def test_scheduler_fences_stale_node_generation_and_reservation_release(tm
         assert running.state=='running'
         assert await scheduler.release(running.id,running.node_id,2)
         assert not await scheduler.release(running.id,running.node_id,2)
+    finally:await store.close()
+
+
+async def test_scheduler_reaps_only_expired_terminal_stale_generation_without_live_sandbox(tmp_path):
+    store,scheduler=await setup(tmp_path)
+    try:
+        await scheduler.register_node(node(generation=1))
+        jobs=[]
+        for suffix in ("absent","live"):
+            _,created=await store.create_job_group("owner",JobGroupCreate(thread_id="b"*32,
+                origin_turn_id="c"*32,idempotency_key=f"stale-{suffix}-group",jobs=[JobRequest(
+                    local_job_id=suffix,kind=JobKind.OPERATION,adapter="fake",descriptor_id="fake",
+                    descriptor_version="1",descriptor_digest="a"*64,
+                    idempotency_key=f"stale-{suffix}-job")]))
+            job=created[0];reservation=await scheduler.reserve(job.id,1,request())
+            attempt=await store.claim_job(job.id,"worker","node-a",30)
+            await store.transition_job(job.id,JobState.FAILED,expected_generation=attempt.generation,
+                result={"error_code":"fixture"})
+            async with store.connections.begin() as db:
+                await db.execute(update(ResourceReservationRow).where(
+                    ResourceReservationRow.id==reservation.id).values(expires_at=now()-timedelta(seconds=1)))
+            jobs.append((job,reservation))
+        await scheduler.register_node(node(generation=2))
+        released=await scheduler.reap_stale_reservations("node-a",2,{jobs[1][0].id})
+        assert released==[jobs[0][1].id]
+        async with store.connections() as db:
+            first=await db.get(ResourceReservationRow,jobs[0][1].id)
+            second=await db.get(ResourceReservationRow,jobs[1][1].id)
+        assert first.state=="released" and second.state=="reserved"
     finally:await store.close()

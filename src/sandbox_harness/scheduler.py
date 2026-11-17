@@ -9,7 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 
 from .domain import identifier, now
-from .store import NodeRow, ResourceReservationRow, utc_datetime
+from .job_contracts import TERMINAL_JOB_STATES
+from .store import JobRow,NodeRow, ResourceReservationRow, utc_datetime
 
 
 class GPUInventory(BaseModel):
@@ -108,6 +109,26 @@ class Scheduler:
                 row.heartbeat_at=timestamp;row.updated_at=timestamp
             else:db.add(NodeRow(id=value.node_id,generation=value.generation,status="ready",
                 inventory_json=value.model_dump_json(),heartbeat_at=timestamp,created_at=timestamp,updated_at=timestamp))
+
+    async def reap_stale_reservations(self,node_id:str,node_generation:int,
+                                      live_sandbox_job_ids:set[str])->list[str]:
+        async with self.store.connections.begin() as db:
+            node=await db.get(NodeRow,node_id,with_for_update=True)
+            if not node or node.generation!=node_generation:raise RuntimeError("stale_node_generation")
+            query=(select(ResourceReservationRow).join(JobRow,JobRow.id==ResourceReservationRow.job_id)
+                .where(ResourceReservationRow.node_id==node_id,
+                    ResourceReservationRow.node_generation!=node_generation,
+                    ResourceReservationRow.state.in_(["reserved","running"]),
+                    ResourceReservationRow.expires_at<now(),
+                    JobRow.state.in_([state.value for state in TERMINAL_JOB_STATES])))
+            if live_sandbox_job_ids:
+                query=query.where(ResourceReservationRow.job_id.not_in(live_sandbox_job_ids))
+            rows=list((await db.execute(query.order_by(ResourceReservationRow.created_at)
+                .with_for_update(of=ResourceReservationRow))).scalars().all())
+            timestamp=now()
+            for row in rows:
+                row.state="released";row.released_at=timestamp;row.expires_at=timestamp
+            return [row.id for row in rows]
 
     async def reserve(self, job_id: str, job_generation: int,
                       request: ResourceRequest) -> ResourceReservation:
