@@ -91,13 +91,23 @@ def test_service_account_can_read_descriptors_and_schema_startup_is_serialized()
     assert "SCHEMA_INITIALIZATION_LOCK_ID" in store
 
 
-def test_runtime_download_staging_is_owned_before_api_and_job_worker_start():
+def test_service_staging_is_owned_before_each_worker_starts():
     installer=(ROOT/"deploy/install-units.sh").read_text()
     assert '0750 "$root/.data/tmp/runtime-downloads"' in installer
-    command=("ExecStartPre=+/usr/bin/install -d -o sandbox-harness -g sandbox-harness -m 0750 "
+    assert all(name in installer for name in ("child-job-artifacts","job-artifacts",
+        "operation-job-artifacts","provider-job-artifacts","provider-outputs","site-stages"))
+    runtime=("ExecStartPre=+/usr/bin/install -d -o sandbox-harness -g sandbox-harness -m 0750 "
         "/data2/wujing03/sandbox-harness-platform-parallel/.data/tmp/runtime-downloads")
     for name in ("sandbox-harness-parallel-api.service","sandbox-harness-parallel-job-worker.service"):
-        assert command in (ROOT/"deploy/systemd"/name).read_text()
+        assert runtime in (ROOT/"deploy/systemd"/name).read_text()
+    ownership={"sandbox-harness-parallel-job-worker.service":("child-job-artifacts",
+        "operation-job-artifacts","provider-job-artifacts"),
+        "sandbox-harness-parallel-gateway.service":("job-artifacts","site-stages"),
+        "sandbox-harness-parallel-media-worker.service":("provider-outputs",),
+        "sandbox-harness-parallel-site-worker.service":("site-stages",)}
+    for name,directories in ownership.items():
+        source=(ROOT/"deploy/systemd"/name).read_text()
+        assert all(".data/tmp/"+directory in source for directory in directories)
 
 
 def test_configure_local_inherits_provider_configuration_but_not_storage_identity():

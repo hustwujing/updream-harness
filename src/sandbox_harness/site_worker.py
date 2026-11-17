@@ -25,7 +25,6 @@ class SiteWorker:
         data_root = Path(getattr(settings, "data_root",
             "/data2/wujing03/sandbox-harness-platform-parallel/data"))
         self.staging_root = data_root / "tmp" / "site-stages"
-        self.staging_root.mkdir(parents=True, exist_ok=True)
 
     async def run(self) -> None:
         active: set[asyncio.Task] = set()
@@ -80,6 +79,7 @@ class SiteWorker:
             heartbeat_task.cancel();await asyncio.gather(heartbeat_task,return_exceptions=True)
 
     def _copy_archive(self, job: dict) -> Path:
+        self.staging_root.mkdir(parents=True, exist_ok=True)
         target=None
         try:
             with NamedTemporaryFile(dir=self.staging_root,

@@ -71,8 +71,10 @@ class MediaWorker:
         self.lease_seconds=getattr(settings,"media_job_lease_seconds",60)
         data_root=Path(getattr(settings,"data_root",Path.cwd()/".data"))
         self.staging_root=(data_root/"tmp"/"provider-outputs").resolve()
-        self.staging_root.mkdir(parents=True,exist_ok=True)
         self.process_start=_process_start(os.getpid()) or "unknown"
+
+    def _prepare_staging(self)->None:
+        self.staging_root.mkdir(parents=True,exist_ok=True)
         for path in self.staging_root.glob(".provider-output-*-*-*"):
             parts=path.name.split("-",4)
             try:pid=int(parts[2]);started=parts[3]
@@ -1038,6 +1040,7 @@ class MediaWorker:
             raise
 
     async def _download(self, url: str, *, expected_kind: str) -> DownloadedMedia:
+        self._prepare_staging()
         maximum=(getattr(self.settings,"tripo_max_output_bytes",512*1024*1024)
             if expected_kind.startswith("model3d") else getattr(self.settings,"max_artifact_bytes",2*1024*1024*1024))
         current=url;temporary=None

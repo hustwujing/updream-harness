@@ -26,6 +26,7 @@ install -d -o sandbox-harness -g sandbox-harness -m 0700 "$root/.data"
 install -d -o sandbox-harness -g sandbox-harness -m 0700 "$root/.data"/{cache,npm-cache,objects,pip-cache,playwright-browsers,preview-cache,runtime-bundles,runtime-code-bundles,service-logs,tmp,uv-cache}
 chmod 1777 "$root/.data/tmp"
 install -d -o sandbox-harness -g sandbox-harness -m 0750 "$root/.data/tmp/runtime-downloads"
+install -d -o sandbox-harness -g sandbox-harness -m 0700 "$root/.data/tmp"/{child-job-artifacts,job-artifacts,operation-job-artifacts,provider-job-artifacts,provider-outputs,site-stages}
 install -d -o root -g sandbox-harness -m 0750 "$root/.data/config"
 install -d -o sandbox-harness-db -g sandbox-harness-db -m 0700 "$root/.data/postgresql"
 install -d -o sandbox-harness-db -g sandbox-harness-db -m 0700 "$root/.data/postgresql/run"

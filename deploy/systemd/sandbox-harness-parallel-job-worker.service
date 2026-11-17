@@ -13,6 +13,7 @@ EnvironmentFile=/data2/wujing03/sandbox-harness-platform-parallel/.data/config/p
 Environment=TMPDIR=/data2/wujing03/sandbox-harness-platform-parallel/.data/tmp
 Environment=XDG_CACHE_HOME=/data2/wujing03/sandbox-harness-platform-parallel/.data/cache
 ExecStartPre=+/usr/bin/install -d -o sandbox-harness -g sandbox-harness -m 0750 /data2/wujing03/sandbox-harness-platform-parallel/.data/tmp/runtime-downloads
+ExecStartPre=+/usr/bin/install -d -o sandbox-harness -g sandbox-harness -m 0700 /data2/wujing03/sandbox-harness-platform-parallel/.data/tmp/child-job-artifacts /data2/wujing03/sandbox-harness-platform-parallel/.data/tmp/operation-job-artifacts /data2/wujing03/sandbox-harness-platform-parallel/.data/tmp/provider-job-artifacts
 ExecStart=/data2/wujing03/sandbox-harness-platform-parallel/.venv/bin/sandbox-harness-parallel-job-worker
 Restart=on-failure
 RestartSec=3
