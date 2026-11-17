@@ -8,9 +8,9 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 
-from sqlalchemy import and_, case, or_, Boolean, DateTime, Integer, String, Text, UniqueConstraint, delete, func, select, text, update
+from sqlalchemy import and_, case, or_, Boolean, DateTime, Integer, String, Text, UniqueConstraint, delete, func, inspect as sqlalchemy_inspect, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -919,6 +919,18 @@ class Store:
                 await connection.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"),
                     {"lock_id": SCHEMA_INITIALIZATION_LOCK_ID})
             await connection.run_sync(Base.metadata.create_all)
+            artifact_columns = await connection.run_sync(lambda value: {
+                column["name"] for column in sqlalchemy_inspect(value).get_columns("artifacts")})
+            if "partial" not in artifact_columns:
+                statement = ("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS "
+                    "partial BOOLEAN NOT NULL DEFAULT FALSE" if connection.dialect.name == "postgresql"
+                    else "ALTER TABLE artifacts ADD COLUMN partial BOOLEAN NOT NULL DEFAULT 0")
+                try:
+                    await connection.execute(text(statement))
+                except OperationalError as exc:
+                    if (connection.dialect.name != "sqlite"
+                            or "duplicate column name: partial" not in str(exc).lower()):
+                        raise
             await connection.execute(text("""
                 INSERT INTO turn_order (turn_id, thread_id, sequence, created_at)
                 SELECT t.id, t.thread_id, MIN(i.sequence), t.created_at

@@ -64,11 +64,17 @@ Streams only wake clients and retain a bounded replay aid.
 ## Files
 
 `uploads` associates immutable uploaded objects with a browser owner.
-`artifacts` indexes immutable `/workspace/outputs` exports by Turn.
+`artifacts` indexes immutable `/workspace/outputs` exports by Turn. Its
+non-null `partial` flag records whether that Turn exposed the file before a
+degraded or failed publication boundary. Once partial within a Turn it cannot
+be downgraded; a later successful Turn creates a distinct complete history row.
 `project_files` versions logical `assets/...` and `artifacts/...` paths per
 Thread. Deletion writes a tombstone version; older versions remain queryable.
 Artifact publication atomically creates the Artifact, its user-visible Item and
 the corresponding artifact ProjectFile under the owning Turn lease.
+Startup adds `artifacts.partial` with a false server default to an existing
+database under the schema initialization lock, preserving and backfilling all
+existing Artifact rows. Repeated and concurrent initialization is idempotent.
 
 `turn_project_files` is the immutable per-Turn input manifest. It stores the
 selected ProjectFile ID, path, version, source, SHA-256, size, MIME and object

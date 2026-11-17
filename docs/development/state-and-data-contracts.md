@@ -84,6 +84,9 @@ paths; deletion is a tombstone. Managed project files are materialized into the
 sandbox and excluded from checkpoint archives to avoid duplicate storage.
 Artifact, transcript Item and artifact ProjectFile publication commit in one
 lease-fenced transaction after the immutable object write.
+Failed or degraded publication atomically marks every Artifact and visible
+Artifact Item from that Turn partial. The state is monotonic within one Turn;
+a successful retry in a new Turn retains separate historical evidence.
 
 Before first materialization a leased worker freezes `turn_project_files` and
 sets `turns.project_files_frozen`, even for an empty manifest. Recovery and

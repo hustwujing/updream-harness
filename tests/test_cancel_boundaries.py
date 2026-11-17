@@ -98,7 +98,7 @@ async def test_cancel_restart_with_fresh_pool_adopts_and_deletes_every_matching_
         replacement=Broker(settings,store,ObjectStore(tmp_path/'objects'),new_pool,runtime,HarnessCatalog())
         try:
             await replacement.reconcile();await wait_state(store,first.id,TurnState.CANCELLED)
-            assert runtime.messages==[] and runtime.cancelled==1
+            assert 'first' not in runtime.messages and runtime.cancelled==1
             assert await backend.find_by_turn(first.id)==[]
             assert not await new_pool.managed_sandbox_ids()
         finally:

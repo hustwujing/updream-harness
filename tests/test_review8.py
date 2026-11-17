@@ -1,10 +1,15 @@
+import asyncio
 import hashlib
+import io
 import json
+import sqlite3
+import tarfile
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from starlette.requests import Request
 
 import sandbox_runtime.app as runtime_app
 from sandbox_harness.catalog import HarnessCatalog
@@ -17,6 +22,7 @@ from sandbox_harness.domain import (
     ThreadCreate,
     TurnCreate,
     TurnInputCreate,
+    RuntimeResult,
     TurnState,
 )
 from sandbox_harness.runtime import RuntimeClient, RuntimeTransferError
@@ -107,6 +113,56 @@ async def test_runtime_artifact_manifest_fails_closed_when_truncated():
         await runtime.artifacts(sandbox, "current")
 
 
+async def test_runtime_artifact_manifest_translates_real_count_limit_response():
+    runtime = RuntimeClient(transport=httpx.MockTransport(lambda request:httpx.Response(413,
+        json={"detail":"artifact_count_limit_exceeded"})))
+    sandbox = Sandbox(id="sandbox", harness=Harness.CODEX, image="image",
+        runtime_url="http://runtime", metadata={})
+    with pytest.raises(RuntimeTransferError, match="artifact_count_limit_exceeded") as captured:
+        await runtime.artifacts(sandbox, "current")
+    assert captured.value.error_code == "artifact_count_limit_exceeded"
+
+
+async def test_artifact_count_limit_is_public_turn_failure(tmp_path):
+    class Runtime:
+        async def inject(self, *args, **kwargs): pass
+        async def reset_project_files(self, *args): pass
+        async def run(self, *args, **kwargs):
+            yield RuntimeResult(status="completed", native_thread_id="native")
+        async def checkpoint(self, sandbox, *, maximum):
+            path = tmp_path / ("checkpoint-" + __import__('uuid').uuid4().hex)
+            path.write_bytes(b"checkpoint")
+            from sandbox_harness.runtime import StagedRuntimeObject
+            return StagedRuntimeObject(path, 10, hashlib.sha256(b"checkpoint").hexdigest())
+        async def artifacts(self, *args):
+            raise RuntimeTransferError("artifact_count_limit_exceeded")
+        async def cancel(self, *args): return {"cancelled": True}
+
+    settings = Settings(backend="fake", data_root=tmp_path,
+        database_url="sqlite+aiosqlite:///" + str(tmp_path / "public-count.db"),
+        gateway_url="http://127.0.0.1:9", session_keepalive_seconds=0)
+    store = Store(settings.database_url); await store.initialize()
+    pool = SandboxPool(FakeSandboxBackend(), {h: "" for h in Harness}, {h: 0 for h in Harness})
+    broker = Broker(settings, store, ObjectStore(tmp_path / "objects"), pool, Runtime(), HarnessCatalog())
+    try:
+        profile = broker.catalog.resolve("codex", "gpt-5.6", "standard")
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CODEX, model=profile.model,
+            reasoning_level="standard", title="Count limit"), profile, "owner")
+        turn = await broker.submit(thread.id,
+            TurnCreate(message="many files", idempotency_key="public-count-limit"))
+        for _ in range(300):
+            current = await store.get_turn(turn.id)
+            if current.state == TurnState.FAILED:
+                break
+            await __import__('asyncio').sleep(.01)
+        assert current.state == TurnState.FAILED
+        error = next(item for item in await store.items_after(thread.id) if item.type == ItemType.ERROR)
+        assert error.payload["code"] == "artifact_count_limit_exceeded"
+        assert "50000" in error.payload["detail"]
+    finally:
+        await broker.close(); await pool.close(); await store.close()
+
+
 def test_runtime_artifact_endpoint_rejects_count_over_limit(tmp_path, monkeypatch):
     outputs = tmp_path / "outputs"; outputs.mkdir()
     (outputs / ".sandbox-output-batch").write_text("turn")
@@ -162,6 +218,102 @@ async def test_failed_save_marks_existing_turn_artifact_partial_and_retry_is_new
         assert [item.payload["partial"] for item in items] == [True, False]
     finally:
         await store.close()
+
+
+async def test_initialize_migrates_existing_artifacts_partial_column_idempotently(tmp_path):
+    database = tmp_path / "artifact-upgrade.db"
+    url = "sqlite+aiosqlite:///" + str(database)
+    store = Store(url); await store.initialize()
+    artifact = await store.add_artifact("turn-before-upgrade", path="kept.txt", sha256="3" * 64,
+        size=4, mime="text/plain", object_ref="sha256:" + "3" * 64)
+    await store.close()
+    with sqlite3.connect(database) as connection:
+        connection.execute("ALTER TABLE artifacts DROP COLUMN partial")
+    for _ in range(2):
+        reopened = Store(url); await reopened.initialize(); await reopened.close()
+    with sqlite3.connect(database) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(artifacts)")}
+        row = connection.execute("SELECT id, partial FROM artifacts WHERE id = ?", (artifact.id,)).fetchone()
+    assert "partial" in columns
+    assert row == (artifact.id, 0)
+
+
+async def test_concurrent_initialize_migrates_artifacts_partial_once(tmp_path):
+    database = tmp_path / "artifact-upgrade-race.db"
+    url = "sqlite+aiosqlite:///" + str(database)
+    seed = Store(url); await seed.initialize(); await seed.close()
+    with sqlite3.connect(database) as connection:
+        connection.execute("ALTER TABLE artifacts DROP COLUMN partial")
+    stores = [Store(url) for _ in range(4)]
+    try:
+        await asyncio.gather(*(store.initialize() for store in stores))
+    finally:
+        await asyncio.gather(*(store.close() for store in stores))
+    with sqlite3.connect(database) as connection:
+        columns = [row[1] for row in connection.execute("PRAGMA table_info(artifacts)")]
+    assert columns.count("partial") == 1
+
+
+def checkpoint_tar() -> bytes:
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w") as archive:
+        payload = b"restored"
+        member = tarfile.TarInfo("project/restored.txt"); member.size = len(payload)
+        archive.addfile(member, io.BytesIO(payload))
+    return output.getvalue()
+
+
+def chunked_request(path: str, chunks: list[bytes]):
+    delivered = 0
+
+    async def receive():
+        nonlocal delivered
+        if delivered >= len(chunks):
+            return {"type":"http.request", "body":b"", "more_body":False}
+        body = chunks[delivered]; delivered += 1
+        return {"type":"http.request", "body":body, "more_body":delivered < len(chunks)}
+
+    request = Request({"type":"http", "method":"PUT", "path":path,
+        "query_string":b"", "headers":[]}, receive)
+    return request, lambda: delivered
+
+
+async def test_runtime_checkpoint_restore_streams_and_stops_over_limit(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"; workspace.mkdir()
+    run = tmp_path / "run"; run.mkdir()
+    monkeypatch.setattr(runtime_app, "WORKSPACE", workspace)
+    monkeypatch.setattr(runtime_app, "RUN", run)
+    monkeypatch.setattr(runtime_app, "MAX_CHECKPOINT_BYTES", 12)
+    app = runtime_app.create_app()
+    endpoint = next(route.endpoint for route in app.routes
+        if getattr(route, "path", None) == "/v1/checkpoint" and "PUT" in route.methods)
+    request, delivered = chunked_request("/v1/checkpoint", [b"a" * 8, b"b" * 8, b"unread"])
+    with pytest.raises(Exception) as captured:
+        await endpoint(request)
+    assert captured.value.status_code == 413
+    assert captured.value.detail == "checkpoint_too_large"
+    assert delivered() == 2
+    assert list(run.glob(".checkpoint-restore-*")) == []
+
+
+async def test_runtime_checkpoint_restore_accepts_multichunk_without_request_body(tmp_path, monkeypatch):
+    archive = checkpoint_tar(); workspace = tmp_path / "workspace"; workspace.mkdir()
+    run = tmp_path / "run"; run.mkdir()
+    monkeypatch.setattr(runtime_app, "WORKSPACE", workspace)
+    monkeypatch.setattr(runtime_app, "RUN", run)
+    monkeypatch.setattr(runtime_app, "MAX_CHECKPOINT_BYTES", len(archive) + 1)
+    monkeypatch.setattr(Request, "body", lambda self: (_ for _ in ()).throw(
+        AssertionError("request.body must not be called")))
+    app = runtime_app.create_app()
+    endpoint = next(route.endpoint for route in app.routes
+        if getattr(route, "path", None) == "/v1/checkpoint" and "PUT" in route.methods)
+    thirds = max(1, len(archive) // 3)
+    request, delivered = chunked_request("/v1/checkpoint",
+        [archive[:thirds], archive[thirds:2*thirds], archive[2*thirds:]])
+    assert await endpoint(request) == {"restored": True}
+    assert delivered() == 3
+    assert (workspace / "project" / "restored.txt").read_bytes() == b"restored"
+    assert list(run.glob(".checkpoint-restore-*")) == []
 
 
 @pytest.mark.parametrize("model", [TurnCreate, TurnInputCreate])

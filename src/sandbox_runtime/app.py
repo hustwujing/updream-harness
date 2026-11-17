@@ -52,11 +52,42 @@ RUN = Path("/run/harness")
 HARNESS_JSONL_LIMIT = 16 * 1024 * 1024
 RUNTIME_EVENT_JOURNAL_LIMIT = 256 * 1024 * 1024
 MAX_OUTPUT_ARTIFACTS = 50_000
+MAX_CHECKPOINT_BYTES = 4 * 1024 * 1024 * 1024
 
 
 def require_output_artifact_count(count: int) -> None:
     if count > MAX_OUTPUT_ARTIFACTS:
         raise HTTPException(413, "artifact_count_limit_exceeded")
+
+
+async def stage_checkpoint_request(request: Request) -> Path:
+    raw_length = request.headers.get("content-length")
+    if raw_length is not None:
+        try:
+            declared = int(raw_length)
+        except ValueError as exc:
+            raise HTTPException(400, "checkpoint_content_length_invalid") from exc
+        if declared < 0:
+            raise HTTPException(400, "checkpoint_content_length_invalid")
+        if declared > MAX_CHECKPOINT_BYTES:
+            raise HTTPException(413, "checkpoint_too_large")
+    RUN.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with NamedTemporaryFile(dir=RUN, prefix=".checkpoint-restore-", delete=False) as stream:
+            temporary = Path(stream.name); size = 0
+            async for chunk in request.stream():
+                if size + len(chunk) > MAX_CHECKPOINT_BYTES:
+                    raise HTTPException(413, "checkpoint_too_large")
+                stream.write(chunk); size += len(chunk)
+            if raw_length is not None and size != declared:
+                raise HTTPException(400, "checkpoint_size_mismatch")
+            stream.flush(); os.fsync(stream.fileno())
+        return temporary
+    except BaseException:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        raise
 class Configure(BaseModel):
     thread_id: str = Field(default="",max_length=160)
     turn_id: str = Field(default="",max_length=160)
@@ -978,26 +1009,30 @@ def create_app() -> FastAPI:
 
     @app.put("/v1/checkpoint")
     async def restore(request: Request):
-        data = await request.body()
-        if len(data) > 4 * 1024 * 1024 * 1024:
-            raise HTTPException(413, "Checkpoint too large")
-        with NamedTemporaryFile() as stream:
-            stream.write(data); stream.flush()
-            with tarfile.open(stream.name, "r:*") as archive:
-                safe_members = []
-                for member in archive.getmembers():
+        staged = await stage_checkpoint_request(request)
+        try:
+            def safe_checkpoint_member(member, _destination):
+                try:
                     path = safe_relative(member.name)
-                    if path.parts[0] not in PERSISTENT:
-                        raise HTTPException(400, "Invalid checkpoint member")
-                    if member.issym() or member.islnk() or member.isdev():
-                        continue
-                    current = WORKSPACE
-                    for part in path.parts[:-1]:
-                        current = current / part
-                        if current.is_symlink():
-                            raise HTTPException(400, "Checkpoint member traverses a link")
-                    safe_members.append(member)
-                archive.extractall(WORKSPACE, members=safe_members, filter="data")
+                except ValueError as exc:
+                    raise tarfile.FilterError("Invalid checkpoint member") from exc
+                if path.parts[0] not in PERSISTENT:
+                    raise tarfile.FilterError("Invalid checkpoint member")
+                if member.issym() or member.islnk() or member.isdev():
+                    return None
+                current = WORKSPACE
+                for part in path.parts[:-1]:
+                    current = current / part
+                    if current.is_symlink():
+                        raise tarfile.FilterError("Checkpoint member traverses a link")
+                return member
+            try:
+                with tarfile.open(staged, "r:*") as archive:
+                    archive.extractall(WORKSPACE, filter=safe_checkpoint_member)
+            except (tarfile.TarError, OSError) as exc:
+                raise HTTPException(400, "checkpoint_archive_invalid") from exc
+        finally:
+            staged.unlink(missing_ok=True)
         if app.state.harness:
             skills = materialize_skills(app.state.harness, WORKSPACE, app.state.skill_ids,
                 app.state.skill_digests or None)

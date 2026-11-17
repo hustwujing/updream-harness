@@ -424,6 +424,13 @@ class RuntimeClient:
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()},
             timeout=60, trust_env=False, transport=self.transport) as client:
             response = await client.get("/v1/artifacts")
+            if response.status_code == 413:
+                try:
+                    detail = response.json().get("detail")
+                except (ValueError, AttributeError):
+                    detail = ""
+                if detail == "artifact_count_limit_exceeded":
+                    raise RuntimeTransferError("artifact_count_limit_exceeded")
             response.raise_for_status()
             value = response.json()
             if value.get("batch_id") != expected_batch_id:
