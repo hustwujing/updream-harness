@@ -280,10 +280,17 @@ class MediaWorker:
             event("media.job.invalid_result", level=40, job_id=job["id"], provider=job["provider"],
                 model=job["model"], failure_stage=stage, error_code=str(exc)[:80])
         except Exception as exc:
-            await self.store.update_media_job(job["id"], self.owner, job["generation"], status="unknown", phase="recovery_required",
-                error_code="worker_error", error_detail=f"{stage}:{type(exc).__name__}")
-            event("media.job.unknown", level=40, job_id=job["id"], provider=job["provider"], model=job["model"],
-                failure_stage=stage, exception_type=type(exc).__name__)
+            if stage.startswith(("download_","object_store_")):
+                await self.store.release_media_job_lease(job["id"],self.owner,job["generation"],
+                    phase="provider_output_retry",error_code="provider_output_unavailable",
+                    error_detail=f"{stage}:{type(exc).__name__}",retry_after_seconds=15)
+                event("media.output.retry_scheduled",level=40,job_id=job["id"],provider=job["provider"],
+                    model=job["model"],failure_stage=stage,exception_type=type(exc).__name__)
+            else:
+                await self.store.update_media_job(job["id"], self.owner, job["generation"], status="unknown", phase="recovery_required",
+                    error_code="worker_error", error_detail=f"{stage}:{type(exc).__name__}")
+                event("media.job.unknown", level=40, job_id=job["id"], provider=job["provider"], model=job["model"],
+                    failure_stage=stage, exception_type=type(exc).__name__)
 
     async def _execute(self, job: dict[str, Any]) -> ProviderResult:
         if job.get("references") and job["adapter"] not in {"tripo_v3", "minimax_t2a"}:

@@ -35,7 +35,8 @@ async def setup_job(tmp_path,name="media"):
     return settings,store,thread,turn,job
 
 
-async def test_sync_provider_receipt_survives_download_retry_without_resubmit(tmp_path,monkeypatch):
+@pytest.mark.parametrize("failure",["http","permission"])
+async def test_sync_provider_receipt_survives_download_retry_without_resubmit(tmp_path,monkeypatch,failure):
     settings,store,thread,turn,job=await setup_job(tmp_path,"receipt")
     worker=MediaWorker(settings,store,ObjectStore(tmp_path/"objects"),MediaCatalog())
     submits=0;downloads=0
@@ -45,6 +46,7 @@ async def test_sync_provider_receipt_survives_download_retry_without_resubmit(tm
     async def download(*args,**kwargs):
         nonlocal downloads;downloads+=1
         if downloads==1:
+            if failure=="permission":raise PermissionError("staging temporarily unavailable")
             request=httpx.Request("GET","https://allowed.test/image.png")
             raise httpx.HTTPStatusError("temporary",request=request,response=httpx.Response(503,request=request))
         path=tmp_path/"image.png";data=b"\x89PNG\r\n\x1a\nvalid";path.write_bytes(data)
