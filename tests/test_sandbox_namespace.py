@@ -170,6 +170,8 @@ async def test_opensandbox_binding_renews_expiration_for_full_turn_ttl():
             return httpx.Response(200, json={})
         if request.url.path.endswith("/renew-expiration"):
             return httpx.Response(200, json={"expiresAt": json.loads(request.content)["expiresAt"]})
+        if request.url.path.endswith("/endpoints/8080"):
+            return httpx.Response(200,json={"endpoint":"http://runtime-refreshed"})
         return httpx.Response(404)
     backend = OpenSandboxBackend("http://opensandbox", "", 3600, "sandbox-harness")
     await backend.client.aclose(); backend.client = httpx.AsyncClient(
@@ -181,10 +183,34 @@ async def test_opensandbox_binding_renews_expiration_for_full_turn_ttl():
         assert [request.url.path for request in requests] == [
             "/v1/sandboxes/sandbox-one/metadata",
             "/v1/sandboxes/sandbox-one/renew-expiration",
+            "/v1/sandboxes/sandbox-one/endpoints/8080",
         ]
+        assert sandbox.runtime_url=="http://runtime-refreshed"
         assert sandbox.expires_at_monotonic > time.monotonic() + 3500
     finally:
         await backend.client.aclose()
+
+
+async def test_opensandbox_refreshes_runtime_endpoint_before_proxy_url_expires():
+    requests=[]
+    def respond(request:httpx.Request):
+        requests.append(request)
+        if request.url.path.endswith('/endpoints/8080'):
+            return httpx.Response(200,json={'endpoint':'http://runtime-new'})
+        return httpx.Response(500)
+    backend=OpenSandboxBackend('http://opensandbox','',3600,'sandbox-harness')
+    await backend.client.aclose();backend.client=httpx.AsyncClient(
+        base_url='http://opensandbox',transport=httpx.MockTransport(respond))
+    sandbox=__import__('sandbox_harness.sandbox',fromlist=['Sandbox']).Sandbox(
+        id='sandbox-one',harness=Harness.CODEX,image='image',runtime_url='http://runtime-old',
+        metadata={},expires_at_monotonic=time.monotonic()+3000)
+    try:
+        await backend.renew(sandbox)
+        assert [request.url.path for request in requests]==[
+            '/v1/sandboxes/sandbox-one/endpoints/8080']
+        assert sandbox.runtime_url=='http://runtime-new'
+        assert sandbox.runtime_endpoint_refresh_at_monotonic>time.monotonic()+50
+    finally:await backend.client.aclose()
 
 
 async def test_create_scopes_sandbox_for_the_shared_internal_network():

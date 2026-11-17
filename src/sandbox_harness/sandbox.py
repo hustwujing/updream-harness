@@ -31,6 +31,7 @@ class Sandbox:
     turn_id: str = ""
     reused: bool = False
     expires_at_monotonic: float = 0
+    runtime_endpoint_refresh_at_monotonic: float = 0
     health_state: str = "ready"
     health_error: str = ""
 
@@ -73,6 +74,18 @@ class OpenSandboxBackend:
             runtime_url=runtime_url or "", metadata=metadata,
             health_state="inventory")
 
+    async def _refresh_runtime_endpoint(self,sandbox:Sandbox)->None:
+        endpoint=await self.client.get(f"/v1/sandboxes/{sandbox.id}/endpoints/8080",
+            params={"use_server_proxy":"true"})
+        if endpoint.status_code==404:
+            raise SandboxNotFound("OpenSandbox runtime endpoint is unavailable")
+        endpoint.raise_for_status();value=endpoint.json().get("endpoint")
+        if not isinstance(value,str) or not value:
+            raise RuntimeError("OpenSandbox returned no runtime endpoint")
+        sandbox.runtime_url=value if "://" in value else "http://"+value
+        sandbox.runtime_headers=dict(self.client.headers)
+        sandbox.runtime_endpoint_refresh_at_monotonic=time.monotonic()+60
+
     async def _ready(self, sandbox: Sandbox) -> Sandbox:
         for _ in range(80):
             status = await self.client.get(f"/v1/sandboxes/{sandbox.id}")
@@ -83,14 +96,8 @@ class OpenSandboxBackend:
             if state in {"failed", "terminated"}:
                 raise RuntimeError("OpenSandbox failed before its runtime endpoint became ready")
             if state == "running":
-                endpoint = await self.client.get(
-                    f"/v1/sandboxes/{sandbox.id}/endpoints/8080",
-                    params={"use_server_proxy": "true"},
-                )
-                if endpoint.status_code == 200 and endpoint.json().get("endpoint"):
-                    value = endpoint.json()["endpoint"]
-                    sandbox.runtime_url = value if "://" in value else "http://" + value
-                    sandbox.runtime_headers = dict(self.client.headers)
+                try:
+                    await self._refresh_runtime_endpoint(sandbox)
                     try:
                         health = await self.client.get(sandbox.runtime_url.rstrip("/") + "/health")
                         if health.status_code == 200 and health.json().get("status") in {"ok", "bootstrap"}:
@@ -99,6 +106,7 @@ class OpenSandboxBackend:
                             return sandbox
                     except (httpx.TimeoutException, httpx.TransportError, ValueError):
                         pass
+                except (httpx.HTTPError,RuntimeError):pass
             await asyncio.sleep(0.25)
         raise RuntimeError("OpenSandbox runtime endpoint did not become ready")
 
@@ -256,16 +264,24 @@ class OpenSandboxBackend:
 
     @observed("sandbox.renew")
     async def renew(self, sandbox: Sandbox, *, force: bool = False) -> None:
-        if (not force and sandbox.expires_at_monotonic
-                and sandbox.expires_at_monotonic - time.monotonic() > max(60, self.timeout_seconds / 2)):
-            return
-        target = datetime.now(timezone.utc) + timedelta(seconds=self.timeout_seconds)
-        response = await self.client.post(f"/v1/sandboxes/{sandbox.id}/renew-expiration",
-            json={"expiresAt": target.isoformat()})
-        if response.status_code == 404:
-            raise SandboxNotFound("OpenSandbox no longer has sandbox " + sandbox.id)
-        response.raise_for_status()
-        sandbox.expires_at_monotonic = time.monotonic() + self.timeout_seconds
+        current=time.monotonic()
+        ttl_due=(force or not sandbox.expires_at_monotonic
+            or sandbox.expires_at_monotonic-current<=max(60,self.timeout_seconds/2))
+        if ttl_due:
+            target=datetime.now(timezone.utc)+timedelta(seconds=self.timeout_seconds)
+            response=await self.client.post(f"/v1/sandboxes/{sandbox.id}/renew-expiration",
+                json={"expiresAt":target.isoformat()})
+            if response.status_code==404:
+                raise SandboxNotFound("OpenSandbox no longer has sandbox "+sandbox.id)
+            response.raise_for_status()
+            sandbox.expires_at_monotonic=time.monotonic()+self.timeout_seconds
+        if force or sandbox.runtime_endpoint_refresh_at_monotonic<=current:
+            try:await self._refresh_runtime_endpoint(sandbox)
+            except Exception as exc:
+                if force:raise
+                sandbox.runtime_endpoint_refresh_at_monotonic=time.monotonic()+10
+                event("sandbox.runtime_endpoint.refresh_failed",level=30,
+                    sandbox_id=sandbox.id,exception_type=type(exc).__name__)
 
     @observed("sandbox.delete")
     async def delete(self, sandbox: Sandbox) -> None:
