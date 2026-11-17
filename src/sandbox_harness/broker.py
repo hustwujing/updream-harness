@@ -547,6 +547,14 @@ class Broker:
         await self.store.persist_runtime_event(thread_id, turn_id, value, execution_id,
             lease_owner=self.instance_id if generation is not None else None,
             recovery_generation=generation)
+        if value.kind==EventKind.STEP_FINISHED and value.payload.get("input_completed"):
+            status="failed" if value.payload.get("is_error") else "applied"
+            for input_id in value.payload.get("input_ids") or []:
+                if input_id!=turn_id:
+                    await self.store.set_input_status(input_id,status,
+                        execution_id=execution_id,
+                        lease_owner=self.instance_id if generation is not None else None,
+                        recovery_generation=generation)
 
     @observed("input.materialize")
     async def _materialize_attachments(self, sandbox, attachments) -> None:

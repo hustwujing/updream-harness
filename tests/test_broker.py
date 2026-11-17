@@ -236,6 +236,40 @@ async def test_broker_pause_quiesces_and_checkpoints_primary_harness(tmp_path):
         await broker.close(); await pool.close(); await store.close()
 
 
+async def test_native_input_completion_receipt_survives_later_input_failure(tmp_path):
+    settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'input-receipts.db'),
+        backend='fake',gateway_signing_key='k'*32,gateway_url='http://127.0.0.1:9')
+    store=Store(settings.database_url);await store.initialize();objects=ObjectStore(tmp_path/'objects')
+    backend=FakeSandboxBackend();pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness})
+    catalog=HarnessCatalog();broker=Broker(settings,store,objects,pool,Runtime(),catalog);owner='a'*64
+    try:
+        profile=catalog.resolve('codex','gpt-5.6','standard')
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level='standard',title='Input receipts'),profile,owner)
+        turn,_,_=await store.create_turn(thread.id,TurnCreate(message='start',
+            idempotency_key='input-receipts-turn'),profile,owner)
+        claim=await store.claim_turn(turn.id,broker.instance_id,30);broker.leases[turn.id]=claim.recovery_generation
+        execution_id=turn.id+':'+turn.id
+        await store.start_runtime_execution(turn.id,execution_id,broker.instance_id,claim.recovery_generation)
+        first,_=await store.create_turn_input(turn.id,TurnInputCreate(message='first',
+            idempotency_key='input-receipt-first'),owner)
+        second,_=await store.create_turn_input(turn.id,TurnInputCreate(message='second',
+            idempotency_key='input-receipt-second'),owner)
+        await broker._record_runtime_event(thread.id,turn.id,RuntimeEvent(
+            kind=EventKind.STEP_FINISHED,payload={'name':'Input completed',
+                'input_completed':True,'input_ids':[first.id],'is_error':False},
+            runtime_sequence=1),execution_id)
+        assert (await store.get_turn_input(first.id)).status=='applied'
+        await store.set_input_status(first.id,'failed',execution_id=execution_id,
+            lease_owner=broker.instance_id,recovery_generation=claim.recovery_generation)
+        await store.set_input_status(second.id,'failed',execution_id=execution_id,
+            lease_owner=broker.instance_id,recovery_generation=claim.recovery_generation)
+        assert (await store.get_turn_input(first.id)).status=='applied'
+        assert (await store.get_turn_input(second.id)).status=='failed'
+    finally:
+        await broker.close();await pool.close();await store.close()
+
+
 async def test_broker_restart_finishes_committed_pause_without_resuming_business_execution(tmp_path):
     settings = Settings(data_root=tmp_path,
         database_url="sqlite+aiosqlite:///" + str(tmp_path / "pause-restart.db"),
@@ -930,6 +964,17 @@ async def test_interaction_unknown_delivery_never_returns_to_pending_or_false_re
         approval=next(item for item in await store.items_after(thread.id)
             if item.type.value=='approval')
         assert approval.status=='in_progress' and 'response' not in approval.payload
+        execution_id=(await store.get_turn(turn.id)).runtime_execution_id
+        await broker._record_runtime_event(thread.id,turn.id,RuntimeEvent(
+            kind=EventKind.STEP_FINISHED,payload={"name":"Interaction applied",
+                "interaction_applied":True,
+                "interaction_id":interaction.runtime_interaction_id},runtime_sequence=999),
+            execution_id)
+        reconciled=(await store.list_interactions(thread.id,owner))[0]
+        assert reconciled.status=='responded'
+        approval=next(item for item in await store.items_after(thread.id)
+            if item.type.value=='approval')
+        assert approval.status=='completed' and approval.payload['response']['answers']['format']=='mp4'
     finally:
         runtime.release.set();await broker.close();await pool.close();await store.close()
 

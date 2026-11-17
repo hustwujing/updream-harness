@@ -14,6 +14,7 @@ import signal
 import shutil
 import stat
 import subprocess
+import sys
 import tarfile
 import time
 from dataclasses import dataclass, field
@@ -187,6 +188,7 @@ class BackgroundJob:
     pid_start_time: str = ""
     boot_id: str = ""
     recovery_detail: str = ""
+    supervisor_receipt: str = ""
     process: asyncio.subprocess.Process | None = None
     task: asyncio.Task | None = None
 
@@ -373,6 +375,14 @@ def create_app() -> FastAPI:
         for record in jobs_root.glob("*.json"):
             try:
                 value = json.loads(record.read_text())
+                receipt=Path(str(value.get('supervisor_receipt') or ''))
+                if not value.get('pid') and value.get('status')=='starting' and str(receipt):
+                    for _ in range(100):
+                        if receipt.is_file():break
+                        time.sleep(.01)
+                if not value.get('pid') and receipt.is_file():
+                    try:value.update(json.loads(receipt.read_text()))
+                    except (OSError,ValueError,TypeError):pass
                 if value.get("status") in {"starting", "running", "cancelling"}:
                     value["recovery_detail"] = quiesce_recorded_group(value)
                     value["status"] = "interrupted"
@@ -493,7 +503,8 @@ def create_app() -> FastAPI:
         target = jobs_root / (job.id + ".json")
         atomic_json(target,{**job.public(),"log_path":job.log_path,
             "pid_start_time":job.pid_start_time,"boot_id":job.boot_id,
-            "recovery_detail":job.recovery_detail})
+            "recovery_detail":job.recovery_detail,
+            "supervisor_receipt":job.supervisor_receipt})
 
     def job_log_tail(job: BackgroundJob) -> str:
         try:
@@ -562,7 +573,17 @@ def create_app() -> FastAPI:
                     native = {}
                 if not isinstance(native, dict):
                     native = {}
+                if native.get("type")=="harness.interaction.applied":
+                    native_id=str(native.get("id") or "")
+                    public_id=next((public for public,value in execution.interaction_ids.items()
+                        if value==native_id),"")
+                    if public_id:
+                        recorded=execution.interaction_responses.get(public_id)
+                        if recorded is not None:recorded["state"]="delivered"
+                        native={**native,"id":public_id}
                 event = normalize(harness, decoded, execution.protocol_state)
+                if native.get("type")=="harness.interaction.applied":
+                    event=normalize(harness,json.dumps(native),execution.protocol_state)
                 terminal_input = (
                     native.get("type") == "harness.input.completed"
                     if execution.selected.control_input else native.get("type") == "result"
@@ -1401,7 +1422,8 @@ def create_app() -> FastAPI:
             identity = uuid.uuid4().hex
             job = BackgroundJob(id=identity, name=value.name, argv=value.argv, cwd=str(cwd),
                 execution_id=execution.id, replaces=value.replaces, status="starting",
-                log_path=str(jobs_root / (identity + ".log")))
+                log_path=str(jobs_root / (identity + ".log")),
+                supervisor_receipt=str(jobs_root/(identity+'.supervisor.json')))
             app.state.background_jobs[job.id] = job
             try:persist_job(job)
             except BaseException:
@@ -1409,7 +1431,9 @@ def create_app() -> FastAPI:
                 raise
             process=None
             try:
-                spawn=asyncio.create_task(asyncio.create_subprocess_exec(*value.argv,
+                spawn=asyncio.create_task(asyncio.create_subprocess_exec(sys.executable,
+                    '-m','sandbox_runtime.background_supervisor','--receipt',
+                    job.supervisor_receipt,'--',*value.argv,
                     cwd=cwd,env=os.environ.copy(),stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,start_new_session=True,
                     limit=HARNESS_JSONL_LIMIT),name="background-spawn-"+job.id)
@@ -1419,8 +1443,16 @@ def create_app() -> FastAPI:
                     process=await spawn
                     raise
                 job.process=process;job.pid=process.pid
-                job.pid_start_time=process_start_identity(process.pid)
-                job.boot_id=boot_identity();job.status="running"
+                receipt={}
+                for _ in range(200):
+                    try:receipt=json.loads(Path(job.supervisor_receipt).read_text())
+                    except (OSError,ValueError):await asyncio.sleep(.01);continue
+                    break
+                if not receipt:raise RuntimeError('background_supervisor_receipt_missing')
+                if int(receipt.get('pid') or 0)!=process.pid:
+                    raise RuntimeError('background_supervisor_identity_mismatch')
+                job.pid_start_time=str(receipt.get('pid_start_time') or '')
+                job.boot_id=str(receipt.get('boot_id') or '');job.status="running"
                 persist_job(job)
                 job.task=asyncio.create_task(watch_job(job),
                     name="background-job-"+job.id)
@@ -1432,6 +1464,9 @@ def create_app() -> FastAPI:
                 return job.public()
             except BaseException as exc:
                 if process and process.returncode is None:
+                    job.status="cancelling"
+                    try:persist_job(job)
+                    except OSError:pass
                     await terminate_group(process)
                 if job.task:
                     await asyncio.gather(job.task,return_exceptions=True)

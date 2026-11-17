@@ -62,6 +62,7 @@ class Bridge:
         else:
             result = {"decision": "accept" if response.get("action") == "approve" else "decline"}
         self.write({"id": message["id"], "result": result})
+        self.emit({"type":"harness.interaction.applied","id":interaction_id})
 
     @staticmethod
     def emit(message): print(json.dumps(message, ensure_ascii=False, separators=(",", ":")), flush=True)

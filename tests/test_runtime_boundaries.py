@@ -208,7 +208,7 @@ async def test_background_publish_failure_after_watcher_kills_and_waits_group(tm
             name='journal-fails',argv=[sys.executable,'-c','import time;time.sleep(60)'],
             cwd=str(tmp_path/'workspace/project')))
     job=next(iter(app.state.background_jobs.values()))
-    assert job.status=='failed' and job.task.done() and job.process.returncode is not None
+    assert job.status=='cancelled' and job.task.done() and job.process.returncode is not None
     with pytest.raises(ProcessLookupError):os.kill(job.pid,0)
     await endpoint(app,'/v1/cancel')();await completed(app)
 
@@ -230,6 +230,55 @@ async def test_runtime_restart_quiesces_surviving_background_process_group(tmp_p
     assert recovered.status=='interrupted' and recovered.recovery_detail=='process_quiesced'
     assert recovered.pid_start_time and recovered.boot_id
     with pytest.raises(ProcessLookupError):os.kill(pid,0)
+    await endpoint(app,'/v1/cancel')();await completed(app)
+
+
+async def test_starting_intent_recovers_supervisor_receipt_after_runtime_crash_window(tmp_path,monkeypatch):
+    monkeypatch.setattr(runtime_app,'RUN',tmp_path/'run')
+    monkeypatch.setattr(runtime_app,'WORKSPACE',tmp_path/'workspace')
+    monkeypatch.setattr(runtime_app,'OUTPUTS',tmp_path/'workspace/outputs')
+    root=tmp_path/'workspace/state/background-jobs';root.mkdir(parents=True)
+    receipt=root/'crash.supervisor.json'
+    supervisor=await asyncio.create_subprocess_exec(sys.executable,'-m',
+        'sandbox_runtime.background_supervisor','--receipt',str(receipt),'--',
+        sys.executable,'-c','import time;time.sleep(60)',start_new_session=True)
+    for _ in range(200):
+        if receipt.is_file():break
+        await asyncio.sleep(.01)
+    assert receipt.is_file()
+    runtime_app.atomic_json(root/'crash.json',{'id':'crash','name':'crash-window',
+        'argv':[sys.executable,'-c','import time;time.sleep(60)'],'cwd':str(tmp_path),
+        'execution_id':'old','replaces':'','status':'starting','pid':0,
+        'pid_start_time':'','boot_id':'','returncode':None,'created_at':'',
+        'completed_at':'','log_path':str(root/'crash.log'),
+        'supervisor_receipt':str(receipt)})
+    app=runtime_app.create_app();job=app.state.background_jobs['crash']
+    assert job.status=='interrupted' and job.recovery_detail=='process_quiesced'
+    await supervisor.wait()
+    with pytest.raises(ProcessLookupError):os.kill(supervisor.pid,0)
+
+
+async def test_daemonized_setsid_descendant_keeps_job_running_until_supervisor_cancels_it(tmp_path,monkeypatch):
+    app=runtime(tmp_path,monkeypatch,'import sys,time\nsys.stdin.readline()\ntime.sleep(60)\n')
+    await endpoint(app,'/v1/turns')(runtime_app.TurnRequest(message='hello'))
+    pidfile=tmp_path/'daemon.pid'
+    source=("import os,time\npid=os.fork()\n"
+        "if pid==0:\n os.setsid();os.close(0);os.close(1);os.close(2);"
+        f"open({str(pidfile)!r},'w').write(str(os.getpid()));time.sleep(60);os._exit(0)\n"
+        "os._exit(0)\n")
+    value=await endpoint(app,'/v1/background-jobs')(runtime_app.BackgroundJobCreate(
+        name='daemonizes',argv=[sys.executable,'-c',source],
+        cwd=str(tmp_path/'workspace/project')))
+    for _ in range(200):
+        if pidfile.is_file():break
+        await asyncio.sleep(.01)
+    daemon=int(pidfile.read_text());await asyncio.sleep(.1)
+    job=app.state.background_jobs[value['id']]
+    assert job.status=='running' and job.process.returncode is None
+    os.kill(daemon,0)
+    await endpoint(app,'/v1/background-jobs/{job_id}/cancel')(job.id)
+    assert job.status=='cancelled' and job.process.returncode is not None
+    with pytest.raises(ProcessLookupError):os.kill(daemon,0)
     await endpoint(app,'/v1/cancel')();await completed(app)
 
 

@@ -3641,6 +3641,31 @@ class Store:
                         item.summary = summary
                         item.payload_json = json.dumps({**json.loads(item.payload_json), **payload}, ensure_ascii=False)
                         item.updated_at = timestamp
+                elif value.kind == EventKind.STEP_FINISHED and payload.get("interaction_applied"):
+                    native_id=str(payload.get("interaction_id") or "")
+                    interaction=(await db.execute(select(InteractionRow).where(
+                        InteractionRow.turn_id==turn_id,
+                        InteractionRow.runtime_execution_id==execution_id,
+                        InteractionRow.runtime_interaction_id==native_id,
+                    ).with_for_update())).scalar_one_or_none()
+                    if interaction and interaction.status=="responding":
+                        interaction.status="responded"
+                        interaction.response_owner=""
+                        interaction.response_expires_at=None
+                        interaction.updated_at=timestamp
+                        payload["interaction_id"]=interaction.id
+                        approvals=(await db.execute(select(ItemRow).where(
+                            ItemRow.turn_id==turn_id,
+                            ItemRow.type==ItemType.APPROVAL.value))).scalars().all()
+                        item=next((row for row in approvals if
+                            json.loads(row.payload_json).get("interaction_id")==interaction.id),None)
+                        if item:
+                            item_payload=json.loads(item.payload_json)
+                            item_payload["response"]=json.loads(interaction.response_json)
+                            item.payload_json=json.dumps(item_payload,ensure_ascii=False)
+                            item.status="completed";item.updated_at=timestamp
+                        if turn.state==TurnState.AWAITING_USER.value:
+                            turn.state=TurnState.RUNNING.value
                 elif value.kind == EventKind.WAITING_USER:
                     native_id = str(payload.get("interaction_id") or "")
                     kind = payload.get("interaction_kind", "approval")

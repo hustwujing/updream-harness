@@ -92,16 +92,26 @@ control-plane Interaction remains `responding` with the frozen answer until
 authoritative completion or explicit recovery.
 
 Supervised background commands persist a crash-safe `starting` intent before
-spawn and then bind PID, boot ID and `/proc` start time before acknowledgement.
-Every post-spawn failure kills and waits the process group. Runtime recovery
-validates that complete process identity before SIGTERM/SIGKILL, so a reused PID
-is never targeted. Surviving groups are quiesced before their records become
-`interrupted` or a replacement execution can start.
+spawn. They launch through `sandbox_runtime.background_supervisor`, which fsyncs
+its PID/boot/start-time receipt before executing user argv and acts as a Linux
+child subreaper. Double-fork and `setsid()` descendants remain owned by that
+supervisor; parent exit is not Job completion until the descendant boundary is
+empty. Every post-spawn failure kills and waits the supervisor boundary. Runtime
+recovery can recover identity from the supervisor receipt, validates it before
+SIGTERM/SIGKILL, and never targets a reused PID. Surviving boundaries are
+quiesced before records become `interrupted` or replacement work can start.
 
 For streaming control Harnesses, model-start/idle timing is per input, not per
 process lifetime. Every explicit input-completion boundary resets the next
 pending input to the model-start timeout; substantive output switches only that
 input to the idle timeout.
+
+Codex control interactions emit `harness.interaction.applied` only after the
+native app-server response write succeeds. Runtime journals that execution-
+scoped receipt and reconciles an UNKNOWN drain to delivered; Store atomically
+marks the matching Interaction/item responded. Likewise every
+`harness.input.completed` event immediately commits per-input applied/failed
+state, so a later input failure cannot overwrite an earlier completion.
 
 ## Required fault checks
 

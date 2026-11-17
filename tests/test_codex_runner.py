@@ -77,4 +77,6 @@ for line in sys.stdin:
     rows += [json.loads(line) for line in output.splitlines()]
     answer = next(row for row in rows if row.get("method") == "fake/answer")
     assert answer["params"] == {"answers":{"format":"mp4"}}
+    assert any(row.get("type")=="harness.interaction.applied"
+        and row.get("id")=="codex-900" for row in rows)
     assert any(row.get("type") == "harness.input.completed" for row in rows)

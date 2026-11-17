@@ -121,6 +121,10 @@ def normalize(harness: str, line: str, state: dict | None = None) -> dict:
             "options": value.get("options") or [],
             "questions": value.get("questions") or [],
         }}
+    if kind == "harness.interaction.applied":
+        return {"kind":"step_finished","payload":{
+            "name":"Interaction applied","interaction_applied":True,
+            "interaction_id":str(value.get("id", ""))}}
     if harness == "codex" and method == "item/agentMessage/delta":
         return {"kind": "text_delta", "payload": {"text": params.get("delta", "")}}
     if harness == "codex" and method in {"item/started", "item/completed"}:
