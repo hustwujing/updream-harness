@@ -3185,7 +3185,9 @@ class Store:
                         "sealed","delivering"])).limit(1))).scalar_one_or_none()
                 pending_reference=(await db.execute(select(MediaReferenceUploadRow.id).where(
                     MediaReferenceUploadRow.thread_id==thread_id,
-                    MediaReferenceUploadRow.status=="pending").limit(1))).scalar_one_or_none()
+                    MediaReferenceUploadRow.status=="pending",
+                    MediaReferenceUploadRow.expires_at>now()).limit(1)
+                    .with_for_update())).scalar_one_or_none()
                 if any((active_media,active_batch,pending_reference)):
                     raise RuntimeError("active_media_prevents_archival")
             timestamp = now()
@@ -3222,7 +3224,8 @@ class Store:
             references=list((await db.execute(select(MediaReferenceUploadRow).where(
                 MediaReferenceUploadRow.thread_id==thread_id).with_for_update())).scalars().all())
             if (any(row.status in {"sealed","delivering","blocked"} for row in batches)
-                    or any(row.status=="pending" for row in references)):
+                    or any(row.status=="pending" and utc_datetime(row.expires_at)>now()
+                        for row in references)):
                 raise RuntimeError("active_media_prevents_thread_delete")
             site_jobs = (await db.execute(select(SiteDeployJobRow).where(
                 SiteDeployJobRow.thread_id == thread_id))).scalars().all()
@@ -4889,9 +4892,13 @@ class Store:
                                             object_key: str, public_url: str,
                                             expires_at: datetime) -> MediaReferenceUploadView:
         async with self.connections.begin() as db:
-            thread = await db.get(ThreadRow, thread_id)
-            if not thread or thread.owner_id != owner_id:
+            thread = (await db.execute(select(ThreadRow).where(
+                ThreadRow.id == thread_id, ThreadRow.owner_id == owner_id)
+                .with_for_update())).scalar_one_or_none()
+            if not thread:
                 raise KeyError("thread_not_found")
+            if thread.archived_at is not None:
+                raise RuntimeError("media_reference_thread_archived")
             row = MediaReferenceUploadRow(id=identifier(), owner_id=owner_id, thread_id=thread_id,
                 name=value.name, kind=value.kind, mime=value.mime, size=value.size,
                 sha256=value.sha256, object_key=object_key, public_url=public_url,
@@ -4909,6 +4916,16 @@ class Store:
     async def finish_media_reference_upload(self, upload_id: str, owner_id: str,
                                             project_file_id: str) -> MediaReferenceUploadView:
         async with self.connections.begin() as db:
+            candidate = (await db.execute(select(MediaReferenceUploadRow).where(
+                MediaReferenceUploadRow.id == upload_id,
+                MediaReferenceUploadRow.owner_id == owner_id))).scalar_one_or_none()
+            if not candidate:
+                raise KeyError("media_reference_upload_not_found")
+            thread = (await db.execute(select(ThreadRow).where(
+                ThreadRow.id == candidate.thread_id,
+                ThreadRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
+            if not thread:
+                raise KeyError("thread_not_found")
             row = (await db.execute(select(MediaReferenceUploadRow).where(
                 MediaReferenceUploadRow.id == upload_id,
                 MediaReferenceUploadRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
@@ -4916,6 +4933,8 @@ class Store:
                 raise KeyError("media_reference_upload_not_found")
             if row.status == "completed":
                 return self._media_reference_upload_view(row)
+            if thread.archived_at is not None:
+                raise RuntimeError("media_reference_thread_archived")
             if row.status != "pending" or utc_datetime(row.expires_at) <= now():
                 raise RuntimeError("media_reference_upload_expired")
             row.status = "completed"; row.project_file_id = project_file_id; row.updated_at = now()
@@ -5613,13 +5632,12 @@ class Store:
                 MediaJobRow.status.in_(["created", "submitted", "running", "cancel_requested"]),
             ))).scalar_one())
 
-    async def release_media_job_lease(self, job_id: str, owner: str, *, phase: str,
+    async def release_media_job_lease(self, job_id: str, owner: str, generation: int, *, phase: str,
                                       error_code: str = "", error_detail: str = "",
-                                      retry_after_seconds: int = 0,
-                                      generation: int = 0) -> bool:
+                                      retry_after_seconds: int = 0) -> bool:
         async with self.connections.begin() as db:
-            query=select(MediaJobRow).where(MediaJobRow.id==job_id,MediaJobRow.lease_owner==owner)
-            if generation:query=query.where(MediaJobRow.generation==generation)
+            query=select(MediaJobRow).where(MediaJobRow.id==job_id,
+                MediaJobRow.lease_owner==owner,MediaJobRow.generation==generation)
             row=(await db.execute(query.with_for_update())).scalar_one_or_none()
             if not row:raise RuntimeError("stale_media_job_lease")
             row.status = "running"; row.phase = phase; row.error_code = error_code
@@ -5995,14 +6013,14 @@ class Store:
             "path":file.path, "sha256":file.sha256, "size":file.size,
             "mime":file.mime, "object_ref":file.object_ref}
 
-    async def update_media_job(self, job_id: str, owner: str, *, status: str, phase: str = "",
+    async def update_media_job(self, job_id: str, owner: str, generation: int, *,
+                               status: str, phase: str = "",
                                progress: int | None = None, provider_job_id: str = "",
                                output_object_ref: str = "", output_mime: str = "", output_size: int = 0,
-                               error_code: str = "", error_detail: str = "",
-                               generation: int = 0) -> bool:
+                               error_code: str = "", error_detail: str = "") -> bool:
         async with self.connections.begin() as db:
-            query=select(MediaJobRow).where(MediaJobRow.id==job_id,MediaJobRow.lease_owner==owner)
-            if generation:query=query.where(MediaJobRow.generation==generation)
+            query=select(MediaJobRow).where(MediaJobRow.id==job_id,
+                MediaJobRow.lease_owner==owner,MediaJobRow.generation==generation)
             row=(await db.execute(query.with_for_update())).scalar_one_or_none()
             if not row:raise RuntimeError("stale_media_job_lease")
             row.status = status; row.phase = phase or row.phase; row.progress = progress

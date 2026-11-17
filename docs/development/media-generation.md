@@ -340,6 +340,11 @@ server-only endpoint or a presigned PUT URL to a Provider.
 
 Media execution is generation-fenced and heartbeats its lease across Provider
 submission, polling, download, validation, object storage and terminal commit.
+Every Worker-owned phase, Provider ID, error, lease release and terminal write
+must carry the claimed generation; owner identity alone is never a fence.
+Heartbeat rejection or database failure cancels the business coroutine before
+it can issue another external call or write. The same rule applies inside
+reference publication and voice-clone preparation.
 Synchronous and asynchronous success follows the persisted sequence
 `requesting -> response_received -> downloading -> object_staged -> committed`.
 The immutable Provider result receipt is committed before download. Each
@@ -360,6 +365,10 @@ object store under the same bounded identity contract.
 Catalog entries may advertise cancellation only when a real Provider cancel
 adapter exists. The current catalog has no such adapter, so `supported` entries
 are rejected at startup and the API never exposes a false cancel action.
-Archival/deletion is blocked by active Media Jobs, pending reference/voice work
-and sealed/delivering continuation batches. Archived batches are blocked rather
-than retried; unarchive returns them to sealed for delivery.
+Archival/deletion is blocked by active Media Jobs, unexpired pending reference
+uploads and sealed/delivering continuation batches. Expired upload tickets stay
+auditable but are not active obligations. Reference creation/completion and
+archive/delete share the Thread lock, so no pending ticket can appear behind an
+archive decision. Archived batches are blocked rather than retried; unarchive
+returns them to sealed for delivery. Voice preparation is owned by its active
+Media Job; voice rows have no independent Thread identity.

@@ -72,7 +72,7 @@ class Store:
         self.touches += 1
         return True
 
-    async def update_media_job(self, job_id, owner, **values):
+    async def update_media_job(self, job_id, owner, generation, **values):
         self.job_updates.append(values); return True
 
 
@@ -93,7 +93,7 @@ async def test_voice_clone_uploads_once_and_reuses_active_cache(monkeypatch):
     clients = [upload, clone]
     async def factory(): return clients.pop(0)
     monkeypatch.setattr(value, "_client", factory)
-    job={"id":"job", "owner_id":"a"*64, "model":"speech-2.8-turbo",
+    job={"id":"job","generation":1, "owner_id":"a"*64, "model":"speech-2.8-turbo",
         "references":[reference(data)]}
     voice_id = await value.prepare(job)
     assert voice_id == "updream_test_voice" and store.record["status"] == "active"
@@ -116,7 +116,7 @@ async def test_uncertain_clone_reconciles_by_deterministic_voice_id(monkeypatch)
         store,Objects(data),"worker")
     async def exists(voice_id): return voice_id=="updream_test_voice"
     monkeypatch.setattr(value,"voice_exists",exists)
-    result=await value.prepare({"id":"job","owner_id":"a"*64,"model":"speech-2.8-turbo",
+    result=await value.prepare({"id":"job","generation":1,"owner_id":"a"*64,"model":"speech-2.8-turbo",
         "references":[ref]})
     assert result=="updream_test_voice" and store.record["status"]=="active"
     assert store.record["lease_owner"]==""
@@ -138,7 +138,7 @@ async def test_expired_active_clone_rotates_voice_id_before_recreation(monkeypat
     clients=[upload,clone]
     async def factory():return clients.pop(0)
     monkeypatch.setattr(value,"_client",factory)
-    result=await value.prepare({"id":"job","owner_id":"a"*64,"model":"speech-2.8-turbo",
+    result=await value.prepare({"id":"job","generation":1,"owner_id":"a"*64,"model":"speech-2.8-turbo",
         "references":[ref]})
     assert result=="updream_rotated_voice" and store.record["revision"]==2
     assert clone.posts[0][1]["json"]["voice_id"]=="updream_rotated_voice"

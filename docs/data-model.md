@@ -173,10 +173,14 @@ budget.
 ## Media execution receipts
 
 `media_jobs.generation` fences every claimed Worker generation.
+All single-Job Worker mutations require this value; no owner-only compatibility
+path exists. Heartbeat failure invalidates the active generation locally.
 `media_job_executions` stores the immutable sanitized Provider result receipt
 and content-addressed staged output list. It is written before download and
 before terminal Artifact binding respectively, allowing retry/restart without
 another billable Provider submission or another download after object staging.
+Pending `media_reference_uploads` are archive/delete obligations only until
+their durable `expires_at`; expired rows remain queryable for audit.
 
 ## Schema upgrades
 

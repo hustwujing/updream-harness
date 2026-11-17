@@ -50,7 +50,8 @@ class Store:
         self.updates = []
         self.releases = []
 
-    async def update_media_job(self, job_id, owner, **values):
+    async def update_media_job(self, job_id, owner, generation, **values):
+        values["generation"] = generation
         self.updates.append((job_id, owner, values))
         return True
 
@@ -58,7 +59,8 @@ class Store:
         assert job_id == "job" and input_job_id == "a" * 32
         return "provider-source-task"
 
-    async def release_media_job_lease(self, job_id, owner, **values):
+    async def release_media_job_lease(self, job_id, owner, generation, **values):
+        values["generation"] = generation
         self.releases.append((job_id, owner, values))
         return True
     async def renew_media_job_lease(self,*args,**kwargs):return True
@@ -97,7 +99,7 @@ async def test_video_recovery_polls_persisted_provider_job_without_resubmit(monk
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
     monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
-    result = await value._ark_video({"id": "job", "model": "sed2", "provider_job_id": "provider-video",
+    result = await value._ark_video({"id": "job", "generation": 1, "model": "sed2", "provider_job_id": "provider-video",
         "parameters": {"prompt": "test", "duration": 5}})
     assert result.status == "success" and result.provider_job_id == "provider-video"
     assert not client.posts and len(client.gets) == 1
@@ -114,7 +116,7 @@ async def test_audio_recovery_polls_persisted_provider_job_without_resubmit(monk
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
     monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
-    result = await value._minimax_audio({"id": "job", "model": "speech-2.8-turbo",
+    result = await value._minimax_audio({"id": "job", "generation": 1, "model": "speech-2.8-turbo",
         "provider_job_id": "provider-audio", "parameters": {"text": "test"}})
     assert result.status == "success" and result.provider_job_id == "provider-audio"
     assert not client.posts and len(client.gets) == 2
@@ -137,7 +139,7 @@ async def test_audio_reference_uses_host_derived_cloned_voice(monkeypatch):
     voices=Voices();value.voice_clones=voices
     monkeypatch.setattr(value,"_client",client_factory)
     monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep",no_sleep)
-    result=await value._minimax_audio({"id":"job","owner_id":"a"*64,
+    result=await value._minimax_audio({"id":"job","generation":1,"owner_id":"a"*64,
         "model":"speech-2.8-turbo","provider_job_id":"","parameters":{"text":"hello"},
         "references":[{"sha256":"1"*64,"role":"reference_audio","usage":"audio"}]})
     assert result.status=="success"
@@ -150,7 +152,7 @@ async def test_audio_submit_ambiguous_provider_failure_is_unknown(monkeypatch):
     value=worker();client=Client([Response({"base_resp":{"status_code":1013}},500)])
     async def client_factory():return client
     monkeypatch.setattr(value,"_client",client_factory)
-    result=await value._minimax_audio({"id":"job","owner_id":"a"*64,
+    result=await value._minimax_audio({"id":"job","generation":1,"owner_id":"a"*64,
         "model":"speech-2.8-turbo","provider_job_id":"",
         "parameters":{"text":"hello"},"references":[]})
     assert result.status=="unknown" and not result.provider_job_id
@@ -168,7 +170,7 @@ async def test_audio_processing_keeps_polling_same_provider_job(monkeypatch):
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
     monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
-    job={"id":"job", "model":"speech-2.8-turbo", "provider_job_id":"provider-audio",
+    job={"id":"job","generation":1, "model":"speech-2.8-turbo", "provider_job_id":"provider-audio",
         "provider_started_at":datetime.now(timezone.utc), "parameters":{"text":"test"}}
     pending = await value._minimax_audio(job)
     assert pending.status == "pending" and pending.provider_job_id == "provider-audio"
@@ -185,7 +187,7 @@ async def test_audio_processing_past_reconciliation_window_returns_unknown(monke
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
     monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
-    result = await value._minimax_audio({"id": "job", "model": "speech-2.8-turbo",
+    result = await value._minimax_audio({"id": "job", "generation": 1, "model": "speech-2.8-turbo",
         "provider_job_id": "provider-audio",
         "provider_started_at": datetime.fromtimestamp(0, timezone.utc),
         "parameters": {"text": "test"}})
@@ -203,7 +205,7 @@ async def test_audio_poll_http_failure_past_reconciliation_window_returns_unknow
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
     monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
-    result = await value._minimax_audio({"id": "job", "model": "speech-2.8-turbo",
+    result = await value._minimax_audio({"id": "job", "generation": 1, "model": "speech-2.8-turbo",
         "provider_job_id": "provider-audio",
         "provider_started_at": datetime.fromtimestamp(0, timezone.utc),
         "parameters": {"text": "test"}})
@@ -218,7 +220,7 @@ async def test_audio_poll_authentication_failure_is_terminal(monkeypatch):
     async def no_sleep(_):return None
     monkeypatch.setattr(value,"_client",client_factory)
     monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep",no_sleep)
-    result=await value._minimax_audio({"id":"job","model":"speech-2.8-turbo",
+    result=await value._minimax_audio({"id":"job","generation":1,"model":"speech-2.8-turbo",
         "provider_job_id":"provider-audio","provider_started_at":datetime.now(timezone.utc),
         "parameters":{"text":"test"}})
     assert result.status=="failed" and result.error_code=="provider_authentication_failed"
@@ -229,7 +231,7 @@ async def test_image_provider_failure_preserves_safe_http_and_business_code(monk
     value = worker(); client = Client([Response({"error":{"code":"InvalidParameter"}}, 400)])
     async def client_factory(): return client
     monkeypatch.setattr(value, "_client", client_factory)
-    result = await value._ark_image({"id":"job", "model":"seedream-5.0",
+    result = await value._ark_image({"id":"job","generation":1, "model":"seedream-5.0",
         "parameters":{"prompt":"test", "size":"2560x1440"}})
     assert result.status == "failed" and result.error == "image_http_400:InvalidParameter"
     assert result.error_code == "provider_input_invalid"
@@ -240,7 +242,7 @@ async def test_image_rate_limit_is_deferred_with_stable_error(monkeypatch):
     value=worker();client=Client([Response({"error":{"code":"RateLimitExceeded"}},429)])
     async def client_factory():return client
     monkeypatch.setattr(value,"_client",client_factory)
-    result=await value._ark_image({"id":"job","model":"seedream-5.0",
+    result=await value._ark_image({"id":"job","generation":1,"model":"seedream-5.0",
         "parameters":{"prompt":"test","size":"2K"}})
     assert result.status=="pending" and result.error_code=="provider_rate_limited"
 
@@ -250,7 +252,7 @@ async def test_image_service_failure_without_result_is_ambiguous_not_retried(mon
     value=worker();client=Client([Response({"error":{"code":"ServiceUnavailable"}},503)])
     async def client_factory():return client
     monkeypatch.setattr(value,"_client",client_factory)
-    result=await value._ark_image({"id":"job","model":"seedream-5.0",
+    result=await value._ark_image({"id":"job","generation":1,"model":"seedream-5.0",
         "parameters":{"prompt":"test","size":"2K"}})
     assert result.status=="unknown"
     assert result.error_code=="provider_submission_outcome_unknown"
@@ -263,7 +265,7 @@ async def test_seedream_reference_payload_uses_frozen_object_urls(monkeypatch):
     monkeypatch.setattr(value, "_client", client_factory)
     refs=[{"object_ref":"sha256:"+"1"*64,"role":"reference_image","usage":"subject","mime":"image/png","size":100,"public_url":"https://boss-shjd.biliapi.net/updream/aniforge/image/one.png"},
         {"object_ref":"sha256:"+"2"*64,"role":"reference_image","usage":"style","mime":"image/png","size":100,"public_url":"https://boss-shjd.biliapi.net/updream/aniforge/image/two.png"}]
-    result=await value._ark_image({"id":"job","model":"seedream-5.0",
+    result=await value._ark_image({"id":"job","generation":1,"model":"seedream-5.0",
         "generation_mode":"reference_image","references":refs,
         "parameters":{"prompt":"merge","size":"2K"}})
     payload=client.posts[0][1]["json"]
@@ -283,7 +285,7 @@ async def test_seedance_edit_payload_orders_source_and_compiles_constraints(monk
         {"object_ref":"sha256:"+"1"*64,"role":"reference_image","usage":"style","mime":"image/png","size":100,"asset_uri":"asset://asset-image-1"},
         {"object_ref":"sha256:"+"2"*64,"role":"reference_video","usage":"edit_source","mime":"video/mp4","size":100,"asset_uri":"asset://asset-video-1"},
     ]
-    result=await value._ark_video({"id":"job","model":"sed2","provider_job_id":"",
+    result=await value._ark_video({"id":"job","generation":1,"model":"sed2","provider_job_id":"",
         "generation_mode":"edit_video","references":references,
         "parameters":{"prompt":"remove the logo","duration":-1,"aspect_ratio":"adaptive"}})
     payload=client.posts[0][1]["json"]
@@ -304,7 +306,7 @@ async def test_seedance_first_last_frame_payload_preserves_roles(monkeypatch):
     monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep",no_sleep)
     refs=[{"object_ref":"sha256:"+"3"*64,"role":"first_frame","usage":"composition","mime":"image/png","size":100,"asset_uri":"asset://asset-first"},
         {"object_ref":"sha256:"+"4"*64,"role":"last_frame","usage":"composition","mime":"image/png","size":100,"asset_uri":"asset://asset-last"}]
-    await value._ark_video({"id":"job","model":"sed2","provider_job_id":"",
+    await value._ark_video({"id":"job","generation":1,"model":"sed2","provider_job_id":"",
         "generation_mode":"first_last_frame","references":refs,
         "parameters":{"prompt":"transition","duration":5,"aspect_ratio":"adaptive"}})
     content=client.posts[0][1]["json"]["content"]
@@ -332,7 +334,7 @@ async def test_dashscope_video_edit_submits_persists_and_returns_output(
         {"kind": "image", "role": "reference_image", "usage": "style",
             "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/image/style.png"},
     ]
-    result = await value._dashscope_video_edit({"id": "job", "adapter": adapter,
+    result = await value._dashscope_video_edit({"id": "job", "generation": 1, "adapter": adapter,
         "provider_job_id": "", "generation_mode": "edit_video", "references": references,
         "parameters": {"prompt": "sync lips", "resolution": "720p"}})
     payload = client.posts[0][1]["json"]
@@ -357,7 +359,7 @@ async def test_dashscope_non_success_receipt_with_task_id_is_persisted(monkeypat
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
     monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
-    result = await value._dashscope_video_edit({"id": "job", "adapter": "wan27_video_edit",
+    result = await value._dashscope_video_edit({"id": "job", "generation": 1, "adapter": "wan27_video_edit",
         "provider_job_id": "", "references": [{"kind": "video", "role": "reference_video",
             "usage": "edit_source", "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/video/source.mp4"}],
         "parameters": {"prompt": "edit"}})
@@ -374,7 +376,7 @@ async def test_dashscope_video_edit_recovery_only_polls_persisted_job(monkeypatc
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
     monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
-    result = await value._dashscope_video_edit({"id": "job", "adapter": "happyhorse_video_edit",
+    result = await value._dashscope_video_edit({"id": "job", "generation": 1, "adapter": "happyhorse_video_edit",
         "provider_job_id": "persisted-task", "generation_mode": "edit_video",
         "references": [{"kind": "video", "role": "reference_video", "usage": "edit_source",
             "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/video/source.mp4"}],
@@ -387,7 +389,7 @@ async def test_dashscope_video_edit_submit_transport_failure_is_unknown(monkeypa
     value = worker(); client = Client([httpx.ReadTimeout("unknown submission")])
     async def client_factory(): return client
     monkeypatch.setattr(value, "_client", client_factory)
-    result = await value._dashscope_video_edit({"id": "job", "adapter": "happyhorse_video_edit",
+    result = await value._dashscope_video_edit({"id": "job", "generation": 1, "adapter": "happyhorse_video_edit",
         "provider_job_id": "", "references": [{"kind": "video", "role": "reference_video", "usage": "edit_source",
             "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/video/source.mp4"}],
         "parameters": {"prompt": "edit"}})
@@ -400,7 +402,7 @@ async def test_dashscope_video_edit_invalid_success_receipt_is_unknown(monkeypat
     value = worker(); client = Client([Response(ValueError("invalid json"))])
     async def client_factory(): return client
     monkeypatch.setattr(value, "_client", client_factory)
-    result = await value._dashscope_video_edit({"id": "job", "adapter": "happyhorse_video_edit",
+    result = await value._dashscope_video_edit({"id": "job", "generation": 1, "adapter": "happyhorse_video_edit",
         "provider_job_id": "", "references": [{"kind": "video", "role": "reference_video", "usage": "edit_source",
             "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/video/source.mp4"}],
         "parameters": {"prompt": "edit"}})
@@ -414,7 +416,7 @@ async def test_dashscope_video_edit_invalid_poll_receipt_retries_same_job(monkey
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
     monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
-    result = await value._dashscope_video_edit({"id": "job", "adapter": "wan27_video_edit",
+    result = await value._dashscope_video_edit({"id": "job", "generation": 1, "adapter": "wan27_video_edit",
         "provider_job_id": "persisted", "references": [{"kind": "video", "role": "reference_video",
             "usage": "edit_source", "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/video/source.mp4"}],
         "parameters": {"prompt": "edit"}})
@@ -429,7 +431,7 @@ async def test_dashscope_video_edit_invalid_poll_past_window_becomes_unknown(mon
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
     monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
-    result = await value._dashscope_video_edit({"id": "job", "adapter": "wan27_video_edit",
+    result = await value._dashscope_video_edit({"id": "job", "generation": 1, "adapter": "wan27_video_edit",
         "provider_job_id": "persisted", "provider_started_at": datetime.fromtimestamp(0, timezone.utc),
         "references": [{"kind": "video", "role": "reference_video", "usage": "edit_source",
             "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/video/source.mp4"}],
@@ -445,7 +447,7 @@ async def test_dashscope_video_edit_provider_unknown_requires_reconciliation(mon
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
     monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
-    result = await value._dashscope_video_edit({"id": "job", "adapter": "wan27_video_edit",
+    result = await value._dashscope_video_edit({"id": "job", "generation": 1, "adapter": "wan27_video_edit",
         "provider_job_id": "persisted", "references": [{"kind": "video", "role": "reference_video",
             "usage": "edit_source", "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/video/source.mp4"}],
         "parameters": {"prompt": "edit"}})
@@ -460,7 +462,7 @@ async def test_video_poll_service_unavailable_releases_existing_provider_job(mon
     async def no_sleep(_):return None
     monkeypatch.setattr(value,"_client",client_factory)
     monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep",no_sleep)
-    result=await value._ark_video({"id":"job","model":"sed2",
+    result=await value._ark_video({"id":"job","generation":1,"model":"sed2",
         "provider_job_id":"provider-video","parameters":{"prompt":"test","duration":5},
         "references":[]})
     assert result.status=="pending" and result.provider_job_id=="provider-video"
@@ -473,7 +475,7 @@ async def test_video_submission_content_policy_is_not_retryable(monkeypatch):
         "code":"OutputVideoSensitiveContentDetected.PolicyViolation"}},400)])
     async def client_factory():return client
     monkeypatch.setattr(value,"_client",client_factory)
-    result=await value._ark_video({"id":"job","model":"sed2","provider_job_id":"",
+    result=await value._ark_video({"id":"job","generation":1,"model":"sed2","provider_job_id":"",
         "parameters":{"prompt":"test","duration":5},"references":[]})
     assert result.status=="failed" and result.error_code=="provider_content_policy_rejected"
 
@@ -495,7 +497,7 @@ async def test_requesting_job_without_provider_id_becomes_unknown(monkeypatch):
     async def should_not_execute(_):
         raise AssertionError("ambiguous provider request must not be replayed")
     monkeypatch.setattr(value, "_execute", should_not_execute)
-    await value.process({"id": "job", "status": "running", "phase": "requesting",
+    await value.process({"id": "job", "generation": 1, "status": "running", "phase": "requesting",
         "provider_job_id": "", "provider": "ark", "model": "seedream-5.0"})
     assert store.updates[-1][2]["status"] == "unknown"
     assert store.updates[-1][2]["error_code"] == "provider_submission_outcome_unknown"
@@ -508,7 +510,7 @@ async def test_known_provider_result_unknown_has_distinct_error_and_releases_lea
         return __import__('sandbox_harness.media_worker', fromlist=['ProviderResult']).ProviderResult(
             "unknown", provider_job_id="provider-audio", error="still processing")
     monkeypatch.setattr(value, "_execute", unresolved)
-    await value.process({"id":"job", "kind":"audio", "model":"speech-2.8-turbo",
+    await value.process({"id":"job","generation":1, "kind":"audio", "model":"speech-2.8-turbo",
         "provider":"minimax", "adapter":"minimax_t2a", "status":"running",
         "phase":"provider_polling", "provider_job_id":"provider-audio", "references":[]})
     assert store.updates[-1][2]["status"] == "unknown"
@@ -522,7 +524,7 @@ async def test_pending_provider_poll_releases_lease_with_delay(monkeypatch):
         return __import__('sandbox_harness.media_worker', fromlist=['ProviderResult']).ProviderResult(
             "pending", provider_job_id="provider-audio", error="still processing")
     monkeypatch.setattr(value, "_execute", pending)
-    await value.process({"id":"job", "kind":"audio", "model":"speech-2.8-turbo",
+    await value.process({"id":"job","generation":1, "kind":"audio", "model":"speech-2.8-turbo",
         "provider":"minimax", "adapter":"minimax_t2a", "status":"running",
         "phase":"provider_polling", "provider_job_id":"provider-audio", "references":[]})
     assert store.releases[-1][2]["retry_after_seconds"] == 15
@@ -534,7 +536,7 @@ async def test_audio_poll_transport_timeout_releases_lease_with_delay(monkeypatc
     async def timeout(_):
         raise httpx.ReadTimeout("provider query timed out")
     monkeypatch.setattr(value, "_execute", timeout)
-    await value.process({"id":"job", "kind":"audio", "model":"speech-2.8-turbo",
+    await value.process({"id":"job","generation":1, "kind":"audio", "model":"speech-2.8-turbo",
         "provider":"minimax", "adapter":"minimax_t2a", "status":"running",
         "phase":"provider_polling", "provider_job_id":"provider-audio",
         "provider_started_at":datetime.now(timezone.utc), "references":[]})
@@ -548,7 +550,7 @@ async def test_audio_poll_transport_timeout_past_window_becomes_unknown(monkeypa
     async def timeout(_):
         raise httpx.ReadTimeout("provider query timed out")
     monkeypatch.setattr(value, "_execute", timeout)
-    await value.process({"id":"job", "kind":"audio", "model":"speech-2.8-turbo",
+    await value.process({"id":"job","generation":1, "kind":"audio", "model":"speech-2.8-turbo",
         "provider":"minimax", "adapter":"minimax_t2a", "status":"running",
         "phase":"provider_polling", "provider_job_id":"provider-audio",
         "provider_started_at":datetime.fromtimestamp(0, timezone.utc), "references":[]})
@@ -562,7 +564,7 @@ async def test_reference_preparation_phase_is_safe_to_resume(monkeypatch):
     async def failed(_):return __import__('sandbox_harness.media_worker',fromlist=['ProviderResult']).ProviderResult(
         "failed",error="reference preparation resumed")
     monkeypatch.setattr(value,"_execute",failed)
-    await value.process({"id":"job","kind":"video","model":"sed2","provider":"ark",
+    await value.process({"id":"job","generation":1,"kind":"video","model":"sed2","provider":"ark",
         "adapter":"ark_video_v2","status":"running","phase":"preparing_references",
         "provider_job_id":"","references":[{"sha256":"1"*64}]})
     assert store.updates[-1][2]["status"]=="failed"
@@ -577,7 +579,7 @@ async def test_reference_policy_rejection_is_a_deterministic_failure_category(mo
         raise MediaReferencePreparationError(
             "ark_asset_processing_failed:InputVideoSensitiveContentDetected.PolicyViolation")
     monkeypatch.setattr(value,"_execute",rejected)
-    await value.process({"id":"job","kind":"video","model":"sed2","provider":"ark",
+    await value.process({"id":"job","generation":1,"kind":"video","model":"sed2","provider":"ark",
         "adapter":"ark_video_v2","status":"running","phase":"preparing_references",
         "provider_job_id":"","references":[{"sha256":"1"*64}]})
     assert store.updates[-1][2]["status"]=="failed"
@@ -624,7 +626,7 @@ async def test_tripo_submission_persists_task_and_returns_model_and_preview(monk
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
     monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
-    result = await value._tripo({"id": "job", "model": "v3.1-20260211",
+    result = await value._tripo({"id": "job", "generation": 1, "model": "v3.1-20260211",
         "provider_job_id": "", "generation_mode": "text_to_model",
         "parameters": {"prompt": "a small cube", "texture": False, "pbr": False}})
     assert result.status == "success" and result.provider_job_id == "tripo-task"
@@ -644,7 +646,7 @@ async def test_tripo_recovery_only_polls_persisted_task(monkeypatch):
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
     monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
-    result = await value._tripo({"id": "job", "model": "v3.1-20260211",
+    result = await value._tripo({"id": "job", "generation": 1, "model": "v3.1-20260211",
         "provider_job_id": "persisted-task", "generation_mode": "text_to_model",
         "parameters": {"prompt": "ignored"}})
     assert result.status == "success" and not client.posts and len(client.gets) == 1
@@ -660,7 +662,7 @@ async def test_tripo_model_url_suffix_overrides_default_glb_expectation(monkeypa
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
     monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
-    result = await value._tripo({"id": "job", "model": "v3.1-20260211",
+    result = await value._tripo({"id": "job", "generation": 1, "model": "v3.1-20260211",
         "provider_job_id": "persisted-task", "generation_mode": "text_to_model",
         "parameters": {"prompt": "phone"}})
     assert result.status == "success"
@@ -683,7 +685,7 @@ async def test_deterministic_provider_result_validation_error_is_explicit_failur
         raise ValueError("provider_result_mime_mismatch")
     monkeypatch.setattr(value, "_execute", execute)
     monkeypatch.setattr(value, "_download", invalid_download)
-    await value.process({"id": "job", "kind": "model3d", "model": "v3.1-20260211",
+    await value.process({"id": "job", "generation": 1, "kind": "model3d", "model": "v3.1-20260211",
         "provider": "tripo", "adapter": "tripo_v3", "status": "running",
         "phase": "provider_polling", "provider_job_id": "task", "references": []})
     assert store.updates[-1][2]["status"] == "failed"
@@ -738,12 +740,12 @@ async def test_tripo_image_and_multiview_payloads_use_stable_public_references(m
         return [{**item, "public_url": f"https://boss-shjd.biliapi.net/updream/aniforge/image/{item['role']}.png"}
             for item in job["references"]]
     monkeypatch.setattr(value.reference_publisher, "prepare", prepare)
-    endpoint, payload = await value._tripo_payload({"id": "job", "model": "v3.1-20260211",
+    endpoint, payload = await value._tripo_payload({"id": "job", "generation": 1, "model": "v3.1-20260211",
         "generation_mode": "image_to_model", "parameters": {"texture": False},
         "references": [{"kind": "image", "role": "reference_image"}]})
     assert endpoint == "generation/image-to-model"
     assert payload["input"].endswith("/reference_image.png") and payload["model"] == "v3.1-20260211"
-    endpoint, payload = await value._tripo_payload({"id": "job", "model": "v3.1-20260211",
+    endpoint, payload = await value._tripo_payload({"id": "job", "generation": 1, "model": "v3.1-20260211",
         "generation_mode": "multiview_to_model", "parameters": {}, "references": [
             {"kind": "image", "role": "front_view"}, {"kind": "image", "role": "right_view"}]})
     assert endpoint == "generation/multiview-to-model"
@@ -754,7 +756,7 @@ async def test_tripo_image_and_multiview_payloads_use_stable_public_references(m
 @pytest.mark.asyncio
 async def test_tripo_postprocess_resolves_owned_platform_job_to_provider_task():
     value = worker()
-    endpoint, payload = await value._tripo_payload({"id": "job", "model": "v3.1-20260211",
+    endpoint, payload = await value._tripo_payload({"id": "job", "generation": 1, "model": "v3.1-20260211",
         "generation_mode": "convert_model", "parameters": {"input_job_id": "a" * 32,
             "target_format": "FBX", "export_orientation": "+x"}, "references": []})
     assert endpoint == "models/convert"
@@ -764,7 +766,7 @@ async def test_tripo_postprocess_resolves_owned_platform_job_to_provider_task():
 @pytest.mark.asyncio
 async def test_tripo_text_payload_derives_no_pbr_and_preserves_reproducibility_fields():
     value = worker()
-    endpoint, payload = await value._tripo_payload({"id": "job", "model": "v3.1-20260211",
+    endpoint, payload = await value._tripo_payload({"id": "job", "generation": 1, "model": "v3.1-20260211",
         "generation_mode": "text_to_model", "parameters": {"prompt": "cube", "texture": False,
             "model_seed": 3, "image_seed": 4, "export_uv": False, "export_orientation": "+x"},
         "references": []})
@@ -785,7 +787,7 @@ async def test_tripo_submit_429_honors_retry_after_without_losing_request(monkey
     async def no_sleep(seconds): sleeps.append(seconds)
     monkeypatch.setattr(value, "_client", client_factory)
     monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
-    result = await value._tripo({"id": "job", "model": "v3.1-20260211",
+    result = await value._tripo({"id": "job", "generation": 1, "model": "v3.1-20260211",
         "provider_job_id": "", "generation_mode": "text_to_model",
         "parameters": {"prompt": "cube"}})
     assert result.status == "success" and len(client.posts) == 2
@@ -798,7 +800,7 @@ async def test_tripo_success_without_task_id_is_unknown_not_rejected(monkeypatch
     value = worker(); client = Client([Response({"code": 0, "data": {}})])
     async def client_factory(): return client
     monkeypatch.setattr(value, "_client", client_factory)
-    result = await value._tripo({"id": "job", "model": "v3.1-20260211",
+    result = await value._tripo({"id": "job", "generation": 1, "model": "v3.1-20260211",
         "provider_job_id": "", "generation_mode": "text_to_model",
         "parameters": {"prompt": "cube"}})
     assert result.status == "unknown" and result.error == "tripo_submit_failed:0"
@@ -818,7 +820,7 @@ async def test_provider_output_http_failure_schedules_safe_download_retry(monkey
         raise __import__('httpx').HTTPStatusError("temporary", request=request, response=response)
     monkeypatch.setattr(value, "_execute", execute)
     monkeypatch.setattr(value, "_download", failed_download)
-    await value.process({"id": "job", "kind": "model3d", "model": "v3.1-20260211",
+    await value.process({"id": "job", "generation": 1, "kind": "model3d", "model": "v3.1-20260211",
         "provider": "tripo", "adapter": "tripo_v3", "status": "running",
         "phase": "provider_polling", "provider_job_id": "provider-task", "references": []})
     assert store.releases[-1][2] == {"phase": "provider_output_retry",

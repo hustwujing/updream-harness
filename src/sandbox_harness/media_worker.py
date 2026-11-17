@@ -140,13 +140,21 @@ class MediaWorker:
                 await asyncio.gather(*active, return_exceptions=True)
 
     async def process(self, job: dict[str, Any]) -> None:
-        job={"generation":1,"provider_result":{},"staged_outputs":[],**job}
+        job={"provider_result":{},"staged_outputs":[],**job}
+        if not isinstance(job.get("generation"),int) or job["generation"]<1:
+            raise ValueError("media_job_generation_required")
         lost=asyncio.Event();owner=asyncio.current_task()
         async def heartbeat():
             while True:
                 await asyncio.sleep(max(.1,self.lease_seconds/3))
-                if not await self.store.renew_media_job_lease(job["id"],self.owner,
-                        job["generation"],self.lease_seconds):
+                try:
+                    renewed=await self.store.renew_media_job_lease(job["id"],self.owner,
+                        job["generation"],self.lease_seconds)
+                except Exception as exc:
+                    renewed=False
+                    event("media.worker.heartbeat_failed",level=40,job_id=job["id"],
+                        generation=job["generation"],exception_type=type(exc).__name__)
+                if not renewed:
                     lost.set();owner.cancel();return
         task=asyncio.create_task(heartbeat(),name="media-heartbeat-"+job["id"])
         try:await self._process_claimed(job)
@@ -160,17 +168,17 @@ class MediaWorker:
         stage = "claimed"
         try:
             if job["status"] == "cancel_requested":
-                await self.store.update_media_job(job["id"], self.owner, status="failed", phase="cancel_refused",
+                await self.store.update_media_job(job["id"], self.owner, job["generation"], status="failed", phase="cancel_refused",
                     error_code="media_cancel_not_supported", error_detail="Provider cancellation is not supported")
                 return
             if (job["status"] == "running" and job["phase"] == "requesting"
                     and not job.get("provider_job_id")):
-                await self.store.update_media_job(job["id"], self.owner, status="unknown", phase="recovery_required",
+                await self.store.update_media_job(job["id"], self.owner, job["generation"], status="unknown", phase="recovery_required",
                     error_code="provider_submission_outcome_unknown",
                     error_detail="Provider request may have been submitted; automatic resubmission is disabled")
                 return
             stage = "provider_request" if not job.get("provider_job_id") else "provider_poll"
-            await self.store.update_media_job(job["id"], self.owner, status="running",
+            await self.store.update_media_job(job["id"], self.owner, job["generation"], status="running",
                 phase="provider_polling" if job.get("provider_job_id") else (
                     "preparing_voice_clone" if job.get("references") and job.get("adapter") == "minimax_t2a"
                     else "preparing_references" if job.get("references") else "requesting"))
@@ -179,17 +187,17 @@ class MediaWorker:
             if result.status == "unknown":
                 error_code = result.error_code or ("provider_result_unresolved" if result.provider_job_id
                     else "provider_submission_outcome_unknown")
-                await self.store.update_media_job(job["id"], self.owner, status="unknown",
+                await self.store.update_media_job(job["id"], self.owner, job["generation"], status="unknown",
                     phase="recovery_required", provider_job_id=result.provider_job_id,
                     error_code=error_code, error_detail=result.error[:2000])
                 return
             if result.status == "pending":
-                await self.store.release_media_job_lease(job["id"], self.owner,
+                await self.store.release_media_job_lease(job["id"], self.owner, job["generation"],
                     phase="provider_polling", error_code=result.error_code or "provider_poll_deferred",
                     error_detail=result.error[:2000], retry_after_seconds=15)
                 return
             if result.status != "success":
-                await self.store.update_media_job(job["id"], self.owner, status="failed", phase="terminal",
+                await self.store.update_media_job(job["id"], self.owner, job["generation"], status="failed", phase="terminal",
                     provider_job_id=result.provider_job_id,
                     error_code=result.error_code or "provider_processing_failed",
                     error_detail=result.error[:2000])
@@ -227,15 +235,14 @@ class MediaWorker:
             error_code = ("media_reference_policy_rejected"
                 if "SensitiveContentDetected" in detail or "PolicyViolation" in detail
                 else "media_reference_unavailable")
-            await self.store.update_media_job(job["id"], self.owner, status="failed", phase="terminal",
+            await self.store.update_media_job(job["id"], self.owner, job["generation"], status="failed", phase="terminal",
                 error_code=error_code, error_detail=detail)
             event("media.reference.failed", level=30, job_id=job["id"], error_code=error_code)
         except httpx.HTTPError as exc:
             if stage.startswith("download"):
-                await self.store.release_media_job_lease(job["id"], self.owner,
+                await self.store.release_media_job_lease(job["id"], self.owner, job["generation"],
                     phase="provider_output_retry", error_code="provider_output_unavailable",
-                    error_detail=f"{stage}:{type(exc).__name__}", retry_after_seconds=15,
-                    generation=job["generation"])
+                    error_detail=f"{stage}:{type(exc).__name__}", retry_after_seconds=15)
                 event("media.output.retry_scheduled", level=30, job_id=job["id"], provider=job["provider"],
                     model=job["model"], failure_stage=stage, exception_type=type(exc).__name__)
             elif (stage == "provider_poll" and job.get("adapter") == "minimax_t2a"
@@ -248,30 +255,30 @@ class MediaWorker:
                 elapsed = ((datetime.now(timezone.utc) - started).total_seconds()
                     if isinstance(started, datetime) else 0)
                 if elapsed >= self.settings.audio_task_timeout_seconds:
-                    await self.store.update_media_job(job["id"], self.owner, status="unknown",
+                    await self.store.update_media_job(job["id"], self.owner, job["generation"], status="unknown",
                         phase="recovery_required", provider_job_id=job["provider_job_id"],
                         error_code="provider_result_unresolved",
                         error_detail=f"provider_poll:{type(exc).__name__}:after_reconciliation_window")
                 else:
-                    await self.store.release_media_job_lease(job["id"], self.owner,
+                    await self.store.release_media_job_lease(job["id"], self.owner, job["generation"],
                         phase="provider_polling", error_code="provider_poll_unavailable",
                         error_detail=f"provider_poll:{type(exc).__name__}", retry_after_seconds=15)
                 event("media.audio.poll_transport_failure", level=30, job_id=job["id"],
                     provider=job["provider"], model=job["model"], elapsed_seconds=round(elapsed),
                     exception_type=type(exc).__name__)
             else:
-                await self.store.update_media_job(job["id"], self.owner, status="unknown",
+                await self.store.update_media_job(job["id"], self.owner, job["generation"], status="unknown",
                     phase="recovery_required", error_code="worker_error",
                     error_detail=f"{stage}:{type(exc).__name__}")
                 event("media.job.unknown", level=40, job_id=job["id"], provider=job["provider"],
                     model=job["model"], failure_stage=stage, exception_type=type(exc).__name__)
         except ValueError as exc:
-            await self.store.update_media_job(job["id"], self.owner, status="failed", phase="terminal",
+            await self.store.update_media_job(job["id"], self.owner, job["generation"], status="failed", phase="terminal",
                 error_code="provider_result_invalid", error_detail=f"{stage}:{str(exc)[:160]}")
             event("media.job.invalid_result", level=40, job_id=job["id"], provider=job["provider"],
                 model=job["model"], failure_stage=stage, error_code=str(exc)[:80])
         except Exception as exc:
-            await self.store.update_media_job(job["id"], self.owner, status="unknown", phase="recovery_required",
+            await self.store.update_media_job(job["id"], self.owner, job["generation"], status="unknown", phase="recovery_required",
                 error_code="worker_error", error_detail=f"{stage}:{type(exc).__name__}")
             event("media.job.unknown", level=40, job_id=job["id"], provider=job["provider"], model=job["model"],
                 failure_stage=stage, exception_type=type(exc).__name__)
@@ -342,7 +349,7 @@ class MediaWorker:
             urls = [await self._reference_url(item) for item in references]
             payload["image"] = urls[0] if len(urls) == 1 else urls
             payload["sequential_image_generation"] = "disabled"
-        if not await self.store.update_media_job(job["id"], self.owner, status="running", phase="requesting"):
+        if not await self.store.update_media_job(job["id"], self.owner, job["generation"], status="running", phase="requesting"):
             return ProviderResult("failed", error="media_job_lease_lost")
         async with await self._client() as client:
             response = await client.post(urljoin(base + "/", "images/generations"),
@@ -391,7 +398,7 @@ class MediaWorker:
             payload = {"model": model, "content": content,
                        "duration": duration, "ratio": ratio,
                        "resolution": p.get("resolution", "480p"), "generate_audio": bool(p.get("generate_audio", False))}
-            if not await self.store.update_media_job(job["id"], self.owner, status="running", phase="requesting"):
+            if not await self.store.update_media_job(job["id"], self.owner, job["generation"], status="running", phase="requesting"):
                 return ProviderResult("failed", error="media_job_lease_lost")
             async with await self._client() as client:
                 response = await client.post(urljoin(base + "/", "contents/generations/tasks"),
@@ -405,7 +412,7 @@ class MediaWorker:
                     if error_code == "provider_service_unavailable" else "failed")
                 return ProviderResult(status, error="video_submit_failed", error_code=(
                     "provider_submission_outcome_unknown" if status == "unknown" else error_code))
-            if not await self.store.update_media_job(job["id"], self.owner, status="running",
+            if not await self.store.update_media_job(job["id"], self.owner, job["generation"], status="running",
                     phase="provider_polling", provider_job_id=task_id):
                 return ProviderResult("failed", provider_job_id=task_id, error="media_job_lease_lost")
             event("media.provider.submitted", job_id=job["id"], provider="ark", provider_job_id=task_id)
@@ -439,7 +446,7 @@ class MediaWorker:
                 return ProviderResult("failed", provider_job_id=task_id, error="video_provider_expired",
                     error_code="provider_job_expired")
             progress = body.get("progress")
-            await self.store.update_media_job(job["id"], self.owner, status="running", phase="provider_polling",
+            await self.store.update_media_job(job["id"], self.owner, job["generation"], status="running", phase="provider_polling",
                 provider_job_id=task_id, progress=progress if isinstance(progress, int) else None)
         return ProviderResult("unknown", provider_job_id=task_id, error="video_timeout",
             error_code="provider_result_unresolved")
@@ -478,7 +485,7 @@ class MediaWorker:
             event("media.provider.resumed", job_id=job["id"], provider=provider,
                 provider_job_id=task_id)
         if not task_id:
-            if not await self.store.update_media_job(job["id"], self.owner,
+            if not await self.store.update_media_job(job["id"], self.owner, job["generation"],
                     status="running", phase="requesting"):
                 return ProviderResult("failed", error="media_job_lease_lost")
             try:
@@ -501,7 +508,7 @@ class MediaWorker:
                     if response.status_code >= 500 or response.is_success else "failed")
                 return ProviderResult(status, error="dashscope_video_submit_failed",
                     error_code="provider_submission_outcome_unknown" if status == "unknown" else error_code)
-            if not await self.store.update_media_job(job["id"], self.owner, status="running",
+            if not await self.store.update_media_job(job["id"], self.owner, job["generation"], status="running",
                     phase="provider_polling", provider_job_id=task_id):
                 return ProviderResult("failed", provider_job_id=task_id, error="media_job_lease_lost")
             event("media.provider.submitted", job_id=job["id"], provider=provider,
@@ -611,7 +618,7 @@ class MediaWorker:
                         return ProviderResult("pending", error="voice_clone_lookup_unavailable")
                 return ProviderResult("failed", error=f"audio_submit_failed:{code}",
                     error_code=classify_provider_error(response.status_code, code))
-            if not await self.store.update_media_job(job["id"], self.owner, status="running",
+            if not await self.store.update_media_job(job["id"], self.owner, job["generation"], status="running",
                     phase="provider_polling", provider_job_id=task_id):
                 return ProviderResult("failed", provider_job_id=task_id, error="media_job_lease_lost")
             provider_started_at = datetime.now(timezone.utc)
@@ -778,7 +785,7 @@ class MediaWorker:
                 provider_job_id=task_id)
         if not task_id:
             endpoint, payload = await self._tripo_payload(job)
-            if not await self.store.update_media_job(job["id"], self.owner, status="running",
+            if not await self.store.update_media_job(job["id"], self.owner, job["generation"], status="running",
                     phase="requesting"):
                 return ProviderResult("failed", error="media_job_lease_lost")
             maximum_retries = int(getattr(self.settings, "tripo_submit_max_retries", 5))
@@ -793,7 +800,7 @@ class MediaWorker:
                 if attempt >= maximum_retries:
                     return ProviderResult("failed", error="tripo_submit_rate_limited")
                 delay = self._tripo_retry_delay(response, attempt)
-                await self.store.update_media_job(job["id"], self.owner, status="running",
+                await self.store.update_media_job(job["id"], self.owner, job["generation"], status="running",
                     phase="provider_rate_limited")
                 event("media.provider.rate_limited", level=30, job_id=job["id"], provider="tripo",
                     retry_seconds=delay, retry_attempt=attempt + 1)
@@ -809,7 +816,7 @@ class MediaWorker:
                 suffix = re.sub(r"[^A-Za-z0-9_.-]", "_", str(code))[:80] if code is not None else "missing"
                 return ProviderResult("unknown" if response.is_success or response.status_code >= 500 else "failed",
                     error="tripo_submit_failed:" + suffix)
-            if not await self.store.update_media_job(job["id"], self.owner, status="running",
+            if not await self.store.update_media_job(job["id"], self.owner, job["generation"], status="running",
                     phase="provider_polling", provider_job_id=task_id):
                 return ProviderResult("failed", provider_job_id=task_id, error="media_job_lease_lost")
             event("media.provider.submitted", job_id=job["id"], provider="tripo",
@@ -824,7 +831,7 @@ class MediaWorker:
                     response = await client.get(urljoin(base, "tasks/" + task_id), headers=headers)
                 if response.status_code == 429:
                     delay = self._tripo_retry_delay(response, 0)
-                    await self.store.update_media_job(job["id"], self.owner, status="running",
+                    await self.store.update_media_job(job["id"], self.owner, job["generation"], status="running",
                         phase="provider_rate_limited", provider_job_id=task_id)
                     await asyncio.sleep(delay)
                     continue
@@ -869,7 +876,7 @@ class MediaWorker:
                     error="tripo_provider_failed:" + code)
             if status == "unknown" or not status:
                 unknown_count += 1
-            await self.store.update_media_job(job["id"], self.owner, status="running",
+            await self.store.update_media_job(job["id"], self.owner, job["generation"], status="running",
                 phase="provider_polling", provider_job_id=task_id,
                 progress=progress if isinstance(progress, int) else None)
         return ProviderResult("pending", provider_job_id=task_id,

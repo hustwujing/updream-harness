@@ -47,7 +47,8 @@ async def test_media_draft_confirm_is_idempotent_and_snapshots_provider(tmp_path
         assert await store.release_media_job_leases("worker") == 1
         reclaimed = await store.claim_media_jobs("worker-restarted")
         assert reclaimed[0]["id"] == first.id
-        await store.update_media_job(first.id, "worker-restarted", status="succeeded", phase="committed",
+        await store.update_media_job(first.id, "worker-restarted", reclaimed[0]["generation"],
+            status="succeeded", phase="committed",
             output_object_ref="sha256:" + "1" * 64, output_mime="video/mp4", output_size=1234)
         ready, _ = await store.media_continuation_group(turn.id)
         assert ready is False
@@ -125,13 +126,16 @@ async def test_media_continuation_waits_for_every_image_and_video_job(tmp_path):
         claimed = await store.claim_media_jobs("worker", limit=10)
         assert {item["id"] for item in claimed} == {job.id for job in jobs}
         await store.set_turn_state(turn.id, TurnState.COMPLETED)
+        generations={item["id"]:item["generation"] for item in claimed}
         for index, job in enumerate(jobs[:-1]):
-            await store.update_media_job(job.id, "worker", status="succeeded", phase="committed",
+            await store.update_media_job(job.id, "worker", generations[job.id],
+                status="succeeded", phase="committed",
                 output_object_ref="sha256:" + str(index + 1) * 64,
                 output_mime="image/png" if job.kind == "image" else "video/mp4", output_size=10)
         ready, group = await store.media_continuation_group(turn.id)
         assert ready is False and len(group) == 4
-        await store.update_media_job(jobs[-1].id, "worker", status="failed", phase="failed",
+        await store.update_media_job(jobs[-1].id, "worker", generations[jobs[-1].id],
+            status="failed", phase="failed",
             error_code="provider_processing_failed", error_detail="provider failed")
         ready, group = await store.media_continuation_group(turn.id)
         assert ready is True

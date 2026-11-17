@@ -169,6 +169,53 @@ async def test_media_lease_heartbeat_prevents_live_worker_takeover(tmp_path,monk
     finally:release.set();await store.close()
 
 
+async def test_stale_generation_cannot_mutate_reclaimed_job_with_same_owner(tmp_path):
+    settings,store,thread,turn,job=await setup_job(tmp_path,"same-owner-fence")
+    try:
+        first=(await store.claim_media_jobs("same-worker",lease_seconds=1))[0]
+        async with store.connections.begin() as db:
+            await db.execute(update(MediaJobRow).where(MediaJobRow.id==job.id).values(
+                lease_expires_at=now()-timedelta(seconds=1)))
+        second=(await store.claim_media_jobs("same-worker",lease_seconds=1))[0]
+        assert (first["generation"],second["generation"])==(1,2)
+        stale_writes=(
+            {"status":"running","phase":"stale-phase"},
+            {"status":"running","phase":"provider_polling","provider_job_id":"stale-provider"},
+            {"status":"failed","phase":"terminal","error_code":"stale-error"},
+            {"status":"unknown","phase":"recovery_required","error_detail":"stale-terminal"},
+        )
+        for values in stale_writes:
+            with pytest.raises(RuntimeError,match="stale_media_job_lease"):
+                await store.update_media_job(job.id,"same-worker",first["generation"],**values)
+        with pytest.raises(RuntimeError,match="stale_media_job_lease"):
+            await store.release_media_job_lease(job.id,"same-worker",first["generation"],
+                phase="stale-release")
+        await store.update_media_job(job.id,"same-worker",second["generation"],
+            status="failed",phase="terminal",error_code="current-generation")
+        current=await store.get_media_job(job.id,"a"*64)
+        assert current.status=="failed" and current.error_code=="current-generation"
+    finally:await store.close()
+
+
+async def test_heartbeat_database_error_cancels_business_task(tmp_path,monkeypatch):
+    class BrokenHeartbeatStore:
+        async def renew_media_job_lease(self,*args,**kwargs):
+            raise RuntimeError("database_unavailable")
+    worker=MediaWorker(Settings(backend="fake",data_root=tmp_path),BrokenHeartbeatStore(),
+        ObjectStore(tmp_path/"objects"),MediaCatalog())
+    worker.lease_seconds=.03
+    started=asyncio.Event();cancelled=asyncio.Event()
+    async def blocked(_job):
+        started.set()
+        try:await asyncio.Event().wait()
+        finally:cancelled.set()
+    monkeypatch.setattr(worker,"_process_claimed",blocked)
+    task=asyncio.create_task(worker.process({"id":"job","generation":7}))
+    await started.wait()
+    await asyncio.wait_for(task,1)
+    assert cancelled.is_set()
+
+
 def test_catalog_rejects_advertised_supported_cancellation():
     raw=__import__('json').dumps([{"kind":"video","model":"cancelable",
         "provider":"x","adapter":"x","route":"/x","execution":"async",
@@ -208,4 +255,52 @@ async def test_media_archive_and_batch_unarchive_barrier(tmp_path):
         assert await store.claim_media_batches("other")==[]
         await store.set_thread_archived(thread.id,"a"*64,archived=False)
         assert (await store.claim_media_batches("other"))[0]["turn_id"]==turn.id
+    finally:await store.close()
+
+
+async def test_expired_reference_upload_does_not_block_archive_or_delete(tmp_path):
+    database=tmp_path/"expired-reference.db";store=Store("sqlite+aiosqlite:///"+str(database))
+    await store.initialize();owner="a"*64
+    profile=HarnessCatalog().resolve("codex","gpt-5.6","standard")
+    try:
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level="standard",title="Expired reference"),profile,owner)
+        value=SimpleNamespace(name="reference.png",kind="image",mime="image/png",size=8,sha256="1"*64)
+        upload=await store.create_media_reference_upload(owner,thread.id,value,
+            object_key="expired/reference.png",public_url="https://cdn.test/reference.png",
+            expires_at=now()-timedelta(seconds=1))
+        assert upload.status=="expired"
+        archived=await store.set_thread_archived(thread.id,owner,archived=True)
+        assert archived.archived_at is not None
+        with pytest.raises(RuntimeError,match="media_reference_thread_archived"):
+            await store.create_media_reference_upload(owner,thread.id,value,
+                object_key="late/reference.png",public_url="https://cdn.test/late.png",
+                expires_at=now()+timedelta(minutes=1))
+        await store.set_thread_archived(thread.id,owner,archived=False)
+        await store.delete_thread(thread.id,owner)
+        assert await store.get_media_reference_upload(upload.id,owner) is None
+    finally:await store.close()
+
+
+async def test_reference_completion_and_archive_share_one_thread_fence(tmp_path):
+    database=tmp_path/"reference-race.db";store=Store("sqlite+aiosqlite:///"+str(database))
+    await store.initialize();owner="a"*64
+    profile=HarnessCatalog().resolve("codex","gpt-5.6","standard")
+    try:
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level="standard",title="Reference race"),profile,owner)
+        value=SimpleNamespace(name="reference.png",kind="image",mime="image/png",size=8,sha256="2"*64)
+        upload=await store.create_media_reference_upload(owner,thread.id,value,
+            object_key="race/reference.png",public_url="https://cdn.test/reference.png",
+            expires_at=now()+timedelta(minutes=1))
+        completed,archived=await asyncio.gather(
+            store.finish_media_reference_upload(upload.id,owner,"project-file"),
+            store.set_thread_archived(thread.id,owner,archived=True),return_exceptions=True)
+        assert not isinstance(completed,Exception) and completed.status=="completed"
+        if isinstance(archived,Exception):
+            assert "active_media_prevents_archival" in str(archived)
+            archived=await store.set_thread_archived(thread.id,owner,archived=True)
+        assert archived.archived_at is not None
+        final=await store.get_media_reference_upload(upload.id,owner)
+        assert final and final.status=="completed"
     finally:await store.close()

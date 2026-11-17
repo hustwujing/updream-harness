@@ -129,7 +129,7 @@ class MiniMaxVoiceClones:
             record, claimed = await self.store.claim_media_voice_clone(job["owner_id"],
                 reference["sha256"], self.worker_owner)
             if not claimed:
-                await self.store.update_media_job(job["id"], self.worker_owner,
+                await self.store.update_media_job(job["id"], self.worker_owner, job["generation"],
                     status="running", phase="waiting_voice_clone")
                 await asyncio.sleep(1)
                 record = await self.store.get_media_voice_clone(job["owner_id"], reference["sha256"])
@@ -164,13 +164,13 @@ class MiniMaxVoiceClones:
                         or hashlib.sha256(data).hexdigest() != reference["sha256"]):
                     raise MiniMaxVoiceCloneError("voice_clone_input_invalid")
                 if not record["provider_file_id"]:
-                    await self.store.update_media_job(job["id"], self.worker_owner,
+                    await self.store.update_media_job(job["id"], self.worker_owner, job["generation"],
                         status="running", phase="uploading_voice_reference")
                     file_id, _ = await self._upload(record, data)
                     record = await self.store.update_media_voice_clone(job["owner_id"],
                         reference["sha256"], self.worker_owner, status="uploaded",
                         provider_file_id=file_id, error_code="")
-                await self.store.update_media_job(job["id"], self.worker_owner,
+                await self.store.update_media_job(job["id"], self.worker_owner, job["generation"],
                     status="running", phase="cloning_voice")
                 await self._clone(record, job["model"])
                 await self.store.update_media_voice_clone(job["owner_id"], reference["sha256"],

@@ -49,7 +49,8 @@ async def test_media_provider_adapter_reuses_media_job_handle_and_binds_generic_
         claimed=(await store.claim_media_jobs('media-worker'))[0]
         assert claimed['id']==accepted.external_execution_id
         data=b'\x89PNG\r\n\x1a\nprovider-output';object_ref,_=objects.put(data)
-        await store.update_media_job(claimed['id'],'media-worker',status='succeeded',phase='committed',
+        await store.update_media_job(claimed['id'],'media-worker',claimed['generation'],
+            status='succeeded',phase='committed',
             output_object_ref=object_ref,output_mime='image/png',output_size=len(data),progress=100)
         context=context.__class__(job=job,request=request,generation=attempt.generation,
             previous_external_execution_id=accepted.external_execution_id,
@@ -72,7 +73,8 @@ async def test_media_provider_adapter_maps_unknown_and_cancellation_without_resu
     context=JobExecutionContext(job=job,request=request,generation=attempt.generation)
     try:
         accepted=await adapter.submit(context);claimed=(await store.claim_media_jobs('media-worker'))[0]
-        await store.update_media_job(claimed['id'],'media-worker',status='unknown',phase='recovery_required',
+        await store.update_media_job(claimed['id'],'media-worker',claimed['generation'],
+            status='unknown',phase='recovery_required',
             error_code='provider_submission_outcome_unknown',error_detail='response lost')
         status=await adapter.reconcile(context,accepted.external_execution_id)
         assert status.terminal and status.state==JobState.UNKNOWN
