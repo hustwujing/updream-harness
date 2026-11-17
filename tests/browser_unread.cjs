@@ -2,12 +2,12 @@ const {chromium}=require('playwright');const assert=require('node:assert/strict'
 (async()=>{const browser=await chromium.launch({headless:true,args:['--no-sandbox'],ignoreDefaultArgs:['--disable-dev-shm-usage']});try{
  const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.addInitScript(()=>{window.EventSource=class{addEventListener(){}close(){}}});
- let generation=1,state='COMPLETED',read='',reads=0,itemDelay=0;
+ let generation=1,state='COMPLETED',read='',reads=0,itemDelay=0,activeListFailure=false;
  const thread=()=>({id:'thread',title:'Unread test',harness:'codex',model:'gpt-5.6',reasoning_level:'standard',updated_at:new Date().toISOString(),latest_turn_id:'turn-'+generation,latest_turn_state:state,unread_completion:state==='COMPLETED'&&read!=='turn-'+generation});
- await page.route('**/api/**',async route=>{const req=route.request(),path=new URL(req.url()).pathname;let body=[];
+ await page.route('**/api/**',async route=>{const req=route.request(),url=new URL(req.url()),path=url.pathname;let body=[];
   if(path.endsWith('/session'))body={ready:true,authentication_required:false,authenticated:false,user:null};
   else if(path.endsWith('/catalog/harnesses'))body=[{id:'codex',label:'Codex',default_model:'gpt-5.6',models:[{id:'gpt-5.6',label:'GPT',reasoning:[{id:'standard',label:'标准'}]}]}];
-  else if(path.endsWith('/threads'))body=[thread()];
+  else if(path.endsWith('/threads')){if(url.searchParams.get('archived')!=='true'&&activeListFailure)return route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({detail:'active_list_failed'})});body=[thread()]}
   else if(path.endsWith('/turns'))body=[{id:'turn-'+generation,thread_id:'thread',harness:'codex',model:'gpt-5.6',state}];
   else if(path.endsWith('/read')){reads++;if(req.postDataJSON().turn_id==='turn-'+generation&&state==='COMPLETED')read='turn-'+generation;body={read_turn_id:read}}
   else if(path.includes('/items')){if(itemDelay)await new Promise(r=>setTimeout(r,itemDelay));body=[{id:'item',turn_id:'turn-'+generation,type:'agent_message',status:'completed',summary:'Finished',payload:{}}]}
@@ -26,5 +26,7 @@ const {chromium}=require('playwright');const assert=require('node:assert/strict'
  itemDelay=250;const previous=reads;await page.getByRole('button',{name:/Unread test/}).click();await page.waitForTimeout(25);assert.equal(await page.locator('.new-thread').isEnabled(),true);await page.locator('.new-thread').click();await page.waitForTimeout(400);
  assert.equal(reads,previous);assert.equal(await page.locator('.thread-status.done').count(),1);
  await page.getByRole('button',{name:/Unread test/}).click();await page.waitForFunction(()=>!document.querySelector('.thread-status.done'));assert.equal(read,'turn-3');
- assert.deepEqual(errors,[]);console.log(JSON.stringify({passed:true,open_marks_read:true,reload_preserves:true,running_not_preread:true,visible_completion_read:true,new_completion_unread:true,late_fetch_does_not_mark_read:true}));
+ generation=4;itemDelay=250;await page.getByRole('button',{name:'已归档'}).click();await page.waitForSelector('.thread-status.done');let archivedReads=reads;await page.getByRole('button',{name:/Unread test/}).click();await page.waitForTimeout(25);await page.locator('.new-thread').click();await page.waitForTimeout(400);assert.equal(reads,archivedReads);assert.equal(await page.locator('.topbar h1').textContent(),'新对话');assert.equal(new URL(page.url()).searchParams.has('thread'),false);
+ generation=5;await page.getByRole('button',{name:'已归档'}).click();await page.waitForSelector('.thread-status.done');archivedReads=reads;await page.getByRole('button',{name:/Unread test/}).click();await page.waitForTimeout(25);activeListFailure=true;await page.locator('.new-thread').click();await page.waitForTimeout(400);assert.equal(reads,archivedReads);assert.equal(await page.locator('.topbar h1').textContent(),'新对话');assert.equal(new URL(page.url()).searchParams.has('thread'),false);activeListFailure=false;
+ assert.deepEqual(errors,[]);console.log(JSON.stringify({passed:true,open_marks_read:true,reload_preserves:true,running_not_preread:true,visible_completion_read:true,new_completion_unread:true,late_fetch_does_not_mark_read:true,archive_new_success_fenced:true,archive_new_failure_fenced:true}));
 }finally{await browser.close()}})().catch(e=>{console.error(e);process.exitCode=1});
