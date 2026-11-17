@@ -187,14 +187,19 @@ class JobWorker:
                 return
             if not accepted:
                 if await self.store.unresolved_job_submission(job.id,attempt.generation):
-                    await self.store.transition_job(job.id,JobState.UNKNOWN,
-                        expected_generation=attempt.generation,result={
-                            "error_code":"submission_outcome_unknown_after_worker_loss"})
-                    return
-                await self.store.mark_job_submission_started(job.id,self.worker_id,attempt.generation)
-                submission_started=True
+                    recovery=await self._before_deadline(adapter.recover_submission(context),deadline)
+                    if recovery.submission is None and not recovery.safe_to_retry:
+                        await self.store.transition_job(job.id,JobState.UNKNOWN,
+                            expected_generation=attempt.generation,result={
+                                "error_code":"submission_outcome_unknown_after_worker_loss"})
+                        return
+                    submission=recovery.submission
+                else:submission=None
+                if submission is None:
+                    await self.store.mark_job_submission_started(job.id,self.worker_id,attempt.generation)
+                    submission_started=True
                 try:
-                    submission = await self._before_deadline(adapter.submit(context),deadline)
+                    submission=(submission or await self._before_deadline(adapter.submit(context),deadline))
                 except PreAcceptFailure as exc:
                     maximum = int(request.retry_policy.get("max_pre_accept_attempts", 1))
                     retry = attempt.generation < max(1, maximum)

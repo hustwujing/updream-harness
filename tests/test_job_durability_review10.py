@@ -4,7 +4,8 @@ import pytest
 
 from sandbox_harness.domain import Harness, ThreadCreate, TurnCreate
 from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.job_adapters import AdapterStatus,AdapterSubmission,BaseJobAdapter
+from sandbox_harness.job_adapters import (AdapterStatus,AdapterSubmission,BaseJobAdapter,
+    SubmissionRecovery)
 from sandbox_harness.job_contracts import JobGroupCreate,JobKind,JobRequest,JobState
 from sandbox_harness.job_worker import JobWorker
 from sandbox_harness.store import (BudgetAccountRow,BudgetLedgerRow,BudgetReservationRow,
@@ -62,6 +63,49 @@ async def test_process_death_after_submit_intent_never_resubmits(tmp_path):
         current=await store.get_job(job.id)
         assert adapter.submit_calls==1 and current.state==JobState.UNKNOWN
         assert current.result["error_code"]=="submission_outcome_unknown_after_worker_loss"
+    finally:adapter.release.set();await store.close()
+
+
+class RecoverableHarnessAdapter(BlockingAdapter):
+    def __init__(self,recovery):super().__init__();self.recovery=recovery
+    async def recover_submission(self,context):return self.recovery
+    async def submit(self,context):
+        self.submit_calls+=1
+        if self.submit_calls==1:
+            self.started.set();await self.release.wait()
+        return AdapterSubmission("new-execution",{"id":"new"},completed=True,result={"ok":True})
+
+
+async def test_harness_worker_loss_retries_only_after_adapter_proves_no_acceptance(tmp_path):
+    store,_,job=await setup(tmp_path,request("harness-retry",kind=JobKind.HARNESS))
+    adapter=RecoverableHarnessAdapter(SubmissionRecovery(safe_to_retry=True))
+    dead=JobWorker(store,{"provider":adapter},node_id="node",worker_id="dead",lease_seconds=1)
+    replacement=JobWorker(store,{"provider":adapter},node_id="node",worker_id="replacement",lease_seconds=1)
+    try:
+        task=asyncio.create_task(dead.run_once());await adapter.started.wait()
+        task.cancel();await asyncio.gather(task,return_exceptions=True);await asyncio.sleep(1.1)
+        adapter.release.set();await replacement.run_once()
+        current=await store.get_job(job.id)
+        assert current.state==JobState.SUCCEEDED and current.result=={"ok":True}
+        assert adapter.submit_calls==2
+    finally:adapter.release.set();await store.close()
+
+
+async def test_harness_worker_loss_adopts_proven_acceptance_without_resubmit(tmp_path):
+    store,_,job=await setup(tmp_path,request("harness-adopt",kind=JobKind.HARNESS))
+    recovered=AdapterSubmission("existing-execution",{"id":"existing"},completed=True,
+        result={"recovered":True})
+    adapter=RecoverableHarnessAdapter(SubmissionRecovery(submission=recovered))
+    dead=JobWorker(store,{"provider":adapter},node_id="node",worker_id="dead",lease_seconds=1)
+    replacement=JobWorker(store,{"provider":adapter},node_id="node",worker_id="replacement",lease_seconds=1)
+    try:
+        task=asyncio.create_task(dead.run_once());await adapter.started.wait()
+        task.cancel();await asyncio.gather(task,return_exceptions=True);await asyncio.sleep(1.1)
+        adapter.release.set();await replacement.run_once()
+        current=await store.get_job(job.id)
+        assert current.state==JobState.SUCCEEDED and current.result=={"recovered":True}
+        assert adapter.submit_calls==1
+        assert (await store.latest_job_acceptance(job.id)).external_execution_id=="existing-execution"
     finally:adapter.release.set();await store.close()
 
 

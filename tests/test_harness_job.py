@@ -162,6 +162,65 @@ async def test_missing_child_sandbox_is_terminal_not_an_infinite_pending_status(
     assert value.terminal and value.result['error_code']=='child_sandbox_lost'
 
 
+async def test_child_submission_recovery_adopts_unique_runtime_execution(tmp_path):
+    digest='b'*64;job_id='c'*32
+    sandbox=Sandbox(id='sandbox-recovered',harness=Harness.CODEX,
+        image='registry/office@sha256:'+digest,runtime_url='http://runtime',metadata={},
+        health_state='ready')
+    class Inventory:
+        async def find_by_turn(self,identity):assert identity==job_id;return [sandbox]
+    class Pool:
+        backend=Inventory();released=[]
+        async def adopt(self,value,**kwargs):assert value is sandbox;return sandbox
+        async def release(self,value,**kwargs):self.released.append(value.id)
+    class Runtime:
+        async def execution_status(self,value,execution_id):
+            assert value is sandbox and execution_id==job_id+':1'
+            return {'result':None}
+    backend=OpenSandboxChildBackend(pool=Pool(),runtime=Runtime(),store=SimpleNamespace(),
+        objects=SimpleNamespace(),settings=Settings(backend='fake',data_root=tmp_path),
+        token_factory=lambda *args:None)
+    backend._ensure_collector=lambda *args:None
+    context=SimpleNamespace(job=SimpleNamespace(id=job_id))
+    reservation=SimpleNamespace(id='reservation',job_generation=1,harness='codex',
+        image_digest=digest,node_id='node',node_generation=7,runtime_profile_id='office',gpu_ids=())
+    recovery=await backend.recover_submission(context,reservation)
+    assert recovery.submission.external_execution_id==job_id+':1'
+    assert recovery.submission.acceptance_receipt['sandbox_id']==sandbox.id
+    assert recovery.submission.acceptance_receipt['runtime_acceptance']['recovered'] is True
+    assert Pool.released==[]
+
+
+async def test_child_submission_recovery_retries_only_when_absence_is_proven(tmp_path):
+    digest='b'*64;job_id='d'*32
+    class Inventory:
+        rows=[]
+        async def find_by_turn(self,identity):return self.rows
+    class Pool:
+        backend=Inventory();released=[]
+        async def adopt(self,value,**kwargs):return value
+        async def release(self,value,**kwargs):self.released.append(value.id)
+    class Runtime:
+        async def execution_status(self,*args):return None
+    backend=OpenSandboxChildBackend(pool=Pool(),runtime=Runtime(),store=SimpleNamespace(),
+        objects=SimpleNamespace(),settings=Settings(backend='fake',data_root=tmp_path),
+        token_factory=lambda *args:None)
+    context=SimpleNamespace(job=SimpleNamespace(id=job_id))
+    reservation=SimpleNamespace(id='reservation',job_generation=1,harness='codex',
+        image_digest=digest,node_id='node',node_generation=7,runtime_profile_id='office',gpu_ids=())
+    assert (await backend.recover_submission(context,reservation)).safe_to_retry is True
+    sandbox=Sandbox(id='sandbox-no-execution',harness=Harness.CODEX,
+        image='registry/office@sha256:'+digest,runtime_url='http://runtime',metadata={},
+        health_state='ready')
+    Pool.backend.rows=[sandbox]
+    assert (await backend.recover_submission(context,reservation)).safe_to_retry is True
+    assert Pool.released==[sandbox.id]
+    Pool.backend.rows=[sandbox,Sandbox(id='duplicate',harness=Harness.CODEX,
+        image=sandbox.image,runtime_url='http://runtime',metadata={},health_state='ready')]
+    ambiguous=await backend.recover_submission(context,reservation)
+    assert ambiguous.submission is None and not ambiguous.safe_to_retry
+
+
 async def test_failed_child_result_does_not_reopen_missing_sandbox(tmp_path):
     backend=OpenSandboxChildBackend(pool=SimpleNamespace(),runtime=SimpleNamespace(),
         store=SimpleNamespace(),objects=SimpleNamespace(),

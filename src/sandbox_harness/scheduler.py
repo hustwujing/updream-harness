@@ -182,6 +182,14 @@ class Scheduler:
                 expires_at=timestamp+timedelta(seconds=self.reservation_seconds),created_at=timestamp,released_at=None)
             db.add(row);await db.flush();return self._view(row)
 
+    async def active_reservation(self,job_id:str)->ResourceReservation|None:
+        async with self.store.connections() as db:
+            row=(await db.execute(select(ResourceReservationRow).where(
+                ResourceReservationRow.job_id==job_id,
+                ResourceReservationRow.state.in_(["reserved","running"])).order_by(
+                ResourceReservationRow.job_generation.desc()).limit(1))).scalar_one_or_none()
+            return self._view(row) if row else None
+
     async def mark_running(self,reservation_id: str,node_id: str,node_generation: int)->ResourceReservation:
         async with self.store.connections.begin() as db:
             row=await db.get(ResourceReservationRow,reservation_id,with_for_update=True)

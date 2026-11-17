@@ -8,7 +8,8 @@ from typing import Any, Awaitable, Callable, Protocol
 
 from .domain import Harness
 from .grants import GrantAuthority,JobGrantRequest,TurnGrantRequest
-from .job_adapters import AdapterStatus, AdapterSubmission, BaseJobAdapter, JobExecutionContext
+from .job_adapters import (AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExecutionContext,
+    SubmissionRecovery)
 from .job_contracts import JobState
 from .artifact_gateway import ArtifactEmission,ArtifactGateway
 from .scheduler import ResourceRequest, Scheduler
@@ -29,6 +30,7 @@ def verify_runtime_artifact(staged, metadata: dict) -> None:
 
 class ChildExecutionBackend(Protocol):
     async def start(self, context: JobExecutionContext, reservation) -> tuple[str, dict[str, Any]]: ...
+    async def recover_submission(self,context:JobExecutionContext,reservation)->SubmissionRecovery: ...
     async def status(self, context: JobExecutionContext, external_execution_id: str,
                      receipt: dict[str, Any]) -> AdapterStatus: ...
     async def cancel(self, context: JobExecutionContext, external_execution_id: str,
@@ -135,6 +137,18 @@ class HarnessJobAdapter(BaseJobAdapter):
             'executor':'harness','reservation_id':reservation.id,'node_id':reservation.node_id,
             'node_generation':reservation.node_generation,'runtime_profile_id':reservation.runtime_profile_id,
             'image_digest':reservation.image_digest,'gpu_ids':list(reservation.gpu_ids),**receipt})
+
+    async def recover_submission(self,context:JobExecutionContext)->SubmissionRecovery:
+        reservation=await self.scheduler.active_reservation(context.job.id)
+        if not reservation:return SubmissionRecovery()
+        recovery=await self.backend.recover_submission(context,reservation)
+        if recovery.submission is not None:
+            await self.scheduler.mark_running(reservation.id,reservation.node_id,
+                reservation.node_generation)
+        elif recovery.safe_to_retry:
+            await self.scheduler.release(reservation.id,reservation.node_id,
+                reservation.node_generation)
+        return recovery
 
     async def status(self,context:JobExecutionContext,external_execution_id:str)->AdapterStatus:
         receipt=context.previous_acceptance_receipt
@@ -285,6 +299,31 @@ class OpenSandboxChildBackend:
         except BaseException:
             await self.pool.release(sandbox,keep_attached=False)
             raise
+
+    async def recover_submission(self,context:JobExecutionContext,reservation)->SubmissionRecovery:
+        matches=await self.pool.backend.find_by_turn(context.job.id)
+        if not matches:return SubmissionRecovery(safe_to_retry=True)
+        ready=[value for value in matches if value.health_state=="ready"
+            and value.harness.value==reservation.harness
+            and value.image.endswith("@sha256:"+reservation.image_digest)]
+        if len(matches)!=1 or len(ready)!=1:return SubmissionRecovery()
+        sandbox=await self.pool.adopt(ready[0],thread_id=self._thread_id(context.job.id),
+            turn_id=context.job.id)
+        execution_id=context.job.id+":"+str(reservation.job_generation)
+        value=await self.runtime.execution_status(sandbox,execution_id)
+        if not value:
+            await self.pool.release(sandbox,keep_attached=False)
+            return SubmissionRecovery(safe_to_retry=True)
+        self.sessions[context.job.id]=sandbox
+        self._ensure_collector(context,sandbox,execution_id)
+        return SubmissionRecovery(submission=AdapterSubmission(external_execution_id=execution_id,
+            acceptance_receipt={"executor":"harness","reservation_id":reservation.id,
+                "node_id":reservation.node_id,"node_generation":reservation.node_generation,
+                "runtime_profile_id":reservation.runtime_profile_id,
+                "image_digest":reservation.image_digest,"gpu_ids":list(reservation.gpu_ids),
+                "sandbox_id":sandbox.id,"capability_nonce":"",
+                "runtime_acceptance":{"accepted":True,"created":False,"recovered":True,
+                    "execution_id":execution_id}}))
 
     def _ensure_collector(self,context:JobExecutionContext,sandbox,execution_id:str)->None:
         existing=self.collectors.get(context.job.id)

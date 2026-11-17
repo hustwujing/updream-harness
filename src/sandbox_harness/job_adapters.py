@@ -24,6 +24,16 @@ class AdapterSubmission:
 
 
 @dataclass(frozen=True)
+class SubmissionRecovery:
+    submission: AdapterSubmission | None = None
+    safe_to_retry: bool = False
+
+    def __post_init__(self):
+        if self.submission is not None and self.safe_to_retry:
+            raise ValueError("Submission recovery cannot be accepted and retryable")
+
+
+@dataclass(frozen=True)
 class AdapterStatus:
     terminal: bool
     state: JobState = JobState.WAITING_EXTERNAL
@@ -56,6 +66,9 @@ class JobAdapter(Protocol):
 
 
 class BaseJobAdapter:
+    async def recover_submission(self,context:JobExecutionContext)->SubmissionRecovery:
+        return SubmissionRecovery()
+
     async def status(self, context: JobExecutionContext, external_execution_id: str) -> AdapterStatus:
         return AdapterStatus(terminal=False)
 
