@@ -18,6 +18,7 @@ from .capability import CapabilityCodec
 from .domain import TERMINAL, identifier, now
 from .observability import event
 from .sandbox import Sandbox, SandboxNotFound
+from .objects import object_chunks
 
 
 EXECD_PORT = 44772
@@ -154,9 +155,10 @@ class SandboxInspector:
 
     async def _restore_new(self, thread, sandbox: Sandbox) -> None:
         if thread.checkpoint_ref and not sandbox.reused:
-            archive = await asyncio.to_thread(self.objects.get, thread.checkpoint_ref,
+            archive_size = await asyncio.to_thread(self.objects.size, thread.checkpoint_ref,
                 maximum=self.settings.max_checkpoint_bytes)
-            await self.runtime.restore(sandbox, archive)
+            await self.runtime.restore(sandbox, object_chunks(self.objects, thread.checkpoint_ref,
+                maximum=self.settings.max_checkpoint_bytes), size=archive_size)
         await self._materialize_managed(thread, sandbox)
 
     async def restore(self, thread_id: str, owner_id: str) -> Sandbox:
@@ -330,14 +332,19 @@ class SandboxInspector:
                 if item["kind"] == "missing":
                     updates.append(item)
                     continue
-                data = await self.runtime.managed_project_file(sandbox, item["path"])
-                digest = hashlib.sha256(data).hexdigest()
-                if digest != item["actual_sha256"] or len(data) != item["size"]:
-                    raise RuntimeError("managed_file_changed_during_release")
-                object_ref, stored_digest = await asyncio.to_thread(self.objects.put, data)
-                if stored_digest != digest:
-                    raise RuntimeError("managed_file_object_identity_mismatch")
-                updates.append({**item,"sha256":digest,"size":len(data),"object_ref":object_ref})
+                staged = await self.runtime.managed_project_file(sandbox, item["path"],
+                    maximum=self.settings.max_artifact_bytes)
+                try:
+                    if staged.sha256 != item["actual_sha256"] or staged.size != item["size"]:
+                        raise RuntimeError("managed_file_changed_during_release")
+                    object_ref, stored_digest = await asyncio.to_thread(self.objects.put_file,
+                        staged.path, digest=staged.sha256, size=staged.size)
+                    if stored_digest != staged.sha256:
+                        raise RuntimeError("managed_file_object_identity_mismatch")
+                    updates.append({**item,"sha256":staged.sha256,"size":staged.size,
+                        "object_ref":object_ref})
+                finally:
+                    staged.remove()
             await self.store.apply_managed_file_versions(thread.id, owner_id, updates)
         elif action != "discard":
             raise ValueError("invalid_managed_file_action")
@@ -446,10 +453,13 @@ class SandboxInspector:
                 try:
                     if control.get("pty_session_id") and not terminal_closed:
                         await self.delete_terminal(sandbox, control["pty_session_id"])
-                    archive = await self.runtime.checkpoint(sandbox)
-                    if len(archive) > self.settings.max_checkpoint_bytes:
-                        raise ValueError("Checkpoint exceeds byte limit")
-                    checkpoint_ref, _ = await asyncio.to_thread(self.objects.put, archive)
+                    archive = await self.runtime.checkpoint(sandbox,
+                        maximum=self.settings.max_checkpoint_bytes)
+                    try:
+                        checkpoint_ref, _ = await asyncio.to_thread(self.objects.put_file,
+                            archive.path, digest=archive.sha256, size=archive.size)
+                    finally:
+                        archive.remove()
                     await self.store.update_thread_checkpoint_idle(thread_id, owner_id, checkpoint_ref)
                     checkpointed = True
                     await self.pool.release(sandbox, keep_attached=True,

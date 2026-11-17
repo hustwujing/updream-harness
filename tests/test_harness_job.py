@@ -12,6 +12,7 @@ from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate
 from sandbox_harness.objects import ObjectStore
 from sandbox_harness.sandbox import Sandbox,SandboxNotFound
 from sandbox_harness.scheduler import NodeInventory,Scheduler
+from sandbox_harness.runtime import StagedRuntimeObject
 from sandbox_harness.store import Store
 
 
@@ -112,8 +113,11 @@ async def test_opensandbox_child_collects_output_into_atomic_delivery(tmp_path):
     data=b'\x89PNG\r\n\x1a\nchild-output'
     class Runtime:
         async def artifacts(self,sandbox,batch):
-            assert batch==job.id;return [{'path':'result.png','size':len(data),'mime':'image/png'}]
-        async def artifact(self,sandbox,path):assert path=='result.png';return data
+            assert batch==job.id;return [{'path':'result.png','size':len(data),'mime':'image/png',
+                'sha256':__import__('hashlib').sha256(data).hexdigest()}]
+        async def artifact(self,sandbox,path,*,maximum):
+            assert path=='result.png';target=tmp_path/'staged-result.png';target.write_bytes(data)
+            return StagedRuntimeObject(target,len(data),__import__('hashlib').sha256(data).hexdigest())
     sandbox=Sandbox(id='sandbox-1',harness=Harness.CODEX,image='image',runtime_url='http://runtime',metadata={})
     backend=OpenSandboxChildBackend(pool=SimpleNamespace(),runtime=Runtime(),store=store,
         objects=ObjectStore(tmp_path/'objects'),settings=Settings(backend='fake',data_root=tmp_path),

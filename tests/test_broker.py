@@ -1,5 +1,7 @@
 import asyncio
+import hashlib
 from datetime import timedelta
+from pathlib import Path
 import httpx
 import pytest
 
@@ -9,7 +11,7 @@ from sandbox_harness.config import Settings
 from sandbox_harness.domain import EventKind, Harness, InteractionResponse, RuntimeEvent, RuntimeResult, ThreadCreate, TurnCreate, TurnInputCreate, TurnState, now
 from sandbox_harness.objects import ObjectStore
 from sandbox_harness.pool import SandboxPool
-from sandbox_harness.runtime import RuntimeStreamInterrupted
+from sandbox_harness.runtime import RuntimeStreamInterrupted, StagedRuntimeObject
 from sandbox_harness.sandbox import FakeSandboxBackend
 from sandbox_harness.store import Store
 
@@ -17,7 +19,8 @@ from sandbox_harness.store import Store
 class Runtime:
     def __init__(self): self.project_files=[]
     async def inject(self, sandbox, **kwargs): pass
-    async def restore(self, sandbox, archive): pass
+    async def restore(self, sandbox, archive, *, size):
+        self.restored=b''.join([chunk async for chunk in archive])
     async def put_attachment(self, sandbox, name, data, mime): pass
     async def put_project_file(self, sandbox, path, data, mime): self.project_files.append((path,data,mime))
     async def reset_project_files(self, sandbox): pass
@@ -25,9 +28,15 @@ class Runtime:
         yield RuntimeEvent(kind=EventKind.TEXT_DELTA, payload={"text": "done"})
         yield RuntimeEvent(kind=EventKind.TOOL_FINISHED, payload={"name": "write", "result": "ok"})
         yield RuntimeResult(status="completed", native_thread_id="native-1")
-    async def checkpoint(self, sandbox): return b"checkpoint"
-    async def artifacts(self, sandbox, expected_batch_id): return [{"path": "result.txt", "mime": "text/plain"}]
-    async def artifact(self, sandbox, path): return b"result"
+    @staticmethod
+    def stage(data):
+        root=Path.cwd()/'.data'/'tmp'/'test-runtime';root.mkdir(parents=True,exist_ok=True)
+        path=root/(__import__('uuid').uuid4().hex);path.write_bytes(data)
+        return StagedRuntimeObject(path,len(data),hashlib.sha256(data).hexdigest())
+    async def checkpoint(self, sandbox, *, maximum): return self.stage(b"checkpoint")
+    async def artifacts(self, sandbox, expected_batch_id): return [{"path": "result.txt", "mime": "text/plain",
+        "size":6,"sha256":hashlib.sha256(b"result").hexdigest()}]
+    async def artifact(self, sandbox, path, *, maximum): return self.stage(b"result")
     async def cancel(self, sandbox): return {"cancelled": True, "native_thread_id": "native-1"}
 
 

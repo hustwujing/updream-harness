@@ -173,7 +173,8 @@ def components(settings: Settings):
         bundle_dir=settings.runtime_bundle_dir,
         default_bundle_digest=settings.runtime_bundle_digest,
         code_bundle_dir=settings.runtime_code_bundle_dir,
-        default_code_bundle_digest=settings.runtime_code_bundle_digest)
+        default_code_bundle_digest=settings.runtime_code_bundle_digest,
+        staging_root=settings.data_root / "tmp" / "runtime-downloads")
     catalog = HarnessCatalog(settings.harness_catalog_json or None)
     media_catalog = MediaCatalog(settings.media_catalog_json,
         ark_assets_configured=bool(settings.ark_access_key and settings.ark_secret_key

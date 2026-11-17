@@ -10,6 +10,7 @@ from sandbox_harness.media_render_adapter import MediaRenderOperationAdapter
 from sandbox_harness.objects import ObjectStore
 from sandbox_harness.sandbox import Sandbox
 from sandbox_harness.scheduler import NodeInventory,Scheduler
+from sandbox_harness.runtime import StagedRuntimeObject
 from sandbox_harness.store import Store
 
 
@@ -55,8 +56,11 @@ async def test_media_render_adapter_reserves_profile_injects_frozen_input_and_bi
         async def inject(self,*args,**kwargs):self.injected=kwargs
         async def put_project_file(self,sandbox,path,data,mime):self.files.append((path,data,mime))
         async def media_render(self,sandbox,value):self.rendered=value;return {
-            'path':'resized.png','size':len(result_data),'mime':'image/png','sha256':'0'*64}
-        async def artifact(self,sandbox,path):assert path=='resized.png';return result_data
+            'path':'resized.png','size':len(result_data),'mime':'image/png',
+            'sha256':__import__('hashlib').sha256(result_data).hexdigest()}
+        async def artifact(self,sandbox,path,*,maximum):
+            assert path=='resized.png';target=tmp_path/'staged-resized.png';target.write_bytes(result_data)
+            return StagedRuntimeObject(target,len(result_data),__import__('hashlib').sha256(result_data).hexdigest())
     runtime=Runtime()
     async def token_factory(*args):return 'token',SimpleNamespace(nonce='nonce')
     adapter=MediaRenderOperationAdapter(scheduler=scheduler,pool=Pool(),runtime=runtime,store=store,
@@ -98,7 +102,9 @@ async def test_media_render_adapter_collects_role_addressed_operation_outputs(tm
         job=await store.get_job(jobs[0].id);objects=ObjectStore(tmp_path/'objects')
         outputs={'processed.wav':b'RIFF\x04\x00\x00\x00WAVE','audio-process-report.json':b'{"status":"succeeded"}'}
         class Runtime:
-            async def artifact(self,sandbox,path):return outputs[path]
+            async def artifact(self,sandbox,path,*,maximum):
+                data=outputs[path];target=tmp_path/('staged-'+path);target.write_bytes(data)
+                return StagedRuntimeObject(target,len(data),__import__('hashlib').sha256(data).hexdigest())
         class Pool:
             async def get_attached(self,*args):return SimpleNamespace(id='sandbox')
         adapter=MediaRenderOperationAdapter(scheduler=None,pool=Pool(),runtime=Runtime(),store=store,
@@ -107,8 +113,12 @@ async def test_media_render_adapter_collects_role_addressed_operation_outputs(tm
             previous_acceptance_receipt={'sandbox_id':'sandbox'})
         result=await adapter.collect(context,'operation:'+job.id,AdapterStatus(True,JobState.SUCCEEDED,{
             'outputs':[{'role':'processed_audio','path':'processed.wav','mime':'audio/wav',
+                'size':len(outputs['processed.wav']),
+                'sha256':__import__('hashlib').sha256(outputs['processed.wav']).hexdigest(),
                 'validation_receipts':[{'validator':'audio','status':'pass'}]},
-                {'role':'measurement_report','path':'audio-process-report.json','mime':'application/json'}]}))
+                {'role':'measurement_report','path':'audio-process-report.json','mime':'application/json',
+                'size':len(outputs['audio-process-report.json']),
+                'sha256':__import__('hashlib').sha256(outputs['audio-process-report.json']).hexdigest()}]}))
         assert {row['artifact_role'] for row in result['artifacts']}=={
             'processed_audio','measurement_report'}
         assert {row['state'] for row in result['collections']}=={'published'}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .observability import observed_sync
 
+import asyncio
 import hashlib
 import os
 import re
@@ -55,6 +56,9 @@ class ObjectStore:
     def put_file(self, source: Path, *, digest: str, size: int) -> tuple[str, str]:
         if not re.fullmatch(r"[0-9a-f]{64}", digest) or source.stat().st_size != size:
             raise ValueError("Invalid staged object identity")
+        with source.open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
+                raise ValueError("Invalid staged object digest")
         target = self._path(digest)
         if not target.exists():
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -86,6 +90,8 @@ class ObjectStore:
     def iter_bytes(self, reference: str, *, maximum: int, start: int = 0,
                    end: int | None = None, chunk_size: int = 1024 * 1024):
         digest = self._digest(reference); size = self.size(reference, maximum=maximum)
+        if size == 0 and start == 0 and end is None:
+            return
         end = size - 1 if end is None else end
         if start < 0 or end < start or end >= size:
             raise ValueError("Invalid object byte range")
@@ -181,6 +187,9 @@ class S3ObjectStore:
     def put_file(self, source: Path, *, digest: str, size: int) -> tuple[str, str]:
         if not re.fullmatch(r"[0-9a-f]{64}", digest) or source.stat().st_size != size:
             raise ValueError("Invalid staged object identity")
+        with source.open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
+                raise ValueError("Invalid staged object digest")
         try:
             self.client.head_object(Bucket=self.bucket, Key=self._key(digest))
         except Exception as exc:
@@ -221,6 +230,8 @@ class S3ObjectStore:
     def iter_bytes(self, reference: str, *, maximum: int, start: int = 0,
                    end: int | None = None, chunk_size: int = 1024 * 1024):
         digest = self._digest(reference); size = self.size(reference, maximum=maximum)
+        if size == 0 and start == 0 and end is None:
+            return
         end = size - 1 if end is None else end
         if start < 0 or end < start or end >= size:
             raise ValueError("Invalid object byte range")
@@ -240,7 +251,6 @@ class S3ObjectStore:
             body.close()
         if hasher and hasher.hexdigest() != digest:
             raise ValueError("Object integrity check failed")
-
     def media_object_key(self, kind: str, digest: str, mime: str) -> str:
         if kind not in {"image", "video", "audio"} or not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise ValueError("Invalid media object identity")
@@ -307,6 +317,17 @@ class S3ObjectStore:
             self.client.copy_object(Bucket=self.bucket, Key=target,
                 CopySource={"Bucket": self.bucket, "Key": object_key}, MetadataDirective="COPY")
         return "sha256:" + digest
+
+
+async def object_chunks(store, reference: str, *, maximum: int,
+                        chunk_size: int = 1024 * 1024):
+    iterator = iter(store.iter_bytes(reference, maximum=maximum, chunk_size=chunk_size))
+    sentinel = object()
+    while True:
+        chunk = await asyncio.to_thread(next, iterator, sentinel)
+        if chunk is sentinel:
+            return
+        yield chunk
 
 
 def object_store(settings):

@@ -6,8 +6,11 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 import httpx
 
@@ -22,12 +25,51 @@ class RuntimeStreamInterrupted(RuntimeError):
     """The existing execution could not be reattached; never replay its input."""
 
 
+class RuntimeTransferError(ValueError):
+    """A Runtime object could not cross the bounded durability boundary."""
+
+    def __init__(self, error_code: str):
+        self.error_code = error_code
+        super().__init__(error_code)
+
+
+@dataclass(frozen=True)
+class StagedRuntimeObject:
+    path: Path
+    size: int
+    sha256: str
+    content_type: str = "application/octet-stream"
+
+    def remove(self) -> None:
+        self.path.unlink(missing_ok=True)
+
+
+def _process_start(pid: int) -> str:
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().split()[21]
+    except (OSError, IndexError):
+        return ""
+
+
+def _reap_stale_downloads(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    for path in root.glob(".runtime-download-*-*-*"):
+        parts = path.name.split("-", 4)
+        try:
+            pid = int(parts[2]); started = parts[3]
+        except (ValueError, IndexError):
+            continue
+        if _process_start(pid) != started:
+            path.unlink(missing_ok=True)
+
+
 class RuntimeClient:
     def __init__(self, *, timeout_seconds: int = 3600, reattach_attempts: int = 8,
                  reattach_max_delay_seconds: float = 4,
                  bundle_dir: Path | None = None, default_bundle_digest: str = "",
                  code_bundle_dir: Path | None = None, default_code_bundle_digest: str = "",
-                 transport: httpx.AsyncBaseTransport | None = None):
+                 transport: httpx.AsyncBaseTransport | None = None,
+                 staging_root: Path | None = None):
         self.timeout = httpx.Timeout(timeout_seconds, connect=20)
         self.reattach_attempts = reattach_attempts
         self.reattach_max_delay_seconds = reattach_max_delay_seconds
@@ -36,6 +78,50 @@ class RuntimeClient:
         self.code_bundle_dir = code_bundle_dir
         self.default_code_bundle_digest = default_code_bundle_digest
         self.transport = transport
+        self.staging_root = (staging_root or Path.cwd() / ".data" / "tmp" / "runtime-downloads").resolve()
+        _reap_stale_downloads(self.staging_root)
+        self.process_start = _process_start(os.getpid()) or "unknown"
+
+    async def _download(self, sandbox: Sandbox, path: str, *, maximum: int,
+                        error_code: str, params: dict | None = None) -> StagedRuntimeObject:
+        if maximum < 0:
+            raise RuntimeTransferError(error_code)
+        temporary: Path | None = None
+        try:
+            async with httpx.AsyncClient(base_url=sandbox.runtime_url,
+                    headers={**sandbox.runtime_headers, **carrier()}, timeout=300,
+                    trust_env=False, transport=self.transport) as client:
+                async with client.stream("GET", path, params=params) as response:
+                    response.raise_for_status()
+                    raw_length = response.headers.get("content-length")
+                    declared = None
+                    if raw_length is not None:
+                        try:
+                            declared = int(raw_length)
+                        except ValueError as exc:
+                            raise RuntimeTransferError("runtime_content_length_invalid") from exc
+                        if declared < 0:
+                            raise RuntimeTransferError("runtime_content_length_invalid")
+                        if declared > maximum:
+                            raise RuntimeTransferError(error_code)
+                    with NamedTemporaryFile(dir=self.staging_root,
+                            prefix=f".runtime-download-{os.getpid()}-{self.process_start}-",
+                            delete=False) as stream:
+                        temporary = Path(stream.name); size = 0; digest = hashlib.sha256()
+                        async for chunk in response.aiter_raw():
+                            if size + len(chunk) > maximum:
+                                raise RuntimeTransferError(error_code)
+                            stream.write(chunk); digest.update(chunk); size += len(chunk)
+                        if declared is not None and size != declared:
+                            raise RuntimeTransferError("runtime_transfer_size_mismatch")
+                        stream.flush(); os.fsync(stream.fileno())
+                    return StagedRuntimeObject(path=temporary, size=size,
+                        sha256=digest.hexdigest(),
+                        content_type=response.headers.get("content-type", "application/octet-stream"))
+        except BaseException:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+            raise
 
     @observed("runtime.configure")
     async def inject(self, sandbox: Sandbox, *, capability_token: str, gateway_url: str, proxy_url: str, harness: str, model: str,
@@ -105,9 +191,12 @@ class RuntimeClient:
                 await asyncio.sleep(0.25 * (attempt + 1))
 
     @observed("workspace.restore")
-    async def restore(self, sandbox: Sandbox, archive: bytes) -> None:
-        async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()}, timeout=120, trust_env=False) as client:
-            response = await client.put("/v1/checkpoint", content=archive, headers={"Content-Type": "application/x-tar"})
+    async def restore(self, sandbox: Sandbox, archive, *, size: int) -> None:
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url,
+                headers={**sandbox.runtime_headers,**carrier()}, timeout=120,
+                trust_env=False, transport=self.transport) as client:
+            response = await client.put("/v1/checkpoint", content=archive,
+                headers={"Content-Type": "application/x-tar", "Content-Length": str(size)})
             response.raise_for_status()
 
     async def put_attachment(self, sandbox: Sandbox, name: str, data: bytes, mime: str) -> None:
@@ -137,12 +226,10 @@ class RuntimeClient:
             response.raise_for_status()
             return response.json()
 
-    async def managed_project_file(self, sandbox: Sandbox, path: str) -> bytes:
-        async with httpx.AsyncClient(base_url=sandbox.runtime_url,
-            headers={**sandbox.runtime_headers, **carrier()}, timeout=300, trust_env=False) as client:
-            response = await client.get("/v1/project-files/file", params={"path": path})
-            response.raise_for_status()
-            return response.content
+    async def managed_project_file(self, sandbox: Sandbox, path: str, *,
+                                   maximum: int) -> StagedRuntimeObject:
+        return await self._download(sandbox, "/v1/project-files/file", params={"path": path},
+            maximum=maximum, error_code="artifact_too_large")
 
     async def preserve_project_files(self, sandbox: Sandbox, paths: list[str], destination: str) -> dict:
         async with httpx.AsyncClient(base_url=sandbox.runtime_url,
@@ -329,11 +416,9 @@ class RuntimeClient:
             yield value
 
     @observed("workspace.checkpoint")
-    async def checkpoint(self, sandbox: Sandbox) -> bytes:
-        async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()}, timeout=300, trust_env=False) as client:
-            response = await client.get("/v1/checkpoint")
-            response.raise_for_status()
-            return response.content
+    async def checkpoint(self, sandbox: Sandbox, *, maximum: int) -> StagedRuntimeObject:
+        return await self._download(sandbox, "/v1/checkpoint", maximum=maximum,
+            error_code="checkpoint_too_large")
 
     async def artifacts(self, sandbox: Sandbox, expected_batch_id: str) -> list[dict]:
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()},
@@ -343,14 +428,16 @@ class RuntimeClient:
             value = response.json()
             if value.get("batch_id") != expected_batch_id:
                 raise ValueError("Runtime output batch does not belong to this Turn")
+            if value.get("truncated") is not False:
+                raise RuntimeTransferError("artifact_count_limit_exceeded")
+            if not isinstance(value.get("items"), list) or len(value["items"]) > 50_000:
+                raise RuntimeTransferError("artifact_count_limit_exceeded")
             return value["items"]
 
     @observed("artifact.download")
-    async def artifact(self, sandbox: Sandbox, path: str) -> bytes:
-        async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()}, timeout=300, trust_env=False) as client:
-            response = await client.get("/v1/artifacts/file", params={"path": path})
-            response.raise_for_status()
-            return response.content
+    async def artifact(self, sandbox: Sandbox, path: str, *, maximum: int) -> StagedRuntimeObject:
+        return await self._download(sandbox, "/v1/artifacts/file", params={"path": path},
+            maximum=maximum, error_code="artifact_too_large")
 
     async def media_render(self,sandbox:Sandbox,value:dict)->dict:
         async with httpx.AsyncClient(base_url=sandbox.runtime_url,

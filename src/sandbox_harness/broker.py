@@ -16,13 +16,13 @@ from .capability import CapabilityCodec
 from .catalog import HarnessCatalog
 from .config import Settings
 from .domain import EventKind, Harness, ItemType, RuntimeResult, TurnCreate, TurnState, TurnView, now
-from .objects import ObjectStore
+from .objects import ObjectStore, object_chunks
 from .errors import public_failure
 from .pool import SandboxPool
 from .runtime import RuntimeClient, RuntimeStreamInterrupted
 from .sandbox import SandboxNotFound
 from .store import Store
-from .site_bundle import build_site_archive_from_files, normalize_site_slug
+from .site_bundle import build_site_archive_from_paths, normalize_site_slug
 
 
 ROUTES = {
@@ -588,62 +588,72 @@ class Broker:
     async def _save_workspace(self, sandbox, thread_id: str, turn_id: str,
                               native_thread_id: str, *, partial: bool = False) -> str:
         generation = self.leases.get(turn_id)
-        archive = await self.runtime.checkpoint(sandbox)
-        if len(archive) > self.settings.max_checkpoint_bytes:
-            raise ValueError("Checkpoint exceeds byte limit")
-        checkpoint_ref, _ = await asyncio.to_thread(self.objects.put, archive)
-        await self.store.update_thread_checkpoint(thread_id, checkpoint_ref, native_thread_id,
-            turn_id=turn_id, lease_owner=self.instance_id, recovery_generation=generation)
-        event("workspace.checkpoint.persisted",bytes=len(archive),partial=partial)
-        total = 0; runtime_artifacts = await self.runtime.artifacts(sandbox, turn_id)
-        site_roots = {PurePosixPath(item["path"]).parent.as_posix()
-            for item in runtime_artifacts if PurePosixPath(item["path"]).name.lower() == "index.html"}
-        site_files: dict[str, dict[str, bytes]] = {root:{} for root in site_roots}
-        for item in runtime_artifacts:
-            path = item["path"]
-            data = await self.runtime.artifact(sandbox, path)
-            total += len(data)
-            if total > self.settings.max_artifact_bytes:
-                raise ValueError("Artifacts exceed Turn byte limit")
-            object_ref, digest = await asyncio.to_thread(self.objects.put, data)
-            artifact, _, _ = await self.store.publish_artifact(thread_id, turn_id, path=path,
-                sha256=digest, size=len(data), mime=item.get("mime") or
-                mimetypes.guess_type(path)[0] or "application/octet-stream", object_ref=object_ref,
-                partial=partial, lease_owner=self.instance_id, recovery_generation=generation)
-            event("artifact.persisted",artifact_id=artifact.id,bytes=len(data),partial=partial)
-            pure = PurePosixPath(path)
-            for root in site_roots:
-                root_path = PurePosixPath(root)
-                try: relative = pure.relative_to(root_path).as_posix()
-                except ValueError: continue
-                site_files[root][relative] = data
-        if not partial:
-            owner_id = await self.store.owner_id_for_thread(thread_id)
-            for root, files in site_files.items():
-                try:
-                    bundle, values = await asyncio.to_thread(build_site_archive_from_files, files)
-                    bundle_ref, digest = await asyncio.to_thread(self.objects.put, bundle)
-                    if await self.store.site_draft_by_bundle(thread_id, digest):
-                        continue
-                    staged = []
-                    for value in values:
-                        object_ref, file_digest = await asyncio.to_thread(self.objects.put, value.data)
-                        if file_digest != value.sha256: raise ValueError("site_file_identity_mismatch")
-                        staged.append({"path":value.path,"sha256":value.sha256,"size":value.size,
-                            "mime":value.mime,"object_ref":object_ref})
-                    name = PurePosixPath(root).name if root not in {"", "."} else "互动站点"
-                    slug = normalize_site_slug(name if name != "互动站点" else "site-" + turn_id[:8])
-                    await self.store.create_site_draft(owner_id, thread_id, turn_id, name=name,
-                        slug=slug, idempotency_key="artifact-site-" + digest,
-                        archive_object_ref=bundle_ref, bundle_sha256=digest, archive_size=len(bundle),
-                        file_count=len(values), total_size=sum(value.size for value in values),
-                        expires_at=now() + timedelta(seconds=self.settings.site_draft_ttl_seconds),
-                        public_base_path=self.settings.site_public_base_path, files=staged)
-                    event("site.draft.auto_created",turn_id=turn_id,files=len(values),bytes=len(bundle))
-                except ValueError as exc:
-                    event("site.draft.auto_skipped",level=logging.WARNING,turn_id=turn_id,
-                        error_code=str(exc)[:100])
-        return checkpoint_ref
+        downloads = []
+        if partial:
+            await self.store.mark_turn_artifacts_partial(turn_id, lease_owner=self.instance_id,
+                recovery_generation=generation)
+        try:
+            archive = await self.runtime.checkpoint(sandbox, maximum=self.settings.max_checkpoint_bytes)
+            downloads.append(archive)
+            checkpoint_ref, _ = await asyncio.to_thread(self.objects.put_file, archive.path,
+                digest=archive.sha256, size=archive.size)
+            await self.store.update_thread_checkpoint(thread_id, checkpoint_ref, native_thread_id,
+                turn_id=turn_id, lease_owner=self.instance_id, recovery_generation=generation)
+            event("workspace.checkpoint.persisted",bytes=archive.size,partial=partial)
+            total = 0; runtime_artifacts = await self.runtime.artifacts(sandbox, turn_id)
+            site_roots = {PurePosixPath(item["path"]).parent.as_posix()
+                for item in runtime_artifacts if PurePosixPath(item["path"]).name.lower() == "index.html"}
+            site_files: dict[str, dict[str, object]] = {root:{} for root in site_roots}
+            for item in runtime_artifacts:
+                path = item["path"]
+                remaining = self.settings.max_artifact_bytes - total
+                value = await self.runtime.artifact(sandbox, path, maximum=remaining)
+                downloads.append(value); total += value.size
+                if item.get("size") != value.size or item.get("sha256") != value.sha256:
+                    raise ValueError("runtime_artifact_identity_mismatch")
+                object_ref, digest = await asyncio.to_thread(self.objects.put_file, value.path,
+                    digest=value.sha256, size=value.size)
+                artifact, _, _ = await self.store.publish_artifact(thread_id, turn_id, path=path,
+                    sha256=digest, size=value.size, mime=item.get("mime") or
+                    mimetypes.guess_type(path)[0] or "application/octet-stream", object_ref=object_ref,
+                    partial=partial, lease_owner=self.instance_id, recovery_generation=generation)
+                event("artifact.persisted",artifact_id=artifact.id,bytes=value.size,partial=partial)
+                pure = PurePosixPath(path)
+                for root in site_roots:
+                    root_path = PurePosixPath(root)
+                    try: relative = pure.relative_to(root_path).as_posix()
+                    except ValueError: continue
+                    site_files[root][relative] = value.path
+            if not partial:
+                owner_id = await self.store.owner_id_for_thread(thread_id)
+                for root, files in site_files.items():
+                    try:
+                        bundle, values = await asyncio.to_thread(build_site_archive_from_paths, files)
+                        bundle_ref, digest = await asyncio.to_thread(self.objects.put, bundle)
+                        if await self.store.site_draft_by_bundle(thread_id, digest):
+                            continue
+                        site_rows = []
+                        for value in values:
+                            object_ref, file_digest = await asyncio.to_thread(self.objects.put, value.data)
+                            if file_digest != value.sha256: raise ValueError("site_file_identity_mismatch")
+                            site_rows.append({"path":value.path,"sha256":value.sha256,"size":value.size,
+                                "mime":value.mime,"object_ref":object_ref})
+                        name = PurePosixPath(root).name if root not in {"", "."} else "互动站点"
+                        slug = normalize_site_slug(name if name != "互动站点" else "site-" + turn_id[:8])
+                        await self.store.create_site_draft(owner_id, thread_id, turn_id, name=name,
+                            slug=slug, idempotency_key="artifact-site-" + digest,
+                            archive_object_ref=bundle_ref, bundle_sha256=digest, archive_size=len(bundle),
+                            file_count=len(values), total_size=sum(value.size for value in values),
+                            expires_at=now() + timedelta(seconds=self.settings.site_draft_ttl_seconds),
+                            public_base_path=self.settings.site_public_base_path, files=site_rows)
+                        event("site.draft.auto_created",turn_id=turn_id,files=len(values),bytes=len(bundle))
+                    except ValueError as exc:
+                        event("site.draft.auto_skipped",level=logging.WARNING,turn_id=turn_id,
+                            error_code=str(exc)[:100])
+            return checkpoint_ref
+        finally:
+            for value in downloads:
+                value.remove()
 
     async def _collect_runtime_logs(self, sandbox) -> None:
         target=telemetry()
@@ -831,9 +841,12 @@ class Broker:
                             for identity in primary_skills} if self.catalog.profile_resolver else {},
                     )
                     if thread.checkpoint_ref and not sandbox.reused:
-                        archive = await asyncio.to_thread(self.objects.get, thread.checkpoint_ref, maximum=self.settings.max_checkpoint_bytes)
+                        archive_size = await asyncio.to_thread(self.objects.size,
+                            thread.checkpoint_ref, maximum=self.settings.max_checkpoint_bytes)
                         try:
-                            await self.runtime.restore(sandbox, archive)
+                            await self.runtime.restore(sandbox, object_chunks(self.objects,
+                                thread.checkpoint_ref, maximum=self.settings.max_checkpoint_bytes),
+                                size=archive_size)
                         except httpx.HTTPStatusError as exc:
                             raise CheckpointRestoreError("Runtime rejected the saved workspace checkpoint") from exc
                     await self._register_project_attachments(thread.id, turn.id, turn.attachments)
@@ -972,7 +985,7 @@ class Broker:
                     except Exception:
                         pass
         except Exception as exc:
-            error_code = type(exc).__name__
+            error_code = getattr(exc, "error_code", type(exc).__name__)
             error_detail = str(exc)
             event("turn.execution.failed",level=logging.ERROR,exc=exc,turn_id=turn.id,execution_id=turn.runtime_execution_id)
             if sandbox and not lost_lease:

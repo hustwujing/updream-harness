@@ -13,6 +13,7 @@ from sandbox_harness.pool import SandboxPool
 from sandbox_harness.sandbox import FakeSandboxBackend
 from sandbox_harness.sandbox_inspector import SandboxInspector, TerminalTicketCodec, websocket_endpoint_headers
 from sandbox_harness.store import Store
+from sandbox_harness.runtime import StagedRuntimeObject
 from sandbox_runtime import app as runtime_app
 
 
@@ -62,13 +63,17 @@ class FakeObjects:
         digest = __import__('hashlib').sha256(data).hexdigest(); value = "sha256:" + digest
         self.values[value] = data; return value, digest
     def get(self, value, *, maximum): return self.values[value]
+    def put_file(self,path,*,digest,size):return self.put(path.read_bytes())
+    def size(self,value,*,maximum):return len(self.values[value])
+    def iter_bytes(self,value,*,maximum,chunk_size):yield self.values[value]
 
 
 class FakeRuntime:
     def __init__(self):
         self.files = {"project/readme.txt": "hello"}; self.injected = 0; self.fail_checkpoint=False
         self.manifest={"items":[],"truncated":False};self.preserved=[];self.materialized=[];self.legacy_manifest=False
-    async def restore(self, sandbox, archive): self.restored = archive
+    async def restore(self, sandbox, archive, *, size):
+        self.restored=b''.join([chunk async for chunk in archive])
     async def reset_project_files(self, sandbox): self.materialized=[]
     async def put_project_file(self, sandbox, path, data, mime): self.materialized.append((path,data,mime))
     async def inject(self, sandbox, **kwargs): self.injected += 1
@@ -86,12 +91,18 @@ class FakeRuntime:
             response=httpx.Response(404,request=request)
             raise httpx.HTTPStatusError("legacy",request=request,response=response)
         return self.manifest
-    async def managed_project_file(self,sandbox,path):return self.files["project/"+path].encode()
+    async def managed_project_file(self,sandbox,path,*,maximum):
+        data=self.files["project/"+path].encode()
+        target=__import__('pathlib').Path.cwd()/'.data'/'tmp'/('managed-'+__import__('uuid').uuid4().hex)
+        target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(data)
+        return StagedRuntimeObject(target,len(data),__import__('hashlib').sha256(data).hexdigest())
     async def preserve_project_files(self,sandbox,paths,destination):
         self.preserved.append((paths,destination));return {"items":paths,"destination":destination}
-    async def checkpoint(self, sandbox):
+    async def checkpoint(self, sandbox, *, maximum):
         if self.fail_checkpoint: raise httpx.ConnectError("runtime lost")
-        return b"checkpoint"
+        target=__import__('pathlib').Path.cwd()/'.data'/'tmp'/'inspector-checkpoint'
+        target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(b'checkpoint')
+        return StagedRuntimeObject(target,10,__import__('hashlib').sha256(b'checkpoint').hexdigest())
 
 
 class FakeBroker:

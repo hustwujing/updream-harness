@@ -65,7 +65,8 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
         reattach_max_delay_seconds=settings.runtime_stream_reattach_max_delay_seconds,
         bundle_dir=settings.runtime_bundle_dir,default_bundle_digest=settings.runtime_bundle_digest,
         code_bundle_dir=settings.runtime_code_bundle_dir,
-        default_code_bundle_digest=settings.runtime_code_bundle_digest)
+        default_code_bundle_digest=settings.runtime_code_bundle_digest,
+        staging_root=settings.data_root / "tmp" / "runtime-downloads")
     scheduler=Scheduler(store)
     child_backend=OpenSandboxChildBackend(pool=pool,runtime=runtime,store=store,objects=objects,
         settings=settings,token_factory=JobGrantFactory(settings))

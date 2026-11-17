@@ -13,6 +13,18 @@ from .job_contracts import JobState
 from .artifact_gateway import ArtifactEmission,ArtifactGateway
 from .scheduler import ResourceRequest, Scheduler
 from .sandbox import SandboxNotFound
+from .objects import object_chunks
+
+
+async def staged_file_chunks(path: Path, chunk_size: int = 1024 * 1024):
+    with path.open("rb") as stream:
+        while chunk := await asyncio.to_thread(stream.read, chunk_size):
+            yield chunk
+
+
+def verify_runtime_artifact(staged, metadata: dict) -> None:
+    if metadata.get("size") != staged.size or metadata.get("sha256") != staged.sha256:
+        raise ValueError("runtime_artifact_identity_mismatch")
 
 
 class ChildExecutionBackend(Protocol):
@@ -204,9 +216,10 @@ class OpenSandboxChildBackend:
                 skill_digests=dict(context.request.parameters.get('skill_digests',{})),
                 defer_skill_install=restoring,child_mode=True,delegation_depth=1)
             if restoring:
-                archive=await __import__('asyncio').to_thread(self.objects.get,
-                    paused.checkpoint_ref,maximum=self.settings.max_checkpoint_bytes)
-                await self.runtime.restore(sandbox,archive)
+                archive_size=await asyncio.to_thread(self.objects.size,paused.checkpoint_ref,
+                    maximum=self.settings.max_checkpoint_bytes)
+                await self.runtime.restore(sandbox,object_chunks(self.objects,paused.checkpoint_ref,
+                    maximum=self.settings.max_checkpoint_bytes),size=archive_size)
             for item in context.request.input_artifacts:
                 artifact=await self.store.get_artifact(item.artifact_id)
                 if not artifact:raise RuntimeError('child_input_artifact_missing')
@@ -283,10 +296,11 @@ class OpenSandboxChildBackend:
                     receipt:dict[str,Any])->dict[str,Any]:
         sandbox=await self._sandbox(context,receipt)
         stopped=await self.runtime.cancel(sandbox)
-        archive=await self.runtime.checkpoint(sandbox)
-        if len(archive)>self.settings.max_checkpoint_bytes:
-            raise ValueError('Checkpoint exceeds byte limit')
-        checkpoint_ref,_=await __import__('asyncio').to_thread(self.objects.put,archive)
+        archive=await self.runtime.checkpoint(sandbox,maximum=self.settings.max_checkpoint_bytes)
+        try:
+            checkpoint_ref,_=await asyncio.to_thread(self.objects.put_file,archive.path,
+                digest=archive.sha256,size=archive.size)
+        finally:archive.remove()
         return {'checkpoint_ref':checkpoint_ref,
             'native_thread_id':str(stopped.get('native_thread_id') or ''),
             'external_execution_id':external_execution_id}
@@ -299,10 +313,12 @@ class OpenSandboxChildBackend:
         by_path={str(item['path']):item for item in items}
         if context.request.adapter=='reviewer-harness':
             if set(by_path)!={'review-verdict.json'}:raise ValueError('reviewer_output_contract_invalid')
-            data=await self.runtime.artifact(sandbox,'review-verdict.json')
-            if len(data)>1024*1024:raise ValueError('reviewer_verdict_too_large')
-            try:value=json.loads(data)
+            staged=await self.runtime.artifact(sandbox,'review-verdict.json',maximum=1024*1024)
+            try:
+                verify_runtime_artifact(staged,by_path['review-verdict.json'])
+                value=json.loads(await asyncio.to_thread(staged.path.read_bytes))
             except (ValueError,TypeError) as exc:raise ValueError('reviewer_verdict_invalid') from exc
+            finally:staged.remove()
             return {'review':value}
         contracts={value.artifact_role:value for value in context.request.expected_outputs}
         if not contracts:
@@ -310,10 +326,12 @@ class OpenSandboxChildBackend:
             return status.result
         manifest_path='job-output-manifest.json';manifest=None
         if manifest_path in by_path:
-            raw=await self.runtime.artifact(sandbox,manifest_path)
-            if len(raw)>1024*1024:raise ValueError('job_output_manifest_too_large')
-            try:manifest=json.loads(raw).get('outputs')
+            staged=await self.runtime.artifact(sandbox,manifest_path,maximum=1024*1024)
+            try:
+                verify_runtime_artifact(staged,by_path[manifest_path])
+                manifest=json.loads(await asyncio.to_thread(staged.path.read_bytes)).get('outputs')
             except (ValueError,AttributeError,TypeError) as exc:raise ValueError('job_output_manifest_invalid') from exc
+            finally:staged.remove()
             if not isinstance(manifest,list):raise ValueError('job_output_manifest_invalid')
         artifact_paths=sorted(set(by_path)-{manifest_path})
         if manifest is None:
@@ -327,13 +345,16 @@ class OpenSandboxChildBackend:
             path=str(row.get('path',''));role=str(row.get('artifact_role',''))
             contract=contracts.get(role)
             if not contract:raise ValueError('job_output_role_not_granted')
-            data=await self.runtime.artifact(sandbox,path);metadata=by_path[path]
-            async def chunks(payload=data):yield payload
-            output=await self.artifact_gateway.emit(ArtifactEmission(job_id=context.job.id,
-                generation=context.generation,artifact_role=role,item_key=str(row.get('item_key',path)),
-                position=int(row.get('position',0)),filename=str(row.get('filename') or Path(path).name),
-                output_disposition=contract.output_disposition,declared_mime=str(metadata.get('mime') or 'application/octet-stream')),
-                chunks())
+            metadata=by_path[path]
+            staged=await self.runtime.artifact(sandbox,path,maximum=self.settings.max_artifact_bytes)
+            try:
+                verify_runtime_artifact(staged,metadata)
+                output=await self.artifact_gateway.emit(ArtifactEmission(job_id=context.job.id,
+                    generation=context.generation,artifact_role=role,item_key=str(row.get('item_key',path)),
+                    position=int(row.get('position',0)),filename=str(row.get('filename') or Path(path).name),
+                    output_disposition=contract.output_disposition,declared_mime=str(metadata.get('mime') or 'application/octet-stream')),
+                    staged_file_chunks(staged.path))
+            finally:staged.remove()
             emitted.append(output.model_dump(mode='json'));roles.add(role)
         collections=[]
         for role in sorted(roles):

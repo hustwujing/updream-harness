@@ -193,6 +193,7 @@ class ArtifactRow(Base):
     size: Mapped[int] = mapped_column(Integer)
     mime: Mapped[str] = mapped_column(String(200))
     object_ref: Mapped[str] = mapped_column(Text)
+    partial: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -3896,15 +3897,18 @@ class Store:
             turn = await db.get(TurnRow, turn_id, with_for_update=True)
             if not turn or turn.thread_id != thread_id:
                 raise KeyError("turn_not_found")
-            artifact_row = (await db.execute(select(ArtifactRow).join(TurnRow,
-                TurnRow.id==ArtifactRow.turn_id).where(TurnRow.thread_id==thread_id,
+            artifact_row = (await db.execute(select(ArtifactRow).where(
+                ArtifactRow.turn_id == turn_id,
                 ArtifactRow.path == path,ArtifactRow.sha256 == sha256).order_by(
                 ArtifactRow.created_at,ArtifactRow.id).limit(1).with_for_update())).scalar_one_or_none()
             created = artifact_row is None
             if artifact_row is None:
                 artifact_row = ArtifactRow(id=identifier(), turn_id=turn_id, path=path,
-                    sha256=sha256, size=size, mime=mime, object_ref=object_ref, created_at=now())
+                    sha256=sha256, size=size, mime=mime, object_ref=object_ref,
+                    partial=partial, created_at=now())
                 db.add(artifact_row)
+            elif partial and not artifact_row.partial:
+                artifact_row.partial = True
             project_row, _ = await self._register_project_file_locked(db, thread_id,
                 path="artifacts/" + path, source_type="artifact", source_turn_id=turn_id,
                 sha256=sha256, size=size, mime=artifact_row.mime, object_ref=object_ref)
@@ -3918,10 +3922,37 @@ class Store:
                 db.add(ItemRow(id=identifier(), thread_id=thread_id, turn_id=turn_id,
                     sequence=sequence, type=ItemType.ARTIFACT.value, status="completed",
                     summary=path, payload_json=json.dumps({"artifact_id":artifact_row.id,
-                        "mime":artifact_row.mime,"size":artifact_row.size,"partial":partial}),
+                        "mime":artifact_row.mime,"size":artifact_row.size,
+                        "partial":artifact_row.partial}),
                     created_at=timestamp, updated_at=timestamp))
+            else:
+                payload = json.loads(item.payload_json)
+                if payload.get("partial") is not artifact_row.partial:
+                    payload["partial"] = artifact_row.partial
+                    item.payload_json = json.dumps(payload); item.updated_at = now()
         artifact = Artifact.model_validate({key:getattr(artifact_row,key) for key in Artifact.model_fields})
         return artifact, self.project_file_view(project_row), created
+
+    async def mark_turn_artifacts_partial(self, turn_id: str, *, lease_owner: str,
+                                          recovery_generation: int) -> int:
+        async with self.connections.begin() as db:
+            await self.require_lease(db, turn_id, lease_owner, recovery_generation)
+            rows = list((await db.execute(select(ArtifactRow).where(
+                ArtifactRow.turn_id == turn_id,
+                ArtifactRow.path.not_like("input/%")).with_for_update())).scalars().all())
+            identities = {row.id for row in rows}
+            for row in rows:
+                row.partial = True
+            if identities:
+                items = list((await db.execute(select(ItemRow).where(
+                    ItemRow.turn_id == turn_id,
+                    ItemRow.type == ItemType.ARTIFACT.value).with_for_update())).scalars().all())
+                for item in items:
+                    payload = json.loads(item.payload_json)
+                    if payload.get("artifact_id") in identities and payload.get("partial") is not True:
+                        payload["partial"] = True
+                        item.payload_json = json.dumps(payload); item.updated_at = now()
+            return len(rows)
 
     async def artifact_by_identity(self, turn_id: str, path: str, sha256: str) -> Artifact | None:
         async with self.connections() as db:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal
+import unicodedata
 from uuid import uuid4
 
 from pathlib import Path
@@ -222,6 +223,14 @@ def valid_attachment_name(value: str) -> bool:
         and not any(ord(character) < 32 or ord(character) == 127 for character in value))
 
 
+def validate_attachment_names(attachments: list[Attachment]) -> None:
+    if any(not valid_attachment_name(item.name) for item in attachments):
+        raise ValueError("Invalid attachment filename")
+    names = [unicodedata.normalize("NFC", item.name) for item in attachments]
+    if len(names) != len(set(names)):
+        raise ValueError("Duplicate attachment filename")
+
+
 class TurnCreate(BaseModel):
     message: str = Field(min_length=1, max_length=200_000)
     idempotency_key: str = Field(min_length=8, max_length=160)
@@ -233,8 +242,7 @@ class TurnCreate(BaseModel):
 
     @model_validator(mode="after")
     def safe_attachment_names(self):
-        if any(not valid_attachment_name(item.name) for item in self.attachments):
-            raise ValueError("Invalid attachment filename")
+        validate_attachment_names(self.attachments)
         return self
 
 
@@ -245,8 +253,7 @@ class TurnInputCreate(BaseModel):
 
     @model_validator(mode="after")
     def safe_attachment_names(self):
-        if any(not valid_attachment_name(item.name) for item in self.attachments):
-            raise ValueError("Invalid attachment filename")
+        validate_attachment_names(self.attachments)
         return self
 
 

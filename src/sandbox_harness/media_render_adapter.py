@@ -8,7 +8,7 @@ import httpx
 
 from .artifact_gateway import ArtifactEmission,ArtifactGateway
 from .domain import Harness
-from .harness_job import HarnessJobAdapter
+from .harness_job import HarnessJobAdapter, staged_file_chunks
 from .job_adapters import AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExecutionContext
 from .job_contracts import JobState
 
@@ -94,19 +94,24 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
         sandbox=await self._sandbox(context,context.previous_acceptance_receipt)
         contracts={value.artifact_role:value for value in context.request.expected_outputs}
         values=status.result.get('outputs') or ([{"role":next(iter(contracts),""),
-            "path":status.result.get('path',''),"mime":status.result.get('mime','application/octet-stream')}]
+            "path":status.result.get('path',''),"mime":status.result.get('mime','application/octet-stream'),
+            "size":status.result.get('size'),"sha256":status.result.get('sha256')}]
             if status.result.get('path') else [])
         if not contracts or {str(value.get('role','')) for value in values}!=set(contracts):
             raise RuntimeError('operation_output_roles_mismatch')
         artifacts=[];collections=[]
         for value in values:
             role=str(value['role']);contract=contracts[role];path=str(value.get('path',''))
-            data=await self.runtime.artifact(sandbox,path)
-            async def chunks(data=data):yield data
-            artifact=await self.artifacts.emit(ArtifactEmission(job_id=context.job.id,
-                generation=context.generation,artifact_role=role,item_key='primary',position=0,
-                filename=Path(path).name,output_disposition=contract.output_disposition,
-                declared_mime=str(value.get('mime','application/octet-stream'))),chunks())
+            staged=await self.runtime.artifact(sandbox,path,maximum=self.settings.max_artifact_bytes)
+            try:
+                if value.get('size') != staged.size or value.get('sha256') != staged.sha256:
+                    raise ValueError('runtime_artifact_identity_mismatch')
+                artifact=await self.artifacts.emit(ArtifactEmission(job_id=context.job.id,
+                    generation=context.generation,artifact_role=role,item_key='primary',position=0,
+                    filename=Path(path).name,output_disposition=contract.output_disposition,
+                    declared_mime=str(value.get('mime','application/octet-stream'))),
+                    staged_file_chunks(staged.path))
+            finally:staged.remove()
             artifacts.append(artifact.model_dump(mode='json'))
             receipts=[]
             for receipt in value.get('validation_receipts',[]):

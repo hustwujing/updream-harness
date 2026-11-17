@@ -20,6 +20,10 @@ def public_failure(code: str, detail: str) -> tuple[str, str]:
         'model_response_timeout': '模型服务在规定时间内没有回复，请稍后重试或切换模型。',
         'harness_idle_timeout': '执行长时间没有新进展，本轮已停止。',
         'cleanup_failed': '运行结果保存或环境清理失败，请稍后重试。',
+        'checkpoint_too_large': '工作区快照超过保存上限，本轮无法安全收尾。请减少工作区内容后重试。',
+        'artifact_too_large': '本轮成果超过保存上限，系统已停止接收且不会发布不完整成果。',
+        'artifact_count_limit_exceeded': '本轮输出文件数量超过 50000 个，系统未发布不完整清单。请合并或压缩文件后重试。',
+        'runtime_artifact_identity_mismatch': '沙箱输出在清单生成后发生变化，系统拒绝发布不一致的成果。',
     }
     if code == 'RuntimeError' and 'stream ended without a result' in text:
         code = 'RuntimeStreamInterrupted'

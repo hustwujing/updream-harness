@@ -51,6 +51,12 @@ INSPECT_INTERNAL_PORTS = {8080, 18080, 29880, 29881, 44772}
 RUN = Path("/run/harness")
 HARNESS_JSONL_LIMIT = 16 * 1024 * 1024
 RUNTIME_EVENT_JOURNAL_LIMIT = 256 * 1024 * 1024
+MAX_OUTPUT_ARTIFACTS = 50_000
+
+
+def require_output_artifact_count(count: int) -> None:
+    if count > MAX_OUTPUT_ARTIFACTS:
+        raise HTTPException(413, "artifact_count_limit_exceeded")
 class Configure(BaseModel):
     thread_id: str = Field(default="",max_length=160)
     turn_id: str = Field(default="",max_length=160)
@@ -1698,8 +1704,8 @@ def create_app() -> FastAPI:
 
     @app.get("/v1/artifacts")
     async def artifacts():
-        items = []
-        for path in OUTPUTS.rglob("*"):
+        paths = []
+        for path in sorted(OUTPUTS.rglob("*"), key=lambda value: value.as_posix()):
             if path == OUTPUTS / ".sandbox-output-batch":
                 continue
             try:
@@ -1707,13 +1713,16 @@ def create_app() -> FastAPI:
                 path = artifact_path(relative)
             except (ValueError, OSError):
                 continue
+            paths.append((relative, path))
+            require_output_artifact_count(len(paths))
+        items = []
+        for relative, path in paths:
             with path.open("rb") as stream:
                 digest = hashlib.file_digest(stream, "sha256").hexdigest()
             items.append({"path": relative, "size": path.stat().st_size, "sha256": digest, "mime": mimetypes.guess_type(path.name)[0] or "application/octet-stream"})
-            if len(items) >= 50_000:
-                break
         marker = OUTPUTS / ".sandbox-output-batch"
-        return {"batch_id": marker.read_text().strip() if marker.is_file() else "", "items": items}
+        return {"batch_id": marker.read_text().strip() if marker.is_file() else "",
+            "items": items, "truncated": False}
 
     @app.get("/v1/artifacts/file")
     async def artifact(path: str):

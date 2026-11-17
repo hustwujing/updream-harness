@@ -16,7 +16,7 @@ async def test_concurrent_upload_registration_is_database_idempotent(tmp_path):
     finally:await store.close()
 
 
-async def test_unchanged_artifact_publication_is_idempotent_across_turns(tmp_path):
+async def test_unchanged_artifact_publication_keeps_distinct_turn_history(tmp_path):
     store=Store("sqlite+aiosqlite:///"+str(tmp_path/"artifact-replay.db"));await store.initialize()
     try:
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard');owner='a'*64
@@ -35,9 +35,9 @@ async def test_unchanged_artifact_publication_is_idempotent_across_turns(tmp_pat
         replay,_,created=await store.publish_artifact(thread.id,second.id,path='result.txt',
             sha256='1'*64,size=1,mime='text/plain',object_ref='sha256:one',partial=False,
             lease_owner='worker-2',recovery_generation=claim.recovery_generation)
-        assert not created and replay.id==artifact.id
+        assert created and replay.id!=artifact.id
         visible=[item for item in await store.items_after(thread.id) if item.type==ItemType.ARTIFACT]
-        assert len(visible)==1 and visible[0].payload['artifact_id']==artifact.id
+        assert len(visible)==2 and [item.turn_id for item in visible]==[first.id,second.id]
     finally:await store.close()
 
 

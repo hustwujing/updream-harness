@@ -140,3 +140,21 @@ def build_site_archive_from_files(files: dict[str, bytes]) -> tuple[bytes, list[
             archive.addfile(info, io.BytesIO(content))
     data = output.getvalue()
     return data, validate_site_archive(data)
+
+
+def build_site_archive_from_paths(files: dict[str, Path]) -> tuple[bytes, list[SiteFile]]:
+    if not files:
+        raise ValueError("site_source_empty")
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w", format=tarfile.PAX_FORMAT) as archive:
+        for raw_path in sorted(files):
+            path = safe_site_path(raw_path); source = files[raw_path]
+            size = source.stat().st_size
+            if size > MAX_SITE_FILE_BYTES:
+                raise ValueError("site_file_size_invalid")
+            info = tarfile.TarInfo(path); info.size = size; info.mode = 0o644
+            info.mtime = 0; info.uid = info.gid = 0; info.uname = info.gname = ""
+            with source.open("rb") as stream:
+                archive.addfile(info, stream)
+    data = output.getvalue()
+    return data, validate_site_archive(data)
