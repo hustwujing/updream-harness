@@ -126,6 +126,10 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
             'artifacts':artifacts,'collections':collections}
 
     async def cleanup(self,context:JobExecutionContext,external_execution_id:str)->None:
+        await self.cleanup_external(context,external_execution_id)
+        await self.release_capacity(context)
+
+    async def cleanup_external(self,context:JobExecutionContext,external_execution_id:str)->None:
         receipt=context.previous_acceptance_receipt;sandbox=None;identity=str(receipt.get('sandbox_id',''))
         if identity:
             try:sandbox=await self._sandbox(context,receipt)
@@ -150,4 +154,8 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
                     response.raise_for_status()
             if sandbox:await self.pool.release(sandbox,keep_attached=False)
             self.sessions.pop(context.job.id,None)
+
+    async def release_capacity(self,context:JobExecutionContext)->None:
+        receipt=context.previous_acceptance_receipt
+        reservation_id=str(receipt['reservation_id']);node_id=str(receipt['node_id']);generation=int(receipt['node_generation'])
         await self.scheduler.release(reservation_id,node_id,generation)

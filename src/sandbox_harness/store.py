@@ -2235,8 +2235,17 @@ class Store:
                 result.append({"cleanup_id":row.id,"job_id":row.job_id,"adapter":row.adapter,
                     "generation":row.generation,"external_execution_id":row.external_execution_id,
                     "acceptance_receipt":json.loads(row.acceptance_receipt_json),
-                    "attempt_count":row.attempt_count})
+                    "attempt_count":row.attempt_count,"phase":row.phase})
             return result
+
+    async def advance_job_cleanup(self, cleanup_id: str, owner: str, *,
+                                  expected_phase: str, next_phase: str) -> None:
+        async with self.connections.begin() as db:
+            row=await db.get(JobCleanupRow,cleanup_id,with_for_update=True)
+            if (not row or row.claim_owner!=owner or row.state!="running"
+                    or row.phase!=expected_phase):
+                raise RuntimeError("stale_job_cleanup_claim")
+            row.phase=next_phase;row.updated_at=now()
 
     async def finish_job_cleanup(self, cleanup_id: str, owner: str, *,
                                  succeeded: bool, error: str = "") -> None:
@@ -2245,7 +2254,7 @@ class Store:
             if not row or row.claim_owner!=owner or row.state!="running":
                 raise RuntimeError("stale_job_cleanup_claim")
             row.state="completed" if succeeded else "pending"
-            row.phase="completed" if succeeded else "external_quiescence"
+            if succeeded:row.phase="completed"
             row.last_error="" if succeeded else error[:2000]
             row.claim_owner="";row.claim_expires_at=None;row.updated_at=now()
 

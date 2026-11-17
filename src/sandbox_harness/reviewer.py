@@ -135,6 +135,10 @@ class ReviewerJobAdapter:
         return await self.delegate.reconcile(context,external_execution_id)
     async def cleanup(self,context:JobExecutionContext,external_execution_id:str)->None:
         await self.delegate.cleanup(context,external_execution_id)
+    async def cleanup_external(self,context:JobExecutionContext,external_execution_id:str)->None:
+        await self.delegate.cleanup_external(context,external_execution_id)
+    async def release_capacity(self,context:JobExecutionContext)->None:
+        await self.delegate.release_capacity(context)
     async def collect(self,context:JobExecutionContext,external_execution_id:str,status:AdapterStatus)->dict:
         result=await self.delegate.collect(context,external_execution_id,status)
         if status.state!=JobState.SUCCEEDED:return result

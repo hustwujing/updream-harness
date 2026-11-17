@@ -269,3 +269,48 @@ async def test_thread_delete_blocks_generic_cleanup_then_removes_complete_job_hi
         assert await store.get_thread(thread.id) is None
         assert await store.get_job(job.id) is None and await store.get_job_group(group.id) is None
     finally:await store.close()
+
+
+class PhasedCleanupAdapter(BaseJobAdapter):
+    def __init__(self):self.external_calls=0;self.release_calls=0;self.release_effects=0;self.released=False
+    async def cleanup_external(self,context,external):self.external_calls+=1
+    async def release_capacity(self,context):
+        self.release_calls+=1
+        if not self.released:self.released=True;self.release_effects+=1
+
+
+async def cleanup_fixture(tmp_path,name):
+    store,_,job=await setup(tmp_path,request(name));attempt=await store.claim_job(job.id,"business","node",30)
+    await store.record_job_acceptance(job.id,"business",attempt.generation,
+        external_execution_id="external",receipt={"accepted":True})
+    await store.transition_job(job.id,JobState.SUCCEEDED,
+        expected_generation=attempt.generation,result={"ok":True})
+    return store,job
+
+
+async def test_cleanup_phase_recovery_after_external_quiescence_and_capacity_release(tmp_path):
+    store,job=await cleanup_fixture(tmp_path,"phase");adapter=PhasedCleanupAdapter()
+    try:
+        claimed=(await store.claim_job_cleanups("crashed",0,limit=1))[0]
+        context_job=await store.get_job(job.id);context_request=await store.get_job_request(job.id)
+        from sandbox_harness.job_adapters import JobExecutionContext
+        context=JobExecutionContext(job=context_job,request=context_request,generation=claimed["generation"],
+            previous_external_execution_id="external",previous_acceptance_receipt={"accepted":True})
+        await adapter.cleanup_external(context,"external")
+        await store.advance_job_cleanup(claimed["cleanup_id"],"crashed",
+            expected_phase="external_quiescence",next_phase="capacity_release")
+        replacement=JobWorker(store,{"provider":adapter},node_id="node",worker_id="replacement")
+        await replacement.run_cleanup_once(limit=1)
+        assert adapter.external_calls==1 and adapter.release_effects==1
+        assert (await store.get_job_cleanup(job.id))["state"]=="completed"
+
+        # Re-open the capacity phase to model process death after idempotent release but before completion.
+        async with store.connections.begin() as db:
+            from sandbox_harness.store import JobCleanupRow
+            row=(await db.execute(__import__('sqlalchemy').select(JobCleanupRow).where(
+                JobCleanupRow.job_id==job.id).with_for_update())).scalar_one()
+            row.state="pending";row.phase="capacity_release";row.claim_owner="";row.claim_expires_at=None
+        await replacement.run_cleanup_once(limit=1)
+        assert adapter.external_calls==1 and adapter.release_calls==2 and adapter.release_effects==1
+        assert (await store.get_job_cleanup(job.id))["state"]=="completed"
+    finally:await store.close()

@@ -51,6 +51,8 @@ class JobAdapter(Protocol):
                       status: AdapterStatus) -> dict[str, Any]: ...
     async def reconcile(self, context: JobExecutionContext, external_execution_id: str) -> AdapterStatus: ...
     async def cleanup(self, context: JobExecutionContext, external_execution_id: str) -> None: ...
+    async def cleanup_external(self, context: JobExecutionContext, external_execution_id: str) -> None: ...
+    async def release_capacity(self, context: JobExecutionContext) -> None: ...
 
 
 class BaseJobAdapter:
@@ -71,4 +73,10 @@ class BaseJobAdapter:
         return await self.status(context, external_execution_id)
 
     async def cleanup(self, context: JobExecutionContext, external_execution_id: str) -> None:
+        return None
+
+    async def cleanup_external(self, context: JobExecutionContext, external_execution_id: str) -> None:
+        await self.cleanup(context,external_execution_id)
+
+    async def release_capacity(self, context: JobExecutionContext) -> None:
         return None

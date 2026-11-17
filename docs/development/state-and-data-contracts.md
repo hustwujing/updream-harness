@@ -108,6 +108,11 @@ Resource reservations remain capacity-authoritative while their state is
 Adapter start/status/collect/pause/cancel/cleanup heartbeats the reservation.
 Cleanup confirms capability revocation and external Sandbox absence before the
 Scheduler release, which is always the last step.
+Cleanup commits `external_quiescence -> capacity_release -> completed` as
+separate claim-fenced transactions. A crash after external absence skips
+quiescence on retry; a crash after Scheduler release repeats only the
+idempotent release and then commits completion, without trying to renew an
+already released reservation.
 
 Thread deletion uses the same Thread row barrier as the last Job transition.
 It rejects nonterminal Jobs, incomplete cleanup, active resource reservations,

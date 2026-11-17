@@ -345,7 +345,16 @@ class JobWorker:
                 context=JobExecutionContext(job=job,request=request,generation=row["generation"],
                     previous_external_execution_id=row["external_execution_id"],
                     previous_acceptance_receipt=row["acceptance_receipt"])
-                await adapter.cleanup(context,row["external_execution_id"])
+                if row["phase"]=="external_quiescence":
+                    cleanup_external=getattr(adapter,"cleanup_external",None)
+                    if cleanup_external:await cleanup_external(context,row["external_execution_id"])
+                    else:await adapter.cleanup(context,row["external_execution_id"])
+                    await self.store.advance_job_cleanup(row["cleanup_id"],self.worker_id,
+                        expected_phase="external_quiescence",next_phase="capacity_release")
+                    row["phase"]="capacity_release"
+                if row["phase"]=="capacity_release":
+                    release_capacity=getattr(adapter,"release_capacity",None)
+                    if release_capacity:await release_capacity(context)
                 await self.store.finish_job_cleanup(row["cleanup_id"],self.worker_id,succeeded=True)
             except asyncio.CancelledError:
                 if not lost.is_set():raise

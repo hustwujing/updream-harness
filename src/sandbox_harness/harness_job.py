@@ -156,6 +156,10 @@ class HarnessJobAdapter(BaseJobAdapter):
             return await self.backend.pause(context,external_execution_id,receipt)
 
     async def cleanup(self,context:JobExecutionContext,external_execution_id:str)->None:
+        await self.cleanup_external(context,external_execution_id)
+        await self.release_capacity(context)
+
+    async def cleanup_external(self,context:JobExecutionContext,external_execution_id:str)->None:
         receipt=context.previous_acceptance_receipt
         reservation_id=str(receipt.get('reservation_id',''))
         if not reservation_id:
@@ -163,6 +167,12 @@ class HarnessJobAdapter(BaseJobAdapter):
         node_id=str(receipt.get('node_id',''));generation=int(receipt.get('node_generation') or 0)
         async with self.scheduler.hold(reservation_id,node_id,generation):
             await self.backend.cleanup(context,external_execution_id,receipt)
+
+    async def release_capacity(self,context:JobExecutionContext)->None:
+        receipt=context.previous_acceptance_receipt
+        reservation_id=str(receipt.get('reservation_id',''))
+        if not reservation_id:return
+        node_id=str(receipt.get('node_id',''));generation=int(receipt.get('node_generation') or 0)
         await self.scheduler.release(reservation_id,node_id,generation)
 
     async def collect(self,context:JobExecutionContext,external_execution_id:str,
