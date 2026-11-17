@@ -4,14 +4,16 @@ import hashlib
 import json
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import case,func,select
 
 from .domain import TERMINAL, TurnState
 from .store import (InteractionRow, JobActivityRow, JobArtifactRow, JobAttemptRow, JobGroupDraftRow, JobGroupRow, JobRow,
-    ResourceReservationRow, ThreadRow, TurnOrderRow, TurnRow, utc_datetime)
+    ResourceReservationRow,ReviewGateRow,ThreadRow,TurnOrderRow,TurnRow,now,utc_datetime)
 
 
 RUNNING_JOB_STATES={'CREATED','QUEUED','RUNNING','WAITING_EXTERNAL','CANCELLING','PAUSING'}
+MAX_TURNS=50;MAX_DRAFTS=100;MAX_GROUPS=200;MAX_JOBS=300;MAX_INTERACTIONS=100
+MAX_ARTIFACT_SUMMARIES=200;MAX_NODES=900;MAX_EDGES=1400
 
 
 def iso(value):return utc_datetime(value).isoformat() if value else None
@@ -31,46 +33,68 @@ class ExecutionGraphProjector:
             thread=(await db.execute(select(ThreadRow).where(ThreadRow.id==thread_id,
                 ThreadRow.owner_id==owner_id))).scalar_one_or_none()
             if not thread:raise KeyError('thread_not_found')
-            turns=list((await db.execute(select(TurnRow).join(TurnOrderRow,
+            total_turns=int((await db.execute(select(func.count()).select_from(TurnRow).where(
+                TurnRow.thread_id==thread_id))).scalar_one())
+            recent=list((await db.execute(select(TurnRow).join(TurnOrderRow,
                 TurnOrderRow.turn_id==TurnRow.id).where(TurnRow.thread_id==thread_id)
-                .order_by(TurnOrderRow.sequence))).scalars().all())
-            if not include_history and len(turns)>5:
-                active={row.id for row in turns if TurnState(row.state) not in TERMINAL}
-                keep={row.id for row in turns[-5:]}|active
-                turns=[row for row in turns if row.id in keep]
+                .order_by(TurnOrderRow.sequence.desc()).limit(MAX_TURNS if include_history else 5)))
+                .scalars().all())
+            active=list((await db.execute(select(TurnRow).where(TurnRow.thread_id==thread_id,
+                TurnRow.state.not_in([state.value for state in TERMINAL])).limit(MAX_TURNS)))
+                .scalars().all())
+            turns=sorted({row.id:row for row in recent+active}.values(),key=lambda row:row.created_at)
             turn_ids={row.id for row in turns}
-            drafts=list((await db.execute(select(JobGroupDraftRow).where(
-                JobGroupDraftRow.thread_id==thread_id).order_by(JobGroupDraftRow.created_at))).scalars().all())
-            groups=list((await db.execute(select(JobGroupRow).where(JobGroupRow.thread_id==thread_id)
-                .order_by(JobGroupRow.created_at))).scalars().all())
+            all_drafts=list((await db.execute(select(JobGroupDraftRow).where(
+                JobGroupDraftRow.thread_id==thread_id).order_by(JobGroupDraftRow.created_at.desc())
+                .limit(MAX_DRAFTS))).scalars().all())
+            drafts=list(reversed(all_drafts))
+            groups=list(reversed(list((await db.execute(select(JobGroupRow).where(
+                JobGroupRow.thread_id==thread_id).order_by(JobGroupRow.created_at.desc())
+                .limit(MAX_GROUPS))).scalars().all())))
             if not include_history:
                 drafts=[row for row in drafts if row.origin_turn_id in turn_ids
                     or row.state in {'DRAFT','AWAITING_CONFIRMATION'}]
                 groups=[row for row in groups if row.origin_turn_id in turn_ids
                     or row.state in {'COMMITTED','RUNNING'}]
+            draft_by_id={row.id:row for row in all_drafts}
+            for group in groups:
+                if group.draft_id and group.draft_id in draft_by_id:
+                    drafts.append(draft_by_id[group.draft_id])
+            drafts=list({row.id:row for row in drafts}.values())
+            ancestor_turn_ids={row.origin_turn_id for row in groups+drafts}-turn_ids
+            if ancestor_turn_ids:
+                ancestors=list((await db.execute(select(TurnRow).where(
+                    TurnRow.id.in_(ancestor_turn_ids)))).scalars().all())
+                turns=sorted({row.id:row for row in turns+ancestors}.values(),key=lambda row:row.created_at)
+                turn_ids={row.id for row in turns}
             group_ids={row.id for row in groups}
             jobs=list((await db.execute(select(JobRow).where(JobRow.group_id.in_(group_ids or {''}))
-                .order_by(JobRow.created_at,JobRow.local_job_id))).scalars().all())
+                .order_by(JobRow.created_at,JobRow.local_job_id).limit(MAX_JOBS))).scalars().all())
             job_ids={row.id for row in jobs}
             interactions=list((await db.execute(select(InteractionRow).where(
-                InteractionRow.thread_id==thread_id).order_by(InteractionRow.created_at))).scalars().all())
+                InteractionRow.thread_id==thread_id).order_by(InteractionRow.created_at.desc())
+                .limit(MAX_INTERACTIONS))).scalars().all())
+            interactions=list(reversed(interactions))
             if not include_history:interactions=[row for row in interactions if row.turn_id in turn_ids]
             reservations=list((await db.execute(select(ResourceReservationRow).where(
                 ResourceReservationRow.job_id.in_(job_ids or {''})))).scalars().all())
-            activities=list((await db.execute(select(JobActivityRow).where(
-                JobActivityRow.job_id.in_(job_ids or {''})))).scalars().all())
-            attempts=list((await db.execute(select(JobAttemptRow).where(
-                JobAttemptRow.job_id.in_(job_ids or {''})))).scalars().all())
+            activity_rows=(await db.execute(select(JobActivityRow.job_id,func.count()).where(
+                JobActivityRow.job_id.in_(job_ids or {''})).group_by(JobActivityRow.job_id))).all()
+            retry_rows=(await db.execute(select(JobAttemptRow.job_id,func.sum(case(
+                (JobAttemptRow.outcome=='PRE_ACCEPT_RETRY',1),
+                (JobAttemptRow.retry_kind.in_(['recovery','reconcile']),1),else_=0))).where(
+                    JobAttemptRow.job_id.in_(job_ids or {''})).group_by(JobAttemptRow.job_id))).all()
             artifacts=list((await db.execute(select(JobArtifactRow).where(
                 JobArtifactRow.job_id.in_(job_ids or {''})).order_by(
-                JobArtifactRow.job_id,JobArtifactRow.artifact_role,JobArtifactRow.position))).scalars().all())
+                JobArtifactRow.job_id,JobArtifactRow.artifact_role,JobArtifactRow.position)
+                .limit(MAX_ARTIFACT_SUMMARIES))).scalars().all())
+            artifact_counts=dict((await db.execute(select(JobArtifactRow.job_id,func.count()).where(
+                JobArtifactRow.job_id.in_(job_ids or {''})).group_by(JobArtifactRow.job_id))).all())
+            gates=list((await db.execute(select(ReviewGateRow).where(
+                ReviewGateRow.reviewer_job_id.in_(job_ids or {''})))).scalars().all())
         reservation_by_job={row.job_id:row for row in reservations}
-        activity_count={identity:0 for identity in job_ids}
-        for row in activities:activity_count[row.job_id]=activity_count.get(row.job_id,0)+1
-        retry_count={identity:0 for identity in job_ids}
-        for row in attempts:
-            if row.outcome=='PRE_ACCEPT_RETRY' or row.retry_kind in {'recovery','reconcile'}:
-                retry_count[row.job_id]=retry_count.get(row.job_id,0)+1
+        activity_count={identity:int(count) for identity,count in activity_rows}
+        retry_count={identity:int(count or 0) for identity,count in retry_rows}
         artifacts_by_job={identity:[] for identity in job_ids}
         for row in artifacts:artifacts_by_job[row.job_id].append({'artifact_id':row.artifact_id,
             'artifact_role':row.artifact_role,'filename':row.filename,'mime':row.mime,
@@ -89,14 +113,16 @@ class ExecutionGraphProjector:
                 'location_label':'OpenSandbox' if turn.sandbox_id else '等待调度',
                 'started_at':iso(turn.created_at),'ended_at':iso(turn.updated_at) if TurnState(turn.state) in TERMINAL else None,
                 'duration_ms':duration_ms(turn.created_at,turn.updated_at) if TurnState(turn.state) in TERMINAL else 0,
-                'retries':turn.recovery_generation,'activity_count':0,'turn_id':turn.id})
+                'retries':max(0,turn.recovery_generation-1),'activity_count':0,'turn_id':turn.id})
             edges.append({'from':user_id,'to':primary_id,'kind':'submitted_by'})
         for draft in drafts:
             identity='draft:'+draft.id
+            draft_state=('EXPIRED' if draft.state in {'DRAFT','AWAITING_CONFIRMATION'}
+                and utc_datetime(draft.expires_at)<=now() else draft.state)
             nodes.append({'id':identity,'type':'job_group_draft','role':'任务确认',
-                'title':'并行任务等待确认','state':draft.state,'location':'control_plane','location_label':'控制面',
-                'started_at':iso(draft.created_at),'ended_at':iso(draft.updated_at) if draft.state in {'REJECTED','EXPIRED','CONFIRMED'} else None,
-                'duration_ms':duration_ms(draft.created_at,draft.updated_at) if draft.state in {'REJECTED','EXPIRED','CONFIRMED'} else 0,
+                'title':'并行任务等待确认','state':draft_state,'location':'control_plane','location_label':'控制面',
+                'started_at':iso(draft.created_at),'ended_at':iso(draft.updated_at) if draft_state in {'REJECTED','EXPIRED','CONFIRMED'} else None,
+                'duration_ms':duration_ms(draft.created_at,draft.updated_at) if draft_state in {'REJECTED','EXPIRED','CONFIRMED'} else 0,
                 'retries':0,'activity_count':0,'turn_id':draft.origin_turn_id})
             if draft.origin_turn_id in turn_ids:edges.append({'from':f'turn:{draft.origin_turn_id}:primary','to':identity,'kind':'submitted_by'})
         for group in groups:
@@ -126,6 +152,8 @@ class ExecutionGraphProjector:
                 'retries':retry_count.get(job.id,0),
                 'activity_count':activity_count.get(job.id,0),'job_id':job.id,'turn_id':job.origin_turn_id,
                 'artifacts':artifacts_by_job.get(job.id,[]),
+                'artifact_count':artifact_counts.get(job.id,0),
+                'artifacts_truncated':artifact_counts.get(job.id,0)>len(artifacts_by_job.get(job.id,[])),
                 'resources':{'cpu':reservation.cpu if reservation else None,
                     'memory_mb':reservation.memory_mb if reservation else None,'gpu_ids':resources,
                     'runtime_profile_id':runtime_profile,'child_profile_id':request.get('child_profile_id') or '',
@@ -135,6 +163,21 @@ class ExecutionGraphProjector:
                     'capability_ids':requirements.get('required_capability_ids') or [],
                     'network_origins':request.get('network_origins') or []}})
             edges.append({'from':'group:'+job.group_id,'to':'job:'+job.id,'kind':'contains'})
+        for gate in gates:
+            identity='review-gate:'+gate.reviewer_job_id
+            nodes.append({'id':identity,'type':'review_gate','role':'审查发布门',
+                'title':gate.artifact_role,'state':gate.state.upper(),
+                'location':'control_plane','location_label':'控制面',
+                'started_at':iso(gate.created_at),'ended_at':iso(gate.updated_at)
+                    if gate.state!='pending' else None,
+                'duration_ms':duration_ms(gate.created_at,gate.updated_at)
+                    if gate.state!='pending' else 0,'retries':0,'activity_count':0,
+                'job_id':gate.reviewer_job_id,'source_job_id':gate.source_job_id,
+                'required':gate.required,'warning':gate.warning})
+            edges.append({'from':'job:'+gate.reviewer_job_id,'to':identity,'kind':'review_verdict'})
+            if gate.source_job_id in job_ids:
+                edges.append({'from':'job:'+gate.source_job_id,
+                    'to':'job:'+gate.reviewer_job_id,'kind':'reviewed_by'})
         for interaction in interactions:
             identity='interaction:'+interaction.id
             nodes.append({'id':identity,'type':'interaction','role':'用户决策','title':interaction.kind,
@@ -143,8 +186,16 @@ class ExecutionGraphProjector:
                 'duration_ms':duration_ms(interaction.created_at,interaction.updated_at) if interaction.status in {'responded','expired'} else 0,
                 'retries':0,'activity_count':0,'turn_id':interaction.turn_id})
             edges.append({'from':f'turn:{interaction.turn_id}:primary','to':identity,'kind':'requested_interaction'})
-        payload={'nodes':nodes,'edges':edges}
+        original_nodes=len(nodes);original_edges=len(edges)
+        nodes=nodes[:MAX_NODES];node_ids={node['id'] for node in nodes}
+        edges=[edge for edge in edges if edge['from'] in node_ids and edge['to'] in node_ids][:MAX_EDGES]
+        metadata={'truncated':original_nodes>len(nodes) or original_edges>len(edges),
+            'node_limit':MAX_NODES,'edge_limit':MAX_EDGES,
+            'artifact_summary_limit':MAX_ARTIFACT_SUMMARIES,
+            'history_turn_limit':MAX_TURNS,
+            'next_history_before':turns[0].id if include_history and total_turns>len(turns) else None}
+        payload={'nodes':nodes,'edges':edges,'metadata':metadata}
         graph_cursor=hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':'),default=str).encode()).hexdigest()
         if cursor==graph_cursor:return {'cursor':graph_cursor,'reset':False,'nodes':[],'edges':[]}
         return {'cursor':graph_cursor,'reset':True,'nodes':nodes,'edges':edges,
-            'historical_available':not include_history and len(turn_ids)<len((await self.store.list_turns(thread_id,owner_id)))}
+            'metadata':metadata,'historical_available':not include_history and total_turns>len(turns)}

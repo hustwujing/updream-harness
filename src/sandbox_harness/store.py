@@ -1197,10 +1197,13 @@ class Store:
 
     @staticmethod
     def job_group_draft_view(row: JobGroupDraftRow) -> JobGroupDraftView:
+        state=(JobGroupDraftState.EXPIRED.value if row.state in {
+            JobGroupDraftState.DRAFT.value,JobGroupDraftState.AWAITING_CONFIRMATION.value}
+            and utc_datetime(row.expires_at)<=now() else row.state)
         return JobGroupDraftView(
             id=row.id, owner_id=row.owner_id, thread_id=row.thread_id,
             origin_turn_id=row.origin_turn_id, idempotency_key=row.idempotency_key,
-            request_digest=row.request_digest, state=JobGroupDraftState(row.state),
+            request_digest=row.request_digest, state=JobGroupDraftState(state),
             requires_confirmation=row.requires_confirmation,
             authorization_gaps=tuple(json.loads(row.authorization_gaps_json)),
             expires_at=utc_datetime(row.expires_at), confirmed_group_id=row.confirmed_group_id,
@@ -1829,14 +1832,27 @@ class Store:
 
     async def expire_job_group_drafts(self) -> int:
         async with self.connections.begin() as db:
-            result = await db.execute(update(JobGroupDraftRow).where(
+            rows=list((await db.execute(select(JobGroupDraftRow).where(
                 JobGroupDraftRow.state.in_([
                     JobGroupDraftState.DRAFT.value,
                     JobGroupDraftState.AWAITING_CONFIRMATION.value,
                 ]),
-                JobGroupDraftRow.expires_at < now(),
-            ).values(state=JobGroupDraftState.EXPIRED.value, updated_at=now()))
-            return result.rowcount or 0
+                JobGroupDraftRow.expires_at <= now()).with_for_update())).scalars().all())
+            for row in rows:
+                row.state=JobGroupDraftState.EXPIRED.value;row.updated_at=now()
+                existing=(await db.execute(select(ItemRow.id).where(ItemRow.thread_id==row.thread_id,
+                    ItemRow.type==ItemType.WARNING.value,
+                    ItemRow.payload_json.like(f'%"job_group_draft_id": "{row.id}"%'))
+                    .limit(1))).scalar_one_or_none()
+                thread=await db.get(ThreadRow,row.thread_id)
+                if not existing and thread:
+                    sequence=await self.next_item_sequence(db,row.thread_id);timestamp=now()
+                    db.add(ItemRow(id=identifier(),thread_id=row.thread_id,
+                        turn_id=row.origin_turn_id,sequence=sequence,type=ItemType.WARNING.value,
+                        status="completed",summary="并行任务确认已过期，请根据当前需求重新规划。",
+                        payload_json=json.dumps({"job_group_draft_id":row.id,
+                            "code":"job_group_draft_expired"}),created_at=timestamp,updated_at=timestamp))
+            return len(rows)
 
     async def _create_job_group_locked(self, db: AsyncSession, owner_id: str,
                                        value: JobGroupCreate, *, draft_id: str | None = None

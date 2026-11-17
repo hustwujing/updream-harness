@@ -99,6 +99,18 @@ Telemetry failure must not change the business result. Queues, disk, retention
 and external export are bounded; PostgreSQL remains authoritative. `/health`
 exposes writer and loss counters.
 
+Authenticated Runtime telemetry always inherits non-empty Turn, Thread and
+Sandbox identities from its capability after mismatch rejection. Local related
+timeline queries scan each telemetry segment once, deduplicate with stable
+fallback identities and expand related Turns in memory under one global limit.
+
+Execution Graph projection uses SQL aggregate counts and bounded summaries. It
+limits history, nodes, edges and Artifact details, returns truncation/continuation
+metadata, and removes every edge whose endpoint is absent. Active nodes retain
+their ancestor closure. Review Gate nodes expose the publication outcome rather
+than inferring it from Reviewer Job state. Turn retries are takeovers after the
+first claim, not raw lease generation.
+
 ## Runtime child durability
 
 Native Interaction delivery is tri-state. A successful stdin drain is

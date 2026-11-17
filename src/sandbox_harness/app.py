@@ -360,6 +360,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.media_outbox_status="running";app.state.media_outbox_last_error=""
         app.state.media_outbox_failures=0
         media_outbox_task = asyncio.create_task(dispatch_media_outbox(), name="media-outbox-dispatcher")
+        draft_expiry_stop=asyncio.Event()
+        async def expire_job_group_drafts():
+            while not draft_expiry_stop.is_set():
+                try:await store.expire_job_group_drafts()
+                except Exception as exc:event("job_group_draft.expiry_failed",level=40,
+                    exception_type=type(exc).__name__)
+                try:await asyncio.wait_for(draft_expiry_stop.wait(),timeout=5)
+                except asyncio.TimeoutError:pass
+        draft_expiry_task=asyncio.create_task(expire_job_group_drafts(),
+            name="job-group-draft-expiry")
         pool_task = None
         catalog_task = None
         if settings.model_catalog_discovery:
@@ -389,7 +399,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.pool_last_error = ""
         app.state.required_tasks={"job_continuation":continuation_task,
             "media_outbox":media_outbox_task,"sandbox_expiry":inspector.cleanup_task,
-            "turn_recovery":broker.recovery_task,"orphan_reaper":broker.reaper_task}
+            "turn_recovery":broker.recovery_task,"orphan_reaper":broker.reaper_task,
+            "job_group_draft_expiry":draft_expiry_task}
         if pool_task:app.state.required_tasks["warm_pool_supervisor"]=pool_task
         yield
         if catalog_task:
@@ -402,6 +413,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await pool_task
         media_outbox_stop.set()
         await media_outbox_task
+        draft_expiry_stop.set();await draft_expiry_task
         continuation_dispatcher.stop_event.set()
         await continuation_task
         await inspector.close()

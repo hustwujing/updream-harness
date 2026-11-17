@@ -164,6 +164,8 @@ async def test_gateway_receiver_requires_scope_and_does_not_consume_model_budget
     class Redis:
         async def exists(self,key):return 0
         async def eval(self,script,count,*values):keys.extend(values[:count]);return 1
+        async def ping(self):return True
+        async def aclose(self):pass
     monkeypatch.setattr(gateway.Redis,'from_url',lambda *a,**kw:Redis())
     settings=Settings(backend='fake',data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'db'),gateway_signing_key='test-key'*8)
     app=gateway.create_gateway(settings)
@@ -173,20 +175,23 @@ async def test_gateway_receiver_requires_scope_and_does_not_consume_model_budget
     record.event_name='runtime.test';record.body.string_value='runtime.test'
     for key,value in {'updream.turn_id':'turn','updream.thread_id':'thread','updream.sandbox_id':'box'}.items():
         attribute=record.attributes.add();attribute.key=key;attribute.value.string_value=value
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app),base_url='http://test') as client:
-        assert (await client.post('/v1/telemetry/logs',content=message.SerializeToString())).status_code==401
-        headers={'Authorization':'Bearer '+token,'Content-Type':'application/x-protobuf'}
-        assert (await client.post('/v1/telemetry/logs',headers=headers,content=message.SerializeToString())).status_code==200
-        record.attributes[0].value.string_value='other-turn'
-        assert (await client.post('/v1/telemetry/logs',headers=headers,content=message.SerializeToString())).status_code==422
-        record.attributes[0].value.string_value='turn'
-        with monkeypatch.context() as patch:
-            patch.setattr(telemetry,'put',lambda *args:False)
-            overloaded=await client.post('/v1/telemetry/logs',headers=headers,content=message.SerializeToString())
-            assert overloaded.status_code==503
-            from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import ExportLogsServiceResponse
-            receipt=ExportLogsServiceResponse();receipt.ParseFromString(overloaded.content)
-            assert receipt.partial_success.rejected_log_records==1
+    await app.state.store.initialize()
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app),base_url='http://test') as client:
+            assert (await client.post('/v1/telemetry/logs',content=message.SerializeToString())).status_code==401
+            headers={'Authorization':'Bearer '+token,'Content-Type':'application/x-protobuf'}
+            assert (await client.post('/v1/telemetry/logs',headers=headers,content=message.SerializeToString())).status_code==200
+            record.attributes[0].value.string_value='other-turn'
+            assert (await client.post('/v1/telemetry/logs',headers=headers,content=message.SerializeToString())).status_code==422
+            record.attributes[0].value.string_value='turn'
+            with monkeypatch.context() as patch:
+                patch.setattr(telemetry,'put',lambda *args:False)
+                overloaded=await client.post('/v1/telemetry/logs',headers=headers,content=message.SerializeToString())
+                assert overloaded.status_code==503
+                from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import ExportLogsServiceResponse
+                receipt=ExportLogsServiceResponse();receipt.ParseFromString(overloaded.content)
+                assert receipt.partial_success.rejected_log_records==1
+    finally:await app.state.store.close()
     assert keys and all('telemetry:rate:' in key for key in keys)
     imported=next(row for row in rows(telemetry) if row['event_name']=='runtime.test')
     assert imported['attributes']['updream.origin']=='sandbox_reported'
@@ -275,16 +280,21 @@ async def test_revoke_audit_uses_authenticated_business_ids_and_propagated_trace
     from sandbox_harness.config import Settings
     class Redis:
         async def set(self,*args,**kwargs):pass
+        async def ping(self):return True
+        async def aclose(self):pass
     monkeypatch.setattr(gateway.Redis,'from_url',lambda *a,**kw:Redis())
     settings=Settings(backend='fake',data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'revoke.db'))
     app=gateway.create_gateway(settings);turn_id='a'*32
-    with obs.operation('test.cleanup',turn_id=turn_id):
-        headers={**obs.carrier(),'X-Sandbox-Harness-Control':settings.gateway_control_key,
-            'X-Updream-Turn-ID':turn_id,'X-Updream-Thread-ID':'b'*32,'X-Updream-Sandbox-ID':'c'*32}
-        expected_trace=headers['traceparent'].split('-')[1]
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app),base_url='http://test') as client:
-            assert (await client.post('/internal/revoke/private-nonce',headers=headers)).status_code==200
-            assert (await client.post('/internal/revoke/private-nonce',headers={'X-Updream-Turn-ID':'d'*32})).status_code==403
+    await app.state.store.initialize()
+    try:
+        with obs.operation('test.cleanup',turn_id=turn_id):
+            headers={**obs.carrier(),'X-Sandbox-Harness-Control':settings.gateway_control_key,
+                'X-Updream-Turn-ID':turn_id,'X-Updream-Thread-ID':'b'*32,'X-Updream-Sandbox-ID':'c'*32}
+            expected_trace=headers['traceparent'].split('-')[1]
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app),base_url='http://test') as client:
+                assert (await client.post('/internal/revoke/private-nonce',headers=headers)).status_code==200
+                assert (await client.post('/internal/revoke/private-nonce',headers={'X-Updream-Turn-ID':'d'*32})).status_code==403
+    finally:await app.state.store.close()
     records=rows(telemetry)
     revoke=next(row for row in records if row['event_name']=='capability.revoked')
     assert revoke['trace_id']==expected_trace and revoke['attributes']['updream.turn_id']==turn_id
@@ -300,6 +310,44 @@ def test_retention_prunes_expired_segments_even_without_new_events(tmp_path):
         while old.exists() and time.monotonic()<deadline:time.sleep(.02)
         assert not old.exists() and value.status()['disk_errors']==0
     finally:value.close()
+
+
+def test_authenticated_telemetry_claims_fill_missing_business_identity():
+    from types import SimpleNamespace
+    from sandbox_harness.telemetry_ingest import claim_attributes
+    claims=SimpleNamespace(turn_id='turn',thread_id='thread',sandbox_id='sandbox')
+    value=claim_attributes(claims,{})
+    assert value['updream.turn_id']=='turn' and value['updream.thread_id']=='thread'
+    assert value['updream.sandbox_id']=='sandbox'
+    matching=claim_attributes(claims,{'updream.turn_id':'turn'})
+    assert matching['updream.thread_id']=='thread'
+    with pytest.raises(ValueError,match='scope_mismatch'):
+        claim_attributes(claims,{'updream.thread_id':'other'})
+    empty=claim_attributes(SimpleNamespace(turn_id='',thread_id='',sandbox_id=''),{})
+    assert not any(key in empty for key in ('updream.turn_id','updream.thread_id','updream.sandbox_id'))
+
+
+def test_related_log_query_scans_each_file_once_and_retains_missing_ids(tmp_path,monkeypatch):
+    from sandbox_harness.log_query import query
+    records=[
+        {'signal':'log','timestamp':'2026-01-01T00:00:00Z','event_name':'a',
+            'attributes':{'updream.request_id':'request','updream.turn_id':'turn'}},
+        {'signal':'log','timestamp':'2026-01-01T00:00:01Z','event_name':'b',
+            'attributes':{'updream.turn_id':'turn'}},
+        {'signal':'log','timestamp':'2026-01-01T00:00:02Z','event_name':'c',
+            'attributes':{'updream.turn_id':'turn'}},
+    ]
+    for index in range(2):
+        (tmp_path/f'{index}.telemetry.jsonl').write_text('\n'.join(
+            json.dumps(row) for row in records[index::2])+'\n')
+    original=Path.open;counts={}
+    def counted(path,*args,**kwargs):
+        counts[str(path)]=counts.get(str(path),0)+1
+        return original(path,*args,**kwargs)
+    monkeypatch.setattr(Path,'open',counted)
+    rows,malformed=query(tmp_path,{'request_id':'request'},related=True,limit=10)
+    assert malformed==0 and [row['event_name'] for row in rows]==['a','b','c']
+    assert counts and all(value==1 for value in counts.values())
 
 
 async def test_reused_runtime_configuration_logs_the_new_turn_not_the_previous_one(telemetry,tmp_path,monkeypatch):

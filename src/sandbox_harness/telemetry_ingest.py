@@ -31,7 +31,7 @@ def claim_attributes(claims,attrs):
     for key,value in expected.items():
         supplied=attrs.get('updream.'+key)
         if supplied and supplied!=value:raise ValueError('telemetry_scope_mismatch')
-        if supplied or key=='sandbox_id':attrs['updream.'+key]=value
+        if value:attrs['updream.'+key]=value
     attrs['updream.origin']='sandbox_reported'
     return attrs
 
