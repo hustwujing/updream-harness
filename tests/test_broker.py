@@ -46,6 +46,16 @@ class PausableRuntime(Runtime):
             "execution_id": "paused-execution"}
 
 
+class SlowPauseRuntime(PausableRuntime):
+    def __init__(self):
+        super().__init__(); self.pause_started = asyncio.Event()
+
+    async def cancel(self, sandbox):
+        self.cancelled += 1; self.pause_started.set(); await asyncio.sleep(.1)
+        return {"cancelled": True, "native_thread_id": "native-pause",
+            "execution_id": "paused-execution"}
+
+
 class FailingRuntime(Runtime):
     async def run(self, sandbox, **kwargs):
         yield RuntimeResult(status="failed", error_code="harness_exit", error_detail="native process exited")
@@ -267,6 +277,36 @@ async def test_broker_restart_finishes_committed_pause_without_resuming_business
         assert sandbox.id not in backend.items
     finally:
         await broker.close(); await pool.close(); await store.close()
+
+
+async def test_broker_shutdown_does_not_cancel_pause_checkpoint_a_second_time(tmp_path):
+    settings = Settings(data_root=tmp_path,
+        database_url="sqlite+aiosqlite:///" + str(tmp_path / "pause-shutdown.db"),
+        backend="fake", gateway_signing_key="k" * 32,
+        gateway_url="http://127.0.0.1:9", session_keepalive_seconds=0)
+    store = Store(settings.database_url); await store.initialize()
+    objects = ObjectStore(tmp_path / "objects"); backend = FakeSandboxBackend()
+    pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
+    catalog = HarnessCatalog(); runtime = SlowPauseRuntime(); owner = "a" * 64
+    broker = Broker(settings, store, objects, pool, runtime, catalog)
+    try:
+        profile = catalog.resolve("codex", "gpt-5.6", "standard")
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CODEX,
+            model=profile.model, reasoning_level="standard", title="Pause shutdown"),
+            profile, owner)
+        turn = await broker.submit(thread.id, TurnCreate(message="long task",
+            idempotency_key="pause-shutdown-turn"))
+        await asyncio.wait_for(runtime.started.wait(), 3)
+        await broker.pause_thread(thread.id, owner)
+        await asyncio.wait_for(runtime.pause_started.wait(), 3)
+        await broker.close()
+        current = await store.get_turn(turn.id)
+        control = await store.get_thread_control(thread.id)
+        assert current.state == TurnState.PAUSED
+        assert control.state.value == "PAUSED" and not control.degraded
+        assert (await store.get_thread(thread.id)).native_thread_id == "native-pause"
+    finally:
+        await pool.close(); await store.close()
 
 
 async def test_turn_heartbeat_renews_active_sandbox_expiration(tmp_path):

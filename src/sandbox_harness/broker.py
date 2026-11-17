@@ -144,7 +144,10 @@ class Broker:
         if self.reaper_task:
             self.reaper_task.cancel()
         for task in list(self.tasks.values()):
-            task.cancel()
+            # A pause is already represented by task cancellation. Cancelling it a
+            # second time interrupts the checkpoint transaction during shutdown.
+            if not task.cancelling():
+                task.cancel()
         values = [task for task in (self.recovery_task, self.reaper_task) if task] + list(self.tasks.values())
         if values:
             await asyncio.gather(*values, return_exceptions=True)
