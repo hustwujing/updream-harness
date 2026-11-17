@@ -1051,7 +1051,7 @@ class MediaWorker:
                         raise ValueError("invalid_provider_result_url")
                     host=normalize_host(parsed.hostname);address=await self._resolve_output(host,443)
                     request=client.build_request("GET",self._pinned_url(parsed,address),headers={"Host":host},
-                        extensions={"sni_hostname":host.encode()})
+                        extensions={"sni_hostname":host})
                     response=await client.send(request,stream=True)
                     if response.is_redirect:
                         location=response.headers.get("location","");await response.aclose()

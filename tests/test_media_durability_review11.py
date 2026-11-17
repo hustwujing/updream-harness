@@ -137,6 +137,7 @@ async def test_provider_download_blocks_ssrf_redirects_and_streams_bounded(tmp_p
     try:
         assert not isinstance(downloaded,bytes) and downloaded.path.read_bytes()==b"\x89PNG\r\n\x1a\nvalid"
         assert client.requests[0].url.host=="8.8.8.8" and client.requests[0].headers["host"]=="cdn.test"
+        assert client.requests[0].extensions["sni_hostname"]=="cdn.test"
     finally:downloaded.remove()
 
     declared=ChunkStream([b"must-not-read"])
