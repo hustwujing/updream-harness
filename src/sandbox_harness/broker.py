@@ -379,6 +379,8 @@ class Broker:
             raise RuntimeError("interaction_delivery_failed") from exc
         current = await self.store.finish_interaction_response(
             interaction_id, delivered=delivered, claim_owner=self.instance_id)
+        if delivered is None:
+            raise RuntimeError("interaction_delivery_unknown")
         if not delivered:
             raise RuntimeError("interaction_transport_unsupported")
         await self.store.finish_interaction_item(interaction.turn_id, interaction.id, response)

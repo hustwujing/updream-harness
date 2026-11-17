@@ -83,6 +83,26 @@ Telemetry failure must not change the business result. Queues, disk, retention
 and external export are bounded; PostgreSQL remains authoritative. `/health`
 exposes writer and loss counters.
 
+## Runtime child durability
+
+Native Interaction delivery is tri-state. A successful stdin drain is
+`delivered`; a failure before write is retryable; a drain failure after write is
+`unknown` and must never be replayed as accepted or blindly written again. The
+control-plane Interaction remains `responding` with the frozen answer until
+authoritative completion or explicit recovery.
+
+Supervised background commands persist a crash-safe `starting` intent before
+spawn and then bind PID, boot ID and `/proc` start time before acknowledgement.
+Every post-spawn failure kills and waits the process group. Runtime recovery
+validates that complete process identity before SIGTERM/SIGKILL, so a reused PID
+is never targeted. Surviving groups are quiesced before their records become
+`interrupted` or a replacement execution can start.
+
+For streaming control Harnesses, model-start/idle timing is per input, not per
+process lifetime. Every explicit input-completion boundary resets the next
+pending input to the model-start timeout; substantive output switches only that
+input to the idle timeout.
+
 ## Required fault checks
 
 - API/Broker SIGKILL while a Runtime execution continues.

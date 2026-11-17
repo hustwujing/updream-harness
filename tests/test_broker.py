@@ -150,6 +150,10 @@ class FailingInteractionRuntime(InteractionRuntime):
         raise httpx.ConnectError("runtime connection reset")
 
 
+class UnknownInteractionRuntime(InteractionRuntime):
+    async def respond_interaction(self,sandbox,interaction_id,response):return None
+
+
 async def test_user_sandbox_control_blocks_turn_archive_and_delete(tmp_path):
     settings=Settings(data_root=tmp_path,database_url="sqlite+aiosqlite:///"+str(tmp_path/"control-block.db"),
         backend="fake",gateway_signing_key="k"*32,gateway_url="http://127.0.0.1:9")
@@ -895,6 +899,39 @@ async def test_interaction_transport_failure_is_retryable_and_returns_domain_err
     finally:
         runtime.release.set()
         await broker.close(); await pool.close(); await store.close()
+
+
+async def test_interaction_unknown_delivery_never_returns_to_pending_or_false_responded(tmp_path):
+    settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'interaction-unknown.db'),
+        backend='fake',gateway_signing_key='k'*32,gateway_url='http://127.0.0.1:9',
+        session_keepalive_seconds=0)
+    store=Store(settings.database_url);await store.initialize();objects=ObjectStore(tmp_path/'objects')
+    backend=FakeSandboxBackend();pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness})
+    runtime=UnknownInteractionRuntime();catalog=HarnessCatalog();broker=Broker(
+        settings,store,objects,pool,runtime,catalog);owner='a'*64
+    try:
+        profile=catalog.resolve('claude','claude-4.6-sonnet','standard')
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CLAUDE,model=profile.model,
+            reasoning_level='standard',title='Interaction unknown'),profile,owner)
+        turn=await broker.submit(thread.id,TurnCreate(message='ask',
+            idempotency_key='interaction-unknown-turn'))
+        for _ in range(100):
+            if (await store.get_turn(turn.id)).state==TurnState.AWAITING_USER:break
+            await asyncio.sleep(.01)
+        interaction=(await store.list_interactions(thread.id,owner))[0]
+        response=InteractionResponse(idempotency_key='interaction-unknown-response',
+            action='answer',answers={'format':'mp4'})
+        with pytest.raises(RuntimeError,match='interaction_delivery_unknown'):
+            await broker.respond_interaction(interaction.id,owner,response)
+        current=(await store.list_interactions(thread.id,owner))[0]
+        assert current.status=='responding'
+        assert current.response_key=='interaction-unknown-response'
+        assert current.response['answers']['format']=='mp4'
+        approval=next(item for item in await store.items_after(thread.id)
+            if item.type.value=='approval')
+        assert approval.status=='in_progress' and 'response' not in approval.payload
+    finally:
+        runtime.release.set();await broker.close();await pool.close();await store.close()
 
 
 async def test_stale_broker_cleanup_does_not_publish_a_false_failure(tmp_path, monkeypatch):

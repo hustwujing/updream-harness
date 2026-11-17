@@ -15,6 +15,7 @@ import shutil
 import stat
 import subprocess
 import tarfile
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from tempfile import NamedTemporaryFile
@@ -183,6 +184,9 @@ class BackgroundJob:
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     completed_at: str = ""
     log_path: str = ""
+    pid_start_time: str = ""
+    boot_id: str = ""
+    recovery_detail: str = ""
     process: asyncio.subprocess.Process | None = None
     task: asyncio.Task | None = None
 
@@ -191,6 +195,52 @@ class BackgroundJob:
             "execution_id": self.execution_id, "status": self.status, "pid": self.pid,
             "returncode": self.returncode, "created_at": self.created_at,
             "completed_at": self.completed_at, "replaces": self.replaces, "log_tail": log_tail}
+
+
+def boot_identity() -> str:
+    try:return Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+    except OSError:return ""
+
+
+def process_start_identity(pid: int) -> str:
+    try:
+        value=Path(f'/proc/{pid}/stat').read_text()
+        return value[value.rfind(') ')+2:].split()[19]
+    except (OSError,IndexError):return ""
+
+
+def recorded_process_alive(value: dict) -> bool:
+    pid=int(value.get('pid') or 0)
+    return bool(pid>1 and value.get('boot_id') and value.get('boot_id')==boot_identity()
+        and value.get('pid_start_time')
+        and value.get('pid_start_time')==process_start_identity(pid))
+
+
+def quiesce_recorded_group(value: dict) -> str:
+    if not recorded_process_alive(value):return 'process_absent_or_identity_changed'
+    pid=int(value['pid'])
+    try:
+        if os.getpgid(pid)!=pid:return 'process_group_identity_changed'
+    except ProcessLookupError:return 'process_already_exited'
+    for sig,deadline in ((signal.SIGTERM,.8),(signal.SIGKILL,.8)):
+        try:os.killpg(pid,sig)
+        except ProcessLookupError:return 'process_quiesced'
+        end=time.monotonic()+deadline
+        while time.monotonic()<end:
+            if not recorded_process_alive(value):return 'process_quiesced'
+            time.sleep(.02)
+    return 'process_quiesce_unconfirmed'
+
+
+def atomic_json(path: Path, value: dict) -> None:
+    temporary=path.with_suffix(path.suffix+'.tmp')
+    with temporary.open('w') as target:
+        target.write(json.dumps(value,ensure_ascii=False))
+        target.flush();os.fsync(target.fileno())
+    temporary.replace(path)
+    descriptor=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY)
+    try:os.fsync(descriptor)
+    finally:os.close(descriptor)
 
 
 def unresolved_background_jobs(jobs: list[BackgroundJob]) -> list[BackgroundJob]:
@@ -233,6 +283,10 @@ class Execution:
     journal_bytes: int = 0
     protocol_state: dict[str, Any] = field(default_factory=dict)
     project_output_snapshot: dict[str, tuple[int, int]] = field(default_factory=dict)
+
+
+def execution_input_ids(execution: Execution) -> list[str]:
+    return list(dict.fromkeys([*execution.completed_input_ids,*execution.pending_input_ids]))
 
 
 def safe_relative(value: str) -> Path:
@@ -319,9 +373,11 @@ def create_app() -> FastAPI:
         for record in jobs_root.glob("*.json"):
             try:
                 value = json.loads(record.read_text())
-                if value.get("status") in {"running", "cancelling"}:
-                    value["status"] = "interrupted"; value["completed_at"] = datetime.now(timezone.utc).isoformat()
-                    record.write_text(json.dumps(value, ensure_ascii=False))
+                if value.get("status") in {"starting", "running", "cancelling"}:
+                    value["recovery_detail"] = quiesce_recorded_group(value)
+                    value["status"] = "interrupted"
+                    value["completed_at"] = datetime.now(timezone.utc).isoformat()
+                    atomic_json(record,value)
                 job = BackgroundJob(**{key: value[key] for key in BackgroundJob.__dataclass_fields__
                     if key in value and key not in {"process", "task"}})
                 app.state.background_jobs[job.id] = job
@@ -435,9 +491,9 @@ def create_app() -> FastAPI:
 
     def persist_job(job: BackgroundJob) -> None:
         target = jobs_root / (job.id + ".json")
-        temporary = target.with_suffix(".json.tmp")
-        temporary.write_text(json.dumps({**job.public(), "log_path": job.log_path}, ensure_ascii=False))
-        temporary.replace(target)
+        atomic_json(target,{**job.public(),"log_path":job.log_path,
+            "pid_start_time":job.pid_start_time,"boot_id":job.boot_id,
+            "recovery_detail":job.recovery_detail})
 
     def job_log_tail(job: BackgroundJob) -> str:
         try:
@@ -494,7 +550,7 @@ def create_app() -> FastAPI:
                         "error_code": "harness_idle_timeout" if substantive else "model_response_timeout",
                         "error_detail": ("Harness produced no events before the idle timeout" if substantive
                             else "The model produced no response before the start timeout"),
-                        "input_ids": list(execution.pending_input_ids)})
+                        "input_ids": execution_input_ids(execution)})
                     execution.pending_input_ids.clear()
                     return
                 if not line:
@@ -542,6 +598,8 @@ def create_app() -> FastAPI:
                         if done:
                             execution.accepting_inputs = False
                     execution.saw_text_delta = False
+                    if not done:
+                        substantive = False
                     if done:
                         await stop_process(execution)
                         background = await wait_background(execution)
@@ -575,7 +633,7 @@ def create_app() -> FastAPI:
                     "native_thread_id": execution.native_thread_id,
                     "error_code": "cancelled" if execution.cancel_requested else "harness_result_missing",
                     "error_detail": "Harness stopped before acknowledging all pending inputs",
-                    "input_ids": list(execution.pending_input_ids),
+                    "input_ids": execution_input_ids(execution),
                 })
                 return
             background = await wait_background(execution)
@@ -587,7 +645,7 @@ def create_app() -> FastAPI:
                     "background_job_failed" if background_failed else "harness_exit"),
                 "error_detail": "" if code == 0 and not background_failed else (
                     "A supervised background job did not complete" if background_failed else f"Harness exited with {code}"),
-                "input_ids": list(execution.pending_input_ids),
+                "input_ids": execution_input_ids(execution),
             })
             execution.pending_input_ids.clear()
         except asyncio.CancelledError:
@@ -597,7 +655,7 @@ def create_app() -> FastAPI:
             await finish_execution(execution, {
                 "status": "failed", "native_thread_id": execution.native_thread_id,
                 "error_code": "harness_protocol_error", "error_detail": f"{type(exc).__name__}: {exc}",
-                "input_ids": list(execution.pending_input_ids),
+                "input_ids": execution_input_ids(execution),
             })
 
     async def stream_execution(execution: Execution, after: int):
@@ -1200,7 +1258,7 @@ def create_app() -> FastAPI:
             if created:
                 await abort_execution(execution)
                 await finish_execution(execution, {"status": "failed", "error_code": "input_delivery_failed",
-                    "error_detail": "Initial input could not be delivered", "input_ids": list(execution.pending_input_ids)})
+                    "error_detail": "Initial input could not be delivered", "input_ids": execution_input_ids(execution)})
             raise
         if created:
             execution.reader_task = asyncio.create_task(read_execution(execution, harness),
@@ -1261,16 +1319,19 @@ def create_app() -> FastAPI:
             native_id = execution.interaction_ids[interaction_id]
             recorded = execution.interaction_responses.get(interaction_id)
             if recorded is not None:
-                if recorded != response:
+                if recorded["response"] != response:
                     raise HTTPException(409, "Interaction already has a different response")
-                return {"accepted": True, "replayed": True}
+                if recorded["state"] == "delivered":
+                    return {"accepted": True, "replayed": True}
+                raise HTTPException(409, "interaction_delivery_unknown")
             if execution.result is not None or not execution.accepting_inputs:
                 raise HTTPException(409, "Execution is no longer accepting responses")
             waiter = app.state.interaction_waiters.get(native_id)
             if waiter is not None:
                 if not waiter.done():
                     waiter.set_result(response)
-                execution.interaction_responses[interaction_id] = response
+                execution.interaction_responses[interaction_id] = {
+                    "response":response,"state":"delivered"}
                 return {"accepted": True}
             process, selected = execution.process, execution.selected
             if process.returncode is not None or not selected.control_input:
@@ -1278,9 +1339,19 @@ def create_app() -> FastAPI:
             async with app.state.write_lock:
                 if not execution.accepting_inputs:
                     raise HTTPException(409, "Execution is no longer accepting responses")
-                process.stdin.write(control_interaction_response(native_id, response))
-                execution.interaction_responses[interaction_id] = response
-                await process.stdin.drain()
+                execution.interaction_responses[interaction_id] = {
+                    "response":response,"state":"reserved"}
+                try:
+                    process.stdin.write(control_interaction_response(native_id, response))
+                except BaseException:
+                    execution.interaction_responses.pop(interaction_id,None)
+                    raise
+                try:
+                    await process.stdin.drain()
+                except BaseException as exc:
+                    execution.interaction_responses[interaction_id]["state"]="unknown"
+                    raise HTTPException(409,"interaction_delivery_unknown") from exc
+                execution.interaction_responses[interaction_id]["state"]="delivered"
             return {"accepted": True}
 
     @app.post("/v1/native-interactions")
@@ -1295,7 +1366,7 @@ def create_app() -> FastAPI:
                 "error_detail":value.prompt,
                 "missing_fields":[question.get("id","") for question in value.questions],
                 "questions":[question.get("question",question.get("text","")) for question in value.questions],
-                "input_ids":list(execution.pending_input_ids)})
+                "input_ids":execution_input_ids(execution)})
             await abort_execution(execution)
             return {"interaction_id":"","action":"blocked","blocked":True}
         identity = "runtime-" + uuid.uuid4().hex
@@ -1328,21 +1399,49 @@ def create_app() -> FastAPI:
                 if previous.status not in {"failed", "cancelled", "interrupted"}:
                     raise HTTPException(422, "Replacement target must be a terminal unsuccessful job")
             identity = uuid.uuid4().hex
-            process = await asyncio.create_subprocess_exec(*value.argv, cwd=cwd, env=os.environ.copy(),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-                start_new_session=True, limit=HARNESS_JSONL_LIMIT)
             job = BackgroundJob(id=identity, name=value.name, argv=value.argv, cwd=str(cwd),
-                execution_id=execution.id, replaces=value.replaces, pid=process.pid,
-                log_path=str(jobs_root / (identity + ".log")),
-                process=process)
-            app.state.background_jobs[job.id] = job; persist_job(job)
-            event("runtime.background.started",job_id=job.id,execution_id=job.execution_id)
-            await publish(execution, {"kind": "step_started", "payload": {
-                "name": "后台任务 · " + job.name, "background_job_id": job.id,
-                "pid": job.pid, "replaces": job.replaces,
-            }})
-            job.task = asyncio.create_task(watch_job(job), name="background-job-" + job.id)
-            return job.public()
+                execution_id=execution.id, replaces=value.replaces, status="starting",
+                log_path=str(jobs_root / (identity + ".log")))
+            app.state.background_jobs[job.id] = job
+            try:persist_job(job)
+            except BaseException:
+                app.state.background_jobs.pop(job.id,None)
+                raise
+            process=None
+            try:
+                spawn=asyncio.create_task(asyncio.create_subprocess_exec(*value.argv,
+                    cwd=cwd,env=os.environ.copy(),stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,start_new_session=True,
+                    limit=HARNESS_JSONL_LIMIT),name="background-spawn-"+job.id)
+                try:
+                    process=await asyncio.shield(spawn)
+                except asyncio.CancelledError:
+                    process=await spawn
+                    raise
+                job.process=process;job.pid=process.pid
+                job.pid_start_time=process_start_identity(process.pid)
+                job.boot_id=boot_identity();job.status="running"
+                persist_job(job)
+                job.task=asyncio.create_task(watch_job(job),
+                    name="background-job-"+job.id)
+                event("runtime.background.started",job_id=job.id,
+                    execution_id=job.execution_id)
+                await publish(execution,{"kind":"step_started","payload":{
+                    "name":"后台任务 · "+job.name,"background_job_id":job.id,
+                    "pid":job.pid,"replaces":job.replaces}})
+                return job.public()
+            except BaseException as exc:
+                if process and process.returncode is None:
+                    await terminate_group(process)
+                if job.task:
+                    await asyncio.gather(job.task,return_exceptions=True)
+                if job.status not in {"completed","failed","cancelled"}:
+                    job.status="failed";job.returncode=(process.returncode if process else None)
+                    job.completed_at=datetime.now(timezone.utc).isoformat()
+                    job.recovery_detail="start_failed:"+type(exc).__name__
+                    try:persist_job(job)
+                    except OSError:pass
+                raise
 
     @app.get("/v1/background-jobs")
     async def list_background_jobs():
@@ -1367,7 +1466,7 @@ def create_app() -> FastAPI:
                 await abort_execution(execution)
                 await finish_execution(execution, {"status": "cancelled", "error_code": "cancelled",
                     "native_thread_id": execution.native_thread_id,
-                    "input_ids": list(execution.pending_input_ids)})
+                    "input_ids": execution_input_ids(execution)})
             return {"cancelled": True,
                 "native_thread_id": execution.native_thread_id if execution else "",
                 "execution_id": execution.id if execution else ""}

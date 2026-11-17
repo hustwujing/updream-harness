@@ -4257,7 +4257,7 @@ class Store:
         return self.interaction_view(row), True
 
     @observed("db.interaction.finish")
-    async def finish_interaction_response(self, interaction_id: str, *, delivered: bool,
+    async def finish_interaction_response(self, interaction_id: str, *, delivered: bool | None,
                                           claim_owner: str = "") -> Interaction:
         async with self.connections.begin() as db:
             row = await db.get(InteractionRow, interaction_id, with_for_update=True)
@@ -4266,8 +4266,8 @@ class Store:
             if row.status == "responding":
                 if claim_owner and row.response_owner != claim_owner:
                     raise RuntimeError("stale_interaction_response_claim")
-                row.status = "responded" if delivered else "pending"
-                if not delivered:
+                row.status = "responded" if delivered else "responding" if delivered is None else "pending"
+                if delivered is False:
                     row.response_key = ""; row.response_json = "{}"
                 row.response_owner = ""; row.response_expires_at = None
                 row.updated_at = now()
