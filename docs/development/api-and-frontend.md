@@ -30,12 +30,22 @@ Turn has no remaining rows. Do not make reconnect correctness depend on Redis.
 - `api.js` is the API/error mapping layer; do not scatter raw fetch contracts
   through components.
 - The Thread ID lives in the query string and browser history.
+- Thread navigation commits the selection and URL only after the target's
+  primary workspace payload loads. Failure preserves the previous Thread and
+  URL and presents a retryable sidebar error.
+- Refresh uses last-known-good state per data slice. A failed or malformed
+  optional response marks that slice stale; it never becomes an authoritative
+  empty list. Primary message/interaction/file/pause failures gate dependent
+  controls until retry converges. Background polling and SSE schedule the same
+  refresh path and clear the stale banner only after success.
 - The composer remains available during active work for appended input. A
   Harness is fixed per Thread; model and reasoning behavior follows the current
   product controls and frozen Turn record.
 - Stream follow occurs only near the bottom. User scrolling must not be pulled
   back by new output.
 - Only active Items animate. Terminal Items retain a fixed elapsed duration.
+- Domain-specific terminal sets drive elapsed timers. Site retry exhaustion is
+  terminal even though the Job remains manually recoverable.
 - Activity rows summarize model waits and tools; agent public output belongs in
   the transcript.
 - Markdown renders no raw HTML. Sandbox paths become links only after resolving
@@ -52,6 +62,14 @@ Public errors are stable and actionable. The browser includes the API request ID
 when available. Do not expose raw Provider messages, credentials, internal URLs
 or stack traces. A failed input receipt remains visible as failed/unknown rather
 than silently creating a duplicate Turn.
+
+Every user action owns busy and error state. Archive/delete/navigation,
+confirmation, media refresh/cancel, site retry/rollback/unpublish and Workspace
+file actions must resolve to visible success or visible recoverable failure;
+never leave a rejected Promise in an event handler. Attachment and Workspace
+batch uploads track each file independently, retain committed successes, and
+offer retry/removal for failures. Open detail panels store an identity and
+derive current data from refreshed props rather than freezing an old object.
 
 ## Required checks
 
