@@ -1532,8 +1532,10 @@ def create_app() -> FastAPI:
 
     @app.get("/v1/background-jobs")
     async def list_background_jobs():
-        return {"items": [job.public(log_tail=job_log_tail(job))
-            for job in app.state.background_jobs.values()]}
+        jobs=list(app.state.background_jobs.values())
+        return {"items":[job.public(log_tail=job_log_tail(job)) for job in jobs],
+            "unresolved":[job.public(log_tail=job_log_tail(job))
+                for job in unresolved_background_jobs(jobs)]}
 
     @app.post("/v1/background-jobs/{job_id}/cancel")
     async def cancel_background_job(job_id: str):

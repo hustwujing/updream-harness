@@ -31,6 +31,23 @@ async def completed(app):
     return app.state.execution.result
 
 
+async def test_background_inventory_exposes_only_transitively_unresolved_failures(tmp_path,monkeypatch):
+    app=runtime(tmp_path,monkeypatch,'')
+    failed=runtime_app.BackgroundJob(id='a'*32,name='render',argv=['false'],
+        cwd=str(tmp_path/'workspace/project'),execution_id='execution',status='failed',returncode=1)
+    replacement=runtime_app.BackgroundJob(id='b'*32,name='render-fixed',argv=['true'],
+        cwd=str(tmp_path/'workspace/project'),execution_id='execution',replaces=failed.id,
+        status='completed',returncode=0)
+    unrelated=runtime_app.BackgroundJob(id='c'*32,name='inspect',argv=['false'],
+        cwd=str(tmp_path/'workspace/project'),execution_id='execution',status='failed',returncode=2)
+    app.state.background_jobs={job.id:job for job in (failed,replacement,unrelated)}
+    inventory=next(route.endpoint for route in app.routes
+        if getattr(route,'path','')=='/v1/background-jobs' and 'GET' in route.methods)
+    value=await inventory()
+    assert [row['id'] for row in value['items']]==[failed.id,replacement.id,unrelated.id]
+    assert [row['id'] for row in value['unresolved']]==[unrelated.id]
+
+
 async def test_concurrent_start_submits_once_and_replays_after_completion(tmp_path, monkeypatch):
     receipt = tmp_path / 'receipt'
     app = runtime(tmp_path, monkeypatch, f'''import sys,json,time
