@@ -1839,6 +1839,9 @@ class Store:
                 raise RuntimeError("idempotency_conflict")
             jobs = (await db.execute(select(JobRow).where(
                 JobRow.group_id == existing.id).order_by(JobRow.created_at, JobRow.local_job_id))).scalars().all()
+            for job in jobs:
+                request=JobRequest.model_validate_json(job.request_json)
+                await self._ensure_review_gate_locked(db,job,request)
             return existing, list(jobs)
         timestamp = now()
         for request in value.jobs:
@@ -1918,9 +1921,30 @@ class Store:
                 created_at=timestamp, updated_at=timestamp,
             )
             db.add(row)
+            await self._ensure_review_gate_locked(db,row,request)
             rows.append(row)
         await db.flush()
         return group, rows
+
+    async def _ensure_review_gate_locked(self,db:AsyncSession,job:JobRow,request:JobRequest)->None:
+        if request.adapter!="reviewer-harness":return
+        context=request.parameters.get("review_context",{});target=context.get("target")
+        if not isinstance(target,dict):return
+        existing=await db.get(ReviewGateRow,job.id,with_for_update=True)
+        encoded_ids=canonical_json(target.get("artifact_ids",[]))
+        encoded_digests=canonical_json(target.get("artifact_digests",[]))
+        required=bool(context.get("required"))
+        if existing:
+            identity=(existing.source_job_id,existing.source_generation,existing.artifact_role,
+                existing.artifact_ids_json,existing.artifact_digests_json,existing.required)
+            expected=(target.get("source_job_id"),target.get("source_generation"),
+                target.get("artifact_role"),encoded_ids,encoded_digests,required)
+            if identity!=expected:raise RuntimeError("review_gate_conflict")
+            return
+        db.add(ReviewGateRow(reviewer_job_id=job.id,source_job_id=target["source_job_id"],
+            source_generation=int(target["source_generation"]),artifact_role=target["artifact_role"],
+            artifact_ids_json=encoded_ids,artifact_digests_json=encoded_digests,required=required,
+            state="pending",receipt_json="{}",warning="",created_at=now(),updated_at=now()))
 
     async def create_job_group(self, owner_id: str,
                                value: JobGroupCreate) -> tuple[JobGroupView, list[JobView]]:
@@ -2467,7 +2491,7 @@ class Store:
             raise KeyError("job_not_found")
         encoded = canonical_json(result or {})
         digest = hashlib.sha256(encoded.encode()).hexdigest()
-        view=None
+        view=None;review_failure=""
         async with self.job_lock(f"group:{group_id}"):
             async with self.connections.begin() as db:
                 group = await db.get(JobGroupRow, group_id, with_for_update=True)
@@ -2581,6 +2605,10 @@ class Store:
                             ))
                     await db.flush()
                     view=self.job_view(job)
+                if job.adapter=="reviewer-harness" and state in TERMINAL_JOB_STATES and state!=JobState.SUCCEEDED:
+                    review_failure="reviewer_"+state.value.lower()
+        if review_failure:
+            await self.apply_review_gate(job_id,execution_error=review_failure)
         return view
 
     async def get_job_outbox(self, group_id: str) -> JobOutboxView | None:
@@ -2820,10 +2848,14 @@ class Store:
             return [self.job_artifact_view(row) for row in rows]
 
     async def resolve_review_candidates(self, owner_id: str, thread_id: str,
-                                        artifact_ids: list[str]) -> dict:
+                                        artifact_ids: list[str], *, allow_mixed: bool = False) -> dict:
         async with self.connections() as db:
             rows=list((await db.execute(select(JobArtifactRow).where(
                 JobArtifactRow.artifact_id.in_(artifact_ids)))).scalars().all())
+            if allow_mixed and (len(rows)!=len(artifact_ids)
+                    or len({(row.job_id,row.artifact_role) for row in rows})!=1):
+                return await self._resolve_advisory_review_candidates_locked(
+                    db,owner_id,thread_id,artifact_ids)
             if not rows:
                 artifacts=list((await db.execute(select(ArtifactRow).join(TurnRow,
                     TurnRow.id==ArtifactRow.turn_id).join(ThreadRow,
@@ -2866,7 +2898,33 @@ class Store:
                 "target":{"source_job_id":job.id,"source_generation":job.generation,
                     "artifact_role":role,"artifact_ids":[row.artifact_id for row in collection],
                     "artifact_digests":digests,"review_policy":contract.review_policy,
-                    "requested_disposition":contract.output_disposition.value}}
+                    "requested_disposition":contract.output_disposition.value,
+                    "gate_eligible":all(row.state=="awaiting_review" and
+                        row.output_disposition==OutputDisposition.CANDIDATE.value for row in collection)}}
+
+    async def _resolve_advisory_review_candidates_locked(self,db:AsyncSession,owner_id:str,
+            thread_id:str,artifact_ids:list[str])->dict:
+        candidates=[]
+        for identity in artifact_ids:
+            row=(await db.execute(select(JobArtifactRow,JobRow).join(JobRow,
+                JobRow.id==JobArtifactRow.job_id).where(JobArtifactRow.artifact_id==identity,
+                    JobRow.owner_id==owner_id,JobRow.thread_id==thread_id))).first()
+            if row:
+                artifact,job=row;receipts=json.loads(artifact.validation_receipts_json or "[]")
+                candidates.append({"artifact_id":artifact.artifact_id,
+                    "artifact_role":artifact.artifact_role,"sha256":artifact.sha256,
+                    "mime":artifact.mime,"size":artifact.size,"validation_receipts":receipts,
+                    "validation_contract":"available" if receipts else "none"})
+                continue
+            generic=(await db.execute(select(ArtifactRow).join(TurnRow,
+                TurnRow.id==ArtifactRow.turn_id).join(ThreadRow,
+                ThreadRow.id==TurnRow.thread_id).where(ArtifactRow.id==identity,
+                    ThreadRow.id==thread_id,ThreadRow.owner_id==owner_id))).scalar_one_or_none()
+            if not generic:raise KeyError("review_artifact_not_found")
+            candidates.append({"artifact_id":generic.id,"artifact_role":"candidate",
+                "sha256":generic.sha256,"mime":generic.mime,"size":generic.size,
+                "validation_receipts":[],"validation_contract":"none"})
+        return {"candidates":candidates,"target":None}
 
     async def create_review_gate(self, reviewer_job_id: str, target: dict,
                                  required: bool) -> None:
@@ -2886,6 +2944,27 @@ class Store:
                 artifact_role=target["artifact_role"],artifact_ids_json=encoded_ids,
                 artifact_digests_json=encoded_digests,required=required,state="pending",
                 receipt_json="{}",warning="",created_at=now(),updated_at=now()))
+
+    async def record_policy_review_unavailable(self,source_job_id:str,generation:int,
+                                               error:str)->list[dict]:
+        job=await self.get_job(source_job_id);request=await self.get_job_request(source_job_id)
+        if not job or not request or job.generation!=generation:
+            raise RuntimeError("stale_job_generation")
+        results=[]
+        for contract in request.expected_outputs:
+            if not contract.requires_review:continue
+            rows=await self.list_job_artifacts(source_job_id,contract.artifact_role)
+            if not rows:continue
+            gate_id=hashlib.sha256(("policy-dispatch:"+source_job_id+":"+
+                contract.artifact_role).encode()).hexdigest()[:32]
+            target={"source_job_id":source_job_id,"source_generation":generation,
+                "artifact_role":contract.artifact_role,
+                "artifact_ids":[row.artifact_id for row in rows],
+                "artifact_digests":[row.sha256 for row in rows]}
+            await self.create_review_gate(gate_id,target,contract.review_policy!="optional")
+            results.append(await self.apply_review_gate(gate_id,
+                execution_error="review_dispatch_unavailable:"+error))
+        return results
 
     async def apply_review_gate(self, reviewer_job_id: str, *, receipt: dict | None = None,
                                 execution_error: str = "") -> dict:
@@ -2943,6 +3022,16 @@ class Store:
                 gate.state="required_unavailable" if execution_error else "review_blocked"
             gate.receipt_json=encoded;gate.warning=warning;gate.updated_at=now()
             return {"state":gate.state,"warning":warning}
+
+    async def get_review_gate(self,reviewer_job_id:str)->dict|None:
+        async with self.connections() as db:
+            row=await db.get(ReviewGateRow,reviewer_job_id)
+            return ({"reviewer_job_id":row.reviewer_job_id,"source_job_id":row.source_job_id,
+                "source_generation":row.source_generation,"artifact_role":row.artifact_role,
+                "artifact_ids":json.loads(row.artifact_ids_json),
+                "artifact_digests":json.loads(row.artifact_digests_json),"required":row.required,
+                "state":row.state,"receipt":json.loads(row.receipt_json or "{}"),
+                "warning":row.warning} if row else None)
 
     async def finalize_job_artifact_collection(self, job_id: str, generation: int,
                                                artifact_role: str, *,

@@ -35,7 +35,14 @@ class JobWorker:
         result=await adapter.collect(context,external_id,status)
         if (self.review_dispatcher and status.state==JobState.SUCCEEDED
                 and context.request.adapter!="reviewer-harness"):
-            await self.review_dispatcher(context,result)
+            try:await self.review_dispatcher(context,result)
+            except Exception as exc:
+                gates=await self.store.record_policy_review_unavailable(
+                    context.job.id,context.generation,type(exc).__name__)
+                result={**result,"review_dispatch":{"state":"unavailable",
+                    "error":type(exc).__name__,"gates":gates}}
+                event("review.policy.dispatch_failed",level=40,job_id=context.job.id,
+                    exception_type=type(exc).__name__)
         return result
 
     async def run_once(self) -> int:

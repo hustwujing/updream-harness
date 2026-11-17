@@ -128,15 +128,16 @@ class ReviewerCoordinator:
         prepared=await self.job_coordinator.prepare_group(owner_id,JobGroupCreate(
             thread_id=value.thread_id,origin_turn_id=value.origin_turn_id,
             idempotency_key=value.idempotency_key,jobs=[request]))
-        if value.target and prepared.jobs:
-            await self.job_coordinator.store.create_review_gate(prepared.jobs[0].id,
-                value.target.model_dump(mode='json'),value.required)
         return prepared
 
     async def prepare_submission(self,owner_id:str,thread_id:str,turn_id:str,value:ReviewSubmission,
                                  trigger:ReviewTrigger=ReviewTrigger.PRIMARY):
         resolved=await self.job_coordinator.store.resolve_review_candidates(owner_id,thread_id,
-            list(value.artifact_ids));target=resolved['target']
+            list(value.artifact_ids),allow_mixed=not value.required);target=resolved['target']
+        if target and not target.pop('gate_eligible',False):
+            if value.required or target.get('review_policy')=='required':
+                raise RuntimeError('required_review_target_already_published')
+            target=None
         if value.required and not target:
             raise RuntimeError('required_review_requires_unpublished_candidate_collection')
         candidates=[ReviewCandidate.model_validate(item) for item in resolved['candidates']]

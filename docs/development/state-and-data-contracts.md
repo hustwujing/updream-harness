@@ -122,6 +122,9 @@ read-only Reviewer Job; disabled policy does not infer review from prompt text.
 `review_gates` binds that Job to one source Job generation, artifact role and
 exact ordered Artifact/digest set. Deterministic validator receipts are loaded
 from the source collection and frozen into Reviewer context before scheduling.
+The Job and Gate are inserted by the same Store transaction; no Reviewer Job is
+claimable without its gate. Every terminal Reviewer transition applies an
+availability outcome even if Adapter collection was never reached.
 
 A digest-bound `PASS` atomically promotes candidates and publishes late
 delivery Items if the source group already terminated. `REVISE`,
@@ -129,6 +132,10 @@ delivery Items if the source group already terminated. `REVISE`,
 is visibly unavailable and retryable; optional execution failure promotes the
 otherwise valid collection with an explicit availability warning. Gate replay
 is idempotent and a changed source identity is never accepted.
+Required gates can attach only to an unpublished `awaiting_review` candidate
+collection. Optional advisory review may group immutable Artifacts from
+multiple Jobs/roles plus generic Artifacts, but has no publication target and
+cannot roll a published collection back to blocked.
 
 Child Harness inputs stream from object storage to Runtime with a declared
 length. Count, per-item, aggregate bytes and reserved disk are checked before

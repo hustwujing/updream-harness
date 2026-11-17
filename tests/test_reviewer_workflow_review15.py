@@ -8,11 +8,12 @@ from sqlalchemy import update
 from sandbox_harness.artifact_gateway import ArtifactEmission,ArtifactGateway
 from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.domain import Harness,ItemType,ThreadCreate,TurnCreate
-from sandbox_harness.job_adapters import AdapterStatus,JobExecutionContext
+from sandbox_harness.job_adapters import AdapterStatus,JobExecutionContext,PreAcceptFailure
 from sandbox_harness.job_catalog import JobCatalog
 from sandbox_harness.job_contracts import (JobExpectedOutput,JobGroupCreate,JobKind,JobRequest,
     JobState,OutputDisposition)
 from sandbox_harness.job_coordinator import JobCoordinator
+from sandbox_harness.job_worker import JobWorker
 from sandbox_harness.objects import ObjectStore
 from sandbox_harness.profiles import ProfileResolver
 from sandbox_harness.reviewer import ReviewSubmission,ReviewerCoordinator,ReviewerJobAdapter
@@ -89,6 +90,7 @@ async def test_real_reviewer_pass_promotes_and_replay_is_idempotent(tmp_path):
         source,_,artifact,digest=await source_collection(store,thread,turn,objects,"pass")
         adapter,result,job,request,attempt=await run_review(store,reviewer,thread,turn,
             artifact,"PASS",digest,key="review-pass-key")
+        assert (await store.get_review_gate(job.id))["state"]=="published"
         assert result["review_gate"]["state"]=="published"
         files=await store.current_project_files(thread.id,"owner")
         assert [value.path for value in files]==[f"artifacts/jobs/{source.id}/pass.pdf"]
@@ -98,6 +100,24 @@ async def test_real_reviewer_pass_promotes_and_replay_is_idempotent(tmp_path):
             "execution",AdapterStatus(True,JobState.SUCCEEDED,{}))
         assert replay["review_gate"]["state"]=="published"
         assert len(await store.current_project_files(thread.id,"owner"))==1
+    finally:await store.close()
+
+
+async def test_review_job_and_gate_are_atomic_and_idempotent_on_prepare_replay(tmp_path):
+    store,thread,turn,reviewer,objects=await environment(tmp_path)
+    try:
+        _,_,artifact,_=await source_collection(store,thread,turn,objects,"atomic")
+        submission=ReviewSubmission(artifact_ids=(artifact.artifact_id,),required=True,
+            harness="codex",model="gpt-5.6",rubric="Review.",idempotency_key="atomic-review")
+        first=await reviewer.prepare_submission("owner",thread.id,turn.id,submission)
+        gate=await store.get_review_gate(first.jobs[0].id)
+        assert gate and gate["state"]=="pending"
+        claimed=await store.claim_job(first.jobs[0].id,"worker","node",60)
+        assert claimed is not None
+        repeated=await reviewer.prepare_submission("owner",thread.id,turn.id,submission)
+        assert repeated.jobs[0].id==first.jobs[0].id
+        assert (await store.get_review_gate(first.jobs[0].id))["artifact_ids"]==[
+            artifact.artifact_id]
     finally:await store.close()
 
 
@@ -160,4 +180,50 @@ async def test_review_rejects_missing_validation_and_changed_digest(tmp_path):
             await ReviewerJobAdapter(VerdictDelegate("PASS",[digest]),store).collect(
                 JobExecutionContext(job=job,request=request,generation=attempt.generation),"execution",
                 AdapterStatus(True,JobState.SUCCEEDED,{}))
+    finally:await store.close()
+
+
+async def test_preaccept_failure_finalizes_required_and_optional_gates(tmp_path):
+    store,thread,turn,reviewer,objects=await environment(tmp_path)
+    class Delegate:
+        async def submit(self,*args):raise PreAcceptFailure("review backend unavailable")
+    try:
+        for policy,expected in (("required","required_unavailable"),("optional","optional_warning")):
+            _,_,artifact,_=await source_collection(store,thread,turn,objects,"preaccept-"+policy,policy)
+            prepared=await reviewer.prepare_submission("owner",thread.id,turn.id,ReviewSubmission(
+                artifact_ids=(artifact.artifact_id,),required=policy=="required",harness="codex",
+                model="gpt-5.6",rubric="Review.",idempotency_key="preaccept-review-"+policy))
+            worker=JobWorker(store,{"reviewer-harness":ReviewerJobAdapter(Delegate(),store)},
+                node_id="node",worker_id="review-worker")
+            await worker.run_once()
+            assert (await store.get_review_gate(prepared.jobs[0].id))["state"]==expected
+        assert any(value.path.endswith("preaccept-optional.pdf")
+            for value in await store.current_project_files(thread.id,"owner"))
+        assert not any(value.path.endswith("preaccept-required.pdf")
+            for value in await store.current_project_files(thread.id,"owner"))
+    finally:await store.close()
+
+
+async def test_late_required_gate_rejected_but_mixed_advisory_review_allowed(tmp_path):
+    store,thread,turn,reviewer,objects=await environment(tmp_path)
+    try:
+        _,_,first,digest=await source_collection(store,thread,turn,objects,"published")
+        await run_review(store,reviewer,thread,turn,first,"PASS",digest,key="published-pass")
+        with pytest.raises(RuntimeError,match="already_published"):
+            await reviewer.prepare_submission("owner",thread.id,turn.id,ReviewSubmission(
+                artifact_ids=(first.artifact_id,),required=True,harness="codex",model="gpt-5.6",
+                rubric="Late gate.",idempotency_key="late-required"))
+
+        _,_,second,_=await source_collection(store,thread,turn,objects,"mixed-second")
+        data=b"generic";generic=await store.add_artifact(turn.id,path="generic.txt",
+            sha256=hashlib.sha256(data).hexdigest(),size=len(data),mime="text/plain",
+            object_ref="sha256:"+hashlib.sha256(data).hexdigest())
+        prepared=await reviewer.prepare_submission("owner",thread.id,turn.id,ReviewSubmission(
+            artifact_ids=(first.artifact_id,second.artifact_id,generic.id),required=False,
+            harness="codex",model="gpt-5.6",rubric="Advisory grouped review.",
+            idempotency_key="mixed-advisory"))
+        request=await store.get_job_request(prepared.jobs[0].id)
+        assert request.parameters["review_context"]["target"] is None
+        assert len(request.input_artifacts)==3
+        assert await store.get_review_gate(prepared.jobs[0].id) is None
     finally:await store.close()

@@ -75,6 +75,25 @@ async def test_successful_collection_dispatches_frozen_policy_review_before_term
     finally:await store.close()
 
 
+async def test_policy_dispatch_failure_does_not_rewrite_successful_source_job(tmp_path):
+    store,_,job=await setup(tmp_path,request(kind=JobKind.OPERATION))
+    adapter=FakeAdapter([AdapterSubmission('external-1',{'accepted':True},completed=True,
+        result={'collections':[{'artifact_role':'report','state':'awaiting_review'}]})])
+    recorded=[]
+    async def unavailable(*args):raise ConnectionError("review coordinator unavailable")
+    async def record(job_id,generation,error):
+        recorded.append((job_id,generation,error));return [{"state":"required_unavailable"}]
+    store.record_policy_review_unavailable=record
+    worker=JobWorker(store,{'fake':adapter},node_id='node',worker_id='worker',
+        review_dispatcher=unavailable)
+    try:
+        await worker.run_once();current=await store.get_job(job.id)
+        assert current.state==JobState.SUCCEEDED
+        assert current.result['review_dispatch']['state']=='unavailable'
+        assert recorded==[(job.id,1,'ConnectionError')]
+    finally:await store.close()
+
+
 async def test_external_handle_is_resumed_without_duplicate_submit(tmp_path):
     store,_,job=await setup(tmp_path,request())
     adapter=FakeAdapter([AdapterSubmission('external-1',{'provider_id':'external-1'})],[
