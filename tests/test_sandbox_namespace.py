@@ -462,6 +462,23 @@ async def test_capacity_evicts_oldest_idle_attached_sandbox_before_blocking_new_
     await pool.close()
 
 
+async def test_capacity_waiter_wakes_when_active_sandbox_becomes_idle():
+    backend=FakeSandboxBackend()
+    pool=SandboxPool(backend,{harness:"" for harness in Harness},
+        {harness:0 for harness in Harness},max_sandboxes=1)
+    first=await pool.acquire(thread_id="first",turn_id="one",harness=Harness.CLAUDE,
+        environment={})
+    waiting=asyncio.create_task(pool.acquire(thread_id="second",turn_id="two",
+        harness=Harness.CLAUDE,environment={}))
+    await asyncio.sleep(.01)
+    assert not waiting.done()
+    await pool.release(first,keep_attached=True,keepalive_seconds=60)
+    second=await asyncio.wait_for(waiting,1)
+    assert first.id not in backend.items and second.id in backend.items
+    await pool.release(second,keep_attached=False)
+    await pool.close()
+
+
 async def test_concurrent_claims_atomically_evict_idle_sessions_at_capacity():
     asyncio = __import__('asyncio')
     backend = FakeSandboxBackend()

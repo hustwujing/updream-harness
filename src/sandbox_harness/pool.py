@@ -25,6 +25,7 @@ class SandboxPool:
         if user_capacity < 1:
             raise ValueError("Sandbox maximum must leave at least one user slot")
         self._user_slots = asyncio.Semaphore(user_capacity)
+        self._capacity_changed = asyncio.Event()
         self._warm: dict[Harness, list[Sandbox]] = defaultdict(list)
         self._attached: dict[str, Sandbox] = {}
         self._expiry: dict[str, asyncio.Task] = {}
@@ -133,6 +134,7 @@ class SandboxPool:
                 retired = self._retiring.pop(sandbox.id, None)
             if retired and retired[1]:
                 self._user_slots.release()
+                self._capacity_changed.set()
         finally:
             async with self._lock:
                 self._deleting.discard(sandbox.id)
@@ -175,6 +177,31 @@ class SandboxPool:
         task.add_done_callback(self._refill.discard)
         task.add_done_callback(lambda value: logger.exception("Warm sandbox refill failed", exc_info=value.exception())
             if not value.cancelled() and value.exception() else None)
+
+    async def _reserve_user_slot(self) -> None:
+        while True:
+            evict=None;evict_expiry=None;waiter=None
+            async with self._lock:
+                if self._closed:
+                    raise RuntimeError("sandbox_pool_closed")
+                if self._user_slots.locked() and self._idle_since:
+                    evict_thread=min(self._idle_since,key=self._idle_since.get)
+                    evict=self._attached.pop(evict_thread,None)
+                    self._idle_since.pop(evict_thread,None)
+                    evict_expiry=self._expiry.pop(evict_thread,None)
+                elif not self._user_slots.locked():
+                    await self._user_slots.acquire()
+                    return
+                else:
+                    self._capacity_changed.clear()
+                    waiter=self._capacity_changed.wait()
+            if evict_expiry:
+                evict_expiry.cancel()
+                await asyncio.gather(evict_expiry,return_exceptions=True)
+            if evict:
+                await self._delete_tracked(evict)
+            elif waiter:
+                await waiter
 
     @observed("sandbox.acquire")
     async def acquire(self, *, thread_id: str, turn_id: str, harness: Harness,
@@ -221,33 +248,15 @@ class SandboxPool:
                     if expiry:
                         expiry.cancel()
                     self._user_slots.release()
+                    self._capacity_changed.set()
                     attached = None
                 except BaseException as exc:
                     attached.health_state="unhealthy"
                     attached.health_error=type(exc).__name__
                     raise
 
-            while not slot_reserved:
-                evict = None
-                evict_expiry = None
-                async with self._lock:
-                    if self._user_slots.locked() and self._idle_since:
-                        evict_thread = min(self._idle_since, key=self._idle_since.get)
-                        evict = self._attached.pop(evict_thread, None)
-                        self._idle_since.pop(evict_thread, None)
-                        evict_expiry = self._expiry.pop(evict_thread, None)
-                    elif not self._user_slots.locked():
-                        await self._user_slots.acquire()
-                        slot_reserved = True
-                if evict_expiry:
-                    evict_expiry.cancel()
-                    await asyncio.gather(evict_expiry, return_exceptions=True)
-                if evict:
-                    await self._delete_tracked(evict)
-                    continue
-                if not slot_reserved:
-                    await self._user_slots.acquire()
-                    slot_reserved = True
+            await self._reserve_user_slot()
+            slot_reserved=True
 
             try:
                 async with self._lock:
@@ -290,6 +299,7 @@ class SandboxPool:
                     raise RuntimeError("sandbox_pool_closed")
             except BaseException:
                 self._user_slots.release()
+                self._capacity_changed.set()
                 raise
             self._schedule_refill(harness)
             return sandbox
@@ -305,7 +315,7 @@ class SandboxPool:
                     if existing.id != sandbox.id:
                         raise RuntimeError("Thread already owns another sandbox")
                     return existing
-            await self._user_slots.acquire()
+            await self._reserve_user_slot()
             try:
                 await self.backend.bind(sandbox, thread_id, turn_id)
                 sandbox.thread_id = thread_id
@@ -318,6 +328,7 @@ class SandboxPool:
                 return sandbox
             except BaseException:
                 self._user_slots.release()
+                self._capacity_changed.set()
                 raise
 
     @observed("sandbox.release")
@@ -336,6 +347,7 @@ class SandboxPool:
                         name="sandbox-expire-" + sandbox.thread_id,
                     )
                     self._idle_since[sandbox.thread_id] = time.monotonic()
+                    self._capacity_changed.set()
                     return
                 self._attached.pop(sandbox.thread_id, None)
                 self._idle_since.pop(sandbox.thread_id, None)
@@ -353,6 +365,7 @@ class SandboxPool:
             if expiry:
                 expiry.cancel()
             self._user_slots.release()
+            self._capacity_changed.set()
 
     async def discard_thread(self, thread_id: str) -> None:
         async with self._thread_lock(thread_id):
@@ -389,6 +402,7 @@ class SandboxPool:
         preserve_sandbox_ids = preserve_sandbox_ids or set()
         async with self._lock:
             self._closed = True
+            self._capacity_changed.set()
             values = [*self._attached.values(), *(item for rows in self._warm.values() for item in rows)]
             expiry = list(self._expiry.values())
             refill = list(self._refill)
