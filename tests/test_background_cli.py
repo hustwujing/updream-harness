@@ -25,11 +25,24 @@ def test_background_status_rejects_unknown_job(monkeypatch):
 
 def test_background_start_forwards_explicit_replacement(monkeypatch, capsys):
     captured = {}
+    monkeypatch.setattr(background_cli.os, "getcwd", lambda: "/workspace/project/work/phase3")
     monkeypatch.setattr(background_cli, "call", lambda method, path="", value=None:
         captured.update(method=method, value=value) or {"id":"new"})
     monkeypatch.setattr(sys, "argv", ["sandbox-background", "start", "--name", "retry",
         "--replaces", "a" * 32, "--", "python", "render.py"])
     background_cli.main()
     assert captured == {"method":"POST", "value":{"name":"retry", "argv":["python","render.py"],
-        "cwd":"/workspace/project", "replaces":"a" * 32}}
+        "cwd":"/workspace/project/work/phase3", "replaces":"a" * 32}}
     assert json.loads(capsys.readouterr().out) == {"id":"new"}
+
+
+def test_background_start_explicit_cwd_overrides_shell_directory(monkeypatch, capsys):
+    captured={}
+    monkeypatch.setattr(background_cli.os,"getcwd",lambda:"/workspace/project/work/phase3")
+    monkeypatch.setattr(background_cli,"call",lambda method,path="",value=None:
+        captured.update(method=method,value=value) or {"id":"new"})
+    monkeypatch.setattr(sys,"argv",["sandbox-background","start","--name","render",
+        "--cwd","/workspace/project/work/render","--","python","render.py"])
+    background_cli.main()
+    assert captured["value"]["cwd"]=="/workspace/project/work/render"
+    assert json.loads(capsys.readouterr().out)=={"id":"new"}

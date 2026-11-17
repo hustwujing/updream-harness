@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import urllib.request
 
 
@@ -21,7 +22,7 @@ def main() -> None:
     commands = parser.add_subparsers(dest="command", required=True)
     start = commands.add_parser("start")
     start.add_argument("--name", required=True)
-    start.add_argument("--cwd", default="/workspace/project")
+    start.add_argument("--cwd")
     start.add_argument("--replaces", default="")
     start.add_argument("argv", nargs=argparse.REMAINDER)
     commands.add_parser("list")
@@ -34,7 +35,7 @@ def main() -> None:
         argv = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
         if not argv:
             parser.error("start requires an argv after --")
-        result = call("POST", value={"name": args.name, "argv": argv, "cwd": args.cwd,
+        result = call("POST", value={"name": args.name, "argv": argv, "cwd": args.cwd or os.getcwd(),
             "replaces": args.replaces})
     elif args.command == "cancel":
         result = call("POST", "/" + args.job_id + "/cancel")
