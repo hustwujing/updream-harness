@@ -37,6 +37,27 @@ def test_gateway_normalizes_native_client_v1_paths_against_versioned_base_url():
     assert upstream_suffix(prefix + "/messages", prefix) == "/messages"
 
 
+def test_gateway_adapts_legacy_claude_thinking_for_adaptive_only_models():
+    from sandbox_harness.gateway import normalize_model_request
+    payload={"model":"ignored","thinking":{"type":"enabled","budget_tokens":32000},
+        "messages":[{"role":"user","content":"hello"}]}
+    normalized=normalize_model_request(payload,harness="claude",model="claude-opus-5-5",
+        suffix="/messages")
+    assert normalized["thinking"]=={"type":"adaptive"}
+    assert normalized["output_config"]["effort"]=="high"
+    assert "budget_tokens" not in normalized["thinking"]
+    assert payload["thinking"]=={"type":"enabled","budget_tokens":32000}
+
+
+def test_gateway_does_not_rewrite_legacy_or_non_claude_thinking():
+    from sandbox_harness.gateway import normalize_model_request
+    payload={"thinking":{"type":"enabled","budget_tokens":32000}}
+    assert normalize_model_request(payload,harness="claude",model="claude-4.6-sonnet",
+        suffix="/messages")["thinking"]==payload["thinking"]
+    assert normalize_model_request(payload,harness="codex",model="gpt-5.6",
+        suffix="/responses")["thinking"]==payload["thinking"]
+
+
 def test_gateway_rejects_invalid_public_proxy_policy_at_startup(tmp_path):
     from sandbox_harness.config import Settings
     from sandbox_harness.gateway import create_gateway

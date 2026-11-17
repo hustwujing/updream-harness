@@ -106,6 +106,31 @@ def upstream_suffix(route: str, prefix: str) -> str:
     return suffix
 
 
+ADAPTIVE_ONLY_CLAUDE_MODELS={
+    "claude-fable-5","claude-fable-5-1","claude-haiku-5-5","claude-opus-4-7",
+    "claude-opus-4-8","claude-opus-5","claude-opus-5-5","claude-sonnet-5-5",
+}
+
+
+def normalize_model_request(payload:dict,*,harness:Harness|str,model:str,suffix:str)->dict:
+    value=dict(payload)
+    harness_id=harness.value if isinstance(harness,Harness) else str(harness)
+    model_id=model.rsplit("/",1)[-1]
+    thinking=value.get("thinking")
+    if (harness_id!="claude" or suffix.rstrip("/")!="/messages"
+            or model_id not in ADAPTIVE_ONLY_CLAUDE_MODELS
+            or not isinstance(thinking,dict) or thinking.get("type")=="adaptive"):
+        return value
+    budget=thinking.get("budget_tokens")
+    effort=("high" if not isinstance(budget,int) else "low" if budget<=4096
+        else "medium" if budget<=16384 else "high" if budget<=65536 else "max")
+    output_config=dict(value.get("output_config") or {})
+    output_config.setdefault("effort",effort)
+    value["thinking"]={"type":"adaptive"}
+    value["output_config"]=output_config
+    return value
+
+
 def enforce_model_output_budget(payload: dict, suffix: str, remaining: int,
                                 input_token_ceiling: int = 0) -> int:
     field = "max_output_tokens" if suffix.rstrip("/") == "/responses" else "max_tokens"
@@ -740,6 +765,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             if not isinstance(payload, dict):
                 raise HTTPException(422, "Model request must be an object")
             payload["model"] = claims.model
+            payload=normalize_model_request(payload,harness=harness,model=claims.model,suffix=suffix)
             requested_output = enforce_model_output_budget(payload,suffix,
                 int(request.state.capability_security["token_remaining"]),len(body))
             if activity:
