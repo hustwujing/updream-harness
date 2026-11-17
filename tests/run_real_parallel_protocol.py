@@ -332,7 +332,8 @@ async def case_p12(client,args):
 async def case_p13(client,args):
     thread,turn=await origin(client,args,'P13')
     response=await prepare(client,thread,turn,[harness_job(0,args,
-        objective='Create a concise recovery marker and return it after checking the workspace.')],'P13')
+        objective=('After checking the workspace, reply with exactly RECOVERY_OK as plain text. '
+            'Do not create, edit, or publish any file.'))],'P13')
     require(response);job=response.json()['jobs'][0]
     deadline=time.monotonic()+120
     while time.monotonic()<deadline:

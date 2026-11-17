@@ -363,7 +363,8 @@ async def protocol_case(case,args,running):
     report=Path(args.report).parent/(case["id"]+".json")
     process=await asyncio.create_subprocess_exec(str(ROOT/".venv/bin/python"),
         str(ROOT/"tests/run_real_parallel_protocol.py"),"--base-url",args.base_url,
-        "--case",case["id"],"--report",str(report))
+        "--case",case["id"],"--report",str(report),"--harness",args.harness,
+        "--model",args.model,"--reasoning",args.reasoning)
     running[case["id"]]["state"]="PROTOCOL_RUNNING"
     try:return_code=await asyncio.wait_for(process.wait(),args.timeout)
     except asyncio.TimeoutError:process.kill();await process.wait();raise TimeoutError("protocol_timeout")
