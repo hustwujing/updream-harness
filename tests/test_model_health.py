@@ -46,6 +46,9 @@ def test_hard_rejection_is_not_cleared_by_timeout_or_single_success():
     (500,{'error':{'message':'no cluster found for model: deepseek-r1'}},'unavailable','model_route_missing'),
     (500,{'error':{'message':'internal error'}},'busy','http_500'),
     (401,{'error':{'message':'invalid key'}},'unavailable','access_denied'),
+    (404,{},'unavailable','model_route_missing'),
+    (405,None,'unavailable','model_route_missing'),
+    (400,{'error':{'message':'unsupported endpoint route'}},'unavailable','model_route_missing'),
     (200,{'error':{'type':'overloaded_error'}},'busy','invalid_probe_response'),
 ])
 def test_classifier_uses_reason_instead_of_treating_every_error_as_unsupported(status,body,outcome,reason):

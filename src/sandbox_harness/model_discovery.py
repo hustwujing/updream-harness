@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 from datetime import datetime, timezone
 import json
 import logging
@@ -31,7 +32,17 @@ def compatible_models(harness: Harness | str, identifiers: list[str]) -> list[st
         allowed = lambda value: value.startswith(("claude-", "origin/claude-"))
     else:
         allowed = lambda value: value.startswith("deepseek-")
-    return sorted(dict.fromkeys(value for value in identifiers if allowed(value)))
+    return sorted(dict.fromkeys(value for value in identifiers
+        if isinstance(value,str) and 0<len(value)<=160 and allowed(value)))
+
+
+def bounded_models(harness:Harness|str,identifiers:list[str],priority:list[str],limit:int)->tuple[list[str],bool]:
+    compatible=compatible_models(harness,identifiers+priority);allowed=set(compatible)
+    ordered=[]
+    for value in priority:
+        if value in allowed and value not in ordered:ordered.append(value)
+    ordered.extend(value for value in compatible if value not in ordered)
+    return ordered[:limit],len(ordered)>limit
 
 
 def parse_model_ids(value: Any) -> list[str]:
@@ -55,22 +66,39 @@ class ModelDiscovery:
         self.snapshot = settings.data_root / "model-catalog.json"
         self.routes = ModelRoutes(settings)
         self.last_refresh_at: str | None = None
+        self.last_attempt_at: str | None = None
         self.last_discovered = 0
         self.last_available = 0
+        self.inventory_status={harness:{"status":"unknown","stale":True,
+            "error":"","last_success_at":None,"truncated":False,"discovered_count":0}
+            for harness in Harness}
 
     def load_snapshot(self) -> bool:
+        previous=(copy.deepcopy(self.catalog.options),copy.deepcopy(self.catalog.known_models),
+            copy.deepcopy(self.catalog.availability),copy.deepcopy(self.catalog.inventory_status),
+            self.last_refresh_at,self.last_attempt_at,self.last_discovered,self.last_available,
+            copy.deepcopy(self.inventory_status))
         try:
             value = json.loads(self.snapshot.read_text())
-            if value.get("version") not in (1, 2, 3) or not isinstance(value.get("models"), dict):
+            if value.get("version") not in (1, 2, 3, 4) or not isinstance(value.get("models"), dict):
                 raise ValueError("Unsupported model catalog snapshot")
-            discovered = {
-                Harness(key): compatible_models(key, identifiers)
-                for key, identifiers in value["models"].items()
-                if key in {item.value for item in Harness} and isinstance(identifiers, list)
-            }
+            if set(value["models"])!={harness.value for harness in Harness}:
+                raise ValueError("Incomplete model catalog snapshot")
+            discovered={}
+            for harness in Harness:
+                identifiers=value["models"].get(harness.value)
+                if not isinstance(identifiers,list):raise ValueError("Incomplete model catalog snapshot")
+                if any(not isinstance(identifier,str) or not identifier or len(identifier)>160
+                        for identifier in identifiers):
+                    raise ValueError("Invalid model catalog snapshot identity")
+                priority=self.routes.configured_models(harness)+[self.catalog.options[harness].default_model]
+                models,truncated=bounded_models(harness,identifiers,priority,
+                    self.settings.model_catalog_max_models_per_harness)
+                if not models:raise ValueError("Snapshot has no compatible models")
+                discovered[harness]=models
             self.catalog.replace_models(discovered)
-            if value.get("version") in (2, 3):
-                availability = {}
+            availability = {}
+            if value.get("version") in (2, 3, 4):
                 for harness_name, models in value.get("availability", {}).items():
                     if harness_name not in {item.value for item in Harness} or not isinstance(models, dict):
                         continue
@@ -81,14 +109,38 @@ class ModelDiscovery:
                                 state = {**state, "status": "unknown", "available": True}
                             availability[(Harness(harness_name), model)] = state
                 self.catalog.replace_availability(availability)
+            metadata=value.get("metadata",{}) if value.get("version")==4 else {}
+            inventory=metadata.get("inventory",{}) if isinstance(metadata,dict) else {}
+            restored={}
+            for harness in Harness:
+                state=inventory.get(harness.value,{}) if isinstance(inventory,dict) else {}
+                restored[harness]={"status":state.get("status","snapshot"),"stale":True,
+                    "error":state.get("error",""),"last_success_at":state.get("last_success_at"),
+                    "truncated":bool(state.get("truncated",False)),
+                    "discovered_count":int(state.get("discovered_count",0))}
+            self.inventory_status=restored;self.catalog.inventory_status=copy.deepcopy(restored)
+            self.last_refresh_at=metadata.get("last_refresh_at") if isinstance(metadata,dict) else value.get("updated_at")
+            self.last_attempt_at=metadata.get("last_attempt_at") if isinstance(metadata,dict) else value.get("updated_at")
+            self.last_discovered=int(metadata.get("discovered",sum(map(len,discovered.values())))) if isinstance(metadata,dict) else sum(map(len,discovered.values()))
+            self.last_available=int(metadata.get("available",sum(
+                state.get("status")=="available" for state in availability.values()))) if isinstance(metadata,dict) else sum(
+                    state.get("status")=="available" for state in availability.values())
             return bool(discovered)
         except FileNotFoundError:
             return False
         except Exception:
+            (self.catalog.options,self.catalog.known_models,self.catalog.availability,
+                self.catalog.inventory_status,self.last_refresh_at,self.last_attempt_at,
+                self.last_discovered,self.last_available,self.inventory_status)=previous
             logger.exception("Ignoring invalid model catalog snapshot")
             return False
 
     async def refresh(self) -> dict[Harness, list[str]]:
+        previous=(copy.deepcopy(self.catalog.options),copy.deepcopy(self.catalog.known_models),
+            copy.deepcopy(self.catalog.availability),copy.deepcopy(self.catalog.inventory_status),
+            self.last_refresh_at,self.last_attempt_at,self.last_discovered,self.last_available,
+            copy.deepcopy(self.inventory_status))
+        attempted_at=datetime.now(timezone.utc).isoformat()
         async with httpx.AsyncClient(
             timeout=self.settings.model_catalog_timeout_seconds,
             trust_env=False,
@@ -97,39 +149,64 @@ class ModelDiscovery:
             results = await asyncio.gather(*(
                 self._fetch(client, harness) for harness in Harness
             ), return_exceptions=True)
-            discovered: dict[Harness, list[str]] = {}
+            discovered: dict[Harness, list[str]] = {};inventory={};all_fresh=True
             for harness, result in zip(Harness, results, strict=True):
+                priority=(self.routes.configured_models(harness)+
+                    [self.catalog.options[harness].default_model]+
+                    [model.id for model in self.catalog.options[harness].models])
                 if isinstance(result, Exception):
                     event("model.catalog.discovery_failed",level=logging.WARNING,harness=harness.value,exc=result)
-                    # Discovery is not a health signal. Keep the last inventory and
-                    # continue probing explicit per-model routes independently.
-                    discovered[harness] = compatible_models(harness,
-                        [model.id for model in self.catalog.options[harness].models]
-                        + self.routes.configured_models(harness))
-                elif result:
-                    discovered[harness] = result
-            if discovered:
-                self.catalog.replace_models(discovered)
-                if self.settings.model_probe_enabled:
-                    availability = await self._probe_all(client, discovered)
-                    availability = {key: reduce_health(self.catalog.availability.get(key, {}), state,
-                        failures=self.settings.model_probe_failure_threshold,
-                        successes=self.settings.model_probe_recovery_threshold) for key, state in availability.items()}
-                    self.catalog.replace_availability(availability)
-                    self.last_available = sum(state["status"] == "available" for state in availability.values())
+                    models,truncated=bounded_models(harness,[],priority,
+                        self.settings.model_catalog_max_models_per_harness)
+                    discovered[harness]=models;all_fresh=False
+                    prior=self.inventory_status.get(harness,{})
+                    inventory[harness]={"status":"stale","stale":True,
+                        "error":type(result).__name__,"last_success_at":prior.get("last_success_at"),
+                        "truncated":truncated,"discovered_count":prior.get("discovered_count",0)}
                 else:
-                    self.last_available = sum(len(models) for models in discovered.values())
-                self.last_discovered = sum(len(models) for models in discovered.values())
-                self.last_refresh_at = datetime.now(timezone.utc).isoformat()
+                    models,truncated=bounded_models(harness,result,priority,
+                        self.settings.model_catalog_max_models_per_harness)
+                    discovered[harness]=models
+                    route_configured=bool(self.routes.default(harness).base_url)
+                    status="fresh" if route_configured else "unconfigured"
+                    inventory[harness]={"status":status,"stale":False,"error":"",
+                        "last_success_at":attempted_at if route_configured else None,
+                        "truncated":truncated,"discovered_count":len(compatible_models(harness,result))
+                            if route_configured else 0}
+            try:
+                availability={}
+                if self.settings.model_probe_enabled:
+                    observations=await self._probe_all(client,discovered)
+                    availability={key:reduce_health(self.catalog.availability.get(key,{}),state,
+                        failures=self.settings.model_probe_failure_threshold,
+                        successes=self.settings.model_probe_recovery_threshold)
+                        for key,state in observations.items()}
+                self.catalog.replace_models(discovered)
+                if availability:self.catalog.replace_availability(availability)
+                self.inventory_status=inventory;self.catalog.inventory_status=copy.deepcopy(inventory)
+                self.last_available=(sum(state["status"]=="available" for state in availability.values())
+                    if self.settings.model_probe_enabled else sum(map(len,discovered.values())))
+                self.last_discovered=sum(state["discovered_count"] for state in inventory.values()
+                    if state["status"]=="fresh")
+                self.last_attempt_at=attempted_at
+                if all_fresh:self.last_refresh_at=attempted_at
                 self._save_snapshot()
+            except Exception:
+                (self.catalog.options,self.catalog.known_models,self.catalog.availability,
+                    self.catalog.inventory_status,self.last_refresh_at,self.last_attempt_at,
+                    self.last_discovered,self.last_available,self.inventory_status)=previous
+                raise
         return discovered
 
     def status(self) -> dict[str, Any]:
         return {"enabled": self.settings.model_catalog_discovery,
                 "probe_enabled": self.settings.model_probe_enabled,
                 "last_refresh_at": self.last_refresh_at,
+                "last_attempt_at":self.last_attempt_at,
                 "discovered": self.last_discovered,
-                "available": self.last_available}
+                "available": self.last_available,
+                "stale":any(state.get("stale") for state in self.inventory_status.values()),
+                "inventory":{harness.value:state for harness,state in self.inventory_status.items()}}
 
     async def _fetch(self, client: httpx.AsyncClient, harness: Harness) -> list[str]:
         route = self.routes.default(harness)
@@ -176,6 +253,9 @@ class ModelDiscovery:
                     "stream": False}
         started = time.monotonic()
         checked_at = datetime.now(timezone.utc).isoformat()
+        if not base:
+            return {"status":"unavailable","available":False,"checked_at":checked_at,
+                "latency_ms":0,"error_code":"model_route_unconfigured"}
         try:
             response = await client.post(url, headers=headers, json=body,
                                          timeout=self.settings.model_probe_timeout_seconds)
@@ -193,7 +273,7 @@ class ModelDiscovery:
 
     def _save_snapshot(self) -> None:
         value = {
-            "version": 3,
+            "version": 4,
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "models": {
                 harness.value: [model.id for model in option.models]
@@ -206,6 +286,10 @@ class ModelDiscovery:
                 }
                 for harness, option in self.catalog.options.items()
             },
+            "metadata":{"last_refresh_at":self.last_refresh_at,
+                "last_attempt_at":self.last_attempt_at,"discovered":self.last_discovered,
+                "available":self.last_available,
+                "inventory":{harness.value:state for harness,state in self.inventory_status.items()}},
         }
         self.snapshot.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.snapshot.with_suffix(".tmp")

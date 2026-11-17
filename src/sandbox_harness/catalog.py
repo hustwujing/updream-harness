@@ -99,6 +99,9 @@ class HarnessCatalog:
             for harness, option in self.options.items()
         }
         self.availability: dict[tuple[Harness, str], dict[str, Any]] = {}
+        self.inventory_status: dict[Harness, dict[str,Any]] = {
+            harness:{"status":"unknown","stale":True,"error":"","last_success_at":None}
+            for harness in Harness}
         self.job_catalog = job_catalog
         self.profile_resolver = profile_resolver
 
@@ -132,28 +135,41 @@ class HarnessCatalog:
         }
 
     def replace_models(self, discovered: dict[Harness | str, list[str]]) -> None:
+        candidate_options=dict(self.options)
+        candidate_known={harness:dict(models) for harness,models in self.known_models.items()}
         for raw_harness, identifiers in discovered.items():
             harness = Harness(raw_harness)
-            option = self.options[harness]
+            option = candidate_options[harness]
             template = option.models[0]
             unique = list(dict.fromkeys(identifier for identifier in identifiers if identifier))
             if not unique:
                 continue
+            if len(unique)>30:raise ValueError("Harness model inventory exceeds limit")
             models = []
             for identifier in unique:
-                model = self.known_models[harness].get(identifier) or ModelOption(
+                model = candidate_known[harness].get(identifier) or ModelOption(
                     id=identifier,
                     label=model_label(identifier),
                     reasoning=template.reasoning,
                 )
-                self.known_models[harness][identifier] = model
+                candidate_known[harness][identifier] = model
                 models.append(model)
             default_model = option.default_model if option.default_model in unique else unique[0]
             models.sort(key=lambda model: (model.id != default_model, model.id))
-            self.options[harness] = option.model_copy(update={"default_model": default_model, "models": models})
+            candidate_options[harness]=HarnessOption(label=option.label,
+                default_model=default_model,models=models)
+        self.options=candidate_options;self.known_models=candidate_known
 
     def replace_availability(self, results: dict[tuple[Harness, str], dict[str, Any]]) -> None:
-        self.availability.update(results)
+        candidate=dict(self.availability)
+        for (raw_harness,model),state in results.items():
+            harness=Harness(raw_harness)
+            if model not in {item.id for item in self.options[harness].models}:
+                raise ValueError("Availability references unknown model")
+            if state.get("status") not in {"available","busy","unknown","unavailable"}:
+                raise ValueError("Invalid model availability state")
+            candidate[(harness,model)]=dict(state)
+        self.availability=candidate
 
     def is_available(self, harness: Harness | str, model: str) -> bool:
         state = self.availability.get((Harness(harness), model))
@@ -165,6 +181,7 @@ class HarnessCatalog:
             available = any(self.is_available(harness, model.id) for model in option.models)
             result.append({"id": harness.value, "label": option.label, "default_model": option.default_model,
                 "available": available,
+                "inventory":self.inventory_status.get(harness,{"status":"unknown","stale":True}),
                 "models": [{"id": model.id, "label": model.label,
                             **self.availability.get((harness, model.id), {"status": "unknown", "available": True}),
                             "reasoning": [{"id": level.id, "label": level.label} for level in model.reasoning]}

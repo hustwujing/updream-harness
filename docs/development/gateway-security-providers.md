@@ -31,15 +31,29 @@ for operation-specific ownership, budget and idempotency rules.
 
 - Defaults come from `upstream_{harness}` plus the corresponding
   `SANDBOX_HARNESS_UPSTREAM_*_KEY`.
+- Every non-empty default and override is canonicalized and validated at
+  startup: HTTP(S) origin/path only, no userinfo, query or fragment. Empty
+  defaults are explicitly unconfigured, not temporarily busy.
 - `model_routes_json` overrides an exact `harness/model` pair.
 - Discovery fetches each default `/models` endpoint and filters IDs by native
   protocol family.
 - Explicit route models remain candidates when discovery fails.
+- Inventory is capped per Harness before probes. Exact configured routes and
+  current/default models have deterministic priority; truncation is visible in
+  inventory status.
 - Health probes use the same resolved route and protocol shape as execution.
   Busy/transient states remain selectable; explicit unsupported/auth failures
   become unavailable through the health reducer.
 - Catalog and health snapshots are versioned under `data_root` and never freeze
   a different choice into an already created Turn.
+- Snapshot/refresh parses and probes a complete candidate before one atomic
+  catalog swap. Invalid data, probe exceptions or snapshot-write failure leave
+  the live catalog unchanged. Snapshot metadata restores counts, last success,
+  last attempt and per-Harness stale/error state after restart.
+- HTTP 404/405 and stable endpoint/protocol rejection are
+  `unavailable/model_route_missing`; 429, 5xx and timeouts remain selectable
+  transient busy evidence. The browser retains choices while showing stale
+  inventory/API state and clears it after recovery.
 
 ## Public HTTP/S proxy
 

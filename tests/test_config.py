@@ -41,6 +41,24 @@ def test_origin_claude_uses_its_model_specific_credential(monkeypatch):
     assert route.base_url=="http://default.example/v1" and route.credential=="origin-secret"
 
 
+@pytest.mark.parametrize("field",["upstream_codex","upstream_claude","upstream_deepseek"])
+@pytest.mark.parametrize("value",[
+    "not-a-url","ftp://models.example/v1","https:///missing-host",
+    "https://user:secret@models.example/v1","https://models.example/v1?query=1",
+    "https://models.example/v1#fragment",
+])
+def test_default_model_routes_reject_malformed_urls(field,value):
+    with pytest.raises(ValueError,match="model route base URL"):
+        ModelRoutes(Settings(_env_file=None,**{field:value}))
+
+
+def test_default_model_routes_allow_empty_and_normalize_trailing_path():
+    routes=ModelRoutes(Settings(_env_file=None,upstream_codex="https://models.example/api/v1///",
+        upstream_claude="",upstream_deepseek=""))
+    assert routes.default("codex").base_url=="https://models.example/api/v1"
+    assert routes.default("claude").base_url==""
+
+
 def test_opensandbox_rejects_development_signing_secrets():
     with pytest.raises(ValueError, match="explicit signing"):
         validate_service_settings(Settings(_env_file=None, backend="opensandbox"))

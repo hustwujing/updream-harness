@@ -154,6 +154,7 @@ class Settings(BaseSettings):
     model_probe_failure_threshold: int = Field(default=3, ge=1, le=10)
     model_probe_recovery_threshold: int = Field(default=2, ge=1, le=10)
     model_probe_concurrency: int = Field(default=6, ge=1, le=32)
+    model_catalog_max_models_per_harness: int = Field(default=30, ge=1, le=30)
 
     def image_for(self, harness: str) -> str:
         return {

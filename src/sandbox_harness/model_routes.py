@@ -32,19 +32,31 @@ class ModelRoutes:
                 raise ValueError("Invalid model route")
             harness_name, model = identity.split("/", 1)
             harness = Harness(harness_name)
-            base_url = str(value.get("base_url") or "").rstrip("/")
+            base_url = self.canonical_base_url(str(value.get("base_url") or ""))
             credential_env = str(value.get("credential_env") or "")
-            parsed = urlsplit(base_url)
-            if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
-                raise ValueError("Invalid model route base URL")
-            if not model or len(model) > 160 or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", credential_env):
+            if (not base_url or not model or len(model) > 160
+                    or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", credential_env)):
                 raise ValueError("Invalid model route identity or credential environment")
             self.overrides[(harness, model)] = ModelRoute(base_url, credential_env)
+        self.defaults={harness:ModelRoute(self.canonical_base_url(
+            getattr(settings,"upstream_"+harness.value)),
+            "SANDBOX_HARNESS_UPSTREAM_"+harness.value.upper()+"_KEY") for harness in Harness}
+
+    @staticmethod
+    def canonical_base_url(value:str)->str:
+        value=value.strip()
+        if not value:return ""
+        parsed=urlsplit(value)
+        if (parsed.scheme not in {"http","https"} or not parsed.netloc
+                or parsed.username or parsed.password or parsed.query or parsed.fragment):
+            raise ValueError("Invalid model route base URL")
+        path=parsed.path.rstrip("/")
+        if "//" in path:raise ValueError("Invalid model route base URL")
+        return parsed.scheme+"://"+parsed.netloc+path
 
     def default(self, harness: Harness | str) -> ModelRoute:
         harness = Harness(harness)
-        return ModelRoute(getattr(self.settings, "upstream_" + harness.value).rstrip("/"),
-            "SANDBOX_HARNESS_UPSTREAM_" + harness.value.upper() + "_KEY")
+        return self.defaults[harness]
 
     def resolve(self, harness: Harness | str, model: str) -> ModelRoute:
         harness = Harness(harness)
