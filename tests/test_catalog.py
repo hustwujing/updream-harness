@@ -71,7 +71,7 @@ async def test_model_discovery_refreshes_catalog_and_persists_snapshot(tmp_path,
     refreshed = await discovery.refresh()
     assert refreshed[Harness.CODEX] == ["gpt-5.6", "gpt-6-sol"]
     assert [model.id for model in catalog.options[Harness.CLAUDE].models] == [
-        "claude-4.6-sonnet", "claude-sonnet-5-5", "origin/claude-opus-5-5",
+        "claude-4.6-sonnet", "claude-sonnet-5-5",
     ]
     assert catalog.resolve("deepseek", "deepseek-r1", "deep").model == "deepseek-r1"
     assert discovery.snapshot.is_file()

@@ -151,12 +151,12 @@ class ModelDiscovery:
             ), return_exceptions=True)
             discovered: dict[Harness, list[str]] = {};inventory={};all_fresh=True
             for harness, result in zip(Harness, results, strict=True):
-                priority=(self.routes.configured_models(harness)+
-                    [self.catalog.options[harness].default_model]+
-                    [model.id for model in self.catalog.options[harness].models])
+                protected=self.routes.configured_models(harness)+[
+                    self.catalog.options[harness].default_model]
                 if isinstance(result, Exception):
                     event("model.catalog.discovery_failed",level=logging.WARNING,harness=harness.value,exc=result)
-                    models,truncated=bounded_models(harness,[],priority,
+                    fallback=protected+[model.id for model in self.catalog.options[harness].models]
+                    models,truncated=bounded_models(harness,[],fallback,
                         self.settings.model_catalog_max_models_per_harness)
                     discovered[harness]=models;all_fresh=False
                     prior=self.inventory_status.get(harness,{})
@@ -164,7 +164,7 @@ class ModelDiscovery:
                         "error":type(result).__name__,"last_success_at":prior.get("last_success_at"),
                         "truncated":truncated,"discovered_count":prior.get("discovered_count",0)}
                 else:
-                    models,truncated=bounded_models(harness,result,priority,
+                    models,truncated=bounded_models(harness,result,protected,
                         self.settings.model_catalog_max_models_per_harness)
                     discovered[harness]=models
                     route_configured=bool(self.routes.default(harness).base_url)

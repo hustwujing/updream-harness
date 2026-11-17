@@ -31,6 +31,26 @@ async def test_inventory_and_probe_count_are_bounded_with_priority(tmp_path):
     assert catalog.inventory_status[Harness.CODEX]["truncated"] is True
 
 
+async def test_successful_disjoint_inventories_replace_old_nonprotected_models(tmp_path):
+    current=["gpt-6-a"]
+    def handle(request):
+        if request.method=="GET":return httpx.Response(200,
+            json={"data":[{"id":value} for value in current]})
+        return httpx.Response(200,json={"ok":True})
+    settings=Settings(data_root=tmp_path,upstream_codex="https://codex.test/v1",
+        upstream_claude="",upstream_deepseek="",model_catalog_max_models_per_harness=3,
+        model_routes_json=json.dumps({"codex/gpt-6-explicit":{"base_url":"https://explicit.test/v1",
+            "credential_env":"EXPLICIT_KEY"}}))
+    catalog=HarnessCatalog();discovery=ModelDiscovery(settings,catalog,httpx.MockTransport(handle))
+    await discovery.refresh();assert {"gpt-5.6","gpt-6-explicit","gpt-6-a"}==set(model_ids(catalog,"codex"))
+    current[:]=["gpt-6-b"];await discovery.refresh()
+    assert {"gpt-5.6","gpt-6-explicit","gpt-6-b"}==set(model_ids(catalog,"codex"))
+    current[:]=["gpt-6-c","gpt-6-d"];await discovery.refresh()
+    assert "gpt-6-a" not in model_ids(catalog,"codex") and "gpt-6-b" not in model_ids(catalog,"codex")
+    current[:]=["gpt-6-d"];await discovery.refresh()
+    assert {"gpt-5.6","gpt-6-explicit","gpt-6-d"}==set(model_ids(catalog,"codex"))
+
+
 @pytest.mark.parametrize("invalid_harness",["codex","claude","deepseek"])
 def test_invalid_snapshot_is_all_or_nothing(tmp_path,invalid_harness):
     catalog=HarnessCatalog();settings=Settings(data_root=tmp_path,model_probe_enabled=False)

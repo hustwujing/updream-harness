@@ -37,7 +37,10 @@ for operation-specific ownership, budget and idempotency rules.
 - `model_routes_json` overrides an exact `harness/model` pair.
 - Discovery fetches each default `/models` endpoint and filters IDs by native
   protocol family.
-- Explicit route models remain candidates when discovery fails.
+- Explicit route/default models are protected during a successful inventory
+  replacement. The previous full inventory is retained only as stale fallback
+  when discovery fails, so removed models leave and new models can enter a full
+  capped catalog.
 - Inventory is capped per Harness before probes. Exact configured routes and
   current/default models have deterministic priority; truncation is visible in
   inventory status.

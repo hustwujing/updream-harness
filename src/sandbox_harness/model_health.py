@@ -13,8 +13,6 @@ def classify_response(response) -> tuple[str, str | None]:
     message = str(error.get('message') or '').lower()
     if response.status_code in {401, 403}:
         return 'unavailable', 'access_denied'
-    if response.status_code in {404,405}:
-        return 'unavailable','model_route_missing'
     if code in {'model_not_found', 'unsupported_model', 'model_not_supported'}:
         return 'unavailable', 'model_not_supported'
     if (str(error.get('type') or '').lower() == 'not_found_error' and 'model' in message) or 'unknown model' in message:
@@ -23,6 +21,8 @@ def classify_response(response) -> tuple[str, str | None]:
         return 'unavailable', 'model_route_missing'
     if 'not supported when using codex with a chatgpt account' in message:
         return 'unavailable', 'model_not_supported'
+    if response.status_code in {404,405}:
+        return 'unavailable','model_route_missing'
     if response.status_code==400 and any(marker in message for marker in (
             'endpoint','route','method not allowed','not found','unsupported request')):
         return 'unavailable','model_route_missing'

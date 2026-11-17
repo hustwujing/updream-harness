@@ -43,6 +43,8 @@ def test_hard_rejection_is_not_cleared_by_timeout_or_single_success():
     (429,{'error':{'message':'rate limited'}},'busy','http_429'),
     (400,{'error':{'code':'invalid_request_error','message':'max_output_tokens too small'}},'busy','http_400'),
     (400,{'error':{'code':'model_not_found'}},'unavailable','model_not_supported'),
+    (404,{'error':{'code':'model_not_found','message':'unknown model'}},'unavailable','model_not_supported'),
+    (404,{'error':{'type':'not_found_error','message':'model does not exist'}},'unavailable','model_not_supported'),
     (500,{'error':{'message':'no cluster found for model: deepseek-r1'}},'unavailable','model_route_missing'),
     (500,{'error':{'message':'internal error'}},'busy','http_500'),
     (401,{'error':{'message':'invalid key'}},'unavailable','access_denied'),
