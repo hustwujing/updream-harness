@@ -2561,13 +2561,17 @@ class Store:
                     jobs = (await db.execute(select(JobRow).where(JobRow.group_id == group.id)
                         .order_by(JobRow.local_job_id).with_for_update())).scalars().all()
                     if all(JobState(member.state) in TERMINAL_JOB_STATES for member in jobs):
-                        terminal_payload = [{
-                            "job_id": member.id,
-                            "local_job_id": member.local_job_id,
-                            "state": member.state,
-                            "result_digest": member.result_digest,
-                            "result": json.loads(member.result_json or "{}"),
-                        } for member in jobs]
+                        terminal_payload = []
+                        for member in jobs:
+                            member_result=json.loads(member.result_json or "{}")
+                            terminal_payload.append({"job_id":member.id,
+                                "local_job_id":member.local_job_id,"state":member.state,
+                                "result_digest":member.result_digest,
+                                "result_available":bool(member_result),
+                                **({"error_code":str(member_result.get("error_code"))[:160]}
+                                    if member_result.get("error_code") else {}),
+                                **({"review_gate":member_result["review_gate"]}
+                                    if isinstance(member_result.get("review_gate"),dict) else {})})
                         result_json = canonical_json(terminal_payload)
                         result_digest = hashlib.sha256(result_json.encode()).hexdigest()
                         group.state = JobGroupState.TERMINAL.value

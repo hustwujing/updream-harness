@@ -128,6 +128,10 @@ availability outcome even if Adapter collection was never reached. Non-success
 Job state, Gate state, optional publication/warning, Job result and group
 continuation outbox commit in one transaction, so continuation cannot observe a
 terminal Reviewer with a pending Gate.
+Continuation outboxes contain only bounded Job facts: identity, state, result
+digest, result availability, stable error code and compact Review Gate
+state/warning. Arbitrary Adapter result bodies remain addressable by Job ID and
+are never copied into the bounded continuation batch.
 
 A digest-bound `PASS` atomically promotes candidates and publishes late
 delivery Items if the source group already terminated. `REVISE`,

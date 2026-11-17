@@ -90,3 +90,24 @@ async def test_batch_respects_group_and_job_limits(tmp_path):
         assert await dispatcher.run_once()==1
         assert len([value for value in await store.list_turns(thread.id,'owner') if value.internal])==2
     finally:await store.close()
+
+
+async def test_oversized_job_results_use_bounded_outbox_facts_without_suppression(tmp_path):
+    store,_,thread,origin=await setup(tmp_path)
+    try:
+        requests=[JobRequest(local_job_id=f"large-{index}",kind=JobKind.OPERATION,
+            adapter="fake",descriptor_id="fake",descriptor_version="1",descriptor_digest="a"*64,
+            idempotency_key=f"large-result-{index}") for index in range(3)]
+        group,jobs=await store.create_job_group("owner",JobGroupCreate(thread_id=thread.id,
+            origin_turn_id=origin.id,idempotency_key="large-result-group",jobs=requests))
+        for job in jobs:
+            await store.transition_job(job.id,JobState.SUCCEEDED,expected_generation=0,
+                result={"payload":"x"*(700*1024),"stable":"fact"})
+        claimed=await store.claim_job_outbox_batch("dispatcher",max_groups=1,max_jobs=10,
+            max_bytes=1024*1024)
+        assert len(claimed)==1 and claimed[0]["group_id"]==group.id
+        assert len(claimed[0]["results"])==3
+        assert all(item["result_available"] is True and "payload" not in item
+            for item in claimed[0]["results"])
+        assert (await store.get_job_outbox(group.id)).state=="claimed"
+    finally:await store.close()

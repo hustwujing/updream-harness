@@ -260,5 +260,5 @@ async def test_malformed_verdict_terminalizes_job_and_gate_atomically_without_wo
                 outbox=(await db.execute(__import__('sqlalchemy').select(JobOutboxRow).where(
                     JobOutboxRow.group_id==prepared.group.id))).scalar_one()
             payload=json.loads(outbox.result_json)
-            assert payload[0]["result"]["review_gate"]["state"]==expected
+            assert payload[0]["review_gate"]["state"]==expected
     finally:await store.close()
