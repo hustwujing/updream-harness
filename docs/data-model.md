@@ -170,6 +170,14 @@ terminal state. Finalization is idempotent; an unfinalized reservation remains
 charged against availability after process restart rather than reopening
 budget.
 
+## Media execution receipts
+
+`media_jobs.generation` fences every claimed Worker generation.
+`media_job_executions` stores the immutable sanitized Provider result receipt
+and content-addressed staged output list. It is written before download and
+before terminal Artifact binding respectively, allowing retry/restart without
+another billable Provider submission or another download after object staging.
+
 ## Schema upgrades
 
 `Store.initialize` creates missing tables and performs explicit additive ALTERs

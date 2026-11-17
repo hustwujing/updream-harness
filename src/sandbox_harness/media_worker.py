@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import ipaddress
 import os
 import re
+import socket
+import shutil
 import tarfile
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict,dataclass
 from datetime import datetime, timezone
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
@@ -22,7 +27,9 @@ from .media_reference_publisher import MediaReferencePreparationError, MediaRefe
 from .minimax_voice import MiniMaxVoiceCloneError, MiniMaxVoiceClonePending, MiniMaxVoiceClones
 from .observability import event
 from .objects import ObjectStore, S3ObjectStore
+from .public_proxy import normalize_host,public_address
 from .store import Store
+from .runtime import _process_start
 
 
 @dataclass
@@ -35,6 +42,15 @@ class ProviderResult:
     error_code: str = ""
     outputs: list[dict[str, str]] | None = None
     credits_consumed: float | None = None
+
+
+@dataclass
+class DownloadedMedia:
+    path: Path
+    size: int
+    sha256: str
+    mime: str
+    def remove(self):self.path.unlink(missing_ok=True)
 
 
 class MediaWorker:
@@ -52,6 +68,19 @@ class MediaWorker:
         self.concurrency = getattr(settings, "media_worker_concurrency", 6)
         self.tripo_concurrency = getattr(settings, "tripo_worker_concurrency", 2)
         self.audio_concurrency = getattr(settings, "audio_worker_concurrency", 6)
+        self.lease_seconds=getattr(settings,"media_job_lease_seconds",60)
+        data_root=Path(getattr(settings,"data_root",Path.cwd()/".data"))
+        self.staging_root=(data_root/"tmp"/"provider-outputs").resolve()
+        self.staging_root.mkdir(parents=True,exist_ok=True)
+        self.process_start=_process_start(os.getpid()) or "unknown"
+        for path in self.staging_root.glob(".provider-output-*-*-*"):
+            parts=path.name.split("-",4)
+            try:pid=int(parts[2]);started=parts[3]
+            except (ValueError,IndexError):continue
+            if _process_start(pid)!=started:path.unlink(missing_ok=True)
+
+    @property
+    def stage_prefix(self):return f".provider-output-{os.getpid()}-{self.process_start}-"
 
     async def run(self) -> None:
         active: set[asyncio.Task] = set()
@@ -71,7 +100,7 @@ class MediaWorker:
                     max(0, self.concurrency - len(active)))
                 if tripo_available > 0:
                     jobs = await self.store.claim_media_jobs(self.owner, limit=tripo_available,
-                        adapter="tripo_v3")
+                        adapter="tripo_v3",lease_seconds=self.lease_seconds)
                     for job in jobs:
                         task = asyncio.create_task(self.process(job), name="media-job-" + job["id"])
                         active.add(task); tripo_active.add(task)
@@ -79,7 +108,7 @@ class MediaWorker:
                     max(0, self.concurrency - len(active)))
                 if audio_available > 0:
                     jobs = await self.store.claim_media_jobs(self.owner, limit=audio_available,
-                        adapter="minimax_t2a", has_provider_job=True)
+                        adapter="minimax_t2a", has_provider_job=True,lease_seconds=self.lease_seconds)
                     for job in jobs:
                         task = asyncio.create_task(self.process(job), name="media-job-" + job["id"])
                         active.add(task); audio_active.add(task)
@@ -90,14 +119,14 @@ class MediaWorker:
                         max(0, self.audio_concurrency - outstanding))
                     if submit_available > 0:
                         jobs = await self.store.claim_media_jobs(self.owner, limit=submit_available,
-                            adapter="minimax_t2a", has_provider_job=False)
+                            adapter="minimax_t2a", has_provider_job=False,lease_seconds=self.lease_seconds)
                         for job in jobs:
                             task = asyncio.create_task(self.process(job), name="media-job-" + job["id"])
                             active.add(task); audio_active.add(task)
                 available = self.concurrency - len(active)
                 if available > 0:
                     jobs = await self.store.claim_media_jobs(self.owner, limit=available,
-                        exclude_adapters={"tripo_v3", "minimax_t2a"})
+                        exclude_adapters={"tripo_v3", "minimax_t2a"},lease_seconds=self.lease_seconds)
                     for job in jobs:
                         active.add(asyncio.create_task(self.process(job), name="media-job-" + job["id"]))
                 try:
@@ -111,6 +140,23 @@ class MediaWorker:
                 await asyncio.gather(*active, return_exceptions=True)
 
     async def process(self, job: dict[str, Any]) -> None:
+        job={"generation":1,"provider_result":{},"staged_outputs":[],**job}
+        lost=asyncio.Event();owner=asyncio.current_task()
+        async def heartbeat():
+            while True:
+                await asyncio.sleep(max(.1,self.lease_seconds/3))
+                if not await self.store.renew_media_job_lease(job["id"],self.owner,
+                        job["generation"],self.lease_seconds):
+                    lost.set();owner.cancel();return
+        task=asyncio.create_task(heartbeat(),name="media-heartbeat-"+job["id"])
+        try:await self._process_claimed(job)
+        except asyncio.CancelledError:
+            if not lost.is_set():raise
+            event("media.worker.lease_lost",level=30,job_id=job["id"],generation=job["generation"])
+        finally:
+            task.cancel();await asyncio.gather(task,return_exceptions=True)
+
+    async def _process_claimed(self, job: dict[str, Any]) -> None:
         stage = "claimed"
         try:
             if job["status"] == "cancel_requested":
@@ -128,7 +174,8 @@ class MediaWorker:
                 phase="provider_polling" if job.get("provider_job_id") else (
                     "preparing_voice_clone" if job.get("references") and job.get("adapter") == "minimax_t2a"
                     else "preparing_references" if job.get("references") else "requesting"))
-            result = await self._execute(job)
+            result=(ProviderResult(**job["provider_result"]) if job.get("provider_result")
+                else await self._execute(job))
             if result.status == "unknown":
                 error_code = result.error_code or ("provider_result_unresolved" if result.provider_job_id
                     else "provider_submission_outcome_unknown")
@@ -147,31 +194,32 @@ class MediaWorker:
                     error_code=result.error_code or "provider_processing_failed",
                     error_detail=result.error[:2000])
                 return
-            if result.outputs:
-                completed = []
-                for output in result.outputs:
-                    stage = "download_" + output["role"]
-                    data, mime = await self._download(output["url"], expected_kind=output["kind"])
+            if not job.get("provider_result"):
+                await self.store.persist_media_provider_result(job["id"],self.owner,
+                    job["generation"],asdict(result))
+            specs=(result.outputs or [{"role":"primary","filename":f"{job['kind']}-{job['id'][:8]}",
+                "url":result.url,"kind":job["kind"]}])
+            completed=list(job.get("staged_outputs") or []);staged_by_role={item["role"]:item for item in completed}
+            for output in specs:
+                if output["role"] in staged_by_role:continue
+                stage = "download_" + output["role"]
+                downloaded=await self._download(output["url"], expected_kind=output["kind"])
+                try:
                     stage = "object_store_" + output["role"]
-                    object_ref, _ = await asyncio.to_thread(self.objects.put, data)
-                    completed.append({"role": output["role"],
-                        "filename": self._filename_for_mime(output["filename"], mime),
-                        "object_ref": object_ref, "mime": mime, "size": len(data)})
-                stage = "commit"
-                await self.store.complete_media_job(job["id"], self.owner,
+                    object_ref,_=await asyncio.to_thread(self.objects.put_file,downloaded.path,
+                        digest=downloaded.sha256,size=downloaded.size)
+                    value={"role":output["role"],
+                        "filename":self._filename_for_mime(output["filename"],downloaded.mime),
+                        "object_ref":object_ref,"mime":downloaded.mime,"size":downloaded.size}
+                    completed=await self.store.persist_media_staged_output(job["id"],self.owner,
+                        job["generation"],value);staged_by_role[value["role"]]=value
+                finally:downloaded.remove()
+            stage = "commit"
+            if not await self.store.complete_media_job(job["id"], self.owner,
                     provider_job_id=result.provider_job_id, outputs=completed,
-                    credits_consumed=result.credits_consumed)
-                total_bytes = sum(output["size"] for output in completed)
-            else:
-                stage = "download"
-                data, mime = await self._download(result.url, expected_kind=job["kind"])
-                stage = "object_store"
-                object_ref, _ = await asyncio.to_thread(self.objects.put, data)
-                stage = "commit"
-                await self.store.update_media_job(job["id"], self.owner, status="succeeded", phase="committed",
-                    provider_job_id=result.provider_job_id, output_object_ref=object_ref,
-                    output_mime=mime, output_size=len(data), progress=100)
-                total_bytes = len(data)
+                    credits_consumed=result.credits_consumed,generation=job["generation"]):
+                raise RuntimeError("stale_media_job_lease")
+            total_bytes = sum(output["size"] for output in completed)
             event("media.job.succeeded", job_id=job["id"], provider=job["provider"], model=job["model"],
                 bytes=total_bytes)
         except MediaReferencePreparationError as exc:
@@ -186,7 +234,8 @@ class MediaWorker:
             if stage.startswith("download"):
                 await self.store.release_media_job_lease(job["id"], self.owner,
                     phase="provider_output_retry", error_code="provider_output_unavailable",
-                    error_detail=f"{stage}:{type(exc).__name__}", retry_after_seconds=15)
+                    error_detail=f"{stage}:{type(exc).__name__}", retry_after_seconds=15,
+                    generation=job["generation"])
                 event("media.output.retry_scheduled", level=30, job_id=job["id"], provider=job["provider"],
                     model=job["model"], failure_stage=stage, exception_type=type(exc).__name__)
             elif (stage == "provider_poll" and job.get("adapter") == "minimax_t2a"
@@ -244,7 +293,7 @@ class MediaWorker:
         return ProviderResult("failed", error="media_adapter_not_configured")
 
     async def _client(self):
-        return httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10), follow_redirects=True, trust_env=False)
+        return httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10), follow_redirects=False, trust_env=False)
 
     async def _reference_url(self, reference: dict[str, Any]) -> str:
         value = reference.get("asset_uri") or reference.get("public_url") or ""
@@ -923,18 +972,108 @@ class MediaWorker:
             pass
         raise ValueError("provider_result_mime_mismatch")
 
-    async def _download(self, url: str, *, expected_kind: str) -> tuple[bytes, str]:
-        if not url or not url.startswith(("http://", "https://")):
-            raise ValueError("invalid_provider_result_url")
-        async with await self._client() as client:
-            response = await client.get(url)
-        response.raise_for_status()
-        data = response.content
-        maximum = (getattr(self.settings, "tripo_max_output_bytes", 512 * 1024 * 1024)
-            if expected_kind.startswith("model3d") else getattr(self.settings, "max_artifact_bytes", 2 * 1024 * 1024 * 1024))
-        if len(data) > maximum:
-            raise ValueError("provider_result_too_large")
-        data, reported = self._unwrap_provider_media(data,
-            response.headers.get("content-type", "application/octet-stream"), expected_kind, maximum)
-        return data, self._validated_mime(data,
-            reported, expected_kind)
+    def _output_host_allowed(self,host:str)->bool:
+        host=normalize_host(host)
+        return any(host==rule.lower().lstrip("*.") or rule.startswith("*.") and
+            host.endswith("."+rule[2:].lower()) for rule in self.settings.provider_output_allowlist)
+
+    async def _resolve_output(self,host:str,port:int)->str:
+        rows=await asyncio.get_running_loop().getaddrinfo(host,port,type=socket.SOCK_STREAM)
+        addresses={row[4][0] for row in rows}
+        if not addresses or any(not public_address(value) for value in addresses):
+            raise ValueError("provider_output_destination_not_public")
+        return sorted(addresses)[0]
+
+    @staticmethod
+    def _pinned_url(parsed,address:str)->str:
+        authority=f"[{address}]" if ":" in address else address
+        if parsed.port and parsed.port!=443:authority+=":"+str(parsed.port)
+        return parsed._replace(netloc=authority).geturl()
+
+    def _validated_mime_file(self,path:Path,reported:str,expected_kind:str)->str:
+        with path.open("rb") as stream:head=stream.read(65536)
+        try:return self._validated_mime(head,reported,expected_kind)
+        except ValueError:
+            if expected_kind.startswith("model3d"):raise
+            try:
+                with av.open(str(path)) as container:
+                    stream_types={stream.type for stream in container.streams};formats=set(container.format.name.split(","))
+                if expected_kind not in stream_types:raise ValueError("provider_result_mime_mismatch")
+                if expected_kind=="audio" and "mp3" in formats:return "audio/mpeg"
+                if formats.intersection({"mov","mp4","m4a","3gp","3g2","mj2"}):return expected_kind+"/mp4"
+                if "webm" in formats:return expected_kind+"/webm"
+            except (av.error.FFmpegError,ValueError) as exc:
+                raise ValueError("provider_result_mime_mismatch") from exc
+            raise ValueError("provider_result_mime_mismatch")
+
+    def _extract_audio_archive(self,path:Path,maximum:int)->Path:
+        target_path=None
+        try:
+            with tarfile.open(path,"r:*") as archive:
+                members=archive.getmembers()
+                extensions={".mp3",".wav",".flac",".m4a",".mp4",".ogg",".webm"}
+                candidates=[member for member in members if member.isfile()
+                    and os.path.splitext(member.name)[1].lower() in extensions]
+                if len(members)>64 or len(candidates)!=1 or candidates[0].size>maximum:
+                    raise ValueError("provider_audio_archive_invalid")
+                source=archive.extractfile(candidates[0])
+                with NamedTemporaryFile(dir=self.staging_root,prefix=self.stage_prefix,delete=False) as target:
+                    target_path=Path(target.name)
+                    copied=0
+                    while chunk:=source.read(1024*1024):
+                        copied+=len(chunk)
+                        if copied>maximum:raise ValueError("provider_result_too_large")
+                        target.write(chunk)
+                    target.flush();os.fsync(target.fileno());return target_path
+        except BaseException as exc:
+            if target_path:target_path.unlink(missing_ok=True)
+            if isinstance(exc,tarfile.TarError):raise ValueError("provider_audio_archive_invalid") from exc
+            raise
+
+    async def _download(self, url: str, *, expected_kind: str) -> DownloadedMedia:
+        maximum=(getattr(self.settings,"tripo_max_output_bytes",512*1024*1024)
+            if expected_kind.startswith("model3d") else getattr(self.settings,"max_artifact_bytes",2*1024*1024*1024))
+        current=url;temporary=None
+        try:
+            async with await self._client() as client:
+                for _ in range(6):
+                    parsed=urlsplit(current)
+                    if (parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.password
+                            or parsed.fragment or (parsed.port or 443)!=443
+                            or not self._output_host_allowed(parsed.hostname)):
+                        raise ValueError("invalid_provider_result_url")
+                    host=normalize_host(parsed.hostname);address=await self._resolve_output(host,443)
+                    request=client.build_request("GET",self._pinned_url(parsed,address),headers={"Host":host},
+                        extensions={"sni_hostname":host.encode()})
+                    response=await client.send(request,stream=True)
+                    if response.is_redirect:
+                        location=response.headers.get("location","");await response.aclose()
+                        if not location:raise ValueError("provider_output_redirect_invalid")
+                        current=urljoin(current,location);continue
+                    response.raise_for_status();raw=response.headers.get("content-length")
+                    if raw and int(raw)>maximum:
+                        await response.aclose();raise ValueError("provider_result_too_large")
+                    digest=hashlib.sha256();size=0
+                    try:
+                        with NamedTemporaryFile(dir=self.staging_root,prefix=self.stage_prefix,delete=False) as stream:
+                            temporary=Path(stream.name)
+                            async for chunk in response.aiter_raw():
+                                size+=len(chunk)
+                                if size>maximum:raise ValueError("provider_result_too_large")
+                                stream.write(chunk);digest.update(chunk)
+                            stream.flush();os.fsync(stream.fileno())
+                        reported=response.headers.get("content-type","application/octet-stream")
+                    finally:await response.aclose()
+                    if expected_kind=="audio" and reported.split(";",1)[0].lower() in {
+                            "application/x-tar","application/tar"}:
+                        extracted=await asyncio.to_thread(self._extract_audio_archive,temporary,maximum)
+                        temporary.unlink(missing_ok=True);temporary=extracted
+                        size=temporary.stat().st_size
+                        with temporary.open("rb") as source:digest=hashlib.file_digest(source,"sha256")
+                        reported="application/octet-stream"
+                    mime=await asyncio.to_thread(self._validated_mime_file,temporary,reported,expected_kind)
+                    return DownloadedMedia(temporary,size,digest.hexdigest(),mime)
+                raise ValueError("provider_output_redirect_limit")
+        except BaseException:
+            if temporary:temporary.unlink(missing_ok=True)
+            raise

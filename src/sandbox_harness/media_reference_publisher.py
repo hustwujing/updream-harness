@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 
 import httpx
 
 from .ark_assets import ArkAssetError, ArkAssets
+from .objects import object_chunks
 from .observability import event
 
 
@@ -25,11 +25,13 @@ class MediaReferencePublisher:
 
     async def _publish_boss(self, record: dict, prepared: dict) -> dict:
         try:
-            data = await asyncio.to_thread(self.objects.get, record["object_ref"], maximum=record["size"])
-            if len(data) != record["size"] or hashlib.sha256(data).hexdigest() != record["sha256"]:
+            size=await asyncio.to_thread(self.objects.size,record["object_ref"],maximum=record["size"])
+            if size != record["size"]:
                 raise MediaReferencePreparationError("media_reference_source_integrity_failed")
             async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
-                response = await client.put(prepared["put_url"], content=data, headers=prepared["headers"])
+                response = await client.put(prepared["put_url"],
+                    content=object_chunks(self.objects,record["object_ref"],maximum=record["size"]),
+                    headers={**prepared["headers"],"Content-Length":str(record["size"])})
             if not response.is_success and response.status_code not in {409, 412}:
                 raise MediaReferencePreparationError(f"boss_reference_upload_http_{response.status_code}")
             head = await asyncio.to_thread(self.objects.head_media_upload, record["object_key"])

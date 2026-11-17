@@ -259,6 +259,10 @@ async def test_tripo_multi_output_commit_is_atomic_and_recoverable(tmp_path):
             items = (await db.execute(__import__('sqlalchemy').select(ItemRow).where(
                 ItemRow.type == "artifact"))).scalars().all()
         assert {item.summary for item in items} == {"model.glb", "preview.png"}
+        with pytest.raises(RuntimeError,match="active_media_prevents_thread_delete"):
+            await store.delete_thread(thread.id,owner)
+        batch=(await store.claim_media_batches("dispatcher"))[0]
+        await store.finish_media_batch(batch["turn_id"],"dispatcher",delivered=True)
         assert await store.delete_thread(thread.id, owner) == [turn.id]
         async with store.connections() as db:
             assert not (await db.execute(__import__('sqlalchemy').select(MediaJobOutputRow))).scalars().all()

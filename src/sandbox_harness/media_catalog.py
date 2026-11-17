@@ -270,6 +270,8 @@ class MediaCatalog:
                 raise ValueError("Invalid media execution mode")
             if spec.cancellation not in {"supported", "unsupported"}:
                 raise ValueError("Invalid media cancellation mode")
+            if spec.cancellation == "supported":
+                raise ValueError("Media Provider cancellation is not implemented for this adapter")
             if spec.execution == "sync" and spec.cancellation == "supported":
                 raise ValueError("Synchronous media jobs cannot be cancellable")
             allowed_modes = {"text_to_video", "first_frame", "first_last_frame",

@@ -335,3 +335,31 @@ details. Shared BOSS configuration remains: upload endpoint
 `https://boss-shjd.biliapi.net/updream/aniforge/...`, server-only endpoint
 `http://shjd-boss.bilibili.co`, region/bucket `updream`. Never pass the
 server-only endpoint or a presigned PUT URL to a Provider.
+
+## Durable Provider output boundary
+
+Media execution is generation-fenced and heartbeats its lease across Provider
+submission, polling, download, validation, object storage and terminal commit.
+Synchronous and asynchronous success follows the persisted sequence
+`requesting -> response_received -> downloading -> object_staged -> committed`.
+The immutable Provider result receipt is committed before download. Each
+content-addressed staged output is committed before the terminal transaction.
+A replacement Worker therefore reuses the receipt/object and never resubmits
+after response receipt, download failure or object-write crash.
+
+Provider-controlled output URLs use HTTPS/443 only and must match
+`provider_output_allowlist`. Every redirect is revalidated. DNS resolution
+rejects any non-public answer and the validated numeric address is pinned while
+preserving Host/TLS SNI, preventing DNS rebinding. Credentials, fragments,
+loopback/private/link-local/reserved addresses and alternate ports are rejected
+before a request is sent. Responses stream into process-owned bounded staging
+files; Content-Length and chunk limits are enforced before object binding, and
+SHA-256 is computed during transfer. Reference publication streams from the
+object store under the same bounded identity contract.
+
+Catalog entries may advertise cancellation only when a real Provider cancel
+adapter exists. The current catalog has no such adapter, so `supported` entries
+are rejected at startup and the API never exposes a false cancel action.
+Archival/deletion is blocked by active Media Jobs, pending reference/voice work
+and sealed/delivering continuation batches. Archived batches are blocked rather
+than retried; unarchive returns them to sealed for delivery.

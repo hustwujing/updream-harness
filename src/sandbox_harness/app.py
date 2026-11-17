@@ -287,8 +287,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     try:
                         await continue_media(batch)
                     except Exception as exc:
+                        permanent=isinstance(exc,RuntimeError) and str(exc)=="thread_archived"
                         await store.finish_media_batch(batch["turn_id"], media_outbox_owner,
-                            delivered=False, error=type(exc).__name__)
+                            delivered=False, error=type(exc).__name__,permanent=permanent)
                     else:
                         await store.finish_media_batch(batch["turn_id"], media_outbox_owner, delivered=True)
                 try:

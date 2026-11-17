@@ -119,6 +119,11 @@ class Settings(BaseSettings):
     tripo_task_timeout_seconds: int = Field(default=1800, ge=60, le=7200)
     tripo_max_output_bytes: int = Field(default=512 * 1024 * 1024, ge=1024 * 1024)
     media_catalog_json: str = ""
+    media_job_lease_seconds: int = Field(default=60, ge=10, le=600)
+    provider_output_allowlist: list[str] = Field(default_factory=lambda:[
+        "*.biliapi.net","*.volces.com","*.volccdn.com","*.aliyuncs.com",
+        "*.dashscope.aliyuncs.com","*.minimax.io","*.minimaxi.com","*.hailuoai.com",
+        "*.tripo3d.ai","*.tripo3d.com"])
     media_draft_ttl_seconds: int = Field(default=24 * 3600, ge=600, le=7 * 86400)
     media_worker_concurrency: int = Field(default=6, ge=1, le=32)
     audio_worker_concurrency: int = Field(default=6, ge=1, le=16)

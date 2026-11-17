@@ -22,6 +22,8 @@ class Objects:
             "put_url":"https://boss-shjd.biliapi.net/signed-put","headers":{"Content-Type":mime,
                 "x-amz-meta-sha256":digest,"x-amz-meta-size":str(size),"x-amz-meta-kind":kind}}
     def get(self, reference, *, maximum):return DATA
+    def size(self,reference,*,maximum):return len(DATA)
+    def iter_bytes(self,reference,*,maximum,chunk_size):yield DATA
     def head_media_upload(self, key):
         return {"size":len(DATA),"mime":"image/png","metadata":{
             "sha256":DIGEST,"size":str(len(DATA)),"kind":"image"}}

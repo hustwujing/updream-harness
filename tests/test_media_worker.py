@@ -61,6 +61,10 @@ class Store:
     async def release_media_job_lease(self, job_id, owner, **values):
         self.releases.append((job_id, owner, values))
         return True
+    async def renew_media_job_lease(self,*args,**kwargs):return True
+    async def persist_media_provider_result(self,job_id,owner,generation,value):return value
+    async def persist_media_staged_output(self,job_id,owner,generation,value):return [value]
+    async def complete_media_job(self,*args,**kwargs):return True
 
 
 class Objects:
@@ -819,5 +823,5 @@ async def test_provider_output_http_failure_schedules_safe_download_retry(monkey
         "phase": "provider_polling", "provider_job_id": "provider-task", "references": []})
     assert store.releases[-1][2] == {"phase": "provider_output_retry",
         "error_code": "provider_output_unavailable", "error_detail": "download_primary:HTTPStatusError",
-        "retry_after_seconds": 15}
+        "retry_after_seconds": 15,"generation":1}
     assert not any(update[2].get("status") == "unknown" for update in store.updates)

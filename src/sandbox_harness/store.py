@@ -387,6 +387,7 @@ class MediaJobRow(Base):
     adapter: Mapped[str] = mapped_column(String(120))
     execution_mode: Mapped[str] = mapped_column(String(16))
     cancellation_mode: Mapped[str] = mapped_column(String(16))
+    generation: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     status: Mapped[str] = mapped_column(String(32), index=True)
     phase: Mapped[str] = mapped_column(String(32), default="", server_default="")
     progress: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -423,6 +424,15 @@ class MediaJobOutputRow(Base):
     artifact_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
     project_file_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MediaExecutionRow(Base):
+    __tablename__ = "media_job_executions"
+    job_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    provider_result_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    staged_outputs_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class MediaOutboxRow(Base):
@@ -981,6 +991,16 @@ class Store:
                     if (connection.dialect.name != "sqlite"
                             or "duplicate column name: partial" not in str(exc).lower()):
                         raise
+            media_columns = await connection.run_sync(lambda value: {
+                column["name"] for column in sqlalchemy_inspect(value).get_columns("media_jobs")})
+            if "generation" not in media_columns:
+                statement = ("ALTER TABLE media_jobs ADD COLUMN IF NOT EXISTS "
+                    "generation INTEGER NOT NULL DEFAULT 0" if connection.dialect.name == "postgresql"
+                    else "ALTER TABLE media_jobs ADD COLUMN generation INTEGER NOT NULL DEFAULT 0")
+                try:await connection.execute(text(statement))
+                except OperationalError as exc:
+                    if (connection.dialect.name!="sqlite"
+                            or "duplicate column name: generation" not in str(exc).lower()):raise
             await connection.execute(text("""
                 INSERT INTO turn_order (turn_id, thread_id, sequence, created_at)
                 SELECT t.id, t.thread_id, MIN(i.sequence), t.created_at
@@ -3157,12 +3177,26 @@ class Store:
                     ).limit(1))).scalar_one_or_none()
                 if any((active_job,active_group,pending_outbox)):
                     raise RuntimeError("active_jobs_prevent_archival")
+                active_media=(await db.execute(select(MediaJobRow.id).where(
+                    MediaJobRow.thread_id==thread_id,MediaJobRow.status.not_in(
+                        ["succeeded","failed","cancelled","unknown"])).limit(1))).scalar_one_or_none()
+                active_batch=(await db.execute(select(MediaBatchRow.turn_id).where(
+                    MediaBatchRow.thread_id==thread_id,MediaBatchRow.status.in_([
+                        "sealed","delivering"])).limit(1))).scalar_one_or_none()
+                pending_reference=(await db.execute(select(MediaReferenceUploadRow.id).where(
+                    MediaReferenceUploadRow.thread_id==thread_id,
+                    MediaReferenceUploadRow.status=="pending").limit(1))).scalar_one_or_none()
+                if any((active_media,active_batch,pending_reference)):
+                    raise RuntimeError("active_media_prevents_archival")
             timestamp = now()
             thread.archived_at = timestamp if archived else None
             thread.updated_at = timestamp
             if not archived:
                 await db.execute(update(JobOutboxRow).where(JobOutboxRow.thread_id==thread_id,
                     JobOutboxRow.state=="blocked").values(state="ready",updated_at=timestamp))
+                await db.execute(update(MediaBatchRow).where(MediaBatchRow.thread_id==thread_id,
+                    MediaBatchRow.status=="blocked").values(status="sealed",updated_at=timestamp,
+                        lease_owner="",lease_expires_at=None))
         return self.thread_view(thread)
 
     async def delete_thread(self, thread_id: str, owner_id: str) -> list[str]:
@@ -3183,6 +3217,13 @@ class Store:
                 MediaJobRow.thread_id == thread_id))).scalars().all()
             if any(job.status not in {"succeeded", "failed", "cancelled", "unknown"} for job in media_jobs):
                 raise RuntimeError("active_thread_cannot_be_deleted")
+            batches=list((await db.execute(select(MediaBatchRow).where(
+                MediaBatchRow.thread_id==thread_id).with_for_update())).scalars().all())
+            references=list((await db.execute(select(MediaReferenceUploadRow).where(
+                MediaReferenceUploadRow.thread_id==thread_id).with_for_update())).scalars().all())
+            if (any(row.status in {"sealed","delivering","blocked"} for row in batches)
+                    or any(row.status=="pending" for row in references)):
+                raise RuntimeError("active_media_prevents_thread_delete")
             site_jobs = (await db.execute(select(SiteDeployJobRow).where(
                 SiteDeployJobRow.thread_id == thread_id))).scalars().all()
             if any(job.status not in {"succeeded", "failed"} for job in site_jobs):
@@ -3219,6 +3260,7 @@ class Store:
             if media_job_ids:
                 await db.execute(delete(MediaOutboxRow).where(MediaOutboxRow.job_id.in_(media_job_ids)))
                 await db.execute(delete(MediaJobOutputRow).where(MediaJobOutputRow.job_id.in_(media_job_ids)))
+                await db.execute(delete(MediaExecutionRow).where(MediaExecutionRow.job_id.in_(media_job_ids)))
                 await db.execute(delete(MediaJobRow).where(MediaJobRow.id.in_(media_job_ids)))
             await db.execute(delete(MediaDraftRow).where(MediaDraftRow.thread_id == thread_id))
             await db.execute(delete(MediaBatchRow).where(MediaBatchRow.thread_id == thread_id))
@@ -5407,7 +5449,8 @@ class Store:
 
     async def claim_media_batches(self, owner: str, limit: int = 20) -> list[dict]:
         async with self.connections.begin() as db:
-            rows = (await db.execute(select(MediaBatchRow).where(
+            rows = (await db.execute(select(MediaBatchRow).join(ThreadRow,
+                ThreadRow.id==MediaBatchRow.thread_id).where(ThreadRow.archived_at.is_(None),
                 MediaBatchRow.status.in_(["sealed", "delivering"]),
                 or_(MediaBatchRow.lease_expires_at.is_(None), MediaBatchRow.lease_expires_at < now()),
             ).order_by(MediaBatchRow.created_at).limit(limit).with_for_update())).scalars().all()
@@ -5420,16 +5463,17 @@ class Store:
                     "owner_id": row.owner_id})
             return result
 
-    async def finish_media_batch(self, turn_id: str, owner: str, *, delivered: bool, error: str = "") -> None:
+    async def finish_media_batch(self, turn_id: str, owner: str, *, delivered: bool,
+                                 error: str = "", permanent: bool = False) -> None:
         async with self.connections.begin() as db:
             row = (await db.execute(select(MediaBatchRow).where(MediaBatchRow.turn_id == turn_id,
                 MediaBatchRow.lease_owner == owner).with_for_update())).scalar_one_or_none()
             if not row:
                 return
-            row.status = "continued" if delivered else "sealed"
+            row.status = "continued" if delivered else "blocked" if permanent else "sealed"
             row.continued_at = now() if delivered else None
             row.last_error = error[:2000]; row.lease_owner = ""
-            row.lease_expires_at = None if delivered else now() + timedelta(seconds=15)
+            row.lease_expires_at = None if delivered or permanent else now() + timedelta(seconds=15)
             row.updated_at = now()
             if delivered:
                 job_ids = select(MediaJobRow.id).where(MediaJobRow.turn_id == turn_id)
@@ -5481,7 +5525,8 @@ class Store:
     async def claim_media_jobs(self, owner: str, limit: int = 4, *, adapter: str | None = None,
                                exclude_adapter: str | None = None,
                                exclude_adapters: set[str] | None = None,
-                               has_provider_job: bool | None = None) -> list[dict]:
+                               has_provider_job: bool | None = None,
+                               lease_seconds: int = 60) -> list[dict]:
         async with self.connections.begin() as db:
             query = select(MediaJobRow).where(
                 MediaJobRow.status.in_(["created", "submitted", "running", "cancel_requested"]),
@@ -5499,19 +5544,67 @@ class Store:
                 query = query.where(MediaJobRow.provider_job_id == "")
             rows = (await db.execute(query.order_by(MediaJobRow.created_at.asc()).limit(limit)
                 .with_for_update())).scalars().all()
-            expiry = now() + timedelta(seconds=60)
+            expiry = now() + timedelta(seconds=lease_seconds)
             result = []
             for row in rows:
+                row.generation+=1
                 row.lease_owner = owner; row.lease_expires_at = expiry; row.updated_at = now()
+                execution=await db.get(MediaExecutionRow,row.id)
                 result.append({"id": row.id, "kind": row.kind, "model": row.model, "provider": row.provider,
                     "adapter": row.adapter, "status": row.status, "phase": row.phase,
                     "generation_mode": row.generation_mode or "", "parameters": json.loads(row.parameters_json or "{}"),
                     "references": json.loads(row.references_json or "[]"), "provider_job_id": row.provider_job_id,
                     "thread_id": row.thread_id, "owner_id": row.owner_id, "turn_id": row.turn_id,
                     "output_role":row.output_role, "created_at":utc_datetime(row.created_at),
+                    "generation":row.generation,
+                    "provider_result":json.loads(execution.provider_result_json) if execution else {},
+                    "staged_outputs":json.loads(execution.staged_outputs_json) if execution else [],
                     "provider_started_at":(utc_datetime(row.provider_started_at)
                         if row.provider_started_at else None)})
         return result
+
+    async def renew_media_job_lease(self,job_id:str,owner:str,generation:int,
+                                    lease_seconds:int=60)->bool:
+        async with self.connections.begin() as db:
+            result=await db.execute(update(MediaJobRow).where(MediaJobRow.id==job_id,
+                MediaJobRow.lease_owner==owner,MediaJobRow.generation==generation).values(
+                    lease_expires_at=now()+timedelta(seconds=lease_seconds),updated_at=now()))
+            return bool(result.rowcount)
+
+    async def persist_media_provider_result(self,job_id:str,owner:str,generation:int,
+                                            value:dict)->dict:
+        encoded=canonical_json(value)
+        async with self.connections.begin() as db:
+            job=(await db.execute(select(MediaJobRow).where(MediaJobRow.id==job_id,
+                MediaJobRow.lease_owner==owner,MediaJobRow.generation==generation)
+                .with_for_update())).scalar_one_or_none()
+            if not job:raise RuntimeError("stale_media_job_lease")
+            row=await db.get(MediaExecutionRow,job_id,with_for_update=True)
+            if row and row.provider_result_json not in {"{}",encoded}:
+                raise RuntimeError("media_provider_result_conflict")
+            if not row:
+                row=MediaExecutionRow(job_id=job_id,provider_result_json=encoded,
+                    staged_outputs_json="[]",created_at=now(),updated_at=now());db.add(row)
+            else:row.provider_result_json=encoded;row.updated_at=now()
+            job.phase="response_received";job.updated_at=now()
+            return value
+
+    async def persist_media_staged_output(self,job_id:str,owner:str,generation:int,
+                                          value:dict)->list[dict]:
+        async with self.connections.begin() as db:
+            job=(await db.execute(select(MediaJobRow).where(MediaJobRow.id==job_id,
+                MediaJobRow.lease_owner==owner,MediaJobRow.generation==generation)
+                .with_for_update())).scalar_one_or_none()
+            if not job:raise RuntimeError("stale_media_job_lease")
+            row=await db.get(MediaExecutionRow,job_id,with_for_update=True)
+            if not row:raise RuntimeError("media_provider_result_missing")
+            values=json.loads(row.staged_outputs_json);by_role={item["role"]:item for item in values}
+            existing=by_role.get(value["role"])
+            if existing and existing!=value:raise RuntimeError("media_staged_output_conflict")
+            if not existing:values.append(value)
+            row.staged_outputs_json=canonical_json(values);row.updated_at=now()
+            job.phase="object_staged";job.updated_at=now()
+            return values
 
     async def count_media_provider_jobs(self, adapter: str) -> int:
         async with self.connections() as db:
@@ -5522,12 +5615,13 @@ class Store:
 
     async def release_media_job_lease(self, job_id: str, owner: str, *, phase: str,
                                       error_code: str = "", error_detail: str = "",
-                                      retry_after_seconds: int = 0) -> bool:
+                                      retry_after_seconds: int = 0,
+                                      generation: int = 0) -> bool:
         async with self.connections.begin() as db:
-            row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
-                MediaJobRow.lease_owner == owner).with_for_update())).scalar_one_or_none()
-            if not row:
-                return False
+            query=select(MediaJobRow).where(MediaJobRow.id==job_id,MediaJobRow.lease_owner==owner)
+            if generation:query=query.where(MediaJobRow.generation==generation)
+            row=(await db.execute(query.with_for_update())).scalar_one_or_none()
+            if not row:raise RuntimeError("stale_media_job_lease")
             row.status = "running"; row.phase = phase; row.error_code = error_code
             row.error_detail = error_detail[:2000]; row.lease_owner = ""
             row.lease_expires_at = (now() + timedelta(seconds=retry_after_seconds)
@@ -5904,11 +5998,13 @@ class Store:
     async def update_media_job(self, job_id: str, owner: str, *, status: str, phase: str = "",
                                progress: int | None = None, provider_job_id: str = "",
                                output_object_ref: str = "", output_mime: str = "", output_size: int = 0,
-                               error_code: str = "", error_detail: str = "") -> bool:
+                               error_code: str = "", error_detail: str = "",
+                               generation: int = 0) -> bool:
         async with self.connections.begin() as db:
-            row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
-                MediaJobRow.lease_owner == owner).with_for_update())).scalar_one_or_none()
-            if not row: return False
+            query=select(MediaJobRow).where(MediaJobRow.id==job_id,MediaJobRow.lease_owner==owner)
+            if generation:query=query.where(MediaJobRow.generation==generation)
+            row=(await db.execute(query.with_for_update())).scalar_one_or_none()
+            if not row:raise RuntimeError("stale_media_job_lease")
             row.status = status; row.phase = phase or row.phase; row.progress = progress
             if provider_job_id: row.provider_job_id = provider_job_id
             if provider_job_id and row.provider_started_at is None: row.provider_started_at = now()
@@ -5948,14 +6044,15 @@ class Store:
             return True
 
     async def complete_media_job(self, job_id: str, owner: str, *, provider_job_id: str,
-                                 outputs: list[dict], credits_consumed: float | None = None) -> bool:
+                                 outputs: list[dict], credits_consumed: float | None = None,
+                                 generation: int = 0) -> bool:
         if not outputs or sum(output.get("role") == "primary" for output in outputs) != 1:
             raise ValueError("media_outputs_require_one_primary")
         async with self.connections.begin() as db:
-            row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
-                MediaJobRow.lease_owner == owner).with_for_update())).scalar_one_or_none()
-            if not row:
-                return False
+            query=select(MediaJobRow).where(MediaJobRow.id==job_id,MediaJobRow.lease_owner==owner)
+            if generation:query=query.where(MediaJobRow.generation==generation)
+            row=(await db.execute(query.with_for_update())).scalar_one_or_none()
+            if not row:raise RuntimeError("stale_media_job_lease")
             existing = (await db.execute(select(MediaJobOutputRow).where(
                 MediaJobOutputRow.job_id == row.id))).scalars().all()
             if existing:
