@@ -17,6 +17,8 @@ def test_campaign_runner_has_bounded_parallel_stop_and_resume_protocol():
     assert "min(8,args.concurrency)" in source
     assert 'default="deep"' in source
     assert "program_failure" in source and "non_program_failure" in source
+    assert "write_report_checkpoint" in source and "os.fsync" in source
+    assert "temporary.replace(target)" in source
 
 
 def test_intervention_cases_use_messages_not_product_keyword_rules():
@@ -37,6 +39,9 @@ def test_parallel_protocol_runner_never_fakes_unimplemented_success():
     assert "HANDLERS" in source and "'P02'" in source and "'P12'" in source
     assert all(f"'P{index:02d}'" in source for index in range(1,21))
     assert "classification':'program_failure'" in source
+    campaign=(ROOT/"tests/run_real_campaign.py").read_text()
+    assert '"--harness",args.harness' in campaign
+    assert '"--model",args.model' in campaign
 
 
 def test_dynamic_resize_case_grades_the_post_intervention_contract():

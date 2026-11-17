@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 from fractions import Fraction
 import io
 from datetime import datetime,timezone
@@ -389,6 +390,20 @@ async def progress(total,running,results,started_count,stop,interval):
                 for identity,row in sorted(running.items())]},ensure_ascii=False),flush=True)
 
 
+def write_report_checkpoint(target:Path,*,revision:str,catalog:Path,selected_count:int,
+                            started_count:int,stopped_for_defect:bool,results:dict)->None:
+    report={"revision":revision,"finished_at":now(),"catalog":str(catalog),
+        "selected_count":selected_count,"started_count":started_count,
+        "stopped_for_defect":stopped_for_defect,"results":results}
+    target.parent.mkdir(parents=True,exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w",dir=target.parent,delete=False) as stream:
+        temporary=Path(stream.name)
+        try:
+            json.dump(report,stream,ensure_ascii=False,indent=2);stream.write("\n")
+            stream.flush();os.fsync(stream.fileno());temporary.replace(target)
+        finally:temporary.unlink(missing_ok=True)
+
+
 async def main():
     parser=argparse.ArgumentParser();parser.add_argument("--base-url",default="http://127.0.0.1:24766/")
     parser.add_argument("--catalog",type=Path,default=ROOT/"tests/real_cases/cases.json")
@@ -407,6 +422,8 @@ async def main():
         selected=[row for row in selected if (row["id"] in set(args.affected_case)
             or prior.get(row["id"],{}).get("classification")!="success")]
     running={};results=dict(prior);started_count=[0];stop=asyncio.Event();defect=asyncio.Event()
+    revision=subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip()
+    target=Path(args.report);report_lock=asyncio.Lock()
     queue=asyncio.Queue()
     for case in selected:queue.put_nowait(case)
     async with httpx.AsyncClient(base_url=args.base_url,timeout=None,trust_env=False) as client:
@@ -425,16 +442,19 @@ async def main():
                     value={"classification":"program_failure","reason":type(exc).__name__+":"+str(exc)[:500]}
                 value.update(case_id=identity,title=case["title"],elapsed_seconds=round(time.monotonic()-started,3),
                     finished_at=now());results[identity]=value;running.pop(identity,None);queue.task_done()
+                async with report_lock:
+                    await asyncio.to_thread(write_report_checkpoint,target,revision=revision,
+                        catalog=args.catalog,selected_count=len(selected),started_count=started_count[0],
+                        stopped_for_defect=defect.is_set() or value["classification"] in DEFECT_CLASSES,
+                        results=dict(results))
                 print(json.dumps({"case_finished":identity,**value},ensure_ascii=False),flush=True)
                 if value["classification"] in DEFECT_CLASSES:defect.set()
         reporter=asyncio.create_task(progress(len(selected),running,results,started_count,stop,args.progress_interval))
         await asyncio.gather(*(worker() for _ in range(max(1,min(8,args.concurrency)))))
         stop.set();await reporter
-    report={"revision":__import__('subprocess').check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip(),
-        "finished_at":now(),"catalog":str(args.catalog),"selected_count":len(selected),"started_count":started_count[0],
-        "stopped_for_defect":defect.is_set(),"results":results}
-    target=Path(args.report);target.parent.mkdir(parents=True,exist_ok=True);target.write_text(
-        json.dumps(report,ensure_ascii=False,indent=2)+"\n")
+    await asyncio.to_thread(write_report_checkpoint,target,revision=revision,catalog=args.catalog,
+        selected_count=len(selected),started_count=started_count[0],
+        stopped_for_defect=defect.is_set(),results=dict(results))
     print(json.dumps({"report":str(target),"total":len(selected),"started":started_count[0],
         "success":sum(row.get("classification")=="success" for row in results.values()),
         "program_failure":sum(row.get("classification")=="program_failure" for row in results.values()),
