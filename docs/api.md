@@ -1,5 +1,14 @@
 # Client API
 
+## Durable Thread Pause
+
+- `GET /api/threads/{thread_id}/pause` returns the Thread control generation and all pause participants.
+- `POST /api/threads/{thread_id}/pause` durably closes the scheduling fence and begins safe-point checkpointing.
+- `POST /api/threads/{thread_id}/resume` requeues only paused Harness Jobs and re-enables continuation delivery.
+- `POST /api/threads/{thread_id}/stop-all` remains destructive hard cancellation and is not resumable.
+
+While a Thread is `PAUSING`, `PAUSED`, or `RESUMING`, new business Turns are rejected with `thread_paused`. The UI resumes the Thread before submitting the user's next message.
+
 The routes below are implemented by `src/sandbox_harness/app.py`. Every resource
 route is scoped to the signed browser owner; foreign resources return 404.
 

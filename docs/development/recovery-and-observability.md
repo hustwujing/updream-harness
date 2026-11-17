@@ -1,5 +1,11 @@
 # Recovery and Observability
 
+## Pause Is A Durable Saga
+
+Never implement user pause by only cancelling a process. Commit the Thread control generation and participant set first, quiesce each Harness, save its native session identity and workspace checkpoint, then release the sandbox. A service restart must claim the existing generation and finish it; it must not resume business execution while the desired state is paused.
+
+Primary and child Harnesses are separate pause participants. Accepted Provider Jobs keep their external identity and may be reconciled while paused, but their terminal Outbox cannot wake the Primary Harness until resume. Unaccepted Jobs remain fenced. Any missing checkpoint is reported as degraded recovery, never as an exact resume.
+
 ## Applies to
 
 Read this for Broker, Store, Runtime stream, pool, cleanup, cancellation,
