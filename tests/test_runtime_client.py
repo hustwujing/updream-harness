@@ -16,6 +16,20 @@ async def test_runtime_client_rejects_outputs_from_another_turn_batch():
         await runtime.artifacts(sandbox,"current-turn")
 
 
+async def test_runtime_project_file_upload_streams_with_explicit_length():
+    requests=[]
+    def respond(request):requests.append(request);return httpx.Response(200,json={"ok":True})
+    runtime=RuntimeClient(transport=httpx.MockTransport(respond))
+    sandbox=Sandbox(id="sandbox",harness=Harness.CODEX,image="image",
+        runtime_url="http://runtime",metadata={})
+    async def content():
+        yield b"first-";yield b"second"
+    await runtime.put_project_file_stream(sandbox,"assets/inputs/report",content(),
+        size=12,mime="application/octet-stream")
+    assert requests[0].headers["content-length"]=="12"
+    assert requests[0].content==b"first-second"
+
+
 async def test_runtime_configuration_retries_transient_proxy_startup_errors():
     requests = []
 

@@ -106,6 +106,43 @@ async def test_descriptor_freezes_adapter_schema_roles_network_resources_and_ret
     finally:await store.close()
 
 
+async def test_descriptor_review_policy_cannot_be_weakened_by_request(tmp_path):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"review-policy.db"));await store.initialize()
+    value=catalog().payload.model_dump(mode="json")
+    value["operations"][0]["review_policy"]="required"
+    value["capabilities"][0]["review_policy"]="optional"
+    coordinator=JobCoordinator(store,JobCatalog(JobCatalogPayload.model_validate(value),"e"*64))
+    try:
+        operation_output=JobExpectedOutput(artifact_role="result",
+            output_disposition=OutputDisposition.DELIVERY,requires_review=False)
+        operation=job("reviewed-operation").model_copy(update={"expected_outputs":(operation_output,)})
+        prepared=await coordinator.prepare_group("owner",JobGroupCreate(thread_id="a"*32,
+            origin_turn_id="b"*32,idempotency_key="required-review-policy",jobs=(operation,)))
+        frozen=await store.get_job_request(prepared.jobs[0].id)
+        assert frozen.expected_outputs[0].requires_review is True
+        assert frozen.expected_outputs[0].review_policy=="required"
+
+        capability_output=JobExpectedOutput(artifact_role="images",
+            output_disposition=OutputDisposition.WORKSPACE,requires_review=False)
+        capability=job("reviewed-capability","image.generate").model_copy(
+            update={"expected_outputs":(capability_output,)})
+        prepared=await coordinator.prepare_group("owner",JobGroupCreate(thread_id="a"*32,
+            origin_turn_id="b"*32,idempotency_key="optional-review-policy",jobs=(capability,)))
+        draft=await store.get_job_group_draft_request(prepared.draft.id,"owner")
+        assert draft.jobs[0].expected_outputs[0].requires_review is True
+        assert draft.jobs[0].expected_outputs[0].review_policy=="optional"
+
+        disabled_coordinator=JobCoordinator(store,catalog())
+        disabled=job("disabled-review").model_copy(update={"expected_outputs":(operation_output.model_copy(
+            update={"requires_review":False}),)})
+        prepared=await disabled_coordinator.prepare_group("owner",JobGroupCreate(thread_id="a"*32,
+            origin_turn_id="b"*32,idempotency_key="disabled-review-policy",jobs=(disabled,)))
+        frozen=await store.get_job_request(prepared.jobs[0].id)
+        assert frozen.expected_outputs[0].requires_review is False
+        assert frozen.expected_outputs[0].review_policy=="disabled"
+    finally:await store.close()
+
+
 async def test_edit_remove_uses_optimistic_digest_and_confirmation_freezes_result(tmp_path):
     store,coordinator=await setup(tmp_path)
     try:

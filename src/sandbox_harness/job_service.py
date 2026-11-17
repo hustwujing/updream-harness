@@ -12,6 +12,8 @@ from .config import Settings, load_settings
 from .domain import Harness
 from .harness_job import HarnessJobAdapter, JobGrantFactory, OpenSandboxChildBackend
 from .job_worker import JobWorker
+from .job_catalog import JobCatalog
+from .job_coordinator import JobCoordinator
 from .node_agent import NodeAgent
 from .media_catalog import MediaCatalog
 from .media_job_adapter import MediaProviderJobAdapter
@@ -19,7 +21,7 @@ from .media_render_adapter import MediaRenderOperationAdapter
 from .objects import object_store
 from .pool import SandboxPool
 from .profiles import ProfileResolver
-from .reviewer import ReviewerJobAdapter
+from .reviewer import ReviewerCoordinator,ReviewerJobAdapter,ReviewSubmission,ReviewTrigger
 from .runtime import RuntimeClient
 from .sandbox import FakeSandboxBackend, OpenSandboxBackend
 from .scheduler import NodeProfile, Scheduler
@@ -68,6 +70,7 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
         default_code_bundle_digest=settings.runtime_code_bundle_digest,
         staging_root=settings.data_root / "tmp" / "runtime-downloads")
     scheduler=Scheduler(store)
+    resolver=profile_resolver(settings)
     child_backend=OpenSandboxChildBackend(pool=pool,runtime=runtime,store=store,objects=objects,
         settings=settings,token_factory=JobGrantFactory(settings))
     harness_adapter=HarnessJobAdapter(scheduler,child_backend)
@@ -78,12 +81,33 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
     media_adapter=MediaProviderJobAdapter(settings,store,objects,media_catalog)
     render_adapter=MediaRenderOperationAdapter(scheduler=scheduler,pool=pool,runtime=runtime,
         store=store,objects=objects,settings=settings,token_factory=JobGrantFactory(settings))
+    catalog_raw=settings.job_catalog_path.read_text()
+    job_catalog=JobCatalog.from_json(catalog_raw,expected_digest=(settings.job_catalog_digest
+        or hashlib.sha256(catalog_raw.encode()).hexdigest()))
+    reviewer=ReviewerCoordinator(JobCoordinator(store,job_catalog,profile_resolver=resolver,
+        draft_ttl_seconds=settings.media_draft_ttl_seconds))
+    async def dispatch_policy_review(context,result):
+        for contract in context.request.expected_outputs:
+            if not contract.requires_review:continue
+            artifacts=await store.list_job_artifacts(context.job.id,contract.artifact_role)
+            if not artifacts:continue
+            trigger=(ReviewTrigger.CAPABILITY_POLICY if context.request.kind.value=="provider"
+                else ReviewTrigger.PUBLICATION_POLICY if contract.review_policy in {"optional","required"}
+                else ReviewTrigger.PRIMARY)
+            await reviewer.prepare_submission(context.job.owner_id,context.job.thread_id,
+                context.job.origin_turn_id,ReviewSubmission(
+                    artifact_ids=tuple(item.artifact_id for item in artifacts),
+                    required=contract.review_policy!="optional",harness=settings.reviewer_harness,
+                    model=settings.reviewer_model,rubric=("Review the frozen "+contract.artifact_role+
+                        " collection against its declared output contract and deterministic validation evidence."),
+                    idempotency_key=f"policy-review-{context.job.id}-{contract.artifact_role}"),trigger=trigger)
     worker=JobWorker(store,{"child-harness":harness_adapter,
-        "reviewer-harness":ReviewerJobAdapter(harness_adapter),
+        "reviewer-harness":ReviewerJobAdapter(harness_adapter,store),
         "image.generate":media_adapter,"media.render":render_adapter,
         "audio.process":render_adapter,"media.concat_sequence":render_adapter},node_id=settings.job_node_id,
-        concurrency=settings.job_worker_concurrency,lease_seconds=settings.job_lease_seconds)
-    profiles=resolved_node_profiles(profile_resolver(settings))
+        concurrency=settings.job_worker_concurrency,lease_seconds=settings.job_lease_seconds,
+        review_dispatcher=dispatch_policy_review)
+    profiles=resolved_node_profiles(resolver)
     cpu_total=max(1,min(os.cpu_count() or 1,settings.job_node_cpu_limit))
     memory_total=max(128,min(int(os.sysconf("SC_PAGE_SIZE")*os.sysconf("SC_PHYS_PAGES")//(1024*1024)),
         settings.job_node_memory_mb_limit))

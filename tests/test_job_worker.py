@@ -56,6 +56,25 @@ async def test_pre_accept_failure_retries_without_acceptance_or_budget(tmp_path)
     finally:await store.close()
 
 
+async def test_successful_collection_dispatches_frozen_policy_review_before_terminal(tmp_path):
+    store,_,job=await setup(tmp_path,request(kind=JobKind.OPERATION))
+    adapter=FakeAdapter([AdapterSubmission('external-1',{'accepted':True},completed=True,
+        result={'collections':[{'artifact_role':'report','state':'awaiting_review'}]})])
+    observed=[]
+    async def dispatch(context,result):
+        current=await store.get_job(context.job.id)
+        assert current.state==JobState.WAITING_EXTERNAL
+        observed.append((context.request.idempotency_key,result))
+    worker=JobWorker(store,{'fake':adapter},node_id='node',concurrency=1,
+        worker_id='worker',review_dispatcher=dispatch)
+    try:
+        await worker.run_once()
+        assert (await store.get_job(job.id)).state==JobState.SUCCEEDED
+        assert observed==[("job-request-key",{'collections':[
+            {'artifact_role':'report','state':'awaiting_review'}]})]
+    finally:await store.close()
+
+
 async def test_external_handle_is_resumed_without_duplicate_submit(tmp_path):
     store,_,job=await setup(tmp_path,request())
     adapter=FakeAdapter([AdapterSubmission('external-1',{'provider_id':'external-1'})],[

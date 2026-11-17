@@ -4,7 +4,7 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -83,6 +83,7 @@ class JobExpectedOutput(BaseModel):
     max_total_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=1)
     validators: tuple[str, ...] = ()
     requires_review: bool = False
+    review_policy: Literal["disabled", "optional", "required"] = "disabled"
 
     @model_validator(mode="after")
     def valid_cardinality(self):

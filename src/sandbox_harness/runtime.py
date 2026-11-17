@@ -212,6 +212,15 @@ class RuntimeClient:
                 headers={"Content-Type": mime})
             response.raise_for_status()
 
+    async def put_project_file_stream(self, sandbox: Sandbox, path: str, content,
+                                      *, size: int, mime: str) -> None:
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url,
+                headers={**sandbox.runtime_headers,**carrier()},timeout=300,
+                trust_env=False,transport=self.transport) as client:
+            response=await client.put("/v1/project-files/file",params={"path":path},content=content,
+                headers={"Content-Type":mime,"Content-Length":str(size)})
+            response.raise_for_status()
+
     async def reset_project_files(self, sandbox: Sandbox) -> None:
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()},
             timeout=60, trust_env=False) as client:

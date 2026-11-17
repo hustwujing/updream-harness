@@ -1127,14 +1127,22 @@ def create_app() -> FastAPI:
                 raise ValueError
         except ValueError:
             raise HTTPException(400, "Invalid managed project path")
-        data = await request.body()
-        if len(data) > 2 * 1024 * 1024 * 1024:
-            raise HTTPException(413, "Project file too large")
+        maximum=2*1024*1024*1024
+        try:declared=int(request.headers.get("content-length", "-1"))
+        except ValueError:raise HTTPException(400,"Invalid Content-Length")
+        if declared<0 or declared>maximum:raise HTTPException(413,"Project file too large")
         temporary = target.with_name("." + target.name + ".tmp")
-        temporary.write_bytes(data)
-        os.chmod(temporary, 0o600)
-        temporary.replace(target)
-        return {"path": "/workspace/project/" + relative.as_posix(), "bytes": len(data)}
+        written=0
+        try:
+            with temporary.open("wb") as stream:
+                async for data in request.stream():
+                    written+=len(data)
+                    if written>declared or written>maximum:raise HTTPException(413,"Project file too large")
+                    stream.write(data)
+            if written!=declared:raise HTTPException(400,"Project file length mismatch")
+            os.chmod(temporary, 0o600);temporary.replace(target)
+        finally:temporary.unlink(missing_ok=True)
+        return {"path": "/workspace/project/" + relative.as_posix(), "bytes": written}
 
     def managed_project_target(path: str) -> Path:
         relative = safe_relative(path)

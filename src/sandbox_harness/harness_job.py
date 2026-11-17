@@ -95,6 +95,8 @@ class HarnessJobAdapter(BaseJobAdapter):
                 'artifact_digests, summary, findings, and missing_evidence. findings must be an array of JSON objects, never '
                 'strings; use objects shaped like {"code":"specific_code","severity":"info|warning|error",'
                 '"message":"specific finding","evidence":{}}. missing_evidence must be an array of strings. '
+                'Frozen candidate metadata and deterministic validation evidence: '
+                +json.dumps(context.get('candidates',[]),sort_keys=True)+'\n'
                 'artifact_digests must exactly equal: '
                 +json.dumps(context.get('artifact_digests',[]),sort_keys=True))
         contracts=[value.model_dump(mode='json') for value in request.expected_outputs]
@@ -219,6 +221,18 @@ class OpenSandboxChildBackend:
         image=reservation.image_ref or self.settings.image_for(harness.value)
         if not image.endswith('@sha256:'+reservation.image_digest):
             raise RuntimeError('child_image_digest_mismatch')
+        if len(context.request.input_artifacts)>getattr(self.settings,'child_input_max_count',100):
+            raise ValueError('child_input_count_exceeded')
+        inputs=[];total_bytes=0
+        for item in context.request.input_artifacts:
+            artifact=await self.store.get_artifact(item.artifact_id)
+            if not artifact:raise RuntimeError('child_input_artifact_missing')
+            if artifact.size>self.settings.max_artifact_bytes:raise ValueError('child_input_item_too_large')
+            total_bytes+=artifact.size;inputs.append((item,artifact))
+        if total_bytes>getattr(self.settings,'child_input_max_total_bytes',8*1024*1024*1024):
+            raise ValueError('child_input_total_too_large')
+        if ((total_bytes+1024*1024-1)//(1024*1024)+512)>reservation.disk_mb:
+            raise ValueError('child_input_exceeds_reserved_disk')
         sandbox=await self.pool.acquire(thread_id=self._thread_id(context.job.id),turn_id=context.job.id,
             harness=harness,environment={},image=image)
         token,claims=await self.token_factory(context,reservation,sandbox.id)
@@ -242,13 +256,18 @@ class OpenSandboxChildBackend:
                     maximum=self.settings.max_checkpoint_bytes)
                 await self.runtime.restore(sandbox,object_chunks(self.objects,paused.checkpoint_ref,
                     maximum=self.settings.max_checkpoint_bytes),size=archive_size)
-            for item in context.request.input_artifacts:
-                artifact=await self.store.get_artifact(item.artifact_id)
-                if not artifact:raise RuntimeError('child_input_artifact_missing')
-                data=await __import__('asyncio').to_thread(self.objects.get,artifact.object_ref,
+            for item,artifact in inputs:
+                iterator=self.objects.iter_bytes(artifact.object_ref,
                     maximum=self.settings.max_artifact_bytes)
-                await self.runtime.put_project_file(sandbox,
-                    f"assets/inputs/{item.artifact_role}-{artifact.id}",data,artifact.mime)
+                sentinel=object()
+                async def chunks(iterator=iterator,sentinel=sentinel):
+                    while True:
+                        value=await asyncio.to_thread(next,iterator,sentinel)
+                        if value is sentinel:return
+                        yield value
+                await self.runtime.put_project_file_stream(sandbox,
+                    f"assets/inputs/{item.artifact_role}-{artifact.id}",chunks(),
+                    size=artifact.size,mime=artifact.mime)
             execution_id=context.job.id+':'+str(context.generation)
             message=HarnessJobAdapter.execution_prompt(context.request)
             if restoring:

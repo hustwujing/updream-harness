@@ -169,3 +169,49 @@ async def test_failed_child_result_does_not_reopen_missing_sandbox(tmp_path):
     result=await backend.collect(SimpleNamespace(), 'execution',
         AdapterStatus(True,JobState.FAILED,{'error_code':'child_sandbox_lost'}),{})
     assert result=={'error_code':'child_sandbox_lost'}
+
+
+async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(tmp_path):
+    digest="a"*64;image="registry/reviewer@sha256:"+digest
+    sandbox=Sandbox(id="sandbox-stream",harness=Harness.CODEX,image=image,
+        runtime_url="http://runtime",metadata={})
+    chunks=[b"x"*(1024*1024),b"y"*(1024*1024),b"z"*17]
+    artifact=SimpleNamespace(id="a"*32,object_ref="sha256:"+"b"*64,
+        size=sum(map(len,chunks)),mime="application/octet-stream")
+    class Store:
+        async def get_artifact(self,*args):return artifact
+        async def get_pause_participant(self,*args):return None
+    class Objects:
+        def get(self,*args,**kwargs):raise AssertionError("full object buffering is forbidden")
+        def iter_bytes(self,*args,**kwargs):yield from chunks
+    class Pool:
+        acquired=0
+        async def acquire(self,**kwargs):self.acquired+=1;return sandbox
+        async def release(self,*args,**kwargs):pass
+    class Runtime:
+        sizes=[]
+        async def inject(self,*args,**kwargs):pass
+        async def put_project_file_stream(self,sandbox,path,content,*,size,mime):
+            seen=0
+            async for value in content:self.sizes.append(len(value));seen+=len(value)
+            assert seen==size and path.startswith("assets/inputs/")
+        async def start_execution(self,*args,**kwargs):return {"accepted":True}
+    async def token(*args):return "token",SimpleNamespace(nonce="nonce")
+    settings=Settings(backend="fake",data_root=tmp_path,max_artifact_bytes=10*1024*1024,
+        runtime_image_codex=image)
+    backend=OpenSandboxChildBackend(pool=Pool(),runtime=Runtime(),store=Store(),objects=Objects(),
+        settings=settings,token_factory=token);backend._ensure_collector=lambda *args:None
+    input_value=__import__('sandbox_harness.job_contracts',fromlist=['JobArtifactInput']).JobArtifactInput(
+        artifact_id=artifact.id,artifact_role="report")
+    frozen=request().model_copy(update={"input_artifacts":(input_value,)})
+    context=JobExecutionContext(job=SimpleNamespace(id="c"*32,thread_id="d"*32),
+        request=frozen,generation=1)
+    reservation=SimpleNamespace(harness="codex",image_ref=image,image_digest=digest,
+        disk_mb=516,runtime_profile_id="reviewer-readonly")
+    execution,_=await backend.start(context,reservation)
+    assert execution.startswith("c"*32) and Runtime.sizes==[len(value) for value in chunks]
+
+    backend.pool.acquired=0
+    with pytest.raises(ValueError,match="reserved_disk"):
+        await backend.start(context,SimpleNamespace(**{**reservation.__dict__,"disk_mb":514}))
+    assert backend.pool.acquired==0

@@ -20,7 +20,7 @@ class JobDeadlineExceeded(TimeoutError):
 class JobWorker:
     def __init__(self, store, adapters: dict[str, JobAdapter], *, node_id: str,
                  concurrency: int = 4, lease_seconds: int = 60, worker_id: str = "",
-                 poll_seconds: float = 1.0):
+                 poll_seconds: float = 1.0, review_dispatcher=None):
         self.store = store
         self.adapters = dict(adapters)
         self.node_id = node_id
@@ -29,6 +29,14 @@ class JobWorker:
         self.worker_id = worker_id or "job-worker-" + uuid.uuid4().hex
         self.poll_seconds = poll_seconds
         self.stop_event = asyncio.Event()
+        self.review_dispatcher = review_dispatcher
+
+    async def _collect_result(self,adapter,context,external_id,status):
+        result=await adapter.collect(context,external_id,status)
+        if (self.review_dispatcher and status.state==JobState.SUCCEEDED
+                and context.request.adapter!="reviewer-harness"):
+            await self.review_dispatcher(context,result)
+        return result
 
     async def run_once(self) -> int:
         cleanups=await self.run_cleanup_once(limit=self.concurrency)
@@ -226,7 +234,7 @@ class JobWorker:
                 context = replace(context, previous_external_execution_id=external_id,
                     previous_acceptance_receipt=submission.acceptance_receipt)
                 if submission.completed:
-                    result=await self._before_deadline(adapter.collect(context,external_id,AdapterStatus(
+                    result=await self._before_deadline(self._collect_result(adapter,context,external_id,AdapterStatus(
                         True,JobState.SUCCEEDED,submission.result)),deadline)
                     await self.store.transition_job(job.id, JobState.SUCCEEDED,
                         expected_generation=attempt.generation, result=result)
@@ -275,7 +283,7 @@ class JobWorker:
 
     async def _finish(self, adapter: JobAdapter, context: JobExecutionContext,
                       external_id: str, status: AdapterStatus, deadline) -> None:
-        result = await self._before_deadline(adapter.collect(context, external_id, status),deadline)
+        result = await self._before_deadline(self._collect_result(adapter,context,external_id,status),deadline)
         current=await self.store.get_job(context.job.id)
         if current and current.cancel_requested and context.request.cancellation_policy.get("supported") is False:
             result={**result,"soft_cancel_requested":True}
@@ -319,7 +327,7 @@ class JobWorker:
             try:
                 status=await asyncio.wait_for(adapter.cancel(context,external_id),timeout=5)
                 if status.terminal:
-                    result=await adapter.collect(context,external_id,status)
+                    result=await self._collect_result(adapter,context,external_id,status)
                     await self.store.transition_job(context.job.id,status.state,
                         expected_generation=context.generation,result=result);return
             except Exception:pass

@@ -102,10 +102,12 @@ async def test_review_submission_resolves_authoritative_artifact_metadata(tmp_pa
     store,thread,turn,artifacts,reviewer=await setup(tmp_path)
     try:
         prepared=await reviewer.prepare_submission('owner',thread.id,turn.id,ReviewSubmission(
-            artifact_ids=tuple(value.id for value in artifacts),required=True,harness='codex',model='gpt-5.6',
+            artifact_ids=tuple(value.id for value in artifacts),required=False,harness='codex',model='gpt-5.6',
             skill_ids=('pdf',),rubric='Check both reports.',idempotency_key='review-submission-key'))
         frozen=await store.get_job_request(prepared.jobs[0].id)
         assert frozen.parameters['review_context']['artifact_digests']==[value.sha256 for value in artifacts]
+        assert all(item['validation_contract']=='none'
+            for item in frozen.parameters['review_context']['candidates'])
         assert [item.artifact_id for item in frozen.input_artifacts]==[value.id for value in artifacts]
     finally:await store.close()
 

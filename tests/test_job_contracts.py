@@ -38,7 +38,7 @@ def request(local_job_id: str = "render") -> JobRequest:
 def test_complete_job_and_group_state_contracts():
     assert {value.value for value in JobState} == {
         "CREATED", "QUEUED", "RUNNING", "WAITING_EXTERNAL", "CANCELLING",
-        "SUCCEEDED", "FAILED", "CANCELLED", "BLOCKED", "UNKNOWN",
+        "PAUSING", "PAUSED", "SUCCEEDED", "FAILED", "CANCELLED", "BLOCKED", "UNKNOWN",
     }
     assert TERMINAL_JOB_STATES == {
         JobState.SUCCEEDED, JobState.FAILED, JobState.CANCELLED,

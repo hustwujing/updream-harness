@@ -114,6 +114,26 @@ quiescence on retry; a crash after Scheduler release repeats only the
 idempotent release and then commits completion, without trying to renew an
 already released reservation.
 
+## Reviewer gates
+
+Descriptor `review_policy` is frozen into each output contract. Required and
+optional policy both keep the validated collection as candidates and create a
+read-only Reviewer Job; disabled policy does not infer review from prompt text.
+`review_gates` binds that Job to one source Job generation, artifact role and
+exact ordered Artifact/digest set. Deterministic validator receipts are loaded
+from the source collection and frozen into Reviewer context before scheduling.
+
+A digest-bound `PASS` atomically promotes candidates and publishes late
+delivery Items if the source group already terminated. `REVISE`,
+`EVIDENCE_REQUIRED` and `BLOCKED` retain candidates. Required execution failure
+is visibly unavailable and retryable; optional execution failure promotes the
+otherwise valid collection with an explicit availability warning. Gate replay
+is idempotent and a changed source identity is never accepted.
+
+Child Harness inputs stream from object storage to Runtime with a declared
+length. Count, per-item, aggregate bytes and reserved disk are checked before
+acquiring a Sandbox; neither Host nor Runtime may buffer a full valid input.
+
 Thread deletion uses the same Thread row barrier as the last Job transition.
 It rejects nonterminal Jobs, incomplete cleanup, active resource reservations,
 open budget and pending continuation. Once all obligations are closed it

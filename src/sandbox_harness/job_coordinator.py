@@ -68,6 +68,10 @@ class JobCoordinator:
                 resources['required_capability_ids']=(list(descriptor.required_capabilities)
                     if request.kind==JobKind.OPERATION else [descriptor.id])
                 updates={}
+                outputs=list(request.expected_outputs)
+                if descriptor.review_policy in {"optional","required"}:
+                    outputs=[output.model_copy(update={"requires_review":True,
+                        "review_policy":descriptor.review_policy}) for output in outputs]
                 if request.kind==JobKind.OPERATION and descriptor.runtime_profile_id:
                     if not self.profile_resolver:raise ValueError('Operation Runtime ProfileResolver is unavailable')
                     try:runtime=self.profile_resolver.runtimes[descriptor.runtime_profile_id]
@@ -80,6 +84,7 @@ class JobCoordinator:
                     updates={'runtime_profile_id':runtime.id,'child_profile_id':'operation-controlled'}
                 jobs.append(JobRequest.model_validate({**request.model_dump(),
                     'network_origins':list(descriptor.network_origins),'resource_requirements':resources,
+                    'expected_outputs':[output.model_dump() for output in outputs],
                     'timeout_seconds':descriptor.timeout_seconds,
                     'retry_policy':descriptor.retry_policy,'cancellation_policy':descriptor.cancellation_policy,
                     'reconciliation_policy':descriptor.reconciliation_policy,**updates}))

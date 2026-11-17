@@ -140,6 +140,10 @@ class Settings(BaseSettings):
         pattern=r"^/[A-Za-z0-9/_-]+$")
     web_dist_digest: str = Field(default="", pattern=r"^$|^[0-9a-f]{64}$")
     gateway_telemetry_fallback_capacity: int = Field(default=4096, ge=64, le=65536)
+    reviewer_harness: str = Field(default="codex", pattern=r"^(codex|claude|deepseek)$")
+    reviewer_model: str = Field(default="gpt-5.6", min_length=1, max_length=160)
+    child_input_max_count: int = Field(default=100, ge=1, le=1000)
+    child_input_max_total_bytes: int = Field(default=8 * 1024 * 1024 * 1024, ge=1)
     model_routes_json: str = ""
     harness_catalog_json: str = ""
     model_catalog_discovery: bool = True
