@@ -63,6 +63,28 @@ class SandboxPool:
             sandbox.id for rows in self._warm.values() for sandbox in rows
             }
 
+    async def execution_available(self) -> bool:
+        async with self._lock:
+            return bool(self._attached or any(self._warm.values()))
+
+    async def retire(self, sandbox: Sandbox) -> None:
+        expiry = None
+        user_slot = False
+        async with self._lock:
+            attached = next((thread_id for thread_id,value in self._attached.items()
+                if value.id == sandbox.id), None)
+            if attached is not None:
+                self._attached.pop(attached, None)
+                self._idle_since.pop(attached, None)
+                expiry = self._expiry.pop(attached, None)
+                user_slot = True
+            existing = self._retiring.get(sandbox.id)
+            if existing:
+                user_slot = existing[1]
+        if expiry:
+            expiry.cancel()
+        await self._delete_tracked(sandbox, user_slot=user_slot)
+
     async def get_attached(self, thread_id: str) -> Sandbox | None:
         async with self._lock:
             return self._attached.get(thread_id)

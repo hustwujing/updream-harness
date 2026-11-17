@@ -48,6 +48,7 @@ class Broker:
         self.codec = CapabilityCodec(settings.gateway_signing_key)
         self.catalog = catalog
         self.tasks: dict[str, asyncio.Task] = {}
+        self.reconciliation_tasks: dict[str, asyncio.Task] = {}
         self.locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.lock_users: dict[str, int] = defaultdict(int)
         self.lock_guard = asyncio.Lock()
@@ -103,6 +104,8 @@ class Broker:
         return {
             "instance_id": self.instance_id,
             "active_turns": len([task for task in self.tasks.values() if not task.done()]),
+            "active_reconciliations": len([task for task in self.reconciliation_tasks.values()
+                if not task.done()]),
             "owned_leases": len(self.leases),
             "recovery_scanner": bool(self.recovery_task and not self.recovery_task.done()),
             "orphan_reaper": bool(self.reaper_task and not self.reaper_task.done()),
@@ -148,7 +151,10 @@ class Broker:
             # second time interrupts the checkpoint transaction during shutdown.
             if not task.cancelling():
                 task.cancel()
-        values = [task for task in (self.recovery_task, self.reaper_task) if task] + list(self.tasks.values())
+        for task in list(self.reconciliation_tasks.values()):
+            task.cancel()
+        values = ([task for task in (self.recovery_task, self.reaper_task) if task]
+            + list(self.tasks.values()) + list(self.reconciliation_tasks.values()))
         if values:
             await asyncio.gather(*values, return_exceptions=True)
         heartbeats=list(self.heartbeats.values())
@@ -176,14 +182,29 @@ class Broker:
                 logger.exception("Periodic orphan reconciliation failed")
 
     async def reconcile(self) -> None:
+        pending=[]
         for turn in await self.store.recoverable_turns():
-            try:
-                await self._reconcile_turn(turn)
-            except Exception:
-                logger.exception("Turn reconciliation failed turn=%s", turn.id)
-                generation = self.leases.pop(turn.id, None)
-                if generation is not None:
-                    await self._release_turn_lease_safely(turn.id,generation)
+            if turn.id in self.tasks or turn.id in self.reconciliation_tasks:
+                continue
+            async def run(value=turn):
+                try:
+                    await self._reconcile_turn(value)
+                except asyncio.CancelledError:
+                    self.leases.pop(value.id,None)
+                    event("turn.reconciliation.cancelled",level=logging.WARNING,
+                        turn_id=value.id)
+                except Exception:
+                    logger.exception("Turn reconciliation failed turn=%s", value.id)
+                    generation = self.leases.pop(value.id, None)
+                    if generation is not None:
+                        await self._release_turn_lease_safely(value.id,generation)
+                finally:
+                    self.reconciliation_tasks.pop(value.id,None)
+            task=asyncio.create_task(run(),name="turn-reconcile-"+turn.id)
+            self.reconciliation_tasks[turn.id]=task
+            pending.append(task)
+        if pending:
+            await asyncio.gather(*pending,return_exceptions=True)
 
     @observed("turn.recover", new_trace=True)
     async def _reconcile_turn(self, turn) -> None:
@@ -216,7 +237,7 @@ class Broker:
                         await self.store.append_event(turn.id, EventKind.WARNING, {
                             "code": "recovery_capability_revoke_failed", "detail": type(exc).__name__})
                 for sandbox in await self.pool.backend.find_by_turn(turn.id):
-                    await self.pool.backend.delete(sandbox)
+                    await self.pool.retire(sandbox)
                 target = TurnState(claimed.pending_final_state)
                 await self.store.append_event(turn.id, EventKind.WARNING, {"code": "turn_cleanup_recovered",
                     "generation": claimed.recovery_generation, "final_state": target.value})
@@ -243,7 +264,7 @@ class Broker:
                 return
             if claimed.state in {TurnState.RESTORING, TurnState.STARTING}:
                 for sandbox in await self.pool.backend.find_by_turn(turn.id):
-                    await self.pool.backend.delete(sandbox)
+                    await self.pool.retire(sandbox)
                 await self.store.append_event(turn.id, EventKind.WARNING, {
                     "code": "turn_recovered_before_harness_start", "generation": claimed.recovery_generation})
                 await self._state(turn.id, TurnState.QUEUED, sandbox_id=""); self._schedule(turn.id); return
@@ -259,7 +280,7 @@ class Broker:
                     selected=candidates[0]
                     for duplicate in matches:
                         if duplicate.id!=selected.id:
-                            await self.pool.backend.delete(duplicate)
+                            await self.pool.retire(duplicate)
                     await self.store.append_event(turn.id, EventKind.WARNING, {"code": "turn_runtime_reattached",
                         "generation": claimed.recovery_generation, "runtime_sequence": claimed.runtime_sequence})
                     event("turn.runtime.reattached",turn_id=turn.id,thread_id=turn.thread_id,generation=claimed.recovery_generation,runtime_sequence=claimed.runtime_sequence)
@@ -277,7 +298,7 @@ class Broker:
                     self.leases.pop(turn.id,None)
                     return
                 for sandbox in matches:
-                    await self.pool.backend.delete(sandbox)
+                    await self.pool.retire(sandbox)
             await self.store.append_event(turn.id, EventKind.ERROR, {"code": "turn_interrupted_during_harness_execution",
                 "detail": "The previous broker lease expired after Harness execution began; automatic replay was suppressed.",
                 "generation": claimed.recovery_generation})
@@ -478,6 +499,7 @@ class Broker:
             if not renewed:
                 event("turn.lease.lost",level=logging.WARNING,turn_id=turn_id,generation=generation)
                 task = self.tasks.get(turn_id)
+                task = task or self.reconciliation_tasks.get(turn_id)
                 if task:
                     task.cancel()
                 return
@@ -489,6 +511,7 @@ class Broker:
                 except SandboxNotFound:
                     event("sandbox.renew.not_found",level=logging.ERROR,turn_id=turn_id,sandbox_id=sandbox.id)
                     task = self.tasks.get(turn_id)
+                    task = task or self.reconciliation_tasks.get(turn_id)
                     if task:
                         task.cancel()
                     return
@@ -496,6 +519,7 @@ class Broker:
                     event("sandbox.renew.failed",level=logging.WARNING,turn_id=turn_id,
                         sandbox_id=sandbox.id,exception_type=type(exc).__name__)
             task = self.tasks.get(turn_id)
+            task = task or self.reconciliation_tasks.get(turn_id)
             if (turn and turn.cancel_requested and turn.state != TurnState.CLEANING
                     and task and not task.cancelling()):
                 task.cancel()
@@ -724,7 +748,7 @@ class Broker:
                     selected,status = candidates[0]
                     for duplicate in matches:
                         if duplicate.id != selected.id:
-                            await self.pool.backend.delete(duplicate)
+                            await self.pool.retire(duplicate)
                     sandbox = await self.pool.adopt(selected, thread_id=thread.id, turn_id=turn.id)
                     self.active_sandboxes[turn.id] = sandbox
                     if status.get("state") == "completed" and turn.runtime_sequence >= int(status.get("last_sequence") or 0):
@@ -1012,7 +1036,7 @@ class Broker:
                             and self.settings.session_keepalive_seconds > 0
                         )
                         for extra in extra_sandboxes:
-                            await self.pool.backend.delete(extra)
+                            await self.pool.retire(extra)
                         await self.pool.release(sandbox, keep_attached=keep_attached,
                             keepalive_seconds=self.settings.session_keepalive_seconds)
                 except Exception as exc:

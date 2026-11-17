@@ -50,6 +50,19 @@ Sandbox TTL, and the active Turn lease heartbeat must continue renewing long
 executions. A reused sandbox must never inherit only the warm pool instance's
 remaining lifetime.
 
+Warm-pool health is not automatically optional. A failed convergence attempt is
+`degraded` only when the Pool still contains a verified ready warm or attached
+Sandbox; otherwise the execution backend is `unavailable` and `/api/health`
+returns 503. Retry/backoff continues until a fill succeeds. This distinguishes a
+missing optional slot for one Harness from a control-plane/authentication/image
+failure that prevents every Turn.
+
+All recovery deletion goes through `SandboxPool.retire`. It removes matching
+attachment/expiry/idle ownership, preserves a failed deletion in `_retiring`,
+and releases exactly one user slot only after backend absence is confirmed.
+Direct backend deletion is reserved for namespace objects proven not to be
+owned by this Pool.
+
 ## Observability contract
 
 Follow [docs/observability.md](../observability.md). Use the shared `event`,

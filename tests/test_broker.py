@@ -562,6 +562,60 @@ async def test_recovery_waits_for_transient_runtime_health_then_reattaches(tmp_p
     finally:await broker.close();await pool.close();await store.close()
 
 
+async def test_reconciliation_lease_loss_cancels_stalled_external_work_before_takeover(tmp_path):
+    from datetime import timedelta
+    from sqlalchemy import update
+    from sandbox_harness.store import TurnRow
+    class Backend(FakeSandboxBackend):
+        entered=asyncio.Event();calls=0;blocked_task=None;old_task_deleted=False
+        async def find_by_turn(self,turn_id):
+            self.calls+=1
+            if self.calls==1:
+                self.blocked_task=asyncio.current_task();self.entered.set()
+                await asyncio.Event().wait()
+            return await super().find_by_turn(turn_id)
+        async def delete(self,sandbox):
+            if asyncio.current_task() is self.blocked_task:self.old_task_deleted=True
+            await super().delete(sandbox)
+    settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'reconcile-fence.db'),
+        backend='fake',gateway_signing_key='k'*32,gateway_url='http://127.0.0.1:9',
+        session_keepalive_seconds=0,recovery_scan_seconds=300).model_copy(
+            update={'turn_heartbeat_seconds':.02,'turn_lease_seconds':1})
+    store=Store(settings.database_url);await store.initialize();objects=ObjectStore(tmp_path/'objects')
+    backend=Backend();old_pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness})
+    new_pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness})
+    catalog=HarnessCatalog();profile=catalog.resolve('codex','gpt-5.6','standard');owner='a'*64
+    thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+        reasoning_level='standard',title='Reconcile fence'),profile,owner)
+    turn,_,_=await store.create_turn(thread.id,TurnCreate(message='recover',
+        idempotency_key='reconcile-fence-turn'),profile,owner)
+    seed_claim=await store.claim_turn(turn.id,'dead',1);execution_id=turn.id+':'+turn.id
+    await store.start_runtime_execution(turn.id,execution_id,'dead',seed_claim.recovery_generation)
+    sandbox=await backend.create(Harness.CODEX,'',{'sandbox-harness.io/turn':turn.id,
+        'sandbox-harness.io/thread':thread.id,'sandbox-harness.io/harness':'codex'}, {})
+    await store.set_turn_state(turn.id,TurnState.RUNNING,sandbox_id=sandbox.id,
+        lease_owner='dead',recovery_generation=seed_claim.recovery_generation)
+    await store.release_turn_lease(turn.id,'dead',seed_claim.recovery_generation)
+    old=Broker(settings,store,objects,old_pool,RecoverableRuntime(),catalog)
+    new=Broker(settings,store,objects,new_pool,RecoverableRuntime(),catalog)
+    try:
+        stalled=asyncio.create_task(old.reconcile());await backend.entered.wait()
+        async with store.connections.begin() as db:
+            await db.execute(update(TurnRow).where(TurnRow.id==turn.id).values(
+                lease_expires_at=now()-timedelta(seconds=1)))
+        await new.reconcile();await asyncio.wait_for(stalled,2)
+        for _ in range(200):
+            current=await store.get_turn(turn.id)
+            if current.state==TurnState.COMPLETED and turn.id not in new.tasks:break
+            await asyncio.sleep(.01)
+        assert current.state==TurnState.COMPLETED
+        assert not backend.old_task_deleted
+        assert sandbox.id not in backend.items
+        assert turn.id not in old.reconciliation_tasks and turn.id not in old.leases
+    finally:
+        await old.close();await new.close();await old_pool.close();await new_pool.close();await store.close()
+
+
 async def test_primary_execution_failure_survives_cleanup_failure_and_saves_partial_workspace(tmp_path, monkeypatch):
     settings = Settings(data_root=tmp_path,
         database_url="sqlite+aiosqlite:///" + str(tmp_path / "primary-failure.db"),
@@ -635,6 +689,46 @@ async def test_success_cleanup_failure_keeps_durable_completed_intent_until_reco
     finally:
         monkeypatch.setattr(backend,'delete',original)
         await broker.close();await pool.close();await store.close()
+
+
+async def test_cleanup_retry_retires_stale_same_pool_attachment_and_releases_capacity(tmp_path):
+    class Backend(FakeSandboxBackend):
+        failed=False;fail_id=''
+        async def delete(self,sandbox):
+            if sandbox.id==self.fail_id and not self.failed:
+                self.failed=True;raise RuntimeError('first duplicate delete failed')
+            await super().delete(sandbox)
+    settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'cleanup-capacity.db'),
+        backend='fake',gateway_signing_key='k'*32,gateway_url='http://127.0.0.1:9',
+        session_keepalive_seconds=0,recovery_scan_seconds=300)
+    store=Store(settings.database_url);await store.initialize();objects=ObjectStore(tmp_path/'objects')
+    backend=Backend();pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness},max_sandboxes=1)
+    catalog=HarnessCatalog();profile=catalog.resolve('codex','gpt-5.6','standard');owner='a'*64
+    thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+        reasoning_level='standard',title='Cleanup capacity'),profile,owner)
+    turn,_,_=await store.create_turn(thread.id,TurnCreate(message='done',
+        idempotency_key='cleanup-capacity-turn'),profile,owner)
+    # Insert the duplicate first so recovery hits its failing delete before the attached main Sandbox.
+    extra=await backend.create(Harness.CODEX,'',{'sandbox-harness.io/turn':turn.id,
+        'sandbox-harness.io/thread':thread.id,'sandbox-harness.io/harness':'codex'}, {})
+    main=await pool.acquire(thread_id=thread.id,turn_id=turn.id,harness=Harness.CODEX,environment={})
+    claim=await store.claim_turn(turn.id,'dead',30)
+    await store.begin_turn_cleanup(turn.id,TurnState.COMPLETED,error_code='',error_detail='',
+        owner='dead',generation=claim.recovery_generation)
+    await store.release_turn_lease(turn.id,'dead',claim.recovery_generation)
+    backend.fail_id=extra.id
+    broker=Broker(settings,store,objects,pool,Runtime(),catalog)
+    try:
+        await broker.reconcile()
+        assert (await store.get_turn(turn.id)).state==TurnState.CLEANING
+        assert pool._attached[thread.id].id==main.id
+        await broker.reconcile()
+        assert (await store.get_turn(turn.id)).state==TurnState.COMPLETED
+        assert not backend.items and not await pool.managed_sandbox_ids()
+        replacement=await asyncio.wait_for(pool.acquire(thread_id='other',turn_id='other',
+            harness=Harness.CODEX,environment={}),1)
+        await pool.release(replacement,keep_attached=False)
+    finally:await broker.close();await pool.close();await store.close()
 
 
 async def test_broker_does_not_replay_turn_when_runtime_execution_is_lost(tmp_path):
