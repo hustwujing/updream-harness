@@ -48,6 +48,7 @@ def test_parallel_deployment_files_cannot_target_predecessor_state():
     unit_root = ROOT / "deploy/systemd"
     expected = {
         "sandbox-harness-parallel-api.service",
+        "sandbox-harness-parallel-controlled-worker.service",
         "sandbox-harness-parallel-gateway.service",
         "sandbox-harness-parallel-job-worker.service",
         "sandbox-harness-parallel-media-worker.service",

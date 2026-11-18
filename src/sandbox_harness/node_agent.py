@@ -4,6 +4,7 @@ import asyncio
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Callable
 
 from .scheduler import GPUInventory, NodeInventory, NodeProfile
 
@@ -37,10 +38,12 @@ def disk_capacity_mb(path: Path) -> int:
 class NodeAgent:
     def __init__(self,scheduler,*,node_id:str,generation:int,profiles:tuple[NodeProfile,...],
                  data_root:Path,cpu_total:int,memory_mb_total:int,heartbeat_seconds:float=10,
-                 cached_bundle_digests:tuple[str,...]=()):
+                 cached_bundle_digests:tuple[str,...]=(),
+                 gpu_provider:Callable[[],tuple[GPUInventory,...]]|None=None):
         self.scheduler=scheduler;self.node_id=node_id;self.generation=generation;self.profiles=profiles
         self.data_root=data_root;self.cpu_total=cpu_total;self.memory_mb_total=memory_mb_total
         self.heartbeat_seconds=heartbeat_seconds;self.cached_bundle_digests=cached_bundle_digests
+        self.gpu_provider=gpu_provider or discover_gpus
         self.stop_event=asyncio.Event()
 
     def inventory(self)->NodeInventory:
@@ -48,7 +51,7 @@ class NodeAgent:
         except OSError:load=0
         return NodeInventory(node_id=self.node_id,generation=self.generation,cpu_total=self.cpu_total,
             memory_mb_total=self.memory_mb_total,disk_mb_total=disk_capacity_mb(self.data_root),
-            load=max(0,load),profiles=self.profiles,gpus=discover_gpus(),
+            load=max(0,load),profiles=self.profiles,gpus=self.gpu_provider(),
             cached_bundle_digests=self.cached_bundle_digests)
 
     async def run_once(self)->NodeInventory:

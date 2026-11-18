@@ -117,6 +117,11 @@ def main():
             (work/'segmentation.json').write_text('{"segmenter":"sam3","matting":"none"}\n')
     except NoSelectionError:
         (work/'model-outcome.json').write_text('{"schema":1,"code":"no_selection"}\n');raise
+    except RuntimeError as exc:
+        if 'requires a CUDA GPU' in str(exc) or 'CUDA' in str(exc) and 'unavailable' in str(exc):
+            (work/'model-outcome.json').write_text(
+                '{"schema":1,"code":"gpu_runtime_unavailable"}\n')
+        raise
 
 
 if __name__=='__main__':main()

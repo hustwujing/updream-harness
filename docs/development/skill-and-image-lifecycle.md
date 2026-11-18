@@ -15,7 +15,7 @@ The repository has three separate delivery units:
 | Runtime image | OS packages, Python packages, Node packages, browsers, fonts, codecs, native renderers and Harness clients | Yes |
 
 The authoritative source paths are `runtime/skills/`,
-`runtime/skills/sources.json`, `runtime/skill_bundle.py`,
+`runtime/skills/sources.json`, `runtime/skills/metadata.json`, `runtime/skill_bundle.py`,
 `runtime/build_runtime_bundle.py`, the Runtime Dockerfiles and the probe
 scripts. Do not install a Skill into a checkpoint or edit a Harness-specific
 copy as a substitute for these sources.
@@ -48,11 +48,14 @@ Content Bundle materialization does not prove that a command or import exists.
    - supported Harnesses;
    - dependency profile and network policy;
    - representative test case.
-4. Add required files and representative artifact checks to
+4. Add the exact Skill ID to `runtime/skills/metadata.json` with complete
+   summary, Harness, network, Capability and GPU metadata.
+   Metadata describes requirements but cannot widen Profile/Gateway policy.
+5. Add required files and representative artifact checks to
    `runtime/skill_smoke.py`.
-5. Run `python3 runtime/skill_bundle.py freeze` and then `verify`. Review the
+6. Run `python3 runtime/skill_bundle.py freeze` and then `verify`. Review the
    resulting content digest and file count in `manifest.json`.
-6. Verify materialization for Codex, Claude and DeepSeek, including checkpoint
+7. Verify materialization for Codex, Claude and DeepSeek, including checkpoint
    restore. Managed Skill links are read-only and must not be written through.
 
 One Skill ID has one canonical source. Do not fork prompts or assets per
@@ -133,6 +136,7 @@ Skill or dependency mismatch.
 - Adding a shared dependency separately to each Harness image.
 - Installing packages from a running sandbox.
 - Hand-editing `manifest.json` or `toolchain.lock.json` to bypass verification.
+- Omitting a Skill metadata row and relying on compiler defaults or Skill prose.
 - Letting a Skill widen network, filesystem, model, approval or credential
   authority.
 - Treating a successful `command -v` or JSON response as artifact validation.

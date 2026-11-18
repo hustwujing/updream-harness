@@ -12,7 +12,7 @@ from .job_catalog import JobCatalog
 from .profiles import ProfileRequirements, ProfileResolver
 from .job_contracts import (
     FROZEN_HARNESS_DESCRIPTORS,JobGroupCreate, JobGroupDraftCreate, JobGroupDraftView, JobGroupView,
-    JobKind, JobRequest, JobView,
+    JobKind, JobRequest, JobView,TERMINAL_JOB_STATES,
 )
 
 
@@ -102,13 +102,15 @@ class JobCoordinator:
                     node_modules=tuple(resources.get("node_modules",())),
                     required_capability_ids=tuple(resources.get("required_capability_ids",())),
                     network_origins=request.network_origins,
-                    requires_gpu=bool(resources.get("requires_gpu",False))))
+                    requires_gpu=bool(resources.get("requires_gpu",False))),allow_fallback=True)
             sanitized={key:int(resources[key]) for key in ("cpu","memory_mb","disk_mb") if key in resources}
             sanitized.update({"harness":harness,"image_digest":resolved.runtime_profile.image_digests[harness],
-                "delegation_depth":1,"required_bundle_digests":list(resources.get("required_bundle_digests",()))})
+                "delegation_depth":1,"required_bundle_digests":list(resources.get("required_bundle_digests",())),
+                "required_capability_ids":list(resolved.required_capability_ids)})
             parameters={**request.parameters,"skill_digests":resolved.skill_digests}
             jobs.append(JobRequest.model_validate({**request.model_dump(),"parameters":parameters,
-                "runtime_profile_id":resolved.runtime_profile.id,"resource_requirements":sanitized}))
+                "runtime_profile_id":resolved.runtime_profile.id,"resource_requirements":sanitized,
+                "network_origins":list(resolved.network_origins)}))
         return JobGroupCreate.model_validate({**value.model_dump(),"jobs":[job.model_dump() for job in jobs]})
 
     def _validate(self, requests: tuple[JobRequest, ...]) -> tuple[str, ...]:
@@ -135,12 +137,89 @@ class JobCoordinator:
                 raise ValueError(f"Job kind {request.kind.value} requires a registered specialized coordinator")
         return tuple(sensitive)
 
+    @staticmethod
+    def _authorization_scope(request:JobRequest)->dict:
+        return {
+            'kind':request.kind.value,'adapter':request.adapter,
+            'descriptor_id':request.descriptor_id,'descriptor_version':request.descriptor_version,
+            'descriptor_digest':request.descriptor_digest,'parameters':request.parameters,
+            'input_artifacts':sorted((value.model_dump(mode='json') for value in request.input_artifacts),
+                key=lambda value:(value['artifact_role'],value['artifact_id'])),
+            'expected_outputs':sorted((value.model_dump(mode='json') for value in request.expected_outputs),
+                key=lambda value:value['artifact_role']),
+            'child_profile_id':request.child_profile_id,'runtime_profile_id':request.runtime_profile_id,
+            'skill_ids':sorted(request.skill_ids),'resource_requirements':request.resource_requirements,
+            'network_origins':sorted(request.network_origins),
+            'budget_requirements':request.budget_requirements,'timeout_seconds':request.timeout_seconds,
+            'retry_policy':request.retry_policy,'cancellation_policy':request.cancellation_policy,
+            'reconciliation_policy':request.reconciliation_policy,
+        }
+
+    @classmethod
+    def _scope_contains(cls,parent:dict,child:dict)->bool:
+        exact=('kind','adapter','descriptor_id','descriptor_version','descriptor_digest','parameters',
+            'child_profile_id','runtime_profile_id','retry_policy','cancellation_policy',
+            'reconciliation_policy')
+        if any(parent.get(key)!=child.get(key) for key in exact):return False
+        if not set(child.get('skill_ids',()))<=set(parent.get('skill_ids',())):return False
+        if not set(child.get('network_origins',()))<=set(parent.get('network_origins',())):return False
+        parent_inputs={(row['artifact_id'],row['artifact_role']) for row in parent.get('input_artifacts',())}
+        child_inputs={(row['artifact_id'],row['artifact_role']) for row in child.get('input_artifacts',())}
+        if not child_inputs<=parent_inputs:return False
+        parent_resources=parent.get('resource_requirements',{});child_resources=child.get('resource_requirements',{})
+        for key,value in child_resources.items():
+            previous=parent_resources.get(key)
+            if isinstance(value,(int,float)) and isinstance(previous,(int,float)):
+                if value>previous:return False
+            elif value!=previous:return False
+        if int(child.get('timeout_seconds',0))>int(parent.get('timeout_seconds',0)):return False
+        for key,value in child.get('budget_requirements',{}).items():
+            if value>parent.get('budget_requirements',{}).get(key,0):return False
+        parent_outputs={row['artifact_role']:row for row in parent.get('expected_outputs',())}
+        visibility={'candidate':0,'workspace':1,'delivery':2}
+        for output in child.get('expected_outputs',()):
+            previous=parent_outputs.get(output['artifact_role'])
+            if not previous:return False
+            if visibility[output['output_disposition']]>visibility[previous['output_disposition']]:return False
+            for key in ('max_items','max_item_bytes','max_total_bytes'):
+                if int(output[key])>int(previous[key]):return False
+            allowed=set(previous.get('mime_patterns',()))
+            if allowed and not set(output.get('mime_patterns',()))<=allowed:return False
+            if not set(previous.get('validators',()))<=set(output.get('validators',())):return False
+            if previous.get('requires_review') and not output.get('requires_review'):return False
+        return True
+
+    @classmethod
+    def _with_authorization_scopes(cls,value:JobGroupCreate,**extra)->JobGroupCreate:
+        snapshot={**value.authorization_snapshot,**extra,'scope_version':1,
+            'job_scopes':{request.local_job_id:cls._authorization_scope(request)
+                for request in value.jobs}}
+        return value.model_copy(update={'authorization_snapshot':snapshot})
+
+    async def _inherited_sensitive(self,owner_id:str,value:JobGroupCreate,
+                                   sensitive:tuple[str,...])->set[str]:
+        inherited=set()
+        for request in value.jobs:
+            if request.local_job_id not in sensitive or not request.replaces_job_id:continue
+            context=await self.store.get_job_authorization_context(
+                request.replaces_job_id,owner_id,value.thread_id)
+            if not context or context['job'].state not in TERMINAL_JOB_STATES:continue
+            parent_scope=context['snapshot'].get('job_scopes',{}).get(
+                context['job'].local_job_id)
+            if (context['snapshot'].get('scope_version')==1 and isinstance(parent_scope,dict)
+                    and self._scope_contains(parent_scope,self._authorization_scope(request))):
+                inherited.add(request.local_job_id)
+        return inherited
+
     async def prepare_group(self, owner_id: str, value: JobGroupCreate) -> PreparedGroup:
         value=self._normalize(value)
         await self.store.validate_job_input_artifacts(owner_id,value.thread_id,value.jobs)
         value.validate_member_limit()
         sensitive = self._validate(value.jobs)
-        if not sensitive:
+        inherited=await self._inherited_sensitive(owner_id,value,sensitive)
+        value=self._with_authorization_scopes(value,
+            inherited_replacements=sorted(inherited))
+        if not sensitive or set(sensitive)<=inherited:
             group, jobs = await self.store.create_job_group(owner_id, value)
             return PreparedGroup(mode="committed", group=group, jobs=jobs)
         draft_value = JobGroupDraftCreate.model_validate({
@@ -163,6 +242,7 @@ class JobCoordinator:
             "authorization_snapshot":(value.authorization_snapshot
                 if value.authorization_snapshot is not None else current.authorization_snapshot),
             "suppress_continuation":current.suppress_continuation}))
+        normalized_group=self._with_authorization_scopes(normalized_group)
         sensitive = self._validate(normalized_group.jobs)
         await self.store.validate_job_input_artifacts(owner_id,current.thread_id,normalized_group.jobs)
         updated = JobGroupDraftCreate.model_validate({

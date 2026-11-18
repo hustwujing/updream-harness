@@ -7,6 +7,7 @@ from PIL import Image
 import pytest
 
 from sandbox_harness.controlled_media_adapter import ControlledMediaOperationAdapter
+from sandbox_harness.controlled_media_runner import ControlledOperationError
 from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate
 from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.job_adapters import AdapterStatus,JobExecutionContext,PreAcceptFailure
@@ -46,7 +47,8 @@ async def setup(tmp_path,identity,parameters,outputs,resources):
             runtime_profile_id='host-controlled',harness='codex',image_digest=runtime_digest),),
         gpus=(GPUInventory(id='gpu-0',type='A100',memory_mb=40000),)))
     settings=SimpleNamespace(data_root=tmp_path/'data',max_artifact_bytes=1024*1024,
-        controlled_runtime_root=tmp_path/'runtime',controlled_runtime_digest=runtime_digest)
+        controlled_runtime_root=tmp_path/'runtime',controlled_runtime_digest=runtime_digest,
+        job_node_heartbeat_seconds=.01)
     settings.controlled_runtime_root.mkdir();return store,objects,scheduler,settings,job,attempt,request
 
 
@@ -136,6 +138,31 @@ async def test_segment_exposes_no_selection_as_stable_domain_failure(tmp_path):
     try:
         with pytest.raises(PreAcceptFailure) as raised:await adapter.submit(context)
         assert raised.value.error_code=='no_target_found'
+        assert not await scheduler.active_reservation(job.id)
+    finally:await store.close()
+
+
+async def test_segment_exposes_controlled_cuda_failure_as_node_health_retry(tmp_path):
+    outputs=(JobExpectedOutput(artifact_role='foreground',min_items=1),)
+    store,objects,scheduler,settings,job,attempt,request=await setup(tmp_path,'image.segment',
+        {'prompt':'dolphin'},outputs,{'cpu':2,'memory_mb':32768,'disk_mb':4096,'gpu':1})
+    async def runner(*_):
+        raise ControlledOperationError('Controlled CUDA runtime is unavailable',
+            error_code='gpu_runtime_unavailable',failed_phase='operation_runtime',
+            retry_class='node_health_change',retryable=True)
+    class Health:
+        invalidated=()
+        def invalidate(self,values):self.invalidated=values
+    health=Health();adapter=ControlledMediaOperationAdapter(scheduler=scheduler,store=store,
+        objects=objects,settings=settings,runner=runner,gpu_health=health)
+    context=JobExecutionContext(job=job,request=request,generation=attempt.generation)
+    try:
+        with pytest.raises(PreAcceptFailure) as raised:await adapter.submit(context)
+        assert raised.value.infrastructure and raised.value.retryable
+        assert raised.value.error_code=='gpu_runtime_unavailable'
+        assert raised.value.failed_phase=='operation_runtime'
+        assert raised.value.retry_class=='node_health_change'
+        assert health.invalidated==('gpu-0',)
         assert not await scheduler.active_reservation(job.id)
     finally:await store.close()
 

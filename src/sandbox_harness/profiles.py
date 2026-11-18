@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -13,11 +14,13 @@ class SkillDescriptor(BaseModel):
     version: str = Field(min_length=1, max_length=64)
     digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     supported_harnesses: tuple[str, ...] = Field(min_length=1)
+    summary: str = Field(min_length=1,max_length=500)
     commands: tuple[str, ...] = ()
     python_modules: tuple[str, ...] = ()
     node_modules: tuple[str, ...] = ()
     required_capabilities: tuple[str, ...] = ()
     network_origins: tuple[str, ...] = ()
+    network_mode: Literal["none","optional","required"] = "none"
     requires_gpu: bool = False
 
 
@@ -106,11 +109,12 @@ class ProfileResolver:
         skills = [SkillDescriptor(
             id=row["id"], version=row["version"], digest=row["content_sha256"],
             supported_harnesses=tuple(row["supported_harnesses"]),
+            summary=row["summary"],
             commands=tuple(row.get("dependencies", {}).get("commands", [])),
             python_modules=tuple(row.get("dependencies", {}).get("python_modules", [])),
             node_modules=tuple(row.get("dependencies", {}).get("node_modules", [])),
             required_capabilities=tuple(row.get("required_capabilities", [])),
-            network_origins=tuple(row.get("network_origins", [])),
+            network_origins=tuple(row["network"]["origins"]),network_mode=row["network"]["mode"],
             requires_gpu=bool(row.get("requires_gpu", False)),
         ) for row in skill_manifest["skills"]]
         return cls(children=list(payload.child_execution_profiles),

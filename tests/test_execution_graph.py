@@ -40,7 +40,9 @@ async def test_execution_graph_contains_only_factual_boundaries_and_truthful_loc
         assert not {'command','tool','file_change'}&types
         provider_node=next(node for node in graph['nodes'] if node.get('job_id')==jobs[0].id)
         child_node=next(node for node in graph['nodes'] if node.get('job_id')==jobs[1].id)
+        group_node=next(node for node in graph['nodes'] if node['type']=='job_group')
         assert provider_node['location']=='external_provider'
+        assert child_node['role']=='子 Harness' and group_node['role']=='并行任务组'
         assert child_node['location']=='opensandbox' and child_node['activity_count']==1
         assert child_node['retries']==0 and child_node['state']=='RUNNING'
         assert child_node['location_label']=='OpenSandbox · general-cpu'

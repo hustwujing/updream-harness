@@ -20,10 +20,12 @@ def resolver() -> ProfileResolver:
     skills = [
         SkillDescriptor(id="writing", version="1", digest="a" * 64,
             supported_harnesses=("codex", "claude", "deepseek"),
+            summary="Writing",
             commands=("python3",), python_modules=(), node_modules=(),
             required_capabilities=(), network_origins=(), requires_gpu=False),
         SkillDescriptor(id="slides", version="1", digest="b" * 64,
-            supported_harnesses=("codex", "claude"), commands=("libreoffice",),
+            supported_harnesses=("codex", "claude"),summary="Slides",
+            network_mode="required",commands=("libreoffice",),
             python_modules=("pptx",), node_modules=("pptxgenjs",),
             required_capabilities=("image.generate",), network_origins=("images",),
             requires_gpu=False),

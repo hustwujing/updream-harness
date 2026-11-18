@@ -13,7 +13,9 @@ cross-layer checklist when a Skill also needs native dependencies.
 ## Distribution contract
 
 The repository-owned bundle lives in `runtime/skills/`. `sources.json` records
-upstream commits, versions, licenses, dependencies, network needs and tests.
+upstream commits, versions, licenses, dependency profiles, network notes and
+tests. `metadata.json` records complete machine-readable routing and execution
+metadata for every Skill.
 `runtime/skill_bundle.py freeze` computes content digests and writes
 `manifest.json`; image builds run `verify` and fail on drift.
 
@@ -35,11 +37,47 @@ copies, so old state cannot shadow a new image or write through a bundle link.
 Each Skill needs a stable ID, version, pinned source commit, supported Harnesses,
 entry instruction, owned scripts/assets, required commands/libraries, network
 needs, license provenance and test cases.
+Its `metadata.json` row must explicitly declare summary, supported Harnesses,
+required Capability IDs, network mode/origins and GPU requirement.
+Missing/extra rows and unknown fields fail bundle freeze.
 Skill text must describe task behavior; credentials and private service tokens
 must remain Gateway capabilities.
 
 Keep one canonical source in `runtime/skills`; do not fork instructions per
 Harness. Verify native discovery with pinned client versions on Harness upgrade.
+
+Natural-language `SKILL.md` content is never parsed into authority. Metadata may
+narrow routing and Runtime selection, but Profile and Gateway policy remain the
+upper bound. Generic Child Harness delegation remains available without routing
+or default-result optimization through the platform's generic candidate output.
+
+The `metadata.json` row is a strict, versioned contract:
+
+| Field | Meaning | Review rule |
+| --- | --- | --- |
+| `summary` | Short catalog description | Describe the task domain, not authority |
+| `supported_harnesses` | Native clients that can consume the Skill | Prove discovery for every listed Harness |
+| `required_capabilities` | Gateway capabilities needed for useful execution | The selected Child Profile must also allow each ID |
+| `network.mode` / `origins` | No, optional or required network access | Origins must be registered and Profile-allowed |
+| `requires_gpu` | Runtime GPU requirement | Requires a matching immutable Runtime Profile |
+
+`sources.json` remains the provenance and dependency source. Skill selection is
+owned by the Primary Harness and `SKILL.md` descriptions, not host-side routing metadata.
+
+## Change workflows
+
+For a new Skill, pin provenance and dependencies first, add its canonical
+directory and complete metadata row, then freeze and run representative
+discovery and artifact checks. For an upstream upgrade, review the upstream
+diff, license, commands, imports, network behavior and metadata together before
+changing the pinned commit or version. A content digest change without a source
+or version explanation is not reviewable.
+
+For retirement, remove the directory, source declaration, metadata row and all
+Profile allowlist references in one change, then add the ID to
+`retired_skills`. Prove that a restored checkpoint cannot rematerialize the
+retired ID. A fully removed ID belongs in `retired_skills`; replacement intent
+belongs in the Skill descriptions while both IDs remain available.
 
 ## Layering and heavy rendering dependencies
 
@@ -60,7 +98,7 @@ Separate a Skill's instruction bundle from the tools it requires to execute:
   command which is absent at runtime.
 
 The Skill manifest records the split through `profile`, `dependencies` and
-`network`. A Skill is executable only when its declared commands and imports
+machine-readable `network`. A Skill is executable only when its declared commands and imports
 are present in the selected image. Content Bundle materialization alone is not
 evidence that a native renderer is installed.
 
@@ -104,3 +142,8 @@ For a Skill with a native or heavy renderer, the completion evidence must also
 include a low-quality deterministic render, output validation (codec, duration
 or file structure as applicable), a bounded timeout, and a clear failure when
 the selected image does not provide the capability.
+
+Removing a Skill requires deleting its canonical directory/source row, removing
+every Profile allowlist reference, adding the ID to `retired_skills`, deleting
+its metadata row and proving checkpoint materialization removes a prior managed
+copy. Shared libraries are removed only after separate dependency analysis.

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
+from typing import Literal
 
 import httpx
+from pydantic import BaseModel,ConfigDict,Field
 
 from sandbox_harness.job_contracts import JobGroupCreate
 
@@ -27,12 +30,88 @@ def _value(raw: str) -> dict:
     return value
 
 
+class DelegationTaskSpec(BaseModel):
+    model_config=ConfigDict(extra="forbid",frozen=True)
+    id:str=Field(min_length=1,max_length=100,pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+    objective:str=Field(min_length=1,max_length=20_000)
+    inputs:tuple[str,...]=Field(default=(),max_length=100)
+    skill_ids:tuple[str,...]=Field(default=(),max_length=32)
+    result_mode:Literal["text","artifacts","mixed"]="artifacts"
+    output_disposition:Literal["candidate","workspace","delivery"]="candidate"
+    max_items:int=Field(default=100,ge=1,le=1000)
+    mime_patterns:tuple[str,...]=Field(default=(),max_length=100)
+
+
+class DelegationGroupSpec(BaseModel):
+    model_config=ConfigDict(extra="forbid",frozen=True)
+    tasks:tuple[DelegationTaskSpec,...]=Field(min_length=1,max_length=32)
+    idempotency_key:str=Field(default="",max_length=160)
+    suppress_continuation:bool=False
+
+
+def _digest(value) -> str:
+    return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(",",":"),
+        ensure_ascii=True).encode()).hexdigest()
+
+
+def compile_delegation(value:dict,catalog:dict,environment:dict[str,str]|None=None)->dict:
+    environment=environment or os.environ;spec=DelegationGroupSpec.model_validate(value)
+    thread_id=environment.get("HARNESS_THREAD_ID","");turn_id=environment.get("HARNESS_TURN_ID","")
+    harness=environment.get("HARNESS_KIND","");model=environment.get("HARNESS_MODEL","")
+    if not thread_id or not turn_id or not harness or not model:
+        raise ValueError("Runtime delegation identity is incomplete")
+    profiles={item.get("id"):item for item in catalog.get("child_execution_profiles",[])}
+    profile=profiles.get("child-general")
+    if not profile or harness not in profile.get("supported_harnesses",[]):
+        raise ValueError("child-general does not support the current Harness")
+    template=profile.get("job_template")
+    if not isinstance(template,dict):raise ValueError("Child Harness Job template is unavailable")
+    skills={item.get("id"):item for item in catalog.get("skills",[])}
+    allowed=set(profile.get("allowed_skill_ids",[]))
+    artifacts={}
+    for item in catalog.get("input_artifacts",[]):
+        artifacts[item.get("artifact_id")]=item
+        artifacts[item.get("project_path")]=item
+    jobs=[]
+    for task in spec.tasks:
+        selected=[]
+        for skill_id in dict.fromkeys(task.skill_ids):
+            skill=skills.get(skill_id)
+            if not skill:raise ValueError("Unknown frozen Skill: "+skill_id)
+            if skill_id not in allowed:raise ValueError("Skill is outside child-general: "+skill_id)
+            if harness not in skill.get("supported_harnesses",[]):
+                raise ValueError("Skill does not support current Harness: "+skill_id)
+            selected.append(skill_id)
+        bindings=[]
+        for index,reference in enumerate(dict.fromkeys(task.inputs),1):
+            artifact=artifacts.get(reference)
+            if not artifact:raise ValueError("Input is not a frozen Turn Artifact: "+reference)
+            bindings.append({"artifact_id":artifact["artifact_id"],"artifact_role":f"input_{index}"})
+        outputs=[] if task.result_mode=="text" else [{
+            "artifact_role":"child_deliverables","output_disposition":task.output_disposition,
+            "min_items":0,"max_items":task.max_items,"mime_patterns":list(task.mime_patterns),
+            "max_item_bytes":512*1024*1024,"max_total_bytes":2*1024*1024*1024}]
+        task_value=task.model_dump(mode="json")
+        jobs.append({**template,"local_job_id":task.id,
+            "idempotency_key":"delegate-job-"+_digest({"turn":turn_id,"task":task_value})[:48],
+            "parameters":{"harness":harness,"model":model,"objective":task.objective},
+            "input_artifacts":bindings,"expected_outputs":outputs,"skill_ids":selected})
+    normalized=spec.model_dump(mode="json")
+    group={"thread_id":thread_id,"origin_turn_id":turn_id,
+        "idempotency_key":spec.idempotency_key or "delegate-"+_digest({
+            "turn":turn_id,"spec":normalized})[:48],"jobs":jobs,"authorization_snapshot":{},
+        "suppress_continuation":spec.suppress_continuation}
+    return JobGroupCreate.model_validate(group).model_dump(mode="json")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sandbox-job")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("catalog", help="Show registered Operations, Capabilities, Skills and Child Profiles")
     prepare = sub.add_parser("prepare", help="Validate and submit one complete parallel JobGroup")
     prepare.add_argument("--request", required=True, help="JSON object or path to a JSON file")
+    delegate = sub.add_parser("delegate", help="Compile compact independent Child Harness tasks")
+    delegate.add_argument("--request", required=True, help="JSON object or path to a JSON file")
     edit = sub.add_parser("edit", help="Replace the editable members of one JobGroupDraft")
     edit.add_argument("--draft-id", required=True)
     edit.add_argument("--expected-digest", required=True)
@@ -54,13 +133,19 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "catalog":
             response = httpx.get(base + "/v1/execution/catalog", headers=headers, timeout=20)
-        elif args.command == "prepare":
+        elif args.command in {"prepare","delegate"}:
             if os.environ.get("HARNESS_CHILD_MODE") == "1":
                 print(json.dumps({"error":"A Child Harness cannot delegate another JobGroup"}))
                 return 2
-            payload = _value(args.request)
-            payload.setdefault("thread_id",os.environ.get("HARNESS_THREAD_ID",""))
-            payload.setdefault("origin_turn_id",os.environ.get("HARNESS_TURN_ID",""))
+            payload=_value(args.request)
+            if args.command=="delegate":
+                catalog_response=httpx.get(base+"/v1/execution/catalog",headers=headers,timeout=20)
+                if not catalog_response.is_success:
+                    print(catalog_response.text);return 1
+                payload=compile_delegation(payload,json.loads(catalog_response.text))
+            else:
+                payload.setdefault("thread_id",os.environ.get("HARNESS_THREAD_ID",""))
+                payload.setdefault("origin_turn_id",os.environ.get("HARNESS_TURN_ID",""))
             JobGroupCreate.model_validate(payload)
             response = httpx.post(base + "/v1/job-group-drafts", headers=headers, json=payload, timeout=30)
         elif args.command == "edit":

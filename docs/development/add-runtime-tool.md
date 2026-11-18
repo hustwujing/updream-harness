@@ -20,6 +20,9 @@ Existing patterns:
 - `sandbox-browser-screenshot`: authenticated public proxy bridge and bounded
   browser arguments.
 - browser render/media probes: deterministic image contract validation.
+- `sandbox-job delegate`: compact metadata-independent Child Harness tasks
+  compiled through the frozen execution catalog into the existing durable
+  `JobGroupCreate`; `sandbox-job prepare` remains the exact low-level interface.
 
 ## Requirements
 

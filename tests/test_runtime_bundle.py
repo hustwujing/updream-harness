@@ -58,7 +58,14 @@ def test_runtime_bundle_build_is_deterministic_and_activation_is_atomic(tmp_path
     assert runtime_instructions() == RUNTIME_INSTRUCTIONS
     assert "sandbox-job job --job-id JOB_ID" in RUNTIME_INSTRUCTIONS
     assert "sandbox-job group --group-id GROUP_ID" in RUNTIME_INSTRUCTIONS
+    assert "sandbox-job delegate --request JSON" in RUNTIME_INSTRUCTIONS
+    assert "you must run `sandbox-job catalog`" in RUNTIME_INSTRUCTIONS
+    assert "before any long research or implementation tool phase" in RUNTIME_INSTRUCTIONS
+    assert "may be delegated with an empty `inputs` list" in RUNTIME_INSTRUCTIONS
     assert "Do not poll in a model loop" in RUNTIME_INSTRUCTIONS
+    assert "`gpu_runtime_unavailable`" in RUNTIME_INSTRUCTIONS
+    assert "Do not change parameters, create a replacement Job" in RUNTIME_INSTRUCTIONS
+    assert "follow the selected Skill's required workflow" in RUNTIME_INSTRUCTIONS
     assert bundle_root() == Path(activated["root"]) / "skills"
 
 

@@ -32,7 +32,8 @@ from pydantic import BaseModel, Field
 
 from sandbox_harness.observability import RequestLoggingMiddleware, observed, event, enrich, telemetry, ToolObservations
 
-from .adapters import command, control_interaction_response, control_user_message, normalize, streaming_user_message
+from .adapters import (command,control_interaction_response,control_user_message,normalize,
+    normalize_error_code,streaming_user_message)
 from .instructions import RUNTIME_GUIDANCE, runtime_guidance
 from .runtime_bundle import MAX_BUNDLE_BYTES, activate_runtime_bundle, verify_runtime_bundle_signature
 from .skills import clear_materialized_skills, materialize_skills
@@ -677,7 +678,7 @@ def create_app() -> FastAPI:
                         await finish_execution(execution, {
                             "status": "failed" if failed else "completed",
                             "native_thread_id": execution.native_thread_id,
-                            "error_code": (native.get("error_code") or (
+                            "error_code": (normalize_error_code(native.get("error_code")) if native.get("error_code") else (
                                 "background_job_failed" if unresolved_background_jobs(background)
                                 else "harness_failed")) if failed else "",
                             "error_detail": str(detail)[:4000] if failed else "",

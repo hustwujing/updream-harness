@@ -2067,6 +2067,20 @@ class Store:
                 return None
             return JobRequest.model_validate_json(row.request_json)
 
+    async def get_job_authorization_context(self, job_id: str, owner_id: str,
+                                            thread_id: str) -> dict | None:
+        async with self.connections() as db:
+            row=(await db.execute(select(JobRow,JobGroupRow,AuthorizationSnapshotRow)
+                .join(JobGroupRow,JobGroupRow.id==JobRow.group_id)
+                .join(AuthorizationSnapshotRow,
+                    AuthorizationSnapshotRow.id==JobGroupRow.authorization_snapshot_id)
+                .where(JobRow.id==job_id,JobRow.owner_id==owner_id,
+                    JobRow.thread_id==thread_id))).one_or_none()
+            if not row:return None
+            job,group,snapshot=row
+            return {'job':self.job_view(job),'request':JobRequest.model_validate_json(job.request_json),
+                'group_id':group.id,'snapshot':json.loads(snapshot.snapshot_json)}
+
     async def latest_job_acceptance(self, job_id: str) -> JobAttemptReceipt | None:
         async with self.connections() as db:
             row = (await db.execute(select(JobAttemptRow).where(
@@ -2108,7 +2122,8 @@ class Store:
         return result
 
     async def finish_pre_accept_attempt(self, job_id: str, worker_id: str, generation: int, *,
-                                        retry: bool, error_code: str, error_detail: str) -> JobView:
+                                        retry: bool, error_code: str, error_detail: str,
+                                        error_metadata:dict|None=None) -> JobView:
         view = None
         async with self.job_lock(f"job:{job_id}"):
             async with self.connections.begin() as db:
@@ -2140,8 +2155,10 @@ class Store:
                 view = self.job_view(job)
         if retry:
             return view
+        metadata={key:value for key,value in (error_metadata or {}).items()
+            if key in {'failed_phase','retry_class','retryable','node_health_generation'}}
         return await self.transition_job(job_id, JobState.FAILED, expected_generation=generation,
-            result={"error_code": error_code, "error_detail": error_detail})
+            result={"error_code": error_code, "error_detail": error_detail,**metadata})
 
     async def mark_infrastructure_wait(self,job_id:str,worker_id:str,generation:int,*,
                                        error_detail:str)->None:
@@ -4282,14 +4299,20 @@ class Store:
             input_ids = {row.id for row in rows}
             timestamp = now()
             for row in rows:
-                row.status = "failed"; row.updated_at = timestamp
+                row.status = "failed" if row.status == "pending" else "unknown"
+                row.updated_at = timestamp
             items = (await db.execute(select(ItemRow).where(
                 ItemRow.turn_id == turn_id,
                 ItemRow.type == ItemType.USER_MESSAGE.value,
             ))).scalars().all()
             for item in items:
-                if json.loads(item.payload_json).get("input_id") in input_ids:
-                    item.status = "failed"; item.updated_at = timestamp
+                payload=json.loads(item.payload_json)
+                if payload.get("input_id") in input_ids:
+                    row=next(value for value in rows if value.id==payload["input_id"])
+                    payload["input_status"]=row.status
+                    item.payload_json=json.dumps(payload)
+                    item.status = "failed" if row.status=="failed" else "in_progress"
+                    item.updated_at = timestamp
 
     async def apply_delivered_inputs(self, turn_id: str) -> None:
         async with self.connections.begin() as db:
@@ -4319,15 +4342,22 @@ class Store:
         ).with_for_update())).scalars().all()
         ids = {value.id for value in inputs}
         for value in inputs:
-            value.status = "failed"; value.updated_at = now()
+            value.status = "failed" if value.status == "pending" else "unknown"
+            value.updated_at = now()
         await db.execute(update(InteractionRow).where(InteractionRow.turn_id == turn_id,
             InteractionRow.status.in_(["pending", "responding"])).values(status="expired", updated_at=now()))
         items = (await db.execute(select(ItemRow).where(ItemRow.turn_id == turn_id))).scalars().all()
         for item in items:
             if item.status == "in_progress" and item.type not in {ItemType.USER_MESSAGE.value, ItemType.APPROVAL.value}:
                 item.status = "interrupted"; item.updated_at = now()
-            if (json.loads(item.payload_json).get("input_id") in ids
-                    or item.type == ItemType.APPROVAL.value and item.status == "in_progress"):
+            payload=json.loads(item.payload_json)
+            if payload.get("input_id") in ids:
+                value=next(row for row in inputs if row.id==payload["input_id"])
+                payload["input_status"]=value.status
+                item.payload_json=json.dumps(payload)
+                item.status="failed" if value.status=="failed" else "in_progress"
+                item.updated_at=now()
+            elif item.type == ItemType.APPROVAL.value and item.status == "in_progress":
                 item.status = "failed"; item.updated_at = now()
         await db.execute(update(MediaBatchRow).where(MediaBatchRow.turn_id == turn_id,
             MediaBatchRow.status == "open").values(status="sealed", sealed_at=now(), updated_at=now()))

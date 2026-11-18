@@ -1,9 +1,10 @@
 # Runtime Skill Bundle
 
-The immutable Runtime bundle contains 33 filesystem Skills. The exact source
-commit, content digest, license, dependency profile and test case for each is
-recorded in `runtime/skills/manifest.json`; `sources.json` is its editable
-source.
+The immutable Runtime bundle contains 32 filesystem Skills. The exact source
+commit, content digest, license, dependency profile, runtime requirements and test
+case for each is recorded in `runtime/skills/manifest.json`; `sources.json`
+owns provenance/dependencies and `metadata.json` owns the concise summary plus
+machine-readable Harness, Capability, network and GPU requirements.
 
 | Skill/source | Bundled scope |
 | --- | --- |
@@ -15,7 +16,7 @@ source.
 | `ningzimu/codex-ppt-skill` | `codex-ppt` |
 | `obra/superpowers` | `brainstorming`, `systematic-debugging`, `verification-before-completion`, `writing-plans` |
 | `nimrodfisher/data-analytics-skills` | `programmatic-eda`, `data-quality-audit`, `query-validation` |
-| `anthropics/skills` | all 19 directories containing `SKILL.md` |
+| `anthropics/skills` | 18 retained directories; generic `pptx` is retired |
 | `vj-distributed-media-edit-system` | `manim-video` with pinned Manim/LaTeX runtime dependencies |
 
 Every source is pinned by commit and copied into the repository; builds do not
@@ -34,3 +35,10 @@ an ignored build input verified by upstream SHA-256 before installation.
 Skill instructions cannot widen a Turn's capability, network policy,
 credentials, filesystem ownership or approval boundary. Provider tasks still
 use scoped Gateway routes and budgets.
+
+Generic Child Harness delegation does not require Skill-specific input/output
+metadata. `sandbox-job delegate` compiles a compact objective, frozen inputs and
+optional Skill IDs into the existing durable Job protocol with bounded generic
+candidate outputs. Frozen metadata selects a compatible Runtime and narrows
+authority; semantic Skill choice remains with the Primary Harness and missing
+authority always defaults to deny.

@@ -18,6 +18,13 @@ THREAD_ENVIRONMENT={
 }
 
 
+class ControlledOperationError(RuntimeError):
+    def __init__(self,message:str,*,error_code:str,failed_phase:str,
+                 retry_class:str='none',retryable:bool=False):
+        super().__init__(message);self.error_code=error_code;self.failed_phase=failed_phase
+        self.retry_class=retry_class;self.retryable=retryable
+
+
 def _thread_environment_args()->list[str]:
     return [value for key,item in THREAD_ENVIRONMENT.items()
         for value in ('--setenv',key,item)]
@@ -51,6 +58,40 @@ def _gpu_uuid(index:str)->str:
     return uuid
 
 
+def _gpu_isolation_args(work:Path,runtime:Path,index:str)->list[str]:
+    account=pwd.getpwnam('agent-plus')
+    groups=','.join(str(grp.getgrnam(name).gr_gid) for name in (
+        'sandbox-agent-runtime','video-use-runtime'))
+    gpu_uuid=_gpu_uuid(index);args=_base_args(work,runtime)
+    if Path('/proc/driver/nvidia').exists():args += ['--ro-bind','/proc/driver/nvidia','/proc/driver/nvidia']
+    for name in (f'nvidia{index}','nvidiactl','nvidia-modeset','nvidia-uvm','nvidia-uvm-tools'):
+        path='/dev/'+name
+        if Path(path).exists():args += ['--dev-bind',path,path]
+    for pattern in ('libnvidia*.so*','libcuda.so*'):
+        for path in Path('/usr/lib/x86_64-linux-gnu').glob(pattern):
+            if path.is_file():args += ['--ro-bind',str(path.resolve()),str(path)]
+    return [*args,'--clearenv',*_thread_environment_args(),
+        '--setenv','PATH','/usr/bin:/bin','--setenv','HOME','/work',
+        '--setenv','TMPDIR','/tmp','--setenv','CUDA_VISIBLE_DEVICES',gpu_uuid,
+        '--setenv','CONTROLLED_MEDIA_RUNTIME_ROOT',str(runtime),'--setenv','HF_HUB_OFFLINE','1',
+        '--setenv','TRANSFORMERS_OFFLINE','1','--chdir','/work','/usr/bin/setpriv',
+        '--reuid='+str(account.pw_uid),'--regid='+str(account.pw_gid),'--groups='+groups,
+        '--no-new-privs','--bounding-set=-all']
+
+
+def probe_controlled_gpu(index:str,runtime:Path,work_root:Path)->bool:
+    account=pwd.getpwnam('agent-plus');work=work_root/('gpu-'+index)
+    if work.exists():shutil.rmtree(work)
+    work.mkdir(parents=True,mode=0o700);os.chown(work,account.pw_uid,account.pw_gid)
+    code=("import json,torch; assert torch.cuda.is_available(); "
+        "value=torch.ones((1,),device='cuda'); torch.cuda.synchronize(); "
+        "print(json.dumps({'cuda':True,'device':torch.cuda.current_device(),'sum':value.item()}))")
+    args=_gpu_isolation_args(work,runtime,index)+[
+        str(runtime/'envs/sam3/bin/python'),'-c',code]
+    try:_run(args,work,90);return True
+    except (OSError,RuntimeError,subprocess.SubprocessError):return False
+
+
 def _segment(work:Path,source:Path,parameters:dict,gpu_ids:tuple[str,...],runtime:Path)->dict:
     if os.geteuid()!=0:raise RuntimeError('controlled_worker_requires_root')
     if len(gpu_ids)!=1:raise RuntimeError('segment_gpu_reservation_invalid')
@@ -59,28 +100,17 @@ def _segment(work:Path,source:Path,parameters:dict,gpu_ids:tuple[str,...],runtim
     shutil.copyfile(Path(__file__).with_name('sam3_job.py'),script)
     request={**parameters,'source':'/work/'+source.name};(work/'request.json').write_text(json.dumps(request))
     for path in work.iterdir():os.chown(path,account.pw_uid,account.pw_gid)
-    groups=','.join(str(grp.getgrnam(name).gr_gid) for name in (
-        'sandbox-agent-runtime','video-use-runtime'))
-    index=gpu_ids[0].removeprefix('gpu-');gpu_uuid=_gpu_uuid(index);args=_base_args(work,runtime)
-    if Path('/proc/driver/nvidia').exists():args += ['--ro-bind','/proc/driver/nvidia','/proc/driver/nvidia']
-    for name in (f'nvidia{index}','nvidiactl','nvidia-uvm','nvidia-uvm-tools'):
-        path='/dev/'+name
-        if Path(path).exists():args += ['--dev-bind',path,path]
-    for pattern in ('libnvidia*.so*','libcuda.so*'):
-        for path in Path('/usr/lib/x86_64-linux-gnu').glob(pattern):
-            if path.is_file():args += ['--ro-bind',str(path.resolve()),str(path)]
-    args += ['--clearenv',*_thread_environment_args(),
-        '--setenv','PATH','/usr/bin:/bin','--setenv','HOME','/work',
-        '--setenv','TMPDIR','/tmp','--setenv','CUDA_VISIBLE_DEVICES',gpu_uuid,
-        '--setenv','CONTROLLED_MEDIA_RUNTIME_ROOT',str(runtime),'--setenv','HF_HUB_OFFLINE','1',
-        '--setenv','TRANSFORMERS_OFFLINE','1','--chdir','/work','/usr/bin/setpriv',
-        '--reuid='+str(account.pw_uid),'--regid='+str(account.pw_gid),'--groups='+groups,
-        '--no-new-privs','--bounding-set=-all','/usr/bin/python3','/work/sam3_job.py','/work/request.json']
+    index=gpu_ids[0].removeprefix('gpu-');args=_gpu_isolation_args(work,runtime,index)
+    args += ['/usr/bin/python3','/work/sam3_job.py','/work/request.json']
     try:_run(args,work,900)
     except RuntimeError as exc:
         outcome=work/'model-outcome.json'
-        if outcome.is_file() and json.loads(outcome.read_text()).get('code')=='no_selection':
-            raise RuntimeError('no_selection') from exc
+        code=(json.loads(outcome.read_text()).get('code') if outcome.is_file() else '')
+        if code=='no_selection':raise RuntimeError('no_selection') from exc
+        if code=='gpu_runtime_unavailable':
+            raise ControlledOperationError('Controlled CUDA runtime is unavailable',
+                error_code='gpu_runtime_unavailable',failed_phase='operation_runtime',
+                retry_class='node_health_change',retryable=True) from exc
         raise
     with Image.open(work/'foreground.png') as foreground:
         size=foreground.size

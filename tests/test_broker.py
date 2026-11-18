@@ -266,7 +266,7 @@ async def test_native_input_completion_receipt_survives_later_input_failure(tmp_
             idempotency_key='input-receipt-second'),owner)
         await broker._record_runtime_event(thread.id,turn.id,RuntimeEvent(
             kind=EventKind.STEP_FINISHED,payload={'name':'Input completed',
-                'input_completed':True,'input_ids':[first.id],'is_error':False},
+                'input_completed':True,'input_ids':[first.id],'is_error':True},
             runtime_sequence=1),execution_id)
         assert (await store.get_turn_input(first.id)).status=='applied'
         await store.set_input_status(first.id,'failed',execution_id=execution_id,

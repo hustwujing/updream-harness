@@ -156,7 +156,7 @@ class ExecutionGraphProjector:
             reservation=reservation_by_job.get(job.id);resources=json.loads(reservation.gpu_ids_json) if reservation else []
             request=json.loads(job.request_json);requirements=request.get('resource_requirements') or {}
             runtime_profile=request.get('runtime_profile_id') or ''
-            role=('质量审查员' if job.descriptor_id=='review.submit' else '委托任务执行员'
+            role=('质量审查员' if job.descriptor_id=='review.submit' else '子 Harness'
                 if job.kind=='harness' else '外部能力任务' if job.kind=='provider' else '任务执行员')
             location=('opensandbox' if job.kind=='harness' else 'external_provider' if job.kind=='provider'
                 else 'gpu_worker' if resources else 'host_worker')

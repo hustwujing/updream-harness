@@ -5,15 +5,17 @@ import os
 from pathlib import Path
 import signal
 import time
+import threading
 
 from .config import Settings,load_settings
 from .controlled_media_adapter import ControlledMediaOperationAdapter
 from .job_worker import JobWorker
-from .node_agent import NodeAgent
+from .node_agent import NodeAgent,discover_gpus
 from .objects import object_store
 from .observability import configure,event
 from .scheduler import NodeProfile,Scheduler
 from .store import Store
+from .controlled_media_runner import probe_controlled_gpu
 
 
 REQUIRED_RUNTIME_PATHS=(
@@ -21,6 +23,35 @@ REQUIRED_RUNTIME_PATHS=(
     'models/sam3/sam3.pt','models/ZIM/zim-anything-vitl/zim_vit_l_2092',
     'envs/media-foundation/bin/python','models/media-foundation/faster-whisper-small/model.bin',
 )
+
+
+class ControlledGPUProvider:
+    def __init__(self,runtime:Path,data_root:Path,*,refresh_seconds:float=300):
+        self.runtime=runtime;self.work_root=data_root/'controlled-gpu-probes'
+        self.refresh_seconds=refresh_seconds;self.next_refresh=0.0
+        self.healthy:set[str]=set();self.generation=0;self.lock=threading.Lock()
+
+    def __call__(self):
+        values=discover_gpus();timestamp=time.monotonic()
+        with self.lock:
+            if timestamp>=self.next_refresh:
+                healthy={value.id for value in values if probe_controlled_gpu(
+                    value.id.removeprefix('gpu-'),self.runtime,self.work_root)}
+                if healthy!=self.healthy:
+                    self.healthy=healthy;self.generation+=1
+                    event('controlled.gpu_health.changed',generation=self.generation,
+                        healthy_count=len(healthy),discovered_count=len(values))
+                self.next_refresh=timestamp+self.refresh_seconds
+            return tuple(value for value in values if value.id in self.healthy)
+
+    def invalidate(self,gpu_ids)->None:
+        with self.lock:
+            previous=set(self.healthy);self.healthy.difference_update(gpu_ids)
+            if self.healthy!=previous:
+                self.generation+=1
+                event('controlled.gpu_health.changed',generation=self.generation,
+                    healthy_count=len(self.healthy),discovered_count=len(previous))
+            self.next_refresh=max(self.next_refresh,time.monotonic()+self.refresh_seconds)
 
 
 def validate_runtime(settings:Settings)->Path:
@@ -38,10 +69,11 @@ def validate_runtime(settings:Settings)->Path:
 
 async def serve(settings:Settings,*,stop_event:asyncio.Event|None=None)->None:
     if os.geteuid()!=0:raise RuntimeError('controlled_worker_requires_root')
-    validate_runtime(settings);store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    runtime=validate_runtime(settings);store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
     objects=object_store(settings);scheduler=Scheduler(store)
+    gpu_provider=ControlledGPUProvider(runtime,settings.data_root)
     adapter=ControlledMediaOperationAdapter(scheduler=scheduler,store=store,objects=objects,
-        settings=settings)
+        settings=settings,gpu_health=gpu_provider)
     worker=JobWorker(store,{'image.segment':adapter,'audio.transcribe':adapter},
         node_id=settings.controlled_node_id,concurrency=settings.controlled_worker_concurrency,
         lease_seconds=settings.job_lease_seconds)
@@ -54,7 +86,8 @@ async def serve(settings:Settings,*,stop_event:asyncio.Event|None=None)->None:
     node=NodeAgent(scheduler,node_id=settings.controlled_node_id,generation=int(time.time()),
         profiles=(profile,),data_root=settings.data_root,cpu_total=cpu_total,memory_mb_total=memory_total,
         heartbeat_seconds=settings.job_node_heartbeat_seconds,
-        cached_bundle_digests=(settings.controlled_runtime_digest,))
+        cached_bundle_digests=(settings.controlled_runtime_digest,),
+        gpu_provider=gpu_provider)
     await store.initialize();await node.run_once()
     try:
         released=await scheduler.reap_stale_reservations(node.node_id,node.generation,set())

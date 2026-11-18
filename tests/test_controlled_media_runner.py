@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from sandbox_harness.controlled_media_runner import (
-    THREAD_ENVIRONMENT,_base_args,_gpu_uuid,_thread_environment_args,
+    THREAD_ENVIRONMENT,_base_args,_gpu_uuid,_thread_environment_args,probe_controlled_gpu,
 )
 
 
@@ -32,3 +32,19 @@ def test_controlled_scientific_runtimes_have_bounded_thread_pools():
     configured={args[index+1]:args[index+2] for index,value in enumerate(args) if value=='--setenv'}
     assert configured==THREAD_ENVIRONMENT
     assert all(int(value)<=4 for value in configured.values())
+
+
+def test_controlled_gpu_probe_uses_exact_sam3_python_and_returns_health(tmp_path,monkeypatch):
+    runtime=tmp_path/'runtime';(runtime/'envs/sam3/bin').mkdir(parents=True)
+    observed=[]
+    monkeypatch.setattr('sandbox_harness.controlled_media_runner.pwd.getpwnam',
+        lambda name:type('Account',(),{'pw_uid':10001,'pw_gid':10001})())
+    monkeypatch.setattr('sandbox_harness.controlled_media_runner.os.chown',lambda *args:None)
+    monkeypatch.setattr('sandbox_harness.controlled_media_runner._gpu_isolation_args',
+        lambda work,runtime,index:['bwrap',index])
+    monkeypatch.setattr('sandbox_harness.controlled_media_runner._run',
+        lambda args,work,timeout:observed.append((args,work,timeout)))
+    assert probe_controlled_gpu('3',runtime,tmp_path/'probes')
+    assert observed[0][0][:2]==['bwrap','3']
+    assert str(runtime/'envs/sam3/bin/python') in observed[0][0]
+    assert observed[0][2]==90

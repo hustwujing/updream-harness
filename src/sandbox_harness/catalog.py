@@ -127,12 +127,15 @@ class HarnessCatalog:
                 "resources":row.resources,"billable":row.billable,"side_effects":row.side_effects}
                 for row in self.job_catalog.payload.capabilities],
             "skills": [{"id": row.id, "version": row.version, "digest": row.digest,
+                "summary":row.summary,
                 "supported_harnesses": list(row.supported_harnesses),
                 "required_capabilities": list(row.required_capabilities),
+                "network":{"mode":row.network_mode,"origins":list(row.network_origins)},
                 "network_origins": list(row.network_origins), "requires_gpu": row.requires_gpu}
                 for row in self.profile_resolver.skills.values()],
             "child_execution_profiles": [{"id": row.id,
                 "supported_harnesses": list(row.supported_harnesses),
+                "allowed_skill_ids":list(row.allowed_skill_ids),
                 "max_delegation_depth": row.max_delegation_depth,
                 "job_template":{"kind":"harness","adapter":adapter,
                     "descriptor_id":descriptor_id,"descriptor_version":descriptor_version,

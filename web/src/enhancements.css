@@ -364,6 +364,7 @@ body[data-network-access="restricted"] .topbar>div:nth-child(2)>span::after{cont
 
 .input-status {display:block;font-size:12px;margin-top:6px;color:#7b8493}
 .input-status.failed {color:#bd4545}
+.input-status.applied-warning {color:#9a5b16}
 .input-status.unknown {color:#8a6a2f}
 
 .activity-row { grid-template-columns: 18px minmax(0,1fr) auto; align-items: start; }

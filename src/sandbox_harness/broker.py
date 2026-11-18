@@ -548,10 +548,9 @@ class Broker:
             lease_owner=self.instance_id if generation is not None else None,
             recovery_generation=generation)
         if value.kind==EventKind.STEP_FINISHED and value.payload.get("input_completed"):
-            status="failed" if value.payload.get("is_error") else "applied"
             for input_id in value.payload.get("input_ids") or []:
                 if input_id!=turn_id:
-                    await self.store.set_input_status(input_id,status,
+                    await self.store.set_input_status(input_id,"applied",
                         execution_id=execution_id,
                         lease_owner=self.instance_id if generation is not None else None,
                         recovery_generation=generation)
@@ -889,13 +888,14 @@ class Broker:
                             await self._state(turn.id, TurnState.DRAINING_INPUTS, sandbox_id=sandbox.id)
                     if current_input_id:
                         await self.store.set_input_status(current_input_id,
-                            "applied" if result.status in ("completed", "waiting_user") else "failed",
+                            "applied" if result.status in ("completed","waiting_user")
+                                or current_input_id in result.input_ids else "unknown",
                             execution_id=execution_id, lease_owner=self.instance_id,
                             recovery_generation=generation)
                     for input_id in result.input_ids:
                         if input_id != turn.id:
                             await self.store.set_input_status(input_id,
-                                "applied" if result.status in ("completed", "waiting_user") else "failed",
+                                "applied",
                                 execution_id=execution_id, lease_owner=self.instance_id,
                                 recovery_generation=generation)
                     if result.status not in ("completed", "waiting_user"):

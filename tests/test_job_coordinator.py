@@ -79,6 +79,32 @@ async def test_one_paid_member_holds_complete_mixed_batch_until_single_confirmat
     finally:await store.close()
 
 
+async def test_confirmed_scope_is_inherited_by_contained_terminal_replacement(tmp_path):
+    store,coordinator=await setup(tmp_path)
+    try:
+        original=await coordinator.prepare_group('owner',JobGroupCreate(
+            thread_id='a'*32,origin_turn_id='b'*32,idempotency_key='authorized-original-group',
+            jobs=[job('paid','image.generate')]))
+        confirmed=await coordinator.confirm_group(original.draft.id,'owner');source=confirmed.jobs[0]
+        attempt=await store.claim_job(source.id,'worker','node',30)
+        await store.transition_job(source.id,JobState.FAILED,expected_generation=attempt.generation,
+            result={'error_code':'provider_processing_failed'})
+        replacement=job('paid-replacement','image.generate').model_copy(update={
+            'idempotency_key':'paid-replacement-request','replaces_job_id':source.id})
+        inherited=await coordinator.prepare_group('owner',JobGroupCreate(
+            thread_id='a'*32,origin_turn_id='c'*32,idempotency_key='authorized-replacement-group',
+            jobs=[replacement]))
+        assert inherited.mode=='committed' and inherited.jobs[0].replaces_job_id==source.id
+
+        expanded=replacement.model_copy(update={'local_job_id':'changed-replacement',
+            'idempotency_key':'changed-replacement-request','parameters':{'prompt':'changed'}})
+        held=await coordinator.prepare_group('owner',JobGroupCreate(
+            thread_id='a'*32,origin_turn_id='d'*32,idempotency_key='expanded-replacement-group',
+            jobs=[expanded]))
+        assert held.mode=='draft' and held.draft.requires_confirmation
+    finally:await store.close()
+
+
 async def test_descriptor_freezes_adapter_schema_roles_network_resources_and_retry(tmp_path):
     store,coordinator=await setup(tmp_path)
     try:
@@ -203,8 +229,34 @@ async def test_harness_infrastructure_fields_are_resolved_by_host_not_manager(tm
         frozen=await store.get_job_request(prepared.jobs[0].id)
         assert frozen.runtime_profile_id=='general-cpu'
         assert frozen.resource_requirements['image_digest']=='1'*64
+        assert frozen.resource_requirements['required_capability_ids']==[]
+        assert frozen.network_origins==()
         assert 'node_id' not in frozen.resource_requirements and 'gpu_ids' not in frozen.resource_requirements
         assert frozen.resource_requirements['delegation_depth']==1
+    finally:await store.close()
+
+
+async def test_harness_skill_metadata_freezes_required_capability_and_network(tmp_path):
+    import hashlib,json
+    from pathlib import Path
+    from sandbox_harness.profiles import ProfileResolver
+    root=Path(__file__).resolve().parents[1]
+    raw=(root/'deploy/profile-catalog.example.json').read_text()
+    resolver=ProfileResolver.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest(),
+        skill_manifest=json.loads((root/'runtime/skills/manifest.json').read_text()))
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'skill-capabilities.db'));await store.initialize()
+    coordinator=JobCoordinator(store,catalog(),profile_resolver=resolver)
+    try:
+        child=JobRequest(local_job_id='slides',kind=JobKind.HARNESS,adapter='child-harness',
+            descriptor_id='delegate.harness',descriptor_version='1',descriptor_digest='d'*64,
+            idempotency_key='slides-capability-key',parameters={'harness':'codex','objective':'make slides'},
+            child_profile_id='child-general',skill_ids=('codex-ppt',))
+        prepared=await coordinator.prepare_group('owner',JobGroupCreate(thread_id='a'*32,
+            origin_turn_id='b'*32,idempotency_key='slides-capability-group',jobs=[child]))
+        frozen=await store.get_job_request(prepared.jobs[0].id)
+        assert frozen.runtime_profile_id=='primary-full-cpu'
+        assert frozen.resource_requirements['required_capability_ids']==['image.generate']
+        assert frozen.network_origins==('image-provider',)
     finally:await store.close()
 
 

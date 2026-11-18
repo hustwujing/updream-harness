@@ -1,23 +1,32 @@
 {
   "schema_version": 1,
-  "bundle_version": "2026.11.14.2",
-  "retired_skills": [],
+  "bundle_version": "2026.11.18.1",
+  "retired_skills": [
+    "pptx"
+  ],
   "skills": [
     {
       "id": "academy-guide",
       "version": "2c5958ec",
       "profile": "instructions",
-      "network": "task-dependent",
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
       "test_case": "validate frontmatter",
+      "network_notes": "task-dependent",
       "source": "anthropics-skills",
       "source_url": "https://github.com/anthropics/skills",
       "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
       "license": "per-skill LICENSE.txt",
+      "summary": "Guide structured learning and academy-style explanations.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -34,17 +43,24 @@
       "id": "algorithmic-art",
       "version": "2c5958ec",
       "profile": "web",
-      "network": "none",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
       "test_case": "validate frontmatter and p5 workflow assets",
+      "network_notes": "none",
       "source": "anthropics-skills",
       "source_url": "https://github.com/anthropics/skills",
       "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
       "license": "per-skill LICENSE.txt",
+      "summary": "Create deterministic or interactive algorithmic artwork.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -69,17 +85,24 @@
       "id": "anatomy",
       "version": "1.1.0+e6600ffc",
       "profile": "anatomy",
-      "network": "optional and only for an explicitly requested gallery publish",
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
       "test_case": "build and capture the dial-indicator example",
+      "network_notes": "optional and only for an explicitly requested gallery publish",
       "source": "wheresryan22-anatomy",
       "source_url": "https://github.com/wheresryan22/anatomy",
       "source_commit": "e6600ffc4e8e6620eeb45bf49bcdbd5e4b84163f",
       "license": "MIT",
+      "summary": "Build and explain interactive visual interfaces and motion systems.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -101,17 +124,24 @@
       "id": "brainstorming",
       "version": "7.0.2",
       "profile": "superpowers",
-      "network": "optional public brand image; visual companion binds loopback only",
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
       "test_case": "validate local visual companion scripts and instruction contract",
+      "network_notes": "optional public brand image; visual companion binds loopback only",
       "source": "obra-superpowers",
       "source_url": "https://github.com/obra/superpowers",
       "source_commit": "22f0b463e7a5e579904dd6211a520321035526f7",
       "license": "MIT",
+      "summary": "Clarify intent and design before creative implementation.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -130,17 +160,24 @@
       "id": "brand-guidelines",
       "version": "2c5958ec",
       "profile": "instructions",
-      "network": "none",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
       "test_case": "validate frontmatter",
+      "network_notes": "none",
       "source": "anthropics-skills",
       "source_url": "https://github.com/anthropics/skills",
       "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
       "license": "per-skill LICENSE.txt",
+      "summary": "Apply or derive consistent brand presentation rules.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -157,17 +194,24 @@
       "id": "canvas-design",
       "version": "2c5958ec",
       "profile": "web",
-      "network": "none",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
       "test_case": "validate frontmatter and bundled fonts",
+      "network_notes": "none",
       "source": "anthropics-skills",
       "source_url": "https://github.com/anthropics/skills",
       "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
       "license": "per-skill LICENSE.txt",
+      "summary": "Create polished static visual designs and canvases.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -192,17 +236,24 @@
       "id": "claude-api",
       "version": "2c5958ec",
       "profile": "mcp",
-      "network": "Claude API tasks require a configured route",
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
       "test_case": "validate frontmatter and language reference tree",
+      "network_notes": "Claude API tasks require a configured route",
       "source": "anthropics-skills",
       "source_url": "https://github.com/anthropics/skills",
       "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
       "license": "per-skill LICENSE.txt",
+      "summary": "Build integrations against the Claude API with pinned references.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -222,17 +273,28 @@
       "id": "codex-ppt",
       "version": "0.6.0+941dcafe",
       "profile": "presentation",
-      "network": "image backend required for slide generation",
+      "network": {
+        "mode": "required",
+        "origins": [
+          "image-provider"
+        ]
+      },
       "test_case": "assemble a deterministic local slide image into PPTX",
+      "network_notes": "image backend required for slide generation",
       "source": "ningzimu-codex-ppt",
       "source_url": "https://github.com/ningzimu/codex-ppt-skill",
       "source_commit": "941dcafe2f23ea4ae61de99e9b22fb0ef3d9e06c",
       "license": "MIT",
+      "summary": "Create visually unified presentation decks from source material.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [
+        "image.generate"
+      ],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -250,24 +312,31 @@
         ],
         "node_modules": []
       },
-      "content_sha256": "755b8f05233435e181be8d51cefe362465adc496e81828e87c59be582b3f3b5d",
+      "content_sha256": "560396d0c46f06095b2daa7b53424446207c48c69af308a8c0f71049473bd77b",
       "file_count": 41
     },
     {
       "id": "data-quality-audit",
       "version": "1.2.0+9449d363",
       "profile": "data-analytics",
-      "network": "none",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
       "test_case": "audit nulls and duplicates in a deterministic CSV",
+      "network_notes": "none",
       "source": "nimrodfisher-data-analytics-skills",
       "source_url": "https://github.com/nimrodfisher/data-analytics-skills",
       "source_commit": "9449d363e1ae43cf1706c73bebc16774e339c427",
       "license": "MIT",
+      "summary": "Audit datasets against explicit quality dimensions and business rules.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -287,17 +356,24 @@
       "id": "diagram-design",
       "version": "2.6",
       "profile": "diagram-design",
-      "network": "optional for public fonts and onboarding sources",
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
       "test_case": "self-check and rasterize a bundled HTML diagram",
+      "network_notes": "optional for public fonts and onboarding sources",
       "source": "cathrynlavery-diagram-design",
       "source_url": "https://github.com/cathrynlavery/diagram-design",
       "source_commit": "f2496acbde9f45ccb55c24d4f75210c8a1355df8",
       "license": "MIT",
+      "summary": "Design and render technical diagrams with explicit visual semantics.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -316,17 +392,24 @@
       "id": "discernment-nudge",
       "version": "2c5958ec",
       "profile": "instructions",
-      "network": "none",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
       "test_case": "validate frontmatter",
+      "network_notes": "none",
       "source": "anthropics-skills",
       "source_url": "https://github.com/anthropics/skills",
       "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
       "license": "per-skill LICENSE.txt",
+      "summary": "Improve decisions by surfacing assumptions and bounded alternatives.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -343,17 +426,24 @@
       "id": "doc-and-modernize",
       "version": "eaaffd5d020b",
       "profile": "instructions",
-      "network": "none",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
       "test_case": "validate frontmatter and cited local-file workflow",
+      "network_notes": "none",
       "source": "github-awesome-copilot",
       "source_url": "https://github.com/github/awesome-copilot",
       "source_commit": "eaaffd5d020b756a2777a4b1b161d2bdc126d9a0",
       "license": "MIT",
+      "summary": "Analyze and modernize code or project documentation.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -370,17 +460,24 @@
       "id": "doc-coauthoring",
       "version": "2c5958ec",
       "profile": "instructions",
-      "network": "none",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
       "license": "not declared upstream",
       "test_case": "validate frontmatter",
+      "network_notes": "none",
       "source": "anthropics-skills",
       "source_url": "https://github.com/anthropics/skills",
       "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
+      "summary": "Collaboratively structure and draft long-form documents.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -397,17 +494,24 @@
       "id": "docx",
       "version": "2c5958ec",
       "profile": "office",
-      "network": "none",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
       "test_case": "create and render a DOCX",
+      "network_notes": "none",
       "source": "anthropics-skills",
       "source_url": "https://github.com/anthropics/skills",
       "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
       "license": "per-skill LICENSE.txt",
+      "summary": "Create, read, edit and validate Word documents.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -446,17 +550,24 @@
       "id": "drawio-skill",
       "version": "3.4.4",
       "profile": "drawio",
-      "network": "optional for remote icons and live sources",
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
       "test_case": "build, validate and export an editable draw.io diagram",
+      "network_notes": "optional for remote icons and live sources",
       "source": "agents365-drawio-skill",
       "source_url": "https://github.com/Agents365-ai/drawio-skill",
       "source_commit": "6550495129d9a42eff7e71434d15bfc9846b6202",
       "license": "MIT",
+      "summary": "Create and edit structured draw.io diagrams.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -478,17 +589,24 @@
       "id": "frontend-design",
       "version": "2c5958ec",
       "profile": "web",
-      "network": "task-dependent assets",
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
       "test_case": "validate frontmatter",
+      "network_notes": "task-dependent assets",
       "source": "anthropics-skills",
       "source_url": "https://github.com/anthropics/skills",
       "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
       "license": "per-skill LICENSE.txt",
+      "summary": "Design and implement polished frontend user experiences.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -513,17 +631,28 @@
       "id": "image-to-editable-ppt",
       "version": "0.1.0+b7be494e",
       "profile": "presentation",
-      "network": "task-dependent OCR and image backend through configured capabilities",
+      "network": {
+        "mode": "optional",
+        "origins": [
+          "image-provider"
+        ]
+      },
       "test_case": "run editppt doctor and prepare a local image page",
+      "network_notes": "task-dependent OCR and image backend through configured capabilities",
       "source": "ningzimu-image-to-editable-ppt",
       "source_url": "https://github.com/ningzimu/image-to-editable-ppt-skill",
       "source_commit": "b7be494e31a0ed56ef98716891db5474606b8cdf",
       "license": "MIT",
+      "summary": "Reconstruct image-based slides into editable presentation elements.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [
+        "image.generate"
+      ],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -541,24 +670,31 @@
         ],
         "node_modules": []
       },
-      "content_sha256": "340dfc7456bfd97e65bab5cc24d88aa36b1ec9d7e9e1cfeb2f1a4bbd7756fe0f",
+      "content_sha256": "a925fd40071e5537c7039fcbce999621fd068d2b4f55c1d78ff76deb79aeef61",
       "file_count": 39
     },
     {
       "id": "internal-comms",
       "version": "2c5958ec",
       "profile": "instructions",
-      "network": "none",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
       "test_case": "validate frontmatter",
+      "network_notes": "none",
       "source": "anthropics-skills",
       "source_url": "https://github.com/anthropics/skills",
       "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
       "license": "per-skill LICENSE.txt",
+      "summary": "Draft clear internal updates, announcements and operational communication.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -575,17 +711,24 @@
       "id": "manim-video",
       "version": "1.0.0+45de9954",
       "profile": "manim",
-      "network": "none for local rendering; narration/provider access requires a configured capability",
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
       "test_case": "render a deterministic low-quality mathematical scene and validate the MP4",
+      "network_notes": "none for local rendering; narration/provider access requires a configured capability",
       "source": "vj-distributed-media-edit-system",
       "source_url": "https://github.com/hustwujing/vj-distributed-media-edit-system",
       "source_commit": "45de99548311ac67240217f23c8ead033a3dbe65",
       "license": "MIT",
+      "summary": "Create technical and mathematical animation videos with Manim.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -608,17 +751,24 @@
       "id": "mcp-builder",
       "version": "2c5958ec",
       "profile": "mcp",
-      "network": "task-dependent SDK documentation",
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
       "test_case": "import Python MCP dependencies",
+      "network_notes": "task-dependent SDK documentation",
       "source": "anthropics-skills",
       "source_url": "https://github.com/anthropics/skills",
       "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
       "license": "per-skill LICENSE.txt",
+      "summary": "Design and implement MCP servers and tool contracts.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -638,17 +788,24 @@
       "id": "pdf",
       "version": "2c5958ec",
       "profile": "office",
-      "network": "none",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
       "test_case": "create, inspect and rasterize a PDF",
+      "network_notes": "none",
       "source": "anthropics-skills",
       "source_url": "https://github.com/anthropics/skills",
       "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
       "license": "per-skill LICENSE.txt",
+      "summary": "Create, read, transform and validate PDF documents.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -684,69 +841,27 @@
       "file_count": 12
     },
     {
-      "id": "pptx",
-      "version": "2c5958ec",
-      "profile": "office",
-      "network": "none",
-      "test_case": "create, render and validate a PPTX",
-      "source": "anthropics-skills",
-      "source_url": "https://github.com/anthropics/skills",
-      "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
-      "license": "per-skill LICENSE.txt",
-      "supported_harnesses": [
-        "codex",
-        "claude",
-        "deepseek"
-      ],
-      "entry": "SKILL.md",
-      "dependencies": {
-        "commands": [
-          "libreoffice",
-          "pandoc",
-          "pdftoppm",
-          "pdftotext",
-          "qpdf",
-          "tesseract"
-        ],
-        "python_modules": [
-          "PIL",
-          "defusedxml",
-          "lxml",
-          "markitdown",
-          "openpyxl",
-          "pandas",
-          "pdf2image",
-          "pdfplumber",
-          "pypdf",
-          "pytesseract"
-        ],
-        "node_modules": [
-          "docx",
-          "pptxgenjs",
-          "react",
-          "react-dom",
-          "react-icons",
-          "sharp"
-        ]
-      },
-      "content_sha256": "1e6e250a368412bac8ee0ae9c0dc8ebe3c082c7ecb7c0fba699a1d6f9938c15a",
-      "file_count": 56
-    },
-    {
       "id": "programmatic-eda",
       "version": "1.2.0+9449d363",
       "profile": "data-analytics",
-      "network": "none",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
       "test_case": "profile a deterministic CSV and validate findings output",
+      "network_notes": "none",
       "source": "nimrodfisher-data-analytics-skills",
       "source_url": "https://github.com/nimrodfisher/data-analytics-skills",
       "source_commit": "9449d363e1ae43cf1706c73bebc16774e339c427",
       "license": "MIT",
+      "summary": "Perform systematic exploratory data analysis with reproducible code.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -766,17 +881,24 @@
       "id": "query-validation",
       "version": "1.2.0+9449d363",
       "profile": "data-analytics",
-      "network": "none",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
       "test_case": "lint deterministic PostgreSQL SQL with sqlglot",
+      "network_notes": "none",
       "source": "nimrodfisher-data-analytics-skills",
       "source_url": "https://github.com/nimrodfisher/data-analytics-skills",
       "source_commit": "9449d363e1ae43cf1706c73bebc16774e339c427",
       "license": "MIT",
+      "summary": "Review SQL for correctness, safety and performance risks.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -796,17 +918,24 @@
       "id": "skill-creator",
       "version": "2c5958ec",
       "profile": "web",
-      "network": "optional for browser review",
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
       "test_case": "run skill structure checks",
+      "network_notes": "optional for browser review",
       "source": "anthropics-skills",
       "source_url": "https://github.com/anthropics/skills",
       "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
       "license": "per-skill LICENSE.txt",
+      "summary": "Create or update a reusable Agent Skill with supporting resources.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -831,17 +960,24 @@
       "id": "slack-gif-creator",
       "version": "2c5958ec",
       "profile": "instructions",
-      "network": "none",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
       "test_case": "import image dependencies",
+      "network_notes": "none",
       "source": "anthropics-skills",
       "source_url": "https://github.com/anthropics/skills",
       "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
       "license": "per-skill LICENSE.txt",
+      "summary": "Create compact animated GIFs suitable for chat and Slack.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -858,17 +994,24 @@
       "id": "systematic-debugging",
       "version": "7.0.2",
       "profile": "superpowers",
-      "network": "none",
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
       "test_case": "validate debugging resources and polluter script syntax",
+      "network_notes": "none",
       "source": "obra-superpowers",
       "source_url": "https://github.com/obra/superpowers",
       "source_commit": "22f0b463e7a5e579904dd6211a520321035526f7",
       "license": "MIT",
+      "summary": "Diagnose unexpected behavior from evidence before proposing a fix.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -887,17 +1030,24 @@
       "id": "theme-factory",
       "version": "2c5958ec",
       "profile": "instructions",
-      "network": "none",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
       "test_case": "validate bundled theme files",
+      "network_notes": "none",
       "source": "anthropics-skills",
       "source_url": "https://github.com/anthropics/skills",
       "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
       "license": "per-skill LICENSE.txt",
+      "summary": "Apply coherent visual themes to generated artifacts.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -914,17 +1064,24 @@
       "id": "verification-before-completion",
       "version": "7.0.2",
       "profile": "instructions",
-      "network": "none",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
       "test_case": "validate evidence-gate instruction contract",
+      "network_notes": "none",
       "source": "obra-superpowers",
       "source_url": "https://github.com/obra/superpowers",
       "source_commit": "22f0b463e7a5e579904dd6211a520321035526f7",
       "license": "MIT",
+      "summary": "Require fresh execution evidence before completion claims.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -941,17 +1098,24 @@
       "id": "web-artifacts-builder",
       "version": "2c5958ec",
       "profile": "web",
-      "network": "package installation for generated projects",
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
       "test_case": "initialize and bundle a minimal artifact",
+      "network_notes": "package installation for generated projects",
       "source": "anthropics-skills",
       "source_url": "https://github.com/anthropics/skills",
       "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
       "license": "per-skill LICENSE.txt",
+      "summary": "Build self-contained interactive web artifacts.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -976,17 +1140,24 @@
       "id": "webapp-testing",
       "version": "2c5958ec",
       "profile": "web",
-      "network": "none for local apps",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
       "test_case": "launch Python Playwright against local HTML",
+      "network_notes": "none for local apps",
       "source": "anthropics-skills",
       "source_url": "https://github.com/anthropics/skills",
       "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
       "license": "per-skill LICENSE.txt",
+      "summary": "Test local web applications with browser automation and evidence.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -1011,17 +1182,24 @@
       "id": "writing-plans",
       "version": "7.0.2",
       "profile": "instructions",
-      "network": "none",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
       "test_case": "validate plan structure instruction contract",
+      "network_notes": "none",
       "source": "obra-superpowers",
       "source_url": "https://github.com/obra/superpowers",
       "source_commit": "22f0b463e7a5e579904dd6211a520321035526f7",
       "license": "MIT",
+      "summary": "Write implementation plans from approved requirements and designs.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
@@ -1038,17 +1216,24 @@
       "id": "xlsx",
       "version": "2c5958ec",
       "profile": "office",
-      "network": "none",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
       "test_case": "create and recalculate an XLSX",
+      "network_notes": "none",
       "source": "anthropics-skills",
       "source_url": "https://github.com/anthropics/skills",
       "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
       "license": "per-skill LICENSE.txt",
+      "summary": "Create, read, transform and validate spreadsheet workbooks.",
       "supported_harnesses": [
         "codex",
         "claude",
         "deepseek"
       ],
+      "required_capabilities": [],
+      "requires_gpu": false,
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [

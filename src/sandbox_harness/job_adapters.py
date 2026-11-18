@@ -42,10 +42,15 @@ class AdapterStatus:
 
 class PreAcceptFailure(RuntimeError):
     def __init__(self,message:str,*,infrastructure:bool=False,retry_after_seconds:float=0,
-                 error_code:str='pre_accept_failure'):
+                 error_code:str='pre_accept_failure',failed_phase:str='pre_accept',
+                 retry_class:str='none',retryable:bool|None=None,node_health_generation:int=0):
         super().__init__(message);self.infrastructure=infrastructure
         self.retry_after_seconds=max(0,float(retry_after_seconds))
         self.error_code=error_code
+        self.failed_phase=failed_phase
+        self.retry_class=('capacity_wait' if infrastructure and retry_class=='none' else retry_class)
+        self.retryable=True if retryable is None else retryable
+        self.node_health_generation=max(0,int(node_health_generation))
 
 
 class SubmissionOutcomeUnknown(RuntimeError):

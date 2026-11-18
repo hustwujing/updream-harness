@@ -5,7 +5,7 @@ import tomllib
 
 
 ROOT=Path(__file__).resolve().parents[1]
-DATA_ROOT=ROOT/".data"
+DATA_ROOT=Path("/data2/wujing03/sandbox-harness-platform-parallel/.data")
 
 
 def load_configure_local():

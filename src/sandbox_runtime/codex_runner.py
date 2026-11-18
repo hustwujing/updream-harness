@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 
+from .adapters import normalize_error_code
 from .instructions import runtime_instructions
 
 
@@ -142,9 +143,11 @@ def main():
                     completed_turn = message.get("params", {}).get("turn", {})
                     completed = True
             error = completed_turn.get("error") or {}
+            status=completed_turn.get("status", "completed")
+            native_code=error.get("codexErrorInfo")
             bridge.emit({"type": "harness.input.completed", "input_ids": input_ids, "thread_id": thread_id,
-                "status": completed_turn.get("status", "completed"),
-                "error_code": error.get("codexErrorInfo") or "",
+                "status": status,"error_code": (normalize_error_code(native_code)
+                    if native_code else "harness_failed" if status=="failed" else ""),
                 "error_detail": error.get("message") or ""})
     except Exception as exc:
         bridge.emit({"type": "error", "message": type(exc).__name__ + ": " + str(exc)}); raise

@@ -4,7 +4,7 @@
   "default_concurrency": 8,
   "source_snapshot": {
     "path": "tests/real_cases/source-plus-cases.json",
-    "sha256": "b20ad231fca467ee8bb3f7277790ad4ed514f08a3fd045f1d2b6f216975a3958",
+    "sha256": "784bcb4157e30135302845b5977078d24215bd59d2720d8ea113b56ab90a6728",
     "source_case_count": 129
   },
   "rules": {
@@ -14,10 +14,10 @@
     "evidence_root": ".data/evidence/real-campaign",
     "forbid_case_specific_product_fixes": true
   },
-  "runnable_case_count": 149,
+  "runnable_case_count": 151,
   "business_case_count": 78,
   "inherited_protocol_case_count": 51,
-  "parallel_case_count": 20,
+  "parallel_case_count": 22,
   "cases": [
     {
       "id": "S01",
@@ -1615,7 +1615,9 @@
       "hook": null,
       "status": "not_run",
       "attempts": [],
-      "allowed_external_operations": [],
+      "allowed_external_operations": [
+        "image.segment"
+      ],
       "entry_mode": "deployed_browser",
       "source_case_id": "C05",
       "original_definition_sha256": "719d784412d19f84b3f72e8f6d1dd8efef4c202994d96feebe28f29df542aed2",
@@ -2320,7 +2322,9 @@
       "hook": null,
       "status": "not_run",
       "attempts": [],
-      "allowed_external_operations": [],
+      "allowed_external_operations": [
+        "image.segment"
+      ],
       "entry_mode": "deployed_browser",
       "source_case_id": "C20",
       "original_definition_sha256": "3a4d97be0eaf1489370e3d5e7f5f521ed173c3dbc37dc8b2b3301f4a0d537f72",
@@ -6849,6 +6853,58 @@
       "required_features": [
         "mixed_group",
         "delegation"
+      ],
+      "provenance": "parallel-design"
+    },
+    {
+      "id": "P22",
+      "title": "紧凑类型化委派闭环",
+      "complexity": "parallel_protocol",
+      "assets": [],
+      "prompt": "用紧凑任务规范并行委派两个相互独立的文本任务，不选择 Skill；全部完成后只续接一次 Primary。",
+      "expect": {
+        "compiled_jobs": 2,
+        "metadata_required": false,
+        "child_harnesses": 2,
+        "continuation_count": 1
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_browser_or_api",
+      "executor": "parallel_protocol",
+      "required_features": [
+        "compact_delegation",
+        "delegation",
+        "continuation"
+      ],
+      "provenance": "parallel-design"
+    },
+    {
+      "id": "P23",
+      "title": "Primary自主并行决策",
+      "complexity": "parallel_protocol",
+      "assets": [],
+      "prompt": "完成两个彼此独立、可分别验收的风险分析并最终汇总；由 Primary 自行选择执行方式。",
+      "expect": {
+        "primary_delegated": true,
+        "child_harnesses": 2,
+        "same_group": true,
+        "attempts_overlapped": true,
+        "one_primary_continuation": true
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_browser_or_api",
+      "executor": "parallel_protocol",
+      "required_features": [
+        "primary_decision",
+        "delegation",
+        "overlap",
+        "continuation"
       ],
       "provenance": "parallel-design"
     }

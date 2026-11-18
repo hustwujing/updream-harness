@@ -500,6 +500,28 @@ async def test_unapplied_inputs_are_failed_with_their_transcript_items(tmp_path)
         await store.close()
 
 
+async def test_terminal_turn_keeps_unconfirmed_delivered_input_unknown(tmp_path):
+    store = Store("sqlite+aiosqlite:///" + str(tmp_path / "delivered-input.db")); await store.initialize()
+    try:
+        catalog = HarnessCatalog(); profile = catalog.resolve("codex", "gpt-5.6", "standard")
+        owner = "a" * 64
+        thread = await store.create_thread(ThreadCreate(harness=Harness.CODEX, model=profile.model,
+            reasoning_level="standard", title="Delivered input"), profile, owner)
+        turn, _, _ = await store.create_turn(thread.id,
+            TurnCreate(message="hello", idempotency_key="delivered-turn-key"), profile, owner)
+        await store.set_turn_state(turn.id, TurnState.RUNNING)
+        value, _ = await store.create_turn_input(turn.id,
+            TurnInputCreate(message="follow up", idempotency_key="delivered-input-key"), owner)
+        await store.set_input_status(value.id, "delivered", "native_steer")
+        await store.set_turn_state(turn.id, TurnState.FAILED, error_code="model_rate_limited")
+        saved = await store.get_turn_input(value.id)
+        item = (await store.items_after(thread.id))[-1]
+        assert saved.status == "unknown" and saved.delivery_mode == "native_steer"
+        assert item.status == "in_progress" and item.payload["input_status"] == "unknown"
+    finally:
+        await store.close()
+
+
 async def test_concurrent_thread_items_receive_unique_contiguous_sequences(tmp_path):
     import asyncio
     store = Store("sqlite+aiosqlite:///" + str(tmp_path / "item-sequences.db")); await store.initialize()

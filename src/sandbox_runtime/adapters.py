@@ -2,11 +2,30 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
 from .instructions import runtime_instructions
+
+
+STABLE_ERROR_CODE=re.compile(r"^[a-z][a-z0-9_.-]{0,159}$")
+
+
+def normalize_error_code(value) -> str:
+    """Reduce arbitrary native error payloads to one bounded public-safe code."""
+    def rate_limited(item) -> bool:
+        if isinstance(item,dict):
+            return any((str(key).lower() in {"httpstatuscode","status","status_code","code"}
+                    and str(child)=="429") or "toomany" in str(key).lower()
+                or rate_limited(child) for key,child in item.items())
+        if isinstance(item,(list,tuple)):return any(rate_limited(child) for child in item)
+        text=str(item or "").lower()
+        return text=="429" or "rate_limit" in text or "rate limit" in text or "too many" in text
+    if rate_limited(value):return "model_rate_limited"
+    if isinstance(value,str) and STABLE_ERROR_CODE.fullmatch(value):return value
+    return "harness_failed"
 
 
 @dataclass(frozen=True)

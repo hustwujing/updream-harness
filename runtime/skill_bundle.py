@@ -6,14 +6,49 @@ import hashlib
 import json
 import re
 from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel,ConfigDict,Field,model_validator
 
 
 ROOT = Path(__file__).resolve().parent / "skills"
 SOURCES = ROOT / "sources.json"
+METADATA = ROOT / "metadata.json"
 MANIFEST = ROOT / "manifest.json"
 NAME = re.compile(r"^name:\s*['\"]?([a-z0-9][a-z0-9-]*)", re.MULTILINE)
 IGNORED_PARTS = {"__pycache__", ".pytest_cache"}
 IGNORED_SUFFIXES = {".pyc", ".pyo"}
+
+
+class NetworkMetadata(BaseModel):
+    model_config=ConfigDict(extra="forbid",frozen=True)
+    mode:Literal["none","optional","required"]
+    origins:tuple[str,...]=()
+
+    @model_validator(mode="after")
+    def none_has_no_origins(self):
+        if self.mode=="none" and self.origins:raise ValueError("network mode none cannot declare origins")
+        return self
+
+
+class SkillMetadata(BaseModel):
+    model_config=ConfigDict(extra="forbid",frozen=True)
+    summary:str=Field(min_length=1,max_length=500)
+    supported_harnesses:tuple[Literal["codex","claude","deepseek"],...]=Field(min_length=1)
+    required_capabilities:tuple[str,...]
+    network:NetworkMetadata
+    requires_gpu:bool
+
+
+SkillMetadata.model_rebuild(_types_namespace=globals())
+
+
+def load_metadata(path:Path=METADATA)->dict[str,SkillMetadata]:
+    raw=json.loads(path.read_text())
+    if not isinstance(raw,dict) or set(raw)!={"schema_version","skills"} or raw["schema_version"]!=1:
+        raise ValueError("Invalid Skill metadata registry")
+    if not isinstance(raw["skills"],dict):raise ValueError("Skill metadata must be keyed by Skill ID")
+    return {identity:SkillMetadata.model_validate(value) for identity,value in raw["skills"].items()}
 
 
 def tree_digest(root: Path) -> tuple[str, int]:
@@ -33,9 +68,16 @@ def tree_digest(root: Path) -> tuple[str, int]:
     return digest.hexdigest(), count
 
 
-def expanded(source_file: Path = SOURCES, skill_root: Path = ROOT) -> dict:
+def expanded(source_file: Path = SOURCES, skill_root: Path = ROOT,
+             metadata_file:Path=METADATA) -> dict:
     source = json.loads(source_file.read_text())
     profiles = source["dependency_profiles"]
+    metadata=load_metadata(metadata_file)
+    declared_ids={declared["id"] for upstream in source["sources"] for declared in upstream["skills"]}
+    if set(metadata)!=declared_ids:
+        missing=declared_ids-set(metadata);extra=set(metadata)-declared_ids
+        raise ValueError("Skill metadata coverage mismatch; missing="+",".join(sorted(missing))+
+            "; extra="+",".join(sorted(extra)))
     rows = []
     seen = set()
     for upstream in source["sources"]:
@@ -57,11 +99,12 @@ def expanded(source_file: Path = SOURCES, skill_root: Path = ROOT) -> dict:
             content_sha256, file_count = tree_digest(directory)
             rows.append({
                 **declared,
+                "network_notes":declared.get("network",""),
                 "source": upstream["id"],
                 "source_url": upstream["url"],
                 "source_commit": upstream["commit"],
                 "license": declared.get("license", upstream["license"]),
-                "supported_harnesses": ["codex", "claude", "deepseek"],
+                **metadata[skill_id].model_dump(mode="json"),
                 "entry": "SKILL.md",
                 "dependencies": profiles[profile_name],
                 "content_sha256": content_sha256,

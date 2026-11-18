@@ -1,6 +1,8 @@
 from pathlib import Path
 
 from sandbox_harness.node_agent import NodeAgent,discover_gpus
+from sandbox_harness.controlled_service import ControlledGPUProvider
+from sandbox_harness.scheduler import GPUInventory
 
 
 def test_gpu_inventory_comes_from_nvidia_smi_identity_not_configured_count(monkeypatch):
@@ -14,6 +16,18 @@ def test_gpu_inventory_comes_from_nvidia_smi_identity_not_configured_count(monke
         value.utilization_percent,value.mode) for value in values]==[
         ('gpu-0','NVIDIA A100-SXM4-40GB',40960,32000,8,'exclusive'),
         ('gpu-1','NVIDIA A100-SXM4-40GB',40960,12000,72,'mig')]
+
+
+def test_controlled_inventory_advertises_only_exactly_probed_gpus(tmp_path,monkeypatch):
+    values=(GPUInventory(id='gpu-0',type='RTX 4090',memory_mb=49140),
+        GPUInventory(id='gpu-1',type='RTX 4090',memory_mb=49140))
+    monkeypatch.setattr('sandbox_harness.controlled_service.discover_gpus',lambda:values)
+    monkeypatch.setattr('sandbox_harness.controlled_service.probe_controlled_gpu',
+        lambda index,runtime,root:index=='1')
+    provider=ControlledGPUProvider(tmp_path/'runtime',tmp_path,refresh_seconds=300)
+    assert [value.id for value in provider()]==['gpu-1']
+    assert provider.healthy=={'gpu-1'} and provider.generation==1
+    provider.invalidate(('gpu-1',));assert provider()==() and provider.generation==2
 
 
 async def test_node_agent_registers_dynamic_inventory_under_data2(tmp_path,monkeypatch):

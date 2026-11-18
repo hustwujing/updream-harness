@@ -52,6 +52,7 @@ class JobGrantFactory:
             for value in request.expected_outputs)
         model_routes=((f'/v1/models/{harness.value}',) if request.kind.value=='harness' else ())
         routes=(*model_routes,'/v1/job-artifacts','/v1/telemetry',
+            *(('/v1/media',) if capability_ids else ()),
             *(('/v1/public-http',) if request.network_origins else ()))
         token_budget=max(1,int(request.budget_requirements.get('model_tokens',
             self.settings.model_token_budget)))

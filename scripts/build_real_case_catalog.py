@@ -64,6 +64,15 @@ PARALLEL_CASES=[
         {"partial_delivery_visible":False,"final_collection_complete":True},features=("artifact_collection","recovery")),
     protocol("P20","Provider与子Harness混合扇出","同时提交三张外部生成图和三个独立子 Harness 分析，完成后由 Primary 汇总。",
         {"provider_jobs":3,"harness_jobs":3,"parallel":True,"one_primary_continuation":True},features=("mixed_group","delegation")),
+    protocol("P22","紧凑类型化委派闭环",
+        "用紧凑任务规范并行委派两个相互独立的文本任务，不选择 Skill；全部完成后只续接一次 Primary。",
+        {"compiled_jobs":2,"metadata_required":False,"child_harnesses":2,"continuation_count":1},
+        features=("compact_delegation","delegation","continuation")),
+    protocol("P23","Primary自主并行决策",
+        "完成两个彼此独立、可分别验收的风险分析并最终汇总；由 Primary 自行选择执行方式。",
+        {"primary_delegated":True,"child_harnesses":2,"same_group":True,
+            "attempts_overlapped":True,"one_primary_continuation":True},
+        features=("primary_decision","delegation","overlap","continuation")),
 ]
 
 

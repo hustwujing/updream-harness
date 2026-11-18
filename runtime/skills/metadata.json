@@ -1,0 +1,461 @@
+{
+  "schema_version": 1,
+  "skills": {
+    "academy-guide": {
+      "summary": "Guide structured learning and academy-style explanations.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "algorithmic-art": {
+      "summary": "Create deterministic or interactive algorithmic artwork.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "anatomy": {
+      "summary": "Build and explain interactive visual interfaces and motion systems.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "brainstorming": {
+      "summary": "Clarify intent and design before creative implementation.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "brand-guidelines": {
+      "summary": "Apply or derive consistent brand presentation rules.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "canvas-design": {
+      "summary": "Create polished static visual designs and canvases.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "claude-api": {
+      "summary": "Build integrations against the Claude API with pinned references.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "codex-ppt": {
+      "summary": "Create visually unified presentation decks from source material.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [
+        "image.generate"
+      ],
+      "network": {
+        "mode": "required",
+        "origins": [
+          "image-provider"
+        ]
+      },
+      "requires_gpu": false
+    },
+    "data-quality-audit": {
+      "summary": "Audit datasets against explicit quality dimensions and business rules.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "diagram-design": {
+      "summary": "Design and render technical diagrams with explicit visual semantics.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "discernment-nudge": {
+      "summary": "Improve decisions by surfacing assumptions and bounded alternatives.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "doc-and-modernize": {
+      "summary": "Analyze and modernize code or project documentation.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "doc-coauthoring": {
+      "summary": "Collaboratively structure and draft long-form documents.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "docx": {
+      "summary": "Create, read, edit and validate Word documents.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "drawio-skill": {
+      "summary": "Create and edit structured draw.io diagrams.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "frontend-design": {
+      "summary": "Design and implement polished frontend user experiences.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "image-to-editable-ppt": {
+      "summary": "Reconstruct image-based slides into editable presentation elements.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [
+        "image.generate"
+      ],
+      "network": {
+        "mode": "optional",
+        "origins": [
+          "image-provider"
+        ]
+      },
+      "requires_gpu": false
+    },
+    "internal-comms": {
+      "summary": "Draft clear internal updates, announcements and operational communication.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "manim-video": {
+      "summary": "Create technical and mathematical animation videos with Manim.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "mcp-builder": {
+      "summary": "Design and implement MCP servers and tool contracts.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "pdf": {
+      "summary": "Create, read, transform and validate PDF documents.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "programmatic-eda": {
+      "summary": "Perform systematic exploratory data analysis with reproducible code.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "query-validation": {
+      "summary": "Review SQL for correctness, safety and performance risks.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "skill-creator": {
+      "summary": "Create or update a reusable Agent Skill with supporting resources.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "slack-gif-creator": {
+      "summary": "Create compact animated GIFs suitable for chat and Slack.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "systematic-debugging": {
+      "summary": "Diagnose unexpected behavior from evidence before proposing a fix.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "theme-factory": {
+      "summary": "Apply coherent visual themes to generated artifacts.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "verification-before-completion": {
+      "summary": "Require fresh execution evidence before completion claims.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "web-artifacts-builder": {
+      "summary": "Build self-contained interactive web artifacts.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "optional",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "webapp-testing": {
+      "summary": "Test local web applications with browser automation and evidence.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "writing-plans": {
+      "summary": "Write implementation plans from approved requirements and designs.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
+    "xlsx": {
+      "summary": "Create, read, transform and validate spreadsheet workbooks.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "requires_gpu": false
+    }
+  }
+}

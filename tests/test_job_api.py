@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from fastapi.testclient import TestClient
 import pytest
@@ -112,6 +113,61 @@ def test_sandbox_job_cli_fills_frozen_identity_lists_catalog_and_blocks_child_de
     monkeypatch.setenv('HARNESS_CHILD_MODE','1')
     assert job_cli.main(['prepare','--request',__import__('json').dumps(payload)])==2
     assert 'cannot delegate' in capsys.readouterr().out
+
+
+def test_sandbox_job_delegate_compiles_metadata_free_tasks_from_catalog(tmp_path,monkeypatch,capsys):
+    token=tmp_path/'token';token.write_text('x'*32);calls=[]
+    monkeypatch.setenv('HARNESS_GATEWAY_URL','http://gateway.test')
+    monkeypatch.setenv('HARNESS_CAPABILITY_TOKEN_FILE',str(token))
+    monkeypatch.setenv('HARNESS_THREAD_ID','a'*32);monkeypatch.setenv('HARNESS_TURN_ID','b'*32)
+    monkeypatch.setenv('HARNESS_KIND','codex');monkeypatch.setenv('HARNESS_MODEL','gpt-5.6')
+    catalog={'skills':[{'id':'plain-skill','version':'1','digest':'e'*64,
+        'supported_harnesses':['codex']}], 'child_execution_profiles':[{
+        'id':'child-general','supported_harnesses':['codex'],'allowed_skill_ids':['plain-skill'],
+        'job_template':{'kind':'harness','adapter':'child-harness',
+            'descriptor_id':'delegate.harness','descriptor_version':'1',
+            'descriptor_digest':'d'*64,'child_profile_id':'child-general'}}],
+        'input_artifacts':[{'artifact_id':'c'*32,'project_path':'assets/source.bin',
+            'sha256':'f'*64,'size':123,'mime':'application/octet-stream'}]}
+    class Result:
+        is_success=True
+        def __init__(self,value):self.text=json.dumps(value)
+    monkeypatch.setattr(job_cli.httpx,'get',lambda url,**kwargs:
+        calls.append(('get',url,kwargs)) or Result(catalog))
+    monkeypatch.setattr(job_cli.httpx,'post',lambda url,**kwargs:
+        calls.append(('post',url,kwargs)) or Result({'mode':'committed'}))
+    request={'tasks':[{'id':'analyze','objective':'Analyze the frozen input',
+        'inputs':['assets/source.bin'],'skill_ids':['plain-skill']}]}
+    assert job_cli.main(['delegate','--request',json.dumps(request)])==0
+    assert calls[0][1]=='http://gateway.test/v1/execution/catalog'
+    submitted=calls[1][2]['json'];job=submitted['jobs'][0]
+    assert submitted['thread_id']=='a'*32 and submitted['origin_turn_id']=='b'*32
+    assert submitted['idempotency_key'].startswith('delegate-')
+    assert job['local_job_id']=='analyze' and job['kind']=='harness'
+    assert job['parameters']=={'harness':'codex','model':'gpt-5.6',
+        'objective':'Analyze the frozen input'}
+    assert job['input_artifacts']==[{'artifact_id':'c'*32,'artifact_role':'input_1'}]
+    assert job['skill_ids']==['plain-skill']
+    assert job['expected_outputs'][0]['artifact_role']=='child_deliverables'
+    assert job['expected_outputs'][0]['output_disposition']=='candidate'
+    assert '"mode": "committed"' in capsys.readouterr().out
+
+
+def test_sandbox_job_delegate_rejects_unfrozen_input(tmp_path,monkeypatch):
+    token=tmp_path/'token';token.write_text('x'*32)
+    monkeypatch.setenv('HARNESS_GATEWAY_URL','http://gateway.test')
+    monkeypatch.setenv('HARNESS_CAPABILITY_TOKEN_FILE',str(token))
+    monkeypatch.setenv('HARNESS_THREAD_ID','a'*32);monkeypatch.setenv('HARNESS_TURN_ID','b'*32)
+    monkeypatch.setenv('HARNESS_KIND','codex');monkeypatch.setenv('HARNESS_MODEL','gpt-5.6')
+    class Result:
+        is_success=True;text=json.dumps({'skills':[],'input_artifacts':[],
+            'child_execution_profiles':[{'id':'child-general','supported_harnesses':['codex'],
+                'allowed_skill_ids':[],'job_template':{'kind':'harness','adapter':'child-harness',
+                'descriptor_id':'delegate.harness','descriptor_version':'1',
+                'descriptor_digest':'d'*64,'child_profile_id':'child-general'}}]})
+    monkeypatch.setattr(job_cli.httpx,'get',lambda *args,**kwargs:Result())
+    with pytest.raises(SystemExit):job_cli.main(['delegate','--request',json.dumps({'tasks':[
+        {'id':'bad','objective':'Read a foreign path','inputs':['work/private.bin']}]})])
 
 
 def test_gateway_exposes_catalog_and_explicit_review_without_user_confirmation_routes(tmp_path):

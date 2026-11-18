@@ -6,6 +6,7 @@ from pathlib import Path
 import tarfile
 
 from fastapi.testclient import TestClient
+import pytest
 
 import sandbox_runtime.app as runtime_app
 from sandbox_runtime.skills import destination_root, materialize_skills
@@ -19,7 +20,9 @@ def test_skill_bundle_manifest_is_frozen_complete_and_licensed():
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     expected=json.loads((ROOT/'runtime/skills/manifest.json').read_text())
     assert module.expanded()==expected
-    assert len(expected['skills'])==33
+    assert len(expected['skills'])==32
+    assert expected['retired_skills']==['pptx']
+    assert 'pptx' not in {row['id'] for row in expected['skills']}
     assert {row['id'] for row in expected['skills']}=={
         path.parent.name for path in (ROOT/'runtime/skills').glob('*/SKILL.md')}
     for row in expected['skills']:
@@ -29,6 +32,30 @@ def test_skill_bundle_manifest_is_frozen_complete_and_licensed():
         if row['license']=='per-skill LICENSE.txt':assert (directory/'LICENSE.txt').is_file()
         elif row['license']=='MIT':assert (directory/'LICENSE').is_file()
         else:assert row['id']=='doc-coauthoring' and row['license']=='not declared upstream'
+        assert row['summary'] and row['supported_harnesses']
+        assert 'routing' not in row
+        assert set(row['network'])=={'mode','origins'}
+        assert 'delegation' not in row
+
+
+def test_skill_metadata_registry_rejects_missing_and_extra_rows_or_fields(tmp_path):
+    spec=importlib.util.spec_from_file_location('runtime_skill_bundle_metadata',ROOT/'runtime/skill_bundle.py')
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    original=json.loads((ROOT/'runtime/skills/metadata.json').read_text())
+    missing=json.loads(json.dumps(original));missing['skills'].pop('xlsx')
+    path=tmp_path/'missing.json';path.write_text(json.dumps(missing))
+    with pytest.raises((KeyError,ValueError),match='xlsx|coverage'):
+        module.expanded(metadata_file=path)
+    unexpected=json.loads(json.dumps(original))
+    unexpected['skills']['xlsx']['delegation']={'supported':True}
+    path=tmp_path/'unexpected.json';path.write_text(json.dumps(unexpected))
+    with pytest.raises(ValueError,match='delegation|extra'):
+        module.expanded(metadata_file=path)
+    routed=json.loads(json.dumps(original))
+    routed['skills']['brainstorming']['routing']={'intents':['plan']}
+    path=tmp_path/'routing.json';path.write_text(json.dumps(routed))
+    with pytest.raises(ValueError,match='routing|extra'):
+        module.expanded(metadata_file=path)
 
 
 def test_skill_smoke_matrix_covers_every_bundled_skill():
@@ -39,6 +66,15 @@ def test_skill_smoke_matrix_covers_every_bundled_skill():
     matrix=ast.literal_eval(assignment.value)
     manifest=json.loads((ROOT/'runtime/skills/manifest.json').read_text())
     assert set(matrix)=={row['id'] for row in manifest['skills']}
+
+
+def test_presentation_skill_descriptions_are_mutually_exclusive():
+    default=(ROOT/'runtime/skills/codex-ppt/SKILL.md').read_text()
+    editable=(ROOT/'runtime/skills/image-to-editable-ppt/SKILL.md').read_text()
+    assert 'default presentation-creation workflow' in default
+    assert 'did not explicitly require object-level editable' in default
+    assert 'only when the user explicitly requests editable reconstruction' in editable
+    assert 'do not use for a generic PDF-to-PPT' in editable
 
 
 def test_skills_materialize_for_each_native_harness_and_upgrade_managed_entries(tmp_path, monkeypatch):
@@ -52,11 +88,11 @@ def test_skills_materialize_for_each_native_harness_and_upgrade_managed_entries(
         (root/'.image-bundle.json').write_text(json.dumps({'bundle_version':'old','skills':['anatomy','removed-skill']}))
         (root/'removed-skill').mkdir()
         result=materialize_skills(harness,workspace,all_ids)
-        assert result['bundle_version']=='2026.11.14.2' and result['skill_count']==33
+        assert result['bundle_version']=='2026.11.18.1' and result['skill_count']==32
         assert (root/'anatomy').is_symlink() and (root/'anatomy/SKILL.md').is_file()
         assert not (root/'removed-skill').exists()
         assert (root/'custom-skill').is_dir()
-        assert len(list(root.glob('*/SKILL.md')))==33
+        assert len(list(root.glob('*/SKILL.md')))==32
 
 
 def test_deferred_skill_install_replaces_checkpoint_copy_after_restore(tmp_path, monkeypatch):

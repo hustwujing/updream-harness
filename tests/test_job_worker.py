@@ -72,6 +72,40 @@ async def test_pre_accept_failure_preserves_stable_domain_error_code(tmp_path):
     finally:await store.close()
 
 
+async def test_nonretryable_infrastructure_failure_is_structured_and_terminal(tmp_path):
+    store,_,job=await setup(tmp_path,request(kind=JobKind.OPERATION,
+        retry_policy={'max_pre_accept_attempts':5,'deterministic':True}))
+    adapter=FakeAdapter([PreAcceptFailure('Controlled CUDA runtime is unavailable',
+        infrastructure=True,error_code='gpu_runtime_unavailable',
+        failed_phase='operation_runtime',retry_class='node_health_change',retryable=False)])
+    worker=JobWorker(store,{'fake':adapter},node_id='node',worker_id='worker')
+    try:
+        await worker.run_once();failed=await store.get_job(job.id)
+        assert failed.state==JobState.FAILED and adapter.submit_calls==1
+        assert failed.result=={'error_code':'gpu_runtime_unavailable',
+            'error_detail':'Controlled CUDA runtime is unavailable',
+            'failed_phase':'operation_runtime','retry_class':'node_health_change',
+            'retryable':False,'node_health_generation':0}
+    finally:await store.close()
+
+
+async def test_node_health_failure_retries_same_immutable_job_as_new_attempt(tmp_path):
+    store,_,job=await setup(tmp_path,request(kind=JobKind.OPERATION,
+        retry_policy={'max_pre_accept_attempts':2,'deterministic':True}))
+    adapter=FakeAdapter([PreAcceptFailure('GPU health changed',infrastructure=True,
+        error_code='gpu_runtime_unavailable',failed_phase='operation_runtime',
+        retry_class='node_health_change',retryable=True),
+        AdapterSubmission('native-1',{'accepted':True},completed=True,result={'ok':True})])
+    worker=JobWorker(store,{'fake':adapter},node_id='node',worker_id='worker')
+    try:
+        await worker.run_once();queued=await store.get_job(job.id)
+        assert queued.state==JobState.QUEUED and queued.generation==1
+        await worker.run_once();completed=await store.get_job(job.id)
+        assert completed.state==JobState.SUCCEEDED and completed.generation==2
+        assert completed.id==job.id and adapter.submit_calls==2
+    finally:await store.close()
+
+
 async def test_infrastructure_pre_accept_failure_does_not_consume_business_retry_limit(tmp_path):
     store,_,job=await setup(tmp_path,request(retry_policy={'max_pre_accept_attempts':1}))
     adapter=FakeAdapter([PreAcceptFailure('no capacity',infrastructure=True),

@@ -40,7 +40,6 @@ REQUIRED_FILES = {
     "mcp-builder": ["scripts/connections.py", "reference/python_mcp_server.md"],
     "manim-video": ["README.md", "references/scene-planning.md", "scripts/setup.sh", "LICENSE"],
     "pdf": ["forms.md", "scripts/convert_pdf_to_images.py"],
-    "pptx": ["scripts/thumbnail.py", "scripts/office/validate.py"],
     "programmatic-eda": ["LICENSE", "scripts/data_overview.py", "scripts/null_profiler.py"],
     "query-validation": ["LICENSE", "scripts/sql_lint.py", "references/sql_anti_patterns.md"],
     "skill-creator": ["scripts/quick_validate.py", "references/schemas.md"],
@@ -91,7 +90,7 @@ def main() -> None:
     for harness in ("codex", "claude", "deepseek"):
         installed = materialize_skills(harness, Path("/workspace"))
         root = Path(installed["root"])
-        assert len(list(root.glob("*/SKILL.md"))) == 33
+        assert len(list(root.glob("*/SKILL.md"))) == 32
         results["harnesses"][harness] = installed["skill_count"]
 
     run("node", "--check", str(ROOT / "algorithmic-art/templates/generator_template.js"))
@@ -177,11 +176,10 @@ Packer.toBuffer(d).then(b=>fs.writeFileSync(process.argv[2],b));\n""")
     run("python3",str(ROOT/"codex-ppt/scripts/assemble_ppt.py"),str(WORK/"deck"),"SmokeDeck.pptx")
     pptx=WORK/"deck"/"SmokeDeck"/"SmokeDeck.pptx"
     with ZipFile(pptx) as archive:assert "ppt/slides/slide1.xml" in archive.namelist()
-    run("python3",str(ROOT/"pptx/scripts/office/soffice.py"),"--headless","--convert-to","pdf","--outdir",str(WORK),str(pptx))
+    run("libreoffice","--headless","--convert-to","pdf","--outdir",str(WORK),str(pptx))
     assert (WORK/"SmokeDeck.pdf").is_file()
     results["artifacts"]["pptx"] = pptx.stat().st_size
-    evidence("codex-ppt", "assembled_pptx")
-    evidence("pptx", "validated_pptx", "libreoffice_pdf")
+    evidence("codex-ppt", "assembled_pptx", "libreoffice_pdf")
 
     workbook=Workbook();sheet=workbook.active;sheet["A1"]=2;sheet["A2"]=3;sheet["A3"]="=SUM(A1:A2)"
     xlsx=WORK/"formula.xlsx";workbook.save(xlsx)
@@ -273,7 +271,7 @@ Follow the requested sample workflow and return the resulting artifact.
             "doc-and-modernize", "doc-coauthoring", "frontend-design", "internal-comms"):
         evidence(skill_id, "instruction_resource_contract")
 
-    assert len(results["skills"]) == 33
+    assert len(results["skills"]) == 32
 
     print(json.dumps({"passed":True,**results},sort_keys=True))
 

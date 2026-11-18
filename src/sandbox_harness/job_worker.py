@@ -206,8 +206,10 @@ class JobWorker:
                             break
                         except PreAcceptFailure as exc:
                             maximum = int(request.retry_policy.get("max_pre_accept_attempts", 1))
-                            retry = exc.infrastructure or attempt.generation < max(1, maximum)
-                            if exc.infrastructure and continuous:
+                            retry = exc.retryable and (exc.retry_class=='capacity_wait'
+                                or attempt.generation < max(1, maximum))
+                            if (exc.infrastructure and exc.retryable and continuous
+                                    and exc.retry_class=='capacity_wait'):
                                 await self.store.mark_infrastructure_wait(job.id,self.worker_id,
                                     attempt.generation,error_detail=str(exc))
                                 if exc.retry_after_seconds:
@@ -220,7 +222,11 @@ class JobWorker:
                             await self.store.finish_pre_accept_attempt(job.id,self.worker_id,
                                 attempt.generation,retry=retry,error_code=(
                                     "infrastructure_capacity_wait" if exc.infrastructure
-                                    else exc.error_code),error_detail=str(exc)[:2000])
+                                        and exc.error_code=='pre_accept_failure' else exc.error_code),
+                                error_detail=str(exc)[:2000],error_metadata={
+                                    'failed_phase':exc.failed_phase,'retry_class':exc.retry_class,
+                                    'retryable':exc.retryable,
+                                    'node_health_generation':exc.node_health_generation})
                             return
                 except SubmissionOutcomeUnknown as exc:
                     await self.store.record_job_acceptance(job.id, self.worker_id, attempt.generation,

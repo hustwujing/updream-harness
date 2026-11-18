@@ -124,6 +124,17 @@ If preparing prompts manually instead of using `prepare_slide_prompts.py`, still
 
 ## Parallel Slide Generation With Subagents
 
+### Platform Durable Job Mapping
+
+The Primary Harness is the only delegator. Run `sandbox-job catalog`, then submit all currently independent
+slide tasks in one `sandbox-job delegate --request JSON` call. Use the frozen sample/source Artifacts listed by
+the catalog; local files created in the current Turn are not valid cross-Sandbox inputs. End the Turn after
+commit and wait for the Job Group continuation instead of polling.
+
+Each Child Harness receives one self-contained slide objective and is a leaf worker. In `HARNESS_CHILD_MODE=1`
+it must generate, verify and publish only that slide and must not create another Job Group. The Primary owns
+result recording, deck-wide QA and final assembly after continuation.
+
 After the user approves the sample slide and full-deck generation is authorized, slide subagents are mandatory whenever the current runtime can spawn them. Use one subagent per remaining slide image job. Do not generate the remaining deck sequentially merely for convenience. If subagents cannot be spawned, stop at the dispatch step and report a blocker instead of producing a lower-quality sequential deck.
 
 Use the slide state scripts as the dispatch contract: the main agent spawns workers, then records dispatch and result state. A slide is not considered dispatched or complete until the relevant script records it.

@@ -121,7 +121,8 @@ async def artifact_boundary(client,args,identity,*,requires_review:bool,verdict:
 
 
 def load_platform_settings():
-    for key,value in dotenv_values(ROOT/'.data/config/platform.env').items():
+    path=Path(os.environ.get('SANDBOX_HARNESS_ENV_FILE',ROOT/'.data/config/platform.env'))
+    for key,value in dotenv_values(path).items():
         if value is not None:os.environ[key]=value
     from sandbox_harness.config import load_settings
     return load_settings()
@@ -575,18 +576,91 @@ async def case_p21(client,args):
         'primary_resume_state':final['state']}
 
 
+async def case_p22(client,args):
+    from sandbox_runtime.job_cli import compile_delegation
+
+    thread,turn=await origin(client,args,'P22')
+    catalog=require(await client.get('api/catalog/execution')).json()
+    compiled=compile_delegation({'tasks':[
+        {'id':'fact-a','objective':'Return only the exact marker independent-a.','result_mode':'text'},
+        {'id':'fact-b','objective':'Return only the exact marker independent-b.','result_mode':'text'},
+    ]},catalog,{'HARNESS_THREAD_ID':thread['id'],'HARNESS_TURN_ID':turn['id'],
+        'HARNESS_KIND':args.harness,'HARNESS_MODEL':args.model})
+    response=require(await client.post('api/job-group-drafts',json=compiled));prepared=response.json()
+    if prepared.get('mode')!='committed':
+        raise AssertionError('non-billable compact delegation unexpectedly required confirmation')
+    jobs=await wait_jobs(client,prepared['jobs'],args.timeout);await asyncio.sleep(3)
+    turns=require(await client.get(f"api/threads/{thread['id']}/turns")).json()
+    continuations=[item for item in turns if item.get('internal')]
+    if len(jobs)!=2 or not continuations:
+        raise AssertionError('compact delegation did not close through one durable continuation')
+    return {'classification':'success','group_id':prepared['group']['id'],
+        'compiled_jobs':len(jobs),'metadata_required':False,'child_harnesses':2,
+        'continuation_count':len(continuations)}
+
+
+async def case_p23(client,args):
+    from sqlalchemy import select
+    from sandbox_harness.store import Store,JobGroupRow,JobRow,JobAttemptRow
+
+    identity='P23-'+uuid.uuid4().hex[:8]
+    response=require(await client.post('api/threads',json={'harness':args.harness,'model':args.model,
+        'reasoning_level':args.reasoning,'title':'Primary autonomous parallel decision'}))
+    thread=response.json()
+    prompt=('两个事儿，请分别完成后再汇总：第一，给出一份包含依据的 API 向后兼容风险分析；'
+        '第二，给出一份包含依据的 GPU 任务故障恢复风险分析。两项彼此独立，分别给出五条可验收结论。')
+    turn=require(await client.post(f"api/threads/{thread['id']}/turns",json={'message':prompt,
+        'attachments':[],'idempotency_key':'protocol-'+identity,'delivery_mode':'start'})).json()
+    await wait_turn(client,turn['id'],args.timeout)
+    settings=load_platform_settings();store=Store(
+        settings.database_url,settings.redis_url,settings.redis_prefix)
+    try:
+        deadline=time.monotonic()+args.timeout;groups=[];jobs=[]
+        while time.monotonic()<deadline:
+            async with store.connections() as db:
+                groups=list((await db.execute(select(JobGroupRow).where(
+                    JobGroupRow.thread_id==thread['id']).order_by(JobGroupRow.created_at))).scalars().all())
+                if groups:
+                    jobs=list((await db.execute(select(JobRow).where(
+                        JobRow.group_id.in_([group.id for group in groups]),
+                        JobRow.kind=='harness').order_by(JobRow.created_at))).scalars().all())
+            if len(jobs)>=2 and all(job.state in TERMINAL_JOBS for job in jobs):break
+            await asyncio.sleep(1)
+        if len(jobs)<2:raise AssertionError('Primary did not delegate two independent Child Harness Jobs')
+        grouped={job.group_id for job in jobs}
+        if len(grouped)!=1:raise AssertionError('independent Child Harness Jobs were not one JobGroup')
+        async with store.connections() as db:
+            attempts=list((await db.execute(select(JobAttemptRow).where(
+                JobAttemptRow.job_id.in_([job.id for job in jobs])))).scalars().all())
+        intervals=[(attempt.started_at,attempt.finished_at) for attempt in attempts
+            if attempt.started_at and attempt.finished_at and attempt.outcome=='SUCCEEDED']
+        overlap=any(left_start<right_end and right_start<left_end
+            for index,(left_start,left_end) in enumerate(intervals)
+            for right_start,right_end in intervals[index+1:])
+        if not overlap:raise AssertionError('Child Harness Attempts did not overlap')
+        turns=require(await client.get(f"api/threads/{thread['id']}/turns")).json()
+        continuations=[value for value in turns if value.get('internal')]
+        if len(continuations)!=1:raise AssertionError('parallel group did not produce one continuation')
+        return {'classification':'success','thread_id':thread['id'],'primary_delegated':True,
+            'child_harnesses':len(jobs),'same_group':True,'attempts_overlapped':True,
+            'one_primary_continuation':True,'group_id':next(iter(grouped))}
+    finally:await store.close()
+
+
 HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case_p05,
     'P06':case_p06,'P07':case_p07,'P08':case_p08,'P09':case_p09,'P10':case_p10,
     'P11':case_p11,'P12':case_p12,'P13':case_p13,'P14':case_p14,'P15':case_p15,
     'P16':case_p16,'P17':case_p17,'P18':case_p18,'P19':case_p19,'P20':case_p20,
-    'P21':case_p21}
+    'P21':case_p21,'P22':case_p22,'P23':case_p23}
 
 
 async def main():
     parser=argparse.ArgumentParser();parser.add_argument('--base-url',default='http://127.0.0.1:24766/')
-    parser.add_argument('--case',required=True,choices=[f'P{value:02d}' for value in range(1,22)])
+    parser.add_argument('--case',required=True,choices=[f'P{value:02d}' for value in range(1,24)])
     parser.add_argument('--report',type=Path,required=True);parser.add_argument('--harness',default='codex')
     parser.add_argument('--model',default='gpt-5.6-sol');parser.add_argument('--reasoning',default='deep')
+    parser.add_argument('--timeout',type=float,default=1200)
+    parser.add_argument('--intervention-delay',type=float,default=0)
     args=parser.parse_args();value={}
     try:
         handler=HANDLERS.get(args.case)

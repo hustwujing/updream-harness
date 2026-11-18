@@ -21,9 +21,10 @@ Runner=Callable[[str,Path,Path,dict,tuple[str,...],Path],Awaitable[dict[str,Any]
 class ControlledMediaOperationAdapter(BaseJobAdapter):
     ADAPTERS=frozenset({'image.segment','audio.transcribe'})
 
-    def __init__(self,*,scheduler,store,objects,settings,runner:Runner|None=None):
+    def __init__(self,*,scheduler,store,objects,settings,runner:Runner|None=None,gpu_health=None):
         self.scheduler=scheduler;self.store=store;self.objects=objects;self.settings=settings
         self.runner=runner or self._default_runner
+        self.gpu_health=gpu_health
         self.root=(settings.data_root/'controlled-operations').resolve();self.root.mkdir(parents=True,exist_ok=True)
         self.artifacts=ArtifactGateway(store,objects,settings.data_root/'tmp'/'controlled-job-artifacts',
             maximum_bytes=settings.max_artifact_bytes)
@@ -108,6 +109,15 @@ class ControlledMediaOperationAdapter(BaseJobAdapter):
                         if str(exc)=='no_selection':
                             raise PreAcceptFailure('No target matched the frozen selector',
                                 error_code='no_target_found') from exc
+                        from .controlled_media_runner import ControlledOperationError
+                        if isinstance(exc,ControlledOperationError):
+                            if exc.retry_class=='node_health_change' and self.gpu_health:
+                                self.gpu_health.invalidate(reservation.gpu_ids)
+                            raise PreAcceptFailure(str(exc),infrastructure=True,
+                                error_code=exc.error_code,failed_phase=exc.failed_phase,
+                                retry_class=exc.retry_class,retryable=exc.retryable,
+                                node_health_generation=int(getattr(self.gpu_health,'generation',0)),
+                                retry_after_seconds=max(1,self.settings.job_node_heartbeat_seconds*2)) from exc
                         raise
                     result=self._validated_result(work,value)
                     temporary=work/'.result.json.tmp';temporary.write_text(json.dumps(result,sort_keys=True))
