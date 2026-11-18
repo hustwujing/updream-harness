@@ -113,6 +113,16 @@ def test_example_job_catalog_is_parseable_and_digest_verified():
     assert transcribe.resources['gpu']==0 and 'faster-whisper' in transcribe.guidance
 
 
+def test_runtime_instructions_route_controlled_operations_through_job_catalog():
+    from sandbox_runtime.instructions import RUNTIME_INSTRUCTIONS
+
+    assert 'image.segment' in RUNTIME_INSTRUCTIONS
+    assert 'audio.transcribe' in RUNTIME_INSTRUCTIONS
+    assert 'sandbox-job catalog' in RUNTIME_INSTRUCTIONS
+    assert 'sandbox-media catalog' in RUNTIME_INSTRUCTIONS
+    assert 'ordinary Sandbox cannot see the host device' in RUNTIME_INSTRUCTIONS
+
+
 def test_public_child_profiles_expose_frozen_harness_job_template():
     raw=(ROOT/'deploy/job-catalog.example.json').read_text()
     value=JobCatalog.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest())
