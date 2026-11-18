@@ -25,6 +25,15 @@ def decorate(identity:str,boundary:str,value:dict)->dict:
         'source_project':'sandbox-harness-platform-plus','parallel_boundary':boundary}
 
 
+def business_artifact_prompt(case:dict)->str:
+    return (case['prompt']+'\n\n'
+        '【当前阶段边界】当前系统使用持续 Primary Harness 和 Durable Job，而不是旧 '
+        'Manager/WorkUnit 名称。上文中的人工确认、用户介入、暂停恢复、服务重启、故障注入、'
+        '旧组件拆分和协议时序，已在同一用例的独立协议阶段完成验证；本阶段不要再次触发、等待或'
+        '模拟这些流程。请直接完成上文要求的最终业务产物，严格保留最终文件的格式、尺寸、时长、'
+        '数量及内容规格。')
+
+
 def adapt(identity:str,boundary:str,handler):
     async def run(client,args):
         protocol=await handler(client,args)
@@ -32,10 +41,7 @@ def adapt(identity:str,boundary:str,handler):
         case=SOURCE_CASES[identity]
         if case.get('expect',{}).get('kind')=='protocol':
             return decorate(identity,boundary,protocol)
-        business={**case,'dynamic_hook':None,'prompt':(
-            '当前系统使用持续 Primary Harness 和 Durable Job，而不是旧 Manager/WorkUnit 名称。'
-            '请保留下面业务目标和文件规格；协议故障边界已由独立测试验证，本阶段已授权执行，'
-            '不要请求额外人工确认。\n\n'+case['prompt'])}
+        business={**case,'dynamic_hook':None,'prompt':business_artifact_prompt(case)}
         running={identity:{'state':'STARTING','expected':case.get('expect',{})}}
         artifact=await campaign.primary_case(client,business,args,running)
         if artifact.get('classification')!='success':

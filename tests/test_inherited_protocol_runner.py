@@ -35,6 +35,14 @@ def test_inherited_non_protocol_cases_require_real_business_artifact_execution()
     assert "if case.get('expect',{}).get('kind')=='protocol'" in source
 
 
+def test_business_artifact_phase_does_not_repeat_protocol_interventions():
+    runner=load_runner();case=runner.SOURCE_CASES['D11']
+    prompt=runner.business_artifact_prompt(case)
+    assert prompt.startswith(case['prompt'])
+    assert '本阶段不要再次触发、等待或模拟这些流程' in prompt
+    assert prompt.endswith('数量及内容规格。')
+
+
 def test_campaign_routes_inherited_protocol_with_selected_model():
     source=(ROOT/'tests/run_real_campaign.py').read_text()
     assert 'run_real_inherited_protocol.py' in source
