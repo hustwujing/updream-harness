@@ -2580,7 +2580,7 @@ class Store:
                                     db.add(JobCleanupRow(id=identifier(),job_id=job.id,
                                         adapter=job.adapter,generation=job.generation,
                                         external_execution_id="",acceptance_receipt_json=receipt,
-                                        state="pending",phase="external_quiescence",attempt_count=0,last_error="",claim_owner="",
+                                        state="pending",phase="capacity_release",attempt_count=0,last_error="",claim_owner="",
                                         claim_expires_at=None,created_at=now(),updated_at=now()))
                         await db.execute(delete(JobLeaseRow).where(JobLeaseRow.job_id == job.id))
                     if group.state == JobGroupState.COMMITTED.value:

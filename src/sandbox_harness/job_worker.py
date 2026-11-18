@@ -371,9 +371,10 @@ class JobWorker:
                     previous_external_execution_id=row["external_execution_id"],
                     previous_acceptance_receipt=row["acceptance_receipt"])
                 if row["phase"]=="external_quiescence":
-                    cleanup_external=getattr(adapter,"cleanup_external",None)
-                    if cleanup_external:await cleanup_external(context,row["external_execution_id"])
-                    else:await adapter.cleanup(context,row["external_execution_id"])
+                    if row["external_execution_id"]:
+                        cleanup_external=getattr(adapter,"cleanup_external",None)
+                        if cleanup_external:await cleanup_external(context,row["external_execution_id"])
+                        else:await adapter.cleanup(context,row["external_execution_id"])
                     await self.store.advance_job_cleanup(row["cleanup_id"],self.worker_id,
                         expected_phase="external_quiescence",next_phase="capacity_release")
                     row["phase"]="capacity_release"

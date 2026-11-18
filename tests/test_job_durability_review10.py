@@ -323,6 +323,46 @@ class PhasedCleanupAdapter(BaseJobAdapter):
         if not self.released:self.released=True;self.release_effects+=1
 
 
+class PreAcceptCleanupAdapter(BaseJobAdapter):
+    def __init__(self):self.external_calls=0;self.release_calls=0
+    async def cleanup_external(self,context,external):
+        self.external_calls+=1
+        raise RuntimeError('external cleanup must not run before acceptance')
+    async def release_capacity(self,context):self.release_calls+=1
+
+
+async def test_preaccept_cleanup_skips_external_quiescence_and_recovers_legacy_rows(tmp_path):
+    store,_,job=await setup(tmp_path,request('preaccept-cleanup'))
+    attempt=await store.claim_job(job.id,'worker','node',30)
+    scheduler=Scheduler(store,reservation_seconds=30)
+    await scheduler.register_node(NodeInventory(node_id='node',generation=1,cpu_total=8,
+        memory_mb_total=16000,disk_mb_total=100000,profiles=(NodeProfile(
+            runtime_profile_id='general',harness='claude',image_digest='d'*64),)))
+    reservation=await scheduler.reserve(job.id,attempt.generation,ResourceRequest(
+        child_profile_id='child',runtime_profile_id='general',harness='claude',
+        image_digest='d'*64))
+    await scheduler.release(reservation.id,reservation.node_id,reservation.node_generation)
+    await store.transition_job(job.id,JobState.FAILED,expected_generation=attempt.generation,
+        result={'error_code':'preaccept_failed'})
+    adapter=PreAcceptCleanupAdapter();worker=JobWorker(store,{'provider':adapter},
+        node_id='node',worker_id='cleanup')
+    try:
+        cleanup=await store.get_job_cleanup(job.id)
+        assert cleanup['phase']=='capacity_release'
+
+        # Old releases wrote this phase even though no external execution existed.
+        async with store.connections.begin() as db:
+            from sandbox_harness.store import JobCleanupRow
+            row=(await db.execute(__import__('sqlalchemy').select(JobCleanupRow).where(
+                JobCleanupRow.job_id==job.id).with_for_update())).scalar_one()
+            row.phase='external_quiescence'
+        await worker.run_cleanup_once(limit=1)
+        cleanup=await store.get_job_cleanup(job.id)
+        assert cleanup['state']=='completed' and cleanup['phase']=='completed'
+        assert adapter.external_calls==0 and adapter.release_calls==1
+    finally:await store.close()
+
+
 async def cleanup_fixture(tmp_path,name):
     store,_,job=await setup(tmp_path,request(name));attempt=await store.claim_job(job.id,"business","node",30)
     await store.record_job_acceptance(job.id,"business",attempt.generation,
