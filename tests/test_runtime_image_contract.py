@@ -161,6 +161,8 @@ def test_parallel_harness_layer_is_thin(harness,marker):
 
 def test_selective_build_keeps_state_under_data2_and_reuses_original_vendor():
     source=(ROOT/"runtime/build-images.sh").read_text()
+    assert 'python=${SANDBOX_HARNESS_BUILD_PYTHON:-$root/.venv/bin/python}' in source
+    assert '"$python" "$root/runtime/skill_bundle.py" verify' in source
     assert 'output_root="$root/.data/image-build/$tag"' in source
     assert "/data2/wujing03/sandbox-harness-platform/runtime/vendor" in source
     assert 'ln "$drawio_vendor/drawio-amd64-32.6.10.deb"' in source

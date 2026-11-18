@@ -4,10 +4,12 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 [[ "$root" == /data2/wujing03/sandbox-harness-platform-parallel ]]
 docker=/data2/wujing03/opensandbox-stack/tools/docker-29.9.3/docker
+python=${SANDBOX_HARNESS_BUILD_PYTHON:-$root/.venv/bin/python}
+test -x "$python"
 export DOCKER_HOST=unix:///run/docker.sock
 git -C "$root" diff --quiet
 git -C "$root" diff --cached --quiet
-python3 "$root/runtime/skill_bundle.py" verify
+"$python" "$root/runtime/skill_bundle.py" verify
 
 registry=${SANDBOX_HARNESS_IMAGE_REGISTRY:-127.0.0.1:25001/sandbox-harness-parallel}
 tag=$(git -C "$root" rev-parse --short=12 HEAD)
@@ -107,7 +109,7 @@ for profile in $profiles; do
   done
 done
 if [[ " $profiles " == " $all_profiles " && " $harnesses " == " $all_harnesses " ]]; then
-  python3 "$root/runtime/build_profile_catalog.py" --matrix "$output_root/images.tsv" \
+  "$python" "$root/runtime/build_profile_catalog.py" --matrix "$output_root/images.tsv" \
     --template "$root/deploy/profile-catalog.example.json" \
     --output "$output_root/profile-catalog.json" \
     --signing-key "$root/.data/config/runtime-bundle-signing.pem"
