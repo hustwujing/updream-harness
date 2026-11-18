@@ -179,3 +179,7 @@ def test_units_are_hardened_and_recover_without_graceful_shutdown():
     assert ".data/provider-runtime" in controlled and ".data/controlled-operations" in controlled
     assert "ReadWritePaths=/data2/wujing03/sandbox-harness-platform-parallel/.data" in controlled
     assert "LockPersonality=true" not in controlled
+    assert "DevicePolicy=closed" in controlled
+    assert "DeviceAllow=char-nvidia rw" in controlled
+    assert "DeviceAllow=char-nvidia-uvm rw" in controlled
+    assert "/dev/nvidia0" not in controlled
