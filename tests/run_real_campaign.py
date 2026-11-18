@@ -84,6 +84,26 @@ async def list_all_items(client,thread_id):
         if len(rows)<500:return values
 
 
+async def wait_for_first_artifact(client,thread_id,turn_id,deadline,stable_polls=3):
+    stable_terminal_polls=0
+    while time.monotonic()<deadline:
+        if any(row.get('type')=='artifact' for row in await list_all_items(client,thread_id)):
+            return True
+        current=await client.get(f"api/turns/{turn_id}");current.raise_for_status()
+        if current.json()["state"] not in TERMINAL:
+            stable_terminal_polls=0
+        else:
+            response=await client.get(f"api/threads/{thread_id}/execution-graph",
+                params={"include_history":"true"});response.raise_for_status()
+            active=any(row.get('type') in {'job','job_group'} and row.get('state') in {
+                'CREATED','QUEUED','COMMITTED','RUNNING','WAITING_EXTERNAL','CANCELLING'}
+                for row in response.json().get('nodes',[]))
+            stable_terminal_polls=0 if active else stable_terminal_polls+1
+            if stable_terminal_polls>=stable_polls:return False
+        await asyncio.sleep(1)
+    raise TimeoutError('intervention_artifact_timeout')
+
+
 def classify(final,artifacts,media_jobs=None):
     state=final.get("state","");code=final.get("error_code","") or ""
     if state=="COMPLETED" and artifacts:return "success",""
@@ -344,12 +364,7 @@ async def primary_case(client,case,args,running):
         if not intervention:return
         if intervention in AFTER_ARTIFACT_INTERVENTIONS:
             deadline=time.monotonic()+args.timeout
-            while time.monotonic()<deadline:
-                if any(row.get('type')=='artifact' for row in await list_all_items(client,thread['id'])):break
-                current=await client.get(f"api/turns/{turn['id']}");current.raise_for_status()
-                if current.json()["state"] in TERMINAL:return
-                await asyncio.sleep(1)
-            else:raise TimeoutError('intervention_artifact_timeout')
+            if not await wait_for_first_artifact(client,thread['id'],turn['id'],deadline):return
         else:await asyncio.sleep(args.intervention_delay)
         message=INTERVENTIONS.get(intervention)
         if not message:return

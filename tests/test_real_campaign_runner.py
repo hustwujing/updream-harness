@@ -2,6 +2,7 @@ import ast
 import importlib.util
 import io
 from pathlib import Path
+import time
 
 import pytest
 from PIL import Image
@@ -47,7 +48,8 @@ def test_intervention_cases_use_messages_not_product_keyword_rules():
     assert '"attachments":attachments' in source
     assert 'AFTER_ARTIFACT_INTERVENTIONS' in source and "intervention_artifact_timeout" in source
     assert '"intervention_feedback"' in source
-    assert 'current.json()["state"] in TERMINAL' in source
+    assert 'current.json()["state"] not in TERMINAL' in source
+    assert 'stable_terminal_polls>=stable_polls' in source
 
 
 def test_parallel_protocol_runner_never_fakes_unimplemented_success():
@@ -196,6 +198,18 @@ class PaginatedItemClient:
         return Response(rows)
 
 
+class DelayedArtifactClient:
+    def __init__(self):self.item_polls=0
+    async def get(self,path,params=None):
+        if path.endswith('/items'):
+            self.item_polls+=1
+            return Response([] if self.item_polls<2 else [
+                {'sequence':1,'type':'artifact','summary':'result.png'}])
+        if path=='api/turns/turn-1':return Response({'id':'turn-1','state':'COMPLETED'})
+        if path.endswith('/execution-graph'):return Response({'nodes':[]})
+        raise AssertionError(path)
+
+
 @pytest.mark.asyncio
 async def test_media_campaign_confirms_waits_for_job_and_continuation(monkeypatch):
     campaign=campaign_module();client=MediaClient()
@@ -224,6 +238,16 @@ async def test_campaign_waits_for_job_group_continuation_and_quiescence(monkeypa
 async def test_item_reader_paginates_to_tail_artifacts():
     campaign=campaign_module();items=await campaign.list_all_items(PaginatedItemClient(),'thread-1')
     assert len(items)==501 and items[-1]=={'sequence':501,'type':'artifact'}
+
+
+@pytest.mark.asyncio
+async def test_after_delivery_intervention_waits_through_terminal_artifact_visibility_race(monkeypatch):
+    campaign=campaign_module();client=DelayedArtifactClient()
+    async def no_sleep(_):pass
+    monkeypatch.setattr(campaign.asyncio,'sleep',no_sleep)
+    value=await campaign.wait_for_first_artifact(client,'thread-1','turn-1',
+        time.monotonic()+10)
+    assert value is True and client.item_polls==2
 
 
 def test_media_provider_failure_is_not_prompt_failure():
