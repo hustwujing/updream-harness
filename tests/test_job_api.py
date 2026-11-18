@@ -170,6 +170,16 @@ def test_sandbox_job_delegate_rejects_unfrozen_input(tmp_path,monkeypatch):
         {'id':'bad','objective':'Read a foreign path','inputs':['work/private.bin']}]})])
 
 
+def test_sandbox_job_delegate_exposes_compact_example_and_schema_without_capability(capsys):
+    assert job_cli.main(['delegate','--example'])==0
+    example=json.loads(capsys.readouterr().out)
+    assert set(example)=={'tasks'} and len(example['tasks'])==2
+    assert set(example['tasks'][0])=={'id','objective','inputs','skill_ids','result_mode'}
+    assert job_cli.main(['delegate','--schema'])==0
+    schema=json.loads(capsys.readouterr().out)
+    assert schema['required']==['tasks'] and 'tasks' in schema['properties']
+
+
 def test_gateway_exposes_catalog_and_explicit_review_without_user_confirmation_routes(tmp_path):
     from sandbox_harness.gateway import create_gateway
     gateway_settings=settings(tmp_path/'gateway').model_copy(update={'redis_url':'redis://127.0.0.1:6379/15'})

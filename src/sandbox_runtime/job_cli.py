@@ -49,6 +49,14 @@ class DelegationGroupSpec(BaseModel):
     suppress_continuation:bool=False
 
 
+DELEGATION_EXAMPLE={"tasks":[
+    {"id":"task-a","objective":"Complete one independent result","inputs":[],
+        "skill_ids":[],"result_mode":"text"},
+    {"id":"task-b","objective":"Complete the other independent result","inputs":[],
+        "skill_ids":[],"result_mode":"text"},
+]}
+
+
 def _digest(value) -> str:
     return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(",",":"),
         ensure_ascii=True).encode()).hexdigest()
@@ -110,8 +118,12 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("catalog", help="Show registered Operations, Capabilities, Skills and Child Profiles")
     prepare = sub.add_parser("prepare", help="Validate and submit one complete parallel JobGroup")
     prepare.add_argument("--request", required=True, help="JSON object or path to a JSON file")
-    delegate = sub.add_parser("delegate", help="Compile compact independent Child Harness tasks")
-    delegate.add_argument("--request", required=True, help="JSON object or path to a JSON file")
+    delegate = sub.add_parser("delegate", help="Compile compact independent Child Harness tasks",
+        epilog='Request shape: {"tasks":[{"id":"task-a","objective":"...","inputs":[],"skill_ids":[],"result_mode":"text"}]}')
+    choice=delegate.add_mutually_exclusive_group(required=True)
+    choice.add_argument("--request", help="Compact tasks JSON object or path to a JSON file")
+    choice.add_argument("--example",action="store_true",help="Print one valid compact request")
+    choice.add_argument("--schema",action="store_true",help="Print the compact request JSON Schema")
     edit = sub.add_parser("edit", help="Replace the editable members of one JobGroupDraft")
     edit.add_argument("--draft-id", required=True)
     edit.add_argument("--expected-digest", required=True)
@@ -124,6 +136,10 @@ def main(argv: list[str] | None = None) -> int:
     cancel_job = sub.add_parser("cancel-job"); cancel_job.add_argument("--job-id", required=True)
     cancel_group = sub.add_parser("cancel-group"); cancel_group.add_argument("--group-id", required=True)
     args = parser.parse_args(argv)
+    if args.command=="delegate" and args.example:
+        print(json.dumps(DELEGATION_EXAMPLE,ensure_ascii=False,indent=2));return 0
+    if args.command=="delegate" and args.schema:
+        print(json.dumps(DelegationGroupSpec.model_json_schema(),ensure_ascii=False));return 0
     base = os.environ.get("HARNESS_GATEWAY_URL", "").rstrip("/")
     token_file = Path(os.environ.get("HARNESS_CAPABILITY_TOKEN_FILE", "/run/harness/capability-token"))
     if not base or not token_file.is_file():

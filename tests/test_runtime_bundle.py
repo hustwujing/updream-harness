@@ -61,6 +61,7 @@ def test_runtime_bundle_build_is_deterministic_and_activation_is_atomic(tmp_path
     assert "sandbox-job delegate --request JSON" in RUNTIME_INSTRUCTIONS
     assert "you must run `sandbox-job catalog`" in RUNTIME_INSTRUCTIONS
     assert "before any long research or implementation tool phase" in RUNTIME_INSTRUCTIONS
+    assert "sandbox-job delegate --example" in RUNTIME_INSTRUCTIONS
     assert "may be delegated with an empty `inputs` list" in RUNTIME_INSTRUCTIONS
     assert "Do not poll in a model loop" in RUNTIME_INSTRUCTIONS
     assert "`gpu_runtime_unavailable`" in RUNTIME_INSTRUCTIONS
