@@ -50,6 +50,13 @@ def test_continuation_protocols_wait_for_state_instead_of_fixed_sleep():
     assert "await wait_jobs(client,committed['jobs'],1200);await asyncio.sleep(3)" not in source
 
 
+def test_primary_decision_protocol_stops_after_terminal_model_failure():
+    source=(ROOT/'tests/run_real_parallel_protocol.py').read_text()
+    block=source[source.index('async def case_p23'):source.index('async def case_p24')]
+    assert "if final['state']!='COMPLETED'" in block
+    assert "'non_program_failure'" in block and "code.startswith" in block
+
+
 def test_business_artifact_phase_does_not_repeat_protocol_interventions():
     runner=load_runner();case=runner.SOURCE_CASES['D11']
     prompt=runner.business_artifact_prompt(case)

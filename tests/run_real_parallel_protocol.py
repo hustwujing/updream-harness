@@ -646,7 +646,12 @@ async def case_p23(client,args):
         '第二，给出一份包含依据的 GPU 任务故障恢复风险分析。两项彼此独立，分别给出五条可验收结论。')
     turn=require(await client.post(f"api/threads/{thread['id']}/turns",json={'message':prompt,
         'attachments':[],'idempotency_key':'protocol-'+identity,'delivery_mode':'start'})).json()
-    await wait_turn(client,turn['id'],args.timeout)
+    final=await wait_turn(client,turn['id'],args.timeout)
+    if final['state']!='COMPLETED':
+        code=str(final.get('error_code') or final['state'].lower())
+        return {'classification':('non_program_failure' if code.startswith(
+            ('model_','provider_','upstream_')) else 'program_failure'),
+            'reason':code,'turn_id':turn['id'],'state':final['state']}
     settings=load_platform_settings();store=Store(
         settings.database_url,settings.redis_url,settings.redis_prefix)
     try:
