@@ -110,6 +110,7 @@ class Settings(BaseSettings):
     controlled_worker_concurrency: int = Field(default=2,ge=1,le=16)
     controlled_node_cpu_limit: int = Field(default=8,ge=1,le=128)
     controlled_node_memory_mb_limit: int = Field(default=65536,ge=4096)
+    image_decompose_base_url: str = "http://127.0.0.1:8912"
     upstream_codex: str = ""
     upstream_claude: str = ""
     upstream_deepseek: str = ""

@@ -155,6 +155,7 @@ def main() -> None:
         module,manifest=controlled_runtime_value(source);controlled=(module,source,manifest)
         values['SANDBOX_HARNESS_CONTROLLED_RUNTIME_ROOT']=str(EXPECTED_DATA_ROOT/'provider-runtime')
         values['SANDBOX_HARNESS_CONTROLLED_RUNTIME_DIGEST']=manifest['digest']
+        values['SANDBOX_HARNESS_IMAGE_DECOMPOSE_BASE_URL']='http://127.0.0.1:8912'
     elif not args.check_only:
         raise ValueError('controlled_runtime_source_required')
     ensure_isolated(values)

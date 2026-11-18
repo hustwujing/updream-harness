@@ -82,7 +82,7 @@ def test_example_job_catalog_is_parseable_and_digest_verified():
     value=JobCatalog.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest())
     assert {row.id for row in value.payload.operations}=={
         'artifact.inspect','media.render','audio.process','media.concat_sequence',
-        'image.segment','audio.transcribe'}
+        'image.segment','audio.transcribe','image.decompose'}
     assert {row.id for row in value.payload.capabilities}=={'image.generate'}
     audio=value.operation('audio.process','1','d'*64)
     recipe=audio.parameter_schema['properties']['recipe']
@@ -106,13 +106,18 @@ def test_example_job_catalog_is_parseable_and_digest_verified():
         'foreground','mask','segmentation_report'}
     assert segment.resources['gpu']==1 and segment.resources['gpu_memory_mb']==16384
     assert segment.creates_artifacts
-    assert segment.retry_policy['max_pre_accept_attempts']==1
+    assert segment.retry_policy['max_pre_accept_attempts']==2
     assert all(value in segment.guidance for value in (
         'SAM3','model-native category','no_target_found','box','points','never repeat'))
     transcribe=value.operation('audio.transcribe','1','2'*64)
     assert transcribe.input_roles==('source',) and set(transcribe.output_roles)=={
         'transcript_json','transcript_text','transcript_srt'}
     assert transcribe.resources['gpu']==0 and 'faster-whisper' in transcribe.guidance
+    decompose=value.operation('image.decompose','1',
+        'd830b2eaf9fd55ad2a7d0445a04c15689103eaa1ea755c02c35a5918acb51640')
+    assert decompose.input_roles==('source',) and decompose.output_roles==('layer_package',)
+    assert decompose.side_effects and not decompose.billable
+    assert 'Qwen Layered' in decompose.guidance and 'ORA' in decompose.guidance
 
 
 def test_runtime_instructions_route_controlled_operations_through_job_catalog():

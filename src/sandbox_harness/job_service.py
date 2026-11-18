@@ -11,6 +11,7 @@ import time
 from .config import Settings, load_settings
 from .domain import Harness
 from .harness_job import HarnessJobAdapter, JobGrantFactory, OpenSandboxChildBackend
+from .image_decompose_adapter import ImageDecomposeAdapter
 from .job_worker import JobWorker
 from .job_catalog import JobCatalog
 from .job_coordinator import JobCoordinator
@@ -82,6 +83,7 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
     media_adapter=MediaProviderJobAdapter(settings,store,objects,media_catalog)
     render_adapter=MediaRenderOperationAdapter(scheduler=scheduler,pool=pool,runtime=runtime,
         store=store,objects=objects,settings=settings,token_factory=JobGrantFactory(settings))
+    decompose_adapter=ImageDecomposeAdapter(settings,store,objects)
     catalog_raw=settings.job_catalog_path.read_text()
     job_catalog=JobCatalog.from_json(catalog_raw,expected_digest=(settings.job_catalog_digest
         or hashlib.sha256(catalog_raw.encode()).hexdigest()))
@@ -105,7 +107,8 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
     worker=JobWorker(store,{"child-harness":harness_adapter,
         "reviewer-harness":ReviewerJobAdapter(harness_adapter,store),
         "image.generate":media_adapter,"media.render":render_adapter,
-        "audio.process":render_adapter,"media.concat_sequence":render_adapter},node_id=settings.job_node_id,
+        "audio.process":render_adapter,"media.concat_sequence":render_adapter,
+        "image.decompose":decompose_adapter},node_id=settings.job_node_id,
         concurrency=settings.job_worker_concurrency,lease_seconds=settings.job_lease_seconds,
         review_dispatcher=dispatch_policy_review)
     profiles=resolved_node_profiles(resolver)

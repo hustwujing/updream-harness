@@ -100,7 +100,7 @@
       "side_effects": false,
       "billable": false,
       "creates_artifacts": true,
-      "retry_policy": {"max_pre_accept_attempts": 1, "deterministic": true},
+      "retry_policy": {"max_pre_accept_attempts": 2, "deterministic": true},
       "cancellation_policy": {"supported": true},
       "reconciliation_policy": {"supported": true},
       "guidance": "Use this Operation for real SAM3 segmentation. Bind the authorized image Artifact as source. Start with one broad model-native category noun such as person, car, animal, or logo instead of a long visual description. If no_target_found is returned, replace the Job with a broader category, box, or points; never repeat the same selector or substitute an approximate local segmentation algorithm. foreground is a transparent PNG, mask is a nontrivial grayscale PNG, and segmentation_report is JSON."
@@ -124,6 +124,26 @@
       "cancellation_policy": {"supported": true},
       "reconciliation_policy": {"supported": true},
       "guidance": "Use the verified offline faster-whisper model for durable timestamped speech transcription. Bind the authorized audio or video Artifact as source. The Operation returns transcript.json, transcript.txt and transcript.srt without network access or Provider billing."
+    },
+    {
+      "id": "image.decompose",
+      "version": "1",
+      "digest": "d830b2eaf9fd55ad2a7d0445a04c15689103eaa1ea755c02c35a5918acb51640",
+      "execution_mode": "durable",
+      "timeout_seconds": 3600,
+      "parameter_schema": {"type": "object", "properties": {"prompt": {"type": "string", "maxLength": 2000}, "layer_count": {"enum": [3, 4, 6, 8]}, "resolution": {"enum": [640, 1024]}, "quality": {"enum": ["balanced", "fine", "original"]}, "seed": {"type": "integer", "minimum": 0, "maximum": 2147483647}, "reconstruction_guard": {"type": "boolean"}}, "additionalProperties": false},
+      "input_roles": ["source"],
+      "output_roles": ["layer_package"],
+      "required_capabilities": [],
+      "network_origins": ["local-image-layered"],
+      "resources": {"cpu": 1, "memory_mb": 512, "disk_mb": 2048, "gpu": 0},
+      "side_effects": true,
+      "billable": false,
+      "creates_artifacts": true,
+      "retry_policy": {"max_pre_accept_attempts": 1, "post_accept": "reconcile_only"},
+      "cancellation_policy": {"supported": true},
+      "reconciliation_policy": {"supported": true},
+      "guidance": "Use the local Qwen Layered service when the user requests semantic editable layers or an ORA package from one authorized flat image. Bind the source Artifact, request one layer_package collection, and preserve the returned ORA, reconstruction image, individual RGBA layers and report. This is an external durable side effect and requires the platform JobGroup confirmation card."
     }
   ],
   "capabilities": [
