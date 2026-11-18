@@ -9,7 +9,8 @@ import httpx
 from .artifact_gateway import ArtifactEmission,ArtifactGateway
 from .domain import Harness
 from .harness_job import HarnessJobAdapter, staged_file_chunks
-from .job_adapters import AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExecutionContext
+from .job_adapters import (AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExecutionContext,
+    PreAcceptFailure)
 from .job_contracts import JobState
 
 
@@ -34,8 +35,13 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
         self.sessions[context.job.id]=adopted;return adopted
 
     async def submit(self,context:JobExecutionContext)->AdapterSubmission:
-        reservation=await self.scheduler.reserve(context.job.id,context.generation,
-            HarnessJobAdapter._resources(context));harness=Harness(reservation.harness)
+        try:reservation=await self.scheduler.reserve(context.job.id,context.generation,
+            HarnessJobAdapter._resources(context))
+        except RuntimeError as exc:
+            if str(exc)=='no_compatible_node_capacity':
+                raise PreAcceptFailure(str(exc),infrastructure=True,retry_after_seconds=1) from exc
+            raise
+        harness=Harness(reservation.harness)
         image=reservation.image_ref or self.settings.image_for(harness.value)
         if not image.endswith('@sha256:'+reservation.image_digest):
             raise RuntimeError('operation_image_digest_mismatch')

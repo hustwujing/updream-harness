@@ -202,9 +202,12 @@ class JobWorker:
                     submission=(submission or await self._before_deadline(adapter.submit(context),deadline))
                 except PreAcceptFailure as exc:
                     maximum = int(request.retry_policy.get("max_pre_accept_attempts", 1))
-                    retry = attempt.generation < max(1, maximum)
+                    retry = exc.infrastructure or attempt.generation < max(1, maximum)
+                    if retry and exc.retry_after_seconds:
+                        await self._before_deadline(asyncio.sleep(exc.retry_after_seconds),deadline)
                     await self.store.finish_pre_accept_attempt(job.id, self.worker_id, attempt.generation,
-                        retry=retry, error_code="pre_accept_failure", error_detail=str(exc)[:2000])
+                        retry=retry,error_code=("infrastructure_capacity_wait" if exc.infrastructure
+                            else "pre_accept_failure"),error_detail=str(exc)[:2000])
                     return
                 except SubmissionOutcomeUnknown as exc:
                     await self.store.record_job_acceptance(job.id, self.worker_id, attempt.generation,

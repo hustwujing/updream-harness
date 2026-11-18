@@ -57,6 +57,20 @@ async def test_pre_accept_failure_retries_without_acceptance_or_budget(tmp_path)
     finally:await store.close()
 
 
+async def test_infrastructure_pre_accept_failure_does_not_consume_business_retry_limit(tmp_path):
+    store,_,job=await setup(tmp_path,request(retry_policy={'max_pre_accept_attempts':1}))
+    adapter=FakeAdapter([PreAcceptFailure('no capacity',infrastructure=True),
+        PreAcceptFailure('no capacity',infrastructure=True),
+        AdapterSubmission('external-1',{'accepted':True},completed=True,result={'ok':True})])
+    worker=JobWorker(store,{'fake':adapter},node_id='node',worker_id='worker')
+    try:
+        await worker.run_once();assert (await store.get_job(job.id)).state==JobState.QUEUED
+        await worker.run_once();assert (await store.get_job(job.id)).state==JobState.QUEUED
+        await worker.run_once();assert (await store.get_job(job.id)).state==JobState.SUCCEEDED
+        assert adapter.submit_calls==3
+    finally:await store.close()
+
+
 async def test_successful_collection_dispatches_frozen_policy_review_before_terminal(tmp_path):
     store,_,job=await setup(tmp_path,request(kind=JobKind.OPERATION))
     adapter=FakeAdapter([AdapterSubmission('external-1',{'accepted':True},completed=True,

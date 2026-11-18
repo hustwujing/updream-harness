@@ -41,7 +41,9 @@ class AdapterStatus:
 
 
 class PreAcceptFailure(RuntimeError):
-    pass
+    def __init__(self,message:str,*,infrastructure:bool=False,retry_after_seconds:float=0):
+        super().__init__(message);self.infrastructure=infrastructure
+        self.retry_after_seconds=max(0,float(retry_after_seconds))
 
 
 class SubmissionOutcomeUnknown(RuntimeError):

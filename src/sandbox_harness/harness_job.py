@@ -9,7 +9,7 @@ from typing import Any, Awaitable, Callable, Protocol
 from .domain import Harness
 from .grants import GrantAuthority,JobGrantRequest,TurnGrantRequest
 from .job_adapters import (AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExecutionContext,
-    SubmissionRecovery)
+    PreAcceptFailure,SubmissionRecovery)
 from .job_contracts import JobState
 from .artifact_gateway import ArtifactEmission,ArtifactGateway
 from .scheduler import ResourceRequest, Scheduler
@@ -125,7 +125,12 @@ class HarnessJobAdapter(BaseJobAdapter):
             affinity_node_id=str(values.get('affinity_node_id','')))
 
     async def submit(self,context:JobExecutionContext)->AdapterSubmission:
-        reservation=await self.scheduler.reserve(context.job.id,context.generation,self._resources(context))
+        try:reservation=await self.scheduler.reserve(
+            context.job.id,context.generation,self._resources(context))
+        except RuntimeError as exc:
+            if str(exc)=='no_compatible_node_capacity':
+                raise PreAcceptFailure(str(exc),infrastructure=True,retry_after_seconds=1) from exc
+            raise
         try:
             async with self.scheduler.hold(reservation.id,reservation.node_id,reservation.node_generation):
                 execution_id,receipt=await self.backend.start(context,reservation)
