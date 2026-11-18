@@ -1,0 +1,39 @@
+[Unit]
+Description=Sandbox Harness controlled CPU/GPU durable Job worker
+After=network-online.target sandbox-harness-parallel-postgresql.service
+Requires=sandbox-harness-parallel-postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/data2/wujing03/sandbox-harness-platform-parallel
+EnvironmentFile=/data2/wujing03/sandbox-harness-platform-parallel/.data/config/platform.env
+Environment=TMPDIR=/data2/wujing03/sandbox-harness-platform-parallel/.data/tmp
+ExecStartPre=+/usr/bin/install -d -o root -g root -m 0700 /data2/wujing03/sandbox-harness-platform-parallel/.data/controlled-operations /data2/wujing03/sandbox-harness-platform-parallel/.data/tmp/controlled-job-artifacts
+ExecStart=/data2/wujing03/sandbox-harness-platform-parallel/.venv/bin/sandbox-harness-parallel-controlled-worker
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=false
+PrivateDevices=false
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/data2/wujing03/sandbox-harness-platform-parallel/.data/provider-runtime
+ReadWritePaths=/data2/wujing03/sandbox-harness-platform-parallel/.data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+LockPersonality=true
+TasksMax=256
+LimitNOFILE=8192
+StandardOutput=append:/data2/wujing03/sandbox-harness-platform-parallel/.data/service-logs/controlled-worker.log
+StandardError=append:/data2/wujing03/sandbox-harness-platform-parallel/.data/service-logs/controlled-worker.log
+
+[Install]
+WantedBy=multi-user.target

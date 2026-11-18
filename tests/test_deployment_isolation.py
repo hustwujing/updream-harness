@@ -26,6 +26,7 @@ def deployment_text() -> str:
 def test_parallel_deployment_has_every_authoritative_service():
     expected={
         "sandbox-harness-parallel-api.service",
+        "sandbox-harness-parallel-controlled-worker.service",
         "sandbox-harness-parallel-gateway.service",
         "sandbox-harness-parallel-job-worker.service",
         "sandbox-harness-parallel-media-worker.service",
@@ -36,6 +37,7 @@ def test_parallel_deployment_has_every_authoritative_service():
     assert {path.name for path in (ROOT/"deploy/systemd").glob("*.service")}==expected
     scripts=tomllib.loads((ROOT/"pyproject.toml").read_text())["project"]["scripts"]
     assert scripts["sandbox-harness-parallel-job-worker"]=="sandbox_harness.job_service:run"
+    assert scripts["sandbox-harness-parallel-controlled-worker"]=="sandbox_harness.controlled_service:run"
     install=(ROOT/"deploy/install-units.sh").read_text()
     for name in expected:
         assert name in install
@@ -77,6 +79,8 @@ def test_configure_local_rejects_collision_and_non_data2_storage():
     assert "sandbox-harness-parallel" in source
     assert "/data2/wujing03/sandbox-harness-platform-parallel/.data" in source
     assert "os.path.commonpath" in source
+    assert "controlled_runtime_source_required" in source
+    assert "build_controlled_runtime_manifest.py" in source
 
 
 def test_service_account_can_read_descriptors_and_schema_startup_is_serialized():
@@ -95,7 +99,8 @@ def test_service_staging_is_owned_before_each_worker_starts():
     installer=(ROOT/"deploy/install-units.sh").read_text()
     assert '0750 "$root/.data/tmp/runtime-downloads"' in installer
     assert all(name in installer for name in ("child-job-artifacts","job-artifacts",
-        "operation-job-artifacts","provider-job-artifacts","provider-outputs","site-stages"))
+        "operation-job-artifacts","provider-job-artifacts","provider-outputs","site-stages",
+        "controlled-job-artifacts","controlled-operations"))
     runtime=("ExecStartPre=+/usr/bin/install -d -o sandbox-harness -g sandbox-harness -m 0750 "
         "/data2/wujing03/sandbox-harness-platform-parallel/.data/tmp/runtime-downloads")
     for name in ("sandbox-harness-parallel-api.service","sandbox-harness-parallel-job-worker.service"):
@@ -165,3 +170,7 @@ def test_units_are_hardened_and_recover_without_graceful_shutdown():
     worker=(ROOT/"deploy/systemd/sandbox-harness-parallel-job-worker.service").read_text()
     assert "sandbox-harness-parallel-job-worker" in worker
     assert "KillMode=control-group" in worker and "TimeoutStopSec=" in worker
+    controlled=(ROOT/"deploy/systemd/sandbox-harness-parallel-controlled-worker.service").read_text()
+    assert "User=root" in controlled and "sandbox-harness-parallel-controlled-worker" in controlled
+    assert ".data/provider-runtime" in controlled and ".data/controlled-operations" in controlled
+    assert "ReadWritePaths=/data2/wujing03/sandbox-harness-platform-parallel/.data" in controlled

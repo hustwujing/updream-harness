@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add the missing durable `image.segment` SAM3/ZIM GPU Operation so Primary and delegated Harnesses can request real segmentation without receiving host GPU or model access.
+**Goal:** Add the missing durable `image.segment` SAM3/ZIM GPU Operation and `audio.transcribe` offline ASR Operation so Harnesses can request recoverable controlled media work without receiving host model or device access.
 
-**Architecture:** A root-only GPU Job Worker claims only the signed `image.segment` adapter, reserves one concrete GPU through the existing Scheduler, and executes the already-downloaded Plus SAM3/ZIM runtime inside fixed offline bwrap. All requests, attempts, budgets, artifacts, validation receipts, cleanup and continuation remain authoritative in Parallel PostgreSQL/ObjectStore; only immutable model programs and weights are reused read-only.
+**Architecture:** A root-only controlled Job Worker claims only signed `image.segment` and `audio.transcribe` adapters, reserves concrete CPU/GPU resources through the existing Scheduler, and executes already-downloaded Plus model runtimes inside fixed offline bwrap. All requests, attempts, budgets, artifacts, validation receipts, cleanup and continuation remain authoritative in Parallel PostgreSQL/ObjectStore; only immutable model programs and weights are reused read-only.
 
 **Tech Stack:** Python 3.13, asyncio, SQLAlchemy/PostgreSQL, existing Durable Job/Artifact Gateway/Scheduler APIs, bwrap, NVIDIA runtime, SAM3, ZIM, systemd.
 
@@ -64,11 +64,12 @@
 - [ ] Run the focused tests and require all pass.
 - [ ] Commit: `feat(gpu): register image segment operation`.
 
-### Task 2: Durable SAM3/ZIM Adapter
+### Task 2: Durable SAM3/ZIM And ASR Adapters
 
 **Files:**
 - Create: `src/sandbox_harness/sam3_job.py`
-- Create: `src/sandbox_harness/sam3_adapter.py`
+- Create: `src/sandbox_harness/transcribe_job.py`
+- Create: `src/sandbox_harness/controlled_media_adapter.py`
 - Modify: `src/sandbox_harness/config.py`
 - Test: `tests/test_sam3_adapter.py`
 - Test: `tests/test_job_worker.py`
@@ -76,9 +77,9 @@
 
 **Interfaces:**
 - Consumes: `JobExecutionContext`, `Scheduler.reserve/hold/release`, Parallel `ObjectStore`, `ArtifactGateway`, and configured read-only SAM3 runtime root.
-- Produces: `Sam3OperationAdapter.submit/recover_submission/status/cancel/collect/cleanup_external/release_capacity` and digest-bound artifacts/validation receipts.
+- Produces: `ControlledMediaOperationAdapter.submit/recover_submission/status/cancel/collect/cleanup_external/release_capacity` for both descriptor IDs and digest-bound artifacts/validation receipts.
 
-- [ ] Write failing fake-runner tests for selector validation, scoped input lookup, GPU reservation identity, successful three-role collection, `no_selection`, process failure, cancellation and exact cleanup.
+- [ ] Write failing fake-runner tests for selector validation, transcription parameters, scoped input lookup, GPU/CPU reservation identity, both successful three-role collections, `no_selection`, process failure, cancellation and exact cleanup.
 - [ ] Write worker-loss tests proving completed work is adopted and incomplete local work is safely retried without a second visible result.
 - [ ] Run the adapter/worker/scheduler tests and verify failures.
 - [ ] Port the fixed offline SAM3/ZIM bwrap job, replacing Plus Store/WorkUnit coupling with Parallel Job/Artifact interfaces and keeping all work directories under Parallel `.data`.

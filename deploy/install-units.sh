@@ -24,9 +24,11 @@ if ! getent passwd sandbox-harness-db >/dev/null; then
 fi
 install -d -o sandbox-harness -g sandbox-harness -m 0700 "$root/.data"
 install -d -o sandbox-harness -g sandbox-harness -m 0700 "$root/.data"/{cache,npm-cache,objects,pip-cache,playwright-browsers,preview-cache,runtime-bundles,runtime-code-bundles,service-logs,tmp,uv-cache}
+install -d -o root -g root -m 0700 "$root/.data/controlled-operations"
 chmod 1777 "$root/.data/tmp"
 install -d -o sandbox-harness -g sandbox-harness -m 0750 "$root/.data/tmp/runtime-downloads"
 install -d -o sandbox-harness -g sandbox-harness -m 0700 "$root/.data/tmp"/{child-job-artifacts,job-artifacts,operation-job-artifacts,provider-job-artifacts,provider-outputs,site-stages}
+install -d -o root -g root -m 0700 "$root/.data/tmp/controlled-job-artifacts"
 install -d -o root -g sandbox-harness -m 0750 "$root/.data/config"
 install -d -o sandbox-harness-db -g sandbox-harness-db -m 0700 "$root/.data/postgresql"
 install -d -o sandbox-harness-db -g sandbox-harness-db -m 0700 "$root/.data/postgresql/run"
@@ -48,5 +50,5 @@ chmod 0755 "$root/deploy/network-rule.sh"
 install -m 0644 "$root"/deploy/systemd/*.service /etc/systemd/system/
 python3 "$root/deploy/record-release.py" --env-file "$env_file"
 systemctl daemon-reload
-systemctl enable sandbox-harness-parallel-postgresql.service sandbox-harness-parallel-network.service sandbox-harness-parallel-gateway.service sandbox-harness-parallel-job-worker.service sandbox-harness-parallel-api.service sandbox-harness-parallel-media-worker.service sandbox-harness-parallel-site-worker.service
+systemctl enable sandbox-harness-parallel-postgresql.service sandbox-harness-parallel-network.service sandbox-harness-parallel-gateway.service sandbox-harness-parallel-job-worker.service sandbox-harness-parallel-controlled-worker.service sandbox-harness-parallel-api.service sandbox-harness-parallel-media-worker.service sandbox-harness-parallel-site-worker.service
 echo "units installed but not started"

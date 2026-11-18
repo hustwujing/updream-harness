@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -117,6 +118,13 @@ def check_port(port: int) -> None:
         except OSError as exc:raise RuntimeError("port_in_use:"+str(port)) from exc
 
 
+def controlled_runtime_value(source:Path)->tuple[object,dict]:
+    script=ROOT/'scripts/build_controlled_runtime_manifest.py'
+    spec=importlib.util.spec_from_file_location('controlled_runtime_manifest',script)
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    value=module.build_manifest(source);return module,value
+
+
 def main() -> None:
     parser=argparse.ArgumentParser()
     parser.add_argument("--source-env",type=Path)
@@ -124,6 +132,7 @@ def main() -> None:
     parser.add_argument("--allow-running",action="store_true")
     parser.add_argument("--check-only",action="store_true")
     parser.add_argument("--runtime-signing-key",type=Path)
+    parser.add_argument("--controlled-runtime-source",type=Path)
     args=parser.parse_args()
     if ROOT!=Path("/data2/wujing03/sandbox-harness-platform-parallel"):
         raise ValueError("identity_collision:project_root")
@@ -138,6 +147,16 @@ def main() -> None:
     values["SANDBOX_HARNESS_GATEWAY_SIGNING_KEY"]=secrets.token_urlsafe(48)
     values["SANDBOX_HARNESS_GATEWAY_CONTROL_KEY"]=secrets.token_urlsafe(48)
     values["SANDBOX_HARNESS_SESSION_SIGNING_KEY"]=secrets.token_urlsafe(48)
+    controlled=None
+    if args.controlled_runtime_source:
+        source=args.controlled_runtime_source.resolve()
+        if not source.is_relative_to(Path('/data2/wujing03')):
+            raise ValueError('controlled_runtime_source_outside_data2')
+        module,manifest=controlled_runtime_value(source);controlled=(module,source,manifest)
+        values['SANDBOX_HARNESS_CONTROLLED_RUNTIME_ROOT']=str(EXPECTED_DATA_ROOT/'provider-runtime')
+        values['SANDBOX_HARNESS_CONTROLLED_RUNTIME_DIGEST']=manifest['digest']
+    elif not args.check_only:
+        raise ValueError('controlled_runtime_source_required')
     ensure_isolated(values)
     if not args.allow_running:
         for port in (24766,28432,29880,29881):check_port(port)
@@ -149,6 +168,11 @@ def main() -> None:
         raise ValueError("identity_collision:runtime_signing_key")
     if target.exists() and not args.force:raise FileExistsError(str(target))
     target.parent.mkdir(parents=True,exist_ok=True);target.parent.chmod(0o750)
+    module,source,manifest=controlled
+    module.publish_entry(source,EXPECTED_DATA_ROOT/'provider-runtime')
+    manifest_path=target.parent/'controlled-runtime-manifest.json'
+    manifest_path.write_text(json.dumps(manifest,ensure_ascii=True,indent=2,sort_keys=True)+'\n')
+    manifest_path.chmod(0o444)
     temporary=target.with_suffix(".tmp");temporary.write_text(render_environment(values));temporary.chmod(0o640)
     temporary.replace(target);os.chmod(target,stat.S_IRUSR|stat.S_IWUSR|stat.S_IRGRP)
     key_target=target.parent/"runtime-bundle-signing.pem"
