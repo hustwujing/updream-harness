@@ -7,7 +7,6 @@ from pathlib import Path
 import pwd
 import shutil
 import subprocess
-import re
 
 from PIL import Image
 
@@ -17,8 +16,7 @@ def _base_args(work:Path,runtime:Path)->list[str]:
     return ['/usr/bin/bwrap','--die-with-parent','--new-session','--unshare-pid','--unshare-net',
         '--unshare-ipc','--unshare-uts','--proc','/proc','--dev','/dev','--ro-bind','/usr','/usr',
         '--ro-bind','/bin','/bin','--ro-bind','/lib','/lib','--ro-bind','/lib64','/lib64',
-        '--ro-bind','/etc','/etc','--ro-bind','/sys','/sys','--dir','/data2',
-        '--dir','/data2/wujing03','--dir',str(project_root),
+        '--ro-bind','/etc','/etc','--dir','/data2','--dir','/data2/wujing03','--dir',str(project_root),
         '--dir',str(project_root/'.data'),'--ro-bind',str(runtime),str(runtime),'--bind',str(work),'/work',
         '--tmpfs','/tmp','--chmod','1777','/tmp']
 
@@ -27,17 +25,6 @@ def _run(args:list[str],work:Path,timeout:int)->None:
     result=subprocess.run(args,capture_output=True,text=True,timeout=timeout)
     (work/'bwrap.log').write_text(result.stdout+'\n'+result.stderr)
     if result.returncode:raise RuntimeError('controlled_bwrap_failed:'+result.stderr[-1600:])
-
-
-def _gpu_uuid(index:str)->str:
-    if not re.fullmatch(r'0|[1-9][0-9]*',index):raise RuntimeError('segment_gpu_id_invalid')
-    rows=subprocess.check_output(['/usr/bin/nvidia-smi','--query-gpu=index,uuid',
-        '--format=csv,noheader,nounits'],text=True,timeout=10).splitlines()
-    values={key.strip():value.strip() for key,value in
-        (row.split(',',1) for row in rows if ',' in row)}
-    uuid=values.get(index,'')
-    if not re.fullmatch(r'GPU-[0-9a-fA-F-]+',uuid):raise RuntimeError('segment_gpu_uuid_missing')
-    return uuid
 
 
 def _segment(work:Path,source:Path,parameters:dict,gpu_ids:tuple[str,...],runtime:Path)->dict:
@@ -50,7 +37,7 @@ def _segment(work:Path,source:Path,parameters:dict,gpu_ids:tuple[str,...],runtim
     for path in work.iterdir():os.chown(path,account.pw_uid,account.pw_gid)
     groups=','.join(str(grp.getgrnam(name).gr_gid) for name in (
         'sandbox-agent-runtime','video-use-runtime'))
-    index=gpu_ids[0].removeprefix('gpu-');gpu_uuid=_gpu_uuid(index);args=_base_args(work,runtime)
+    index=gpu_ids[0].removeprefix('gpu-');args=_base_args(work,runtime)
     if Path('/proc/driver/nvidia').exists():args += ['--ro-bind','/proc/driver/nvidia','/proc/driver/nvidia']
     for name in (f'nvidia{index}','nvidiactl','nvidia-uvm','nvidia-uvm-tools'):
         path='/dev/'+name
@@ -59,7 +46,7 @@ def _segment(work:Path,source:Path,parameters:dict,gpu_ids:tuple[str,...],runtim
         for path in Path('/usr/lib/x86_64-linux-gnu').glob(pattern):
             if path.is_file():args += ['--ro-bind',str(path.resolve()),str(path)]
     args += ['--clearenv','--setenv','PATH','/usr/bin:/bin','--setenv','HOME','/work',
-        '--setenv','TMPDIR','/tmp','--setenv','CUDA_VISIBLE_DEVICES',gpu_uuid,
+        '--setenv','TMPDIR','/tmp','--setenv','CUDA_VISIBLE_DEVICES',index,
         '--setenv','CONTROLLED_MEDIA_RUNTIME_ROOT',str(runtime),'--setenv','HF_HUB_OFFLINE','1',
         '--setenv','TRANSFORMERS_OFFLINE','1','--chdir','/work','/usr/bin/setpriv',
         '--reuid='+str(account.pw_uid),'--regid='+str(account.pw_gid),'--groups='+groups,
