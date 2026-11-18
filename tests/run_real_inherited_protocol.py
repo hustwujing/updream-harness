@@ -43,7 +43,7 @@ def business_artifact_prompt(case:dict)->str:
 
 def adapt(identity:str,boundary:str,handler):
     async def run(client,args):
-        protocol=await handler(client,args)
+        async with parallel.protocol_lock():protocol=await handler(client,args)
         if protocol.get('classification')!='success':return decorate(identity,boundary,protocol)
         case=SOURCE_CASES[identity]
         if case.get('expect',{}).get('kind')=='protocol':
@@ -160,10 +160,9 @@ async def main():
     args.asset_root=(configured_root if configured_root.is_absolute()
         else (ROOT/'tests/real_cases'/configured_root).resolve())
     try:
-        async with parallel.protocol_lock():
-            async with parallel.ResilientAsyncClient(base_url=args.base_url,timeout=None,trust_env=False) as client:
-                parallel.require(await client.get('api/session'))
-                value=await HANDLERS[args.case](client,args)
+        async with parallel.ResilientAsyncClient(base_url=args.base_url,timeout=None,trust_env=False) as client:
+            parallel.require(await client.get('api/session'))
+            value=await HANDLERS[args.case](client,args)
     except Exception as exc:
         value={'classification':'program_failure','reason':type(exc).__name__+':'+str(exc)[:1000],
             'source_case_id':args.case,'source_project':'sandbox-harness-platform-plus',
