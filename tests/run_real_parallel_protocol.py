@@ -113,6 +113,18 @@ async def wait_turn(client,turn_id,timeout=900):
     raise TimeoutError('turn_timeout:'+turn_id)
 
 
+async def wait_continuations(client,thread_id,timeout=300,*,minimum=1,maximum=None):
+    deadline=time.monotonic()+timeout
+    while time.monotonic()<deadline:
+        turns=require(await client.get(f'api/threads/{thread_id}/turns')).json()
+        continuations=[value for value in turns if value.get('internal')]
+        if maximum is not None and len(continuations)>maximum:
+            raise AssertionError('too_many_continuations:'+str(len(continuations)))
+        if len(continuations)>=minimum:return turns,continuations
+        await asyncio.sleep(.25)
+    raise TimeoutError('continuation_timeout:'+thread_id)
+
+
 async def artifact_boundary(client,args,identity,*,requires_review:bool,verdict:str)->dict:
     thread,turn=await origin(client,args,identity);settings=load_platform_settings()
     from sandbox_harness.app import object_store
@@ -188,9 +200,7 @@ async def case_p01(client,args):
     if draft['mode']!='draft':raise AssertionError('mixed billable group bypassed confirmation')
     response=await client.post(f"api/job-group-drafts/{draft['draft']['id']}/confirm");require(response)
     committed=response.json();await wait_jobs(client,committed['jobs'],1200)
-    await asyncio.sleep(2)
-    turns=require(await client.get(f"api/threads/{thread['id']}/turns")).json()
-    continuations=[value for value in turns if value.get('internal')]
+    _,continuations=await wait_continuations(client,thread['id'],maximum=1)
     return {'classification':'success','group_id':committed['group']['id'],'group_members':4,
         'kinds':['provider','operation','harness'],'continuation_count':len(continuations)}
 
@@ -220,10 +230,9 @@ async def case_p05(client,args):
         response=await prepare(client,thread,turn,[harness_job(index,args,
             objective=f'Return only the factual marker group-{index}.')],f'P05-{index}')
         require(response);value=response.json();groups.append(value['group']);jobs.extend(value['jobs'])
-    await wait_jobs(client,jobs,1200);await asyncio.sleep(3)
+    await wait_jobs(client,jobs,1200)
     group_values=[require(await client.get(f"api/job-groups/{group['id']}")).json()['group'] for group in groups]
-    turns=require(await client.get(f"api/threads/{thread['id']}/turns")).json()
-    continuations=[value for value in turns if value.get('internal')]
+    _,continuations=await wait_continuations(client,thread['id'])
     if any(value['state'] not in {'TERMINAL','CONTINUED'} for value in group_values):
         raise AssertionError('group did not become terminal')
     if not continuations:raise AssertionError('no durable continuation was created')
@@ -239,10 +248,9 @@ async def case_p06(client,args):
     queued=require(await client.post(f"api/threads/{thread['id']}/turns",json={
         'message':'最终还需要一份中文摘要。','attachments':[],
         'idempotency_key':'protocol-p06-user-'+uuid.uuid4().hex,'delivery_mode':'queue'})).json()
-    await wait_jobs(client,value['jobs'],1200);await asyncio.sleep(3)
-    turns=require(await client.get(f"api/threads/{thread['id']}/turns")).json()
+    await wait_jobs(client,value['jobs'],1200)
+    turns,continuations=await wait_continuations(client,thread['id'])
     positions={item['id']:index for index,item in enumerate(turns)}
-    continuations=[item for item in turns if item.get('internal')]
     if not continuations or positions[queued['id']]>=min(positions[item['id']] for item in continuations):
         raise AssertionError('user turn was not ordered before continuation')
     return {'classification':'success','user_turn_id':queued['id'],
@@ -540,10 +548,8 @@ async def case_p20(client,args):
         objective=f'Return independent factual analysis marker-{index}.') for index in range(3)]
     response=await prepare(client,thread,turn,jobs,'P20');require(response);draft=response.json()
     response=await client.post(f"api/job-group-drafts/{draft['draft']['id']}/confirm");require(response)
-    committed=response.json();await wait_jobs(client,committed['jobs'],1200);await asyncio.sleep(3)
-    turns=require(await client.get(f"api/threads/{thread['id']}/turns")).json()
-    continuations=[item for item in turns if item.get('internal')]
-    if len(continuations)!=1:raise AssertionError('mixed fanout did not create one continuation')
+    committed=response.json();await wait_jobs(client,committed['jobs'],1200)
+    _,continuations=await wait_continuations(client,thread['id'],maximum=1)
     return {'classification':'success','provider_jobs':3,'harness_jobs':3,'parallel':True,
         'one_primary_continuation':True,'group_id':committed['group']['id']}
 
@@ -617,9 +623,8 @@ async def case_p22(client,args):
     response=require(await client.post('api/job-group-drafts',json=compiled));prepared=response.json()
     if prepared.get('mode')!='committed':
         raise AssertionError('non-billable compact delegation unexpectedly required confirmation')
-    jobs=await wait_jobs(client,prepared['jobs'],args.timeout);await asyncio.sleep(3)
-    turns=require(await client.get(f"api/threads/{thread['id']}/turns")).json()
-    continuations=[item for item in turns if item.get('internal')]
+    jobs=await wait_jobs(client,prepared['jobs'],args.timeout)
+    _,continuations=await wait_continuations(client,thread['id'],maximum=1)
     if len(jobs)!=2 or not continuations:
         raise AssertionError('compact delegation did not close through one durable continuation')
     return {'classification':'success','group_id':prepared['group']['id'],

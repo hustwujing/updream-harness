@@ -43,6 +43,13 @@ def test_destructive_protocols_are_serialized_and_business_assets_are_configured
     assert "args.asset_root=" in inherited and "ResilientAsyncClient" in inherited
 
 
+def test_continuation_protocols_wait_for_state_instead_of_fixed_sleep():
+    source=(ROOT/'tests/run_real_parallel_protocol.py').read_text()
+    assert 'async def wait_continuations' in source
+    assert source.count('await wait_continuations(')>=5
+    assert "await wait_jobs(client,committed['jobs'],1200);await asyncio.sleep(3)" not in source
+
+
 def test_business_artifact_phase_does_not_repeat_protocol_interventions():
     runner=load_runner();case=runner.SOURCE_CASES['D11']
     prompt=runner.business_artifact_prompt(case)
