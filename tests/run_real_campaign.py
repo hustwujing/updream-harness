@@ -84,7 +84,7 @@ async def list_all_items(client,thread_id):
         if len(rows)<500:return values
 
 
-async def wait_for_first_artifact(client,thread_id,turn_id,deadline,stable_polls=3):
+async def wait_for_first_artifact(client,thread_id,turn_id,deadline,stable_polls=10):
     stable_terminal_polls=0
     while time.monotonic()<deadline:
         if any(row.get('type')=='artifact' for row in await list_all_items(client,thread_id)):
@@ -93,9 +93,12 @@ async def wait_for_first_artifact(client,thread_id,turn_id,deadline,stable_polls
         if current.json()["state"] not in TERMINAL:
             stable_terminal_polls=0
         else:
+            turns_response=await client.get(f"api/threads/{thread_id}/turns")
+            turns_response.raise_for_status()
             response=await client.get(f"api/threads/{thread_id}/execution-graph",
                 params={"include_history":"true"});response.raise_for_status()
-            active=any(row.get('type') in {'job','job_group'} and row.get('state') in {
+            active=any(row.get('state') not in TERMINAL for row in turns_response.json()) or any(
+                row.get('type') in {'job','job_group'} and row.get('state') in {
                 'CREATED','QUEUED','COMMITTED','RUNNING','WAITING_EXTERNAL','CANCELLING'}
                 for row in response.json().get('nodes',[]))
             stable_terminal_polls=0 if active else stable_terminal_polls+1

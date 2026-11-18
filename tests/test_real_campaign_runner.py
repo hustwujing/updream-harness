@@ -206,6 +206,23 @@ class DelayedArtifactClient:
             return Response([] if self.item_polls<2 else [
                 {'sequence':1,'type':'artifact','summary':'result.png'}])
         if path=='api/turns/turn-1':return Response({'id':'turn-1','state':'COMPLETED'})
+        if path.endswith('/turns'):return Response([{'id':'turn-1','state':'COMPLETED'}])
+        if path.endswith('/execution-graph'):return Response({'nodes':[]})
+        raise AssertionError(path)
+
+
+class ContinuationGapClient:
+    def __init__(self):self.item_polls=0
+    async def get(self,path,params=None):
+        if path.endswith('/items'):
+            self.item_polls+=1
+            return Response([] if self.item_polls<6 else [
+                {'sequence':9,'type':'artifact','summary':'final.png'}])
+        if path=='api/turns/turn-1':return Response({'id':'turn-1','state':'COMPLETED'})
+        if path.endswith('/turns'):
+            rows=[{'id':'turn-1','state':'COMPLETED'}]
+            if 2<=self.item_polls<6:rows.append({'id':'continuation','state':'RUNNING'})
+            return Response(rows)
         if path.endswith('/execution-graph'):return Response({'nodes':[]})
         raise AssertionError(path)
 
@@ -248,6 +265,16 @@ async def test_after_delivery_intervention_waits_through_terminal_artifact_visib
     value=await campaign.wait_for_first_artifact(client,'thread-1','turn-1',
         time.monotonic()+10)
     assert value is True and client.item_polls==2
+
+
+@pytest.mark.asyncio
+async def test_after_delivery_intervention_tracks_internal_continuations(monkeypatch):
+    campaign=campaign_module();client=ContinuationGapClient()
+    async def no_sleep(_):pass
+    monkeypatch.setattr(campaign.asyncio,'sleep',no_sleep)
+    value=await campaign.wait_for_first_artifact(client,'thread-1','turn-1',
+        time.monotonic()+10)
+    assert value is True and client.item_polls==6
 
 
 def test_media_provider_failure_is_not_prompt_failure():
