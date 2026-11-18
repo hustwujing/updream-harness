@@ -81,7 +81,8 @@ def test_example_job_catalog_is_parseable_and_digest_verified():
     raw=(ROOT/'deploy/job-catalog.example.json').read_text()
     value=JobCatalog.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest())
     assert {row.id for row in value.payload.operations}=={
-        'artifact.inspect','media.render','audio.process','media.concat_sequence'}
+        'artifact.inspect','media.render','audio.process','media.concat_sequence',
+        'image.segment','audio.transcribe'}
     assert {row.id for row in value.payload.capabilities}=={'image.generate'}
     audio=value.operation('audio.process','1','d'*64)
     recipe=audio.parameter_schema['properties']['recipe']
@@ -100,6 +101,15 @@ def test_example_job_catalog_is_parseable_and_digest_verified():
     assert exposed_concat['guidance']==concat.guidance
     render=value.operation('media.render','1','b'*64)
     assert 'contain semantics' in render.guidance and 'transparent' in render.guidance
+    segment=value.operation('image.segment','1','1'*64)
+    assert segment.input_roles==('source',) and set(segment.output_roles)=={
+        'foreground','mask','segmentation_report'}
+    assert segment.resources['gpu']==1 and segment.creates_artifacts
+    assert 'SAM3' in segment.guidance and 'box' in segment.guidance and 'points' in segment.guidance
+    transcribe=value.operation('audio.transcribe','1','2'*64)
+    assert transcribe.input_roles==('source',) and set(transcribe.output_roles)=={
+        'transcript_json','transcript_text','transcript_srt'}
+    assert transcribe.resources['gpu']==0 and 'faster-whisper' in transcribe.guidance
 
 
 def test_public_child_profiles_expose_frozen_harness_job_template():
