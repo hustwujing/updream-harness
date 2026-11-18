@@ -30,7 +30,6 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
 ProtectControlGroups=true
-LockPersonality=true
 TasksMax=256
 LimitNOFILE=8192
 StandardOutput=append:/data2/wujing03/sandbox-harness-platform-parallel/.data/service-logs/controlled-worker.log
