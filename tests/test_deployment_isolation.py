@@ -164,7 +164,11 @@ def test_units_are_hardened_and_recover_without_graceful_shutdown():
         text=unit.read_text()
         assert "Restart=on-failure" in text or unit.name.endswith("network.service")
         if "Type=oneshot" not in text:
-            assert "NoNewPrivileges=true" in text
+            if unit.name.endswith("controlled-worker.service"):
+                assert "NoNewPrivileges=false" in text
+                assert "RestrictSUIDSGID=false" in text
+            else:
+                assert "NoNewPrivileges=true" in text
             assert "ProtectSystem=strict" in text
             assert "UMask=0077" in text
     worker=(ROOT/"deploy/systemd/sandbox-harness-parallel-job-worker.service").read_text()
