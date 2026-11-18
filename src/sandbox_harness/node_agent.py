@@ -11,20 +11,22 @@ from .scheduler import GPUInventory, NodeInventory, NodeProfile
 def discover_gpus() -> tuple[GPUInventory, ...]:
     executable=shutil.which('nvidia-smi')
     if not executable:return ()
-    result=subprocess.run([executable,'--query-gpu=index,name,memory.total,compute_mode,mig.mode.current',
+    result=subprocess.run([executable,
+        '--query-gpu=index,name,memory.total,memory.free,utilization.gpu,compute_mode,mig.mode.current',
         '--format=csv,noheader,nounits'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
         timeout=10,check=False)
     if result.returncode:return ()
     values=[]
     for line in result.stdout.splitlines():
         parts=[item.strip() for item in line.split(',')]
-        if len(parts)!=5:continue
-        index,name,memory,compute_mode,mig_mode=parts
-        try:memory_mb=int(memory)
+        if len(parts)!=7:continue
+        index,name,memory,memory_free,utilization,compute_mode,mig_mode=parts
+        try:memory_mb=int(memory);memory_free_mb=int(memory_free);utilization_percent=int(utilization)
         except ValueError:continue
         mode=('mig' if mig_mode.lower() in {'enabled','enable'} else
             'exclusive' if 'exclusive' in compute_mode.lower() else 'shared')
-        values.append(GPUInventory(id='gpu-'+index,type=name,memory_mb=memory_mb,mode=mode))
+        values.append(GPUInventory(id='gpu-'+index,type=name,memory_mb=memory_mb,
+            memory_free_mb=memory_free_mb,utilization_percent=utilization_percent,mode=mode))
     return tuple(values)
 
 

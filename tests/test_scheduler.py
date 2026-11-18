@@ -59,6 +59,26 @@ async def test_scheduler_allocates_exact_gpu_count_type_mode_memory_without_doub
     finally:await store.close()
 
 
+async def test_scheduler_selects_gpu_by_live_utilization_then_free_memory(tmp_path):
+    store,scheduler=await setup(tmp_path)
+    try:
+        await scheduler.register_node(node(gpus=[
+            {'id':'gpu-0','type':'RTX 4090','memory_mb':49140,'memory_free_mb':44000,
+                'utilization_percent':35,'mode':'shared'},
+            {'id':'gpu-1','type':'RTX 4090','memory_mb':49140,'memory_free_mb':18000,
+                'utilization_percent':0,'mode':'shared'},
+            {'id':'gpu-2','type':'RTX 4090','memory_mb':49140,'memory_free_mb':48000,
+                'utilization_percent':0,'mode':'shared'},
+        ]))
+        selected=await scheduler.reserve('1'*32,1,request(gpu_count=1,
+            gpu_memory_mb=16000))
+        assert selected.gpu_ids==('gpu-2',)
+        await scheduler.release(selected.id,selected.node_id,selected.node_generation)
+        with pytest.raises(RuntimeError,match='no_compatible'):
+            await scheduler.reserve('2'*32,1,request(gpu_count=1,gpu_memory_mb=49000))
+    finally:await store.close()
+
+
 async def test_scheduler_fences_stale_node_generation_and_reservation_release(tmp_path):
     store,scheduler=await setup(tmp_path)
     try:

@@ -18,6 +18,8 @@ class GPUInventory(BaseModel):
     id: str = Field(min_length=1, max_length=100)
     type: str = Field(min_length=1, max_length=100)
     memory_mb: int = Field(ge=1)
+    memory_free_mb: int = Field(default=0, ge=0)
+    utilization_percent: int = Field(default=0, ge=0, le=100)
     mode: str = Field(default="exclusive", pattern=r"^(exclusive|shared|mig)$")
 
 
@@ -162,7 +164,9 @@ class Scheduler:
                 available=[gpu for gpu in inventory.gpus if gpu.id not in used_gpu
                     and (not request.gpu_type or gpu.type==request.gpu_type)
                     and (not request.gpu_mode or gpu.mode==request.gpu_mode)
-                    and gpu.memory_mb>=request.gpu_memory_mb]
+                    and (gpu.memory_free_mb or gpu.memory_mb)>=request.gpu_memory_mb]
+                available.sort(key=lambda gpu:(gpu.utilization_percent,
+                    -(gpu.memory_free_mb or gpu.memory_mb),gpu.id))
                 if len(available)<request.gpu_count:continue
                 gpu_ids=tuple(gpu.id for gpu in available[:request.gpu_count])
                 cached=len(set(request.required_bundle_digests)&set(inventory.cached_bundle_digests))

@@ -96,7 +96,7 @@
       "output_roles": ["foreground", "mask", "segmentation_report"],
       "required_capabilities": [],
       "network_origins": [],
-      "resources": {"cpu": 2, "memory_mb": 32768, "disk_mb": 4096, "gpu": 1},
+      "resources": {"cpu": 2, "memory_mb": 32768, "disk_mb": 4096, "gpu": 1, "gpu_memory_mb": 16384},
       "side_effects": false,
       "billable": false,
       "creates_artifacts": true,
