@@ -58,6 +58,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S01"
     },
@@ -100,6 +101,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S02"
     },
@@ -141,6 +143,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S03"
     },
@@ -182,6 +185,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S04"
     },
@@ -224,6 +228,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S05"
     },
@@ -266,6 +271,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S06"
     },
@@ -308,6 +314,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S07"
     },
@@ -351,6 +358,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S08"
     },
@@ -398,6 +406,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S09"
     },
@@ -450,6 +459,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原有terms同时包含英文与数字；明确文字范围，保留所有原验收词、坐标与JSON/TXT要求；历史失败原样保存。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S10"
     },
@@ -493,6 +503,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S11"
     },
@@ -536,6 +547,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S12"
     },
@@ -579,6 +591,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S13"
     },
@@ -620,6 +633,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S14"
     },
@@ -662,6 +676,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S15"
     },
@@ -706,6 +721,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S16"
     },
@@ -751,6 +767,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S17"
     },
@@ -796,6 +813,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S18"
     },
@@ -841,6 +859,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S19"
     },
@@ -886,6 +905,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S20"
     },
@@ -930,6 +950,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S21"
     },
@@ -972,6 +993,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S22"
     },
@@ -1018,6 +1040,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S23"
     },
@@ -1062,6 +1085,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S24"
     },
@@ -1108,6 +1132,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S25"
     },
@@ -1164,6 +1189,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S26"
     },
@@ -1206,6 +1232,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S27"
     },
@@ -1252,6 +1279,7 @@
       "manual_review": "video",
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S28"
     },
@@ -1299,6 +1327,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S29"
     },
@@ -1352,6 +1381,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S30"
     },
@@ -1397,6 +1427,7 @@
       "review_reason": "覆盖音轨存在与实际静音的类型化语义，和S21无音轨形成正反例。",
       "status": "not_run",
       "attempts": [],
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:S31"
     },
@@ -1444,6 +1475,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C01"
     },
@@ -1492,6 +1524,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C02"
     },
@@ -1540,6 +1573,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C03"
     },
@@ -1589,6 +1623,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C04"
     },
@@ -1635,6 +1670,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C05"
     },
@@ -1681,6 +1717,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C06"
     },
@@ -1725,6 +1762,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C07"
     },
@@ -1769,6 +1807,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C08"
     },
@@ -1815,6 +1854,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C09"
     },
@@ -1864,6 +1904,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C10"
     },
@@ -1913,6 +1954,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C11"
     },
@@ -1963,6 +2005,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C12"
     },
@@ -2010,6 +2053,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C13"
     },
@@ -2057,6 +2101,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C14"
     },
@@ -2107,6 +2152,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C15"
     },
@@ -2152,6 +2198,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C16"
     },
@@ -2200,6 +2247,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C17"
     },
@@ -2248,6 +2296,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C18"
     },
@@ -2296,6 +2345,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C19"
     },
@@ -2342,6 +2392,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C20"
     },
@@ -2390,6 +2441,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C21"
     },
@@ -2439,6 +2491,7 @@
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "保留原业务与暂停/恢复断言，增加F39合法ZIP目录检查必测边界；必须实际检查至少24个不同视频成员，不能把目录检查当成成员媒体内容验证。",
       "required_archive_video_members": 24,
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C22"
     },
@@ -2487,6 +2540,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C23"
     },
@@ -2535,6 +2589,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C24"
     },
@@ -2597,6 +2652,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C25"
     },
@@ -2644,6 +2700,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C26"
     },
@@ -2691,6 +2748,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C27"
     },
@@ -2740,6 +2798,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C28"
     },
@@ -2789,6 +2848,7 @@
       "dynamic_hook": "worker_restart",
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C29"
     },
@@ -2841,6 +2901,7 @@
       "dynamic_hook": null,
       "review_decision": "保留业务目标，修改入口和协议断言",
       "review_reason": "原始素材、尺寸/时长/内容验收不变；改用授权包络、动态图版本和封口交付；每个 case 增加内部状态审计。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:C30"
     },
@@ -2852,7 +2913,7 @@
         "portrait.png",
         "rocket.png"
       ],
-      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。",
+      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。 本次确认已授权把非最终候选注册为 candidate Artifact 并执行独立审查；请从一开始通过 durable Child Harness 或 Operation 生成可审查候选，不要在本地完成后再询问用户如何注册或是否跳过审查。",
       "expect": {
         "kind": "image",
         "width": 128,
@@ -2911,6 +2972,7 @@
       "dynamic_hook": "intervention_rename",
       "review_decision": "修改干预协议，保留用户目标",
       "review_reason": "不再插入旧 Plan/Step 状态；通过实际浏览器创建和控制任务。已开始节点不改写；变更目标需要新授权，原产物哈希与旧租约不变。",
+      "review_candidate_authorized": true,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:R01"
     },
@@ -2922,7 +2984,7 @@
         "portrait.png",
         "rocket.png"
       ],
-      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。",
+      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。 本次确认已授权把非最终候选注册为 candidate Artifact 并执行独立审查；请从一开始通过 durable Child Harness 或 Operation 生成可审查候选，不要在本地完成后再询问用户如何注册或是否跳过审查。",
       "expect": {
         "kind": "image",
         "width": 256,
@@ -2986,6 +3048,7 @@
       "dynamic_hook": "intervention_resize_format",
       "review_decision": "修改干预协议，保留用户目标",
       "review_reason": "不再插入旧 Plan/Step 状态；通过实际浏览器创建和控制任务。已开始节点不改写；变更目标需要新授权，原产物哈希与旧租约不变。",
+      "review_candidate_authorized": true,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:R02"
     },
@@ -2997,7 +3060,7 @@
         "portrait.png",
         "rocket.png"
       ],
-      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。",
+      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。 本次确认已授权把非最终候选注册为 candidate Artifact 并执行独立审查；请从一开始通过 durable Child Harness 或 Operation 生成可审查候选，不要在本地完成后再询问用户如何注册或是否跳过审查。",
       "expect": {
         "kind": "image",
         "width": 128,
@@ -3056,6 +3119,7 @@
       "dynamic_hook": "intervention_reorder",
       "review_decision": "修改干预协议，保留用户目标",
       "review_reason": "不再插入旧 Plan/Step 状态；通过实际浏览器创建和控制任务。已开始节点不改写；变更目标需要新授权，原产物哈希与旧租约不变。",
+      "review_candidate_authorized": true,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:R03"
     },
@@ -3074,7 +3138,7 @@
         "portrait.png",
         "rocket.png"
       ],
-      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。",
+      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。 本次确认已授权把非最终候选注册为 candidate Artifact 并执行独立审查；请从一开始通过 durable Child Harness 或 Operation 生成可审查候选，不要在本地完成后再询问用户如何注册或是否跳过审查。",
       "expect": {
         "kind": "image",
         "width": 128,
@@ -3138,6 +3202,7 @@
       "must_drain": [
         "屏障前已开始的业务Task及其必要验收/清理"
       ],
+      "review_candidate_authorized": true,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:R04"
     },
@@ -3149,7 +3214,7 @@
         "portrait.png",
         "rocket.png"
       ],
-      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。",
+      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。 本次确认已授权把非最终候选注册为 candidate Artifact 并执行独立审查；请从一开始通过 durable Child Harness 或 Operation 生成可审查候选，不要在本地完成后再询问用户如何注册或是否跳过审查。",
       "expect": {
         "kind": "image",
         "width": 128,
@@ -3211,6 +3276,7 @@
       "must_drain": [
         "屏障前已开始的业务Task及其必要验收/清理"
       ],
+      "review_candidate_authorized": true,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:R05"
     },
@@ -3222,7 +3288,7 @@
         "portrait.png",
         "rocket.png"
       ],
-      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。",
+      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。 本次确认已授权把非最终候选注册为 candidate Artifact 并执行独立审查；请从一开始通过 durable Child Harness 或 Operation 生成可审查候选，不要在本地完成后再询问用户如何注册或是否跳过审查。",
       "expect": {
         "kind": "image",
         "width": 128,
@@ -3284,6 +3350,7 @@
       "must_drain": [
         "屏障前已开始的业务Task及其必要验收/清理"
       ],
+      "review_candidate_authorized": true,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:R06"
     },
@@ -3296,7 +3363,7 @@
         "rocket.png",
         "clip_a.mp4"
       ],
-      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png 制作4秒128×64、24fps、H.264 yuv420p无音轨视频；前2秒显示portrait，后2秒显示rocket，画面保持比例居中裁切。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。",
+      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png 制作4秒128×64、24fps、H.264 yuv420p无音轨视频；前2秒显示portrait，后2秒显示rocket，画面保持比例居中裁切。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。 本次确认已授权把非最终候选注册为 candidate Artifact 并执行独立审查；请从一开始通过 durable Child Harness 或 Operation 生成可审查候选，不要在本地完成后再询问用户如何注册或是否跳过审查。",
       "expect": {
         "kind": "video",
         "width": 128,
@@ -3361,6 +3428,7 @@
       "must_drain": [
         "屏障前已开始的业务Task及其必要验收/清理"
       ],
+      "review_candidate_authorized": true,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:R07"
     },
@@ -3373,7 +3441,7 @@
         "rocket.png",
         "clip_a.mp4"
       ],
-      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png 制作4秒128×64、24fps、H.264 yuv420p无音轨视频；前2秒显示portrait，后2秒显示rocket，画面保持比例居中裁切。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。",
+      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png 制作4秒128×64、24fps、H.264 yuv420p无音轨视频；前2秒显示portrait，后2秒显示rocket，画面保持比例居中裁切。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。 本次确认已授权把非最终候选注册为 candidate Artifact 并执行独立审查；请从一开始通过 durable Child Harness 或 Operation 生成可审查候选，不要在本地完成后再询问用户如何注册或是否跳过审查。",
       "expect": {
         "kind": "video",
         "width": 128,
@@ -3438,6 +3506,7 @@
       "must_drain": [
         "屏障前已开始的业务Task及其必要验收/清理"
       ],
+      "review_candidate_authorized": true,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:R08"
     },
@@ -3450,7 +3519,7 @@
         "rocket.png",
         "clip_a.mp4"
       ],
-      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png 制作4秒128×64、24fps、H.264 yuv420p无音轨视频；前2秒显示portrait，后2秒显示rocket，画面保持比例居中裁切。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。",
+      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png 制作4秒128×64、24fps、H.264 yuv420p无音轨视频；前2秒显示portrait，后2秒显示rocket，画面保持比例居中裁切。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。 本次确认已授权把非最终候选注册为 candidate Artifact 并执行独立审查；请从一开始通过 durable Child Harness 或 Operation 生成可审查候选，不要在本地完成后再询问用户如何注册或是否跳过审查。",
       "expect": {
         "kind": "video",
         "width": 360,
@@ -3512,6 +3581,7 @@
       "dynamic_hook": "intervention_portrait",
       "review_decision": "修改干预协议，保留用户目标",
       "review_reason": "不再插入旧 Plan/Step 状态；通过实际浏览器创建和控制任务。已开始节点不改写；变更目标需要新授权，原产物哈希与旧租约不变。",
+      "review_candidate_authorized": true,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:R09"
     },
@@ -3523,7 +3593,7 @@
         "portrait.png",
         "rocket.png"
       ],
-      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。",
+      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。 本次确认已授权把非最终候选注册为 candidate Artifact 并执行独立审查；请从一开始通过 durable Child Harness 或 Operation 生成可审查候选，不要在本地完成后再询问用户如何注册或是否跳过审查。",
       "expect": {
         "kind": "image",
         "width": 128,
@@ -3581,6 +3651,7 @@
       "dynamic_hook": "intervention_thumbnail",
       "review_decision": "修改干预协议，保留用户目标",
       "review_reason": "不再插入旧 Plan/Step 状态；通过实际浏览器创建和控制任务。已开始节点不改写；变更目标需要新授权，原产物哈希与旧租约不变。",
+      "review_candidate_authorized": true,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:R10"
     },
@@ -3592,7 +3663,7 @@
         "portrait.png",
         "rocket.png"
       ],
-      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。",
+      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。 本次确认已授权把非最终候选注册为 candidate Artifact 并执行独立审查；请从一开始通过 durable Child Harness 或 Operation 生成可审查候选，不要在本地完成后再询问用户如何注册或是否跳过审查。",
       "expect": {
         "kind": "image",
         "width": 128,
@@ -3657,6 +3728,7 @@
       "must_drain": [
         "屏障前已开始的业务Task及其必要验收/清理"
       ],
+      "review_candidate_authorized": true,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:R11"
     },
@@ -3669,7 +3741,7 @@
         "rocket.png",
         "clip_a.mp4"
       ],
-      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png 制作4秒128×64、24fps、H.264 yuv420p无音轨视频；前2秒显示portrait，后2秒显示rocket，画面保持比例居中裁切。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。",
+      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png 制作4秒128×64、24fps、H.264 yuv420p无音轨视频；前2秒显示portrait，后2秒显示rocket，画面保持比例居中裁切。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。 本次确认已授权把非最终候选注册为 candidate Artifact 并执行独立审查；请从一开始通过 durable Child Harness 或 Operation 生成可审查候选，不要在本地完成后再询问用户如何注册或是否跳过审查。",
       "expect": {
         "kind": "video",
         "width": 128,
@@ -3728,6 +3800,7 @@
       "dynamic_hook": "intervention_new_goal",
       "review_decision": "修改干预协议，保留用户目标",
       "review_reason": "不再插入旧 Plan/Step 状态；通过实际浏览器创建和控制任务。已开始节点不改写；变更目标需要新授权，原产物哈希与旧租约不变。",
+      "review_candidate_authorized": true,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:R12"
     },
@@ -3739,7 +3812,7 @@
         "portrait.png",
         "rocket.png"
       ],
-      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。",
+      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。 本次确认已授权把非最终候选注册为 candidate Artifact 并执行独立审查；请从一开始通过 durable Child Harness 或 Operation 生成可审查候选，不要在本地完成后再询问用户如何注册或是否跳过审查。",
       "expect": {
         "kind": "image",
         "width": 64,
@@ -3799,6 +3872,7 @@
       "dynamic_hook": "intervention_pause_replan",
       "review_decision": "修改干预协议，保留用户目标",
       "review_reason": "不再插入旧 Plan/Step 状态；通过实际浏览器创建和控制任务。已开始节点不改写；变更目标需要新授权，原产物哈希与旧租约不变。",
+      "review_candidate_authorized": true,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:R13"
     },
@@ -3815,7 +3889,7 @@
         "portrait.png",
         "rocket.png"
       ],
-      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。",
+      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。 本次确认已授权把非最终候选注册为 candidate Artifact 并执行独立审查；请从一开始通过 durable Child Harness 或 Operation 生成可审查候选，不要在本地完成后再询问用户如何注册或是否跳过审查。",
       "expect": {
         "kind": "image",
         "width": 128,
@@ -3875,6 +3949,7 @@
       "review_decision": "修改干预协议，保留用户目标",
       "review_reason": "不再插入旧 Plan/Step 状态；通过实际浏览器创建和控制任务。已开始节点不改写；变更目标需要新授权，原产物哈希与旧租约不变。",
       "required_output_completion": "both_runtime_progress_marker_and_durable_output_checkpoint",
+      "review_candidate_authorized": true,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:R14"
     },
@@ -3886,7 +3961,7 @@
         "portrait.png",
         "rocket.png"
       ],
-      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。",
+      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。 本次确认已授权把非最终候选注册为 candidate Artifact 并执行独立审查；请从一开始通过 durable Child Harness 或 Operation 生成可审查候选，不要在本地完成后再询问用户如何注册或是否跳过审查。",
       "expect": {
         "kind": "image",
         "width": 128,
@@ -3950,6 +4025,7 @@
       "must_drain": [
         "屏障前已开始的业务Task及其必要验收/清理"
       ],
+      "review_candidate_authorized": true,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:R15"
     },
@@ -3961,7 +4037,7 @@
         "portrait.png",
         "rocket.png"
       ],
-      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。",
+      "prompt": "已在界面确认初始方案：使用 portrait.png 与 rocket.png，分别保持比例居中裁切为64×64，portrait在左、rocket在右，无间隙拼成128×64，输出PNG。请使用本地后台工作流实际执行，保存可复用中间成果，经过独立审查和最终验收后交付；执行中我会发送结构化变更，只修改明确受影响的闭包，保留其余已完成成果。 本次确认已授权把非最终候选注册为 candidate Artifact 并执行独立审查；请从一开始通过 durable Child Harness 或 Operation 生成可审查候选，不要在本地完成后再询问用户如何注册或是否跳过审查。",
       "expect": {
         "kind": "image",
         "width": 128,
@@ -4018,6 +4094,7 @@
       "dynamic_hook": "intervention_chain",
       "review_decision": "修改干预协议，保留用户目标",
       "review_reason": "不再插入旧 Plan/Step 状态；通过实际浏览器创建和控制任务。已开始节点不改写；变更目标需要新授权，原产物哈希与旧租约不变。",
+      "review_candidate_authorized": true,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:R16"
     },
@@ -4089,6 +4166,7 @@
       "dynamic_hook": "intervention_scope_successor",
       "review_decision": "修改干预协议，保留用户目标",
       "review_reason": "全局目标变更统一通过输入屏障和明确successor授权，移除旧Jev分类器与直接取消重启断言。",
+      "review_candidate_authorized": false,
       "executor": "primary_harness",
       "provenance": "sandbox-harness-platform-plus:R17"
     },

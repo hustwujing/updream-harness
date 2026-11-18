@@ -88,7 +88,13 @@ def main():
     raw=SOURCE.read_bytes();source=json.loads(raw);business=[];inherited=[];superseded=[]
     for value in source["cases"]:
         if value["id"].startswith(("S","C","R")):
-            migrated={**value,"status":"not_run","attempts":[],"executor":"primary_harness",
+            review_authorized=value['id'].startswith('R') and value['id']!='R17'
+            prompt=value['prompt']+((
+                " 本次确认已授权把非最终候选注册为 candidate Artifact 并执行独立审查；"
+                "请从一开始通过 durable Child Harness 或 Operation 生成可审查候选，"
+                "不要在本地完成后再询问用户如何注册或是否跳过审查。") if review_authorized else '')
+            migrated={**value,"prompt":prompt,'review_candidate_authorized':review_authorized,
+                "status":"not_run","attempts":[],"executor":"primary_harness",
                 "entry_mode":"deployed_browser","provenance":"sandbox-harness-platform-plus:"+value["id"]}
             business.append(migrated)
         elif value["id"].startswith("D"):
