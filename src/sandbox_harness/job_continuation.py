@@ -23,6 +23,23 @@ class ContinuationDispatcher:
         self.after_submit = after_submit
         self.stop_event = asyncio.Event()
 
+    @staticmethod
+    def _bounded_user_context(value:dict,max_bytes:int=64*1024)->str:
+        if not value:return '{}'
+        def truncate(text:str,limit:int)->str:
+            raw=text.encode()
+            return text if len(raw)<=limit else raw[:limit].decode(errors='ignore')+'...[truncated]'
+        bounded={'source_turn_id':value.get('source_turn_id',''),
+            'initial_message':truncate(str(value.get('initial_message','')),24*1024),
+            'applied_inputs':[]}
+        for row in reversed(value.get('applied_inputs',[])):
+            candidate={**row,'message':truncate(str(row.get('message','')),16*1024)}
+            updated={**bounded,'applied_inputs':[candidate,*bounded['applied_inputs']]}
+            encoded=json.dumps(updated,ensure_ascii=False,sort_keys=True,separators=(',',':'))
+            if len(encoded.encode())>max_bytes:break
+            bounded=updated
+        return json.dumps(bounded,ensure_ascii=False,sort_keys=True,separators=(',',':'))
+
     async def run_once(self) -> int:
         batch = await self.store.claim_job_outbox_batch(
             self.owner, lease_seconds=self.lease_seconds, max_groups=self.max_groups,
@@ -33,14 +50,18 @@ class ContinuationDispatcher:
         digest = batch[0]["batch_digest"]
         facts = [{"group_id": item["group_id"], "result_digest": item["result_digest"],
             "results": item["results"]} for item in batch]
-        message = ("[job_groups_completed] Factual terminal results from durable parallel groups. "
+        thread_id = batch[0]["thread_id"]
+        user_context=self._bounded_user_context(
+            await self.store.authoritative_user_context(thread_id))
+        message = ("[authoritative_user_inputs] These program-recorded inputs are authoritative. "
+            "Never deny an applied input, restore an older requirement, or let a late result override it. "
+            +user_context+"\n\n[job_groups_completed] Factual terminal results from durable parallel groups. "
             "Do not assume they still satisfy later user intent; inspect and decide what to do next. "
             "A row with result_available=true intentionally omits the full durable result to keep this "
             "continuation bounded. Now that continuation has arrived, fetch details once with "
             "`sandbox-job job --job-id JOB_ID` or fetch the group with "
             "`sandbox-job group --group-id GROUP_ID` before deciding; never guess omitted output. "
             + json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
-        thread_id = batch[0]["thread_id"]
         try:
             group = await self.store.get_job_group(batch[0]["group_id"])
             origin = await self.store.get_turn(group.origin_turn_id) if group else None

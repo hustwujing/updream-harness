@@ -4336,6 +4336,20 @@ class Store:
                 .order_by(TurnInputRow.sequence))).scalars().all()
         return [self.input_view(row) for row in rows]
 
+    async def authoritative_user_context(self, thread_id: str) -> dict:
+        async with self.connections() as db:
+            turn = (await db.execute(select(TurnRow).join(TurnOrderRow,
+                TurnOrderRow.turn_id == TurnRow.id).where(
+                TurnRow.thread_id == thread_id, TurnRow.internal == False,
+            ).order_by(TurnOrderRow.sequence.desc()).limit(1))).scalar_one_or_none()
+            if not turn:return {}
+            inputs = list((await db.execute(select(TurnInputRow).where(
+                TurnInputRow.turn_id == turn.id, TurnInputRow.status == 'applied',
+            ).order_by(TurnInputRow.sequence))).scalars().all())
+        return {'source_turn_id':turn.id,'initial_message':turn.public_message,
+            'applied_inputs':[{'input_id':row.id,'sequence':row.sequence,'message':row.message,
+                'attachments':json.loads(row.attachments_json)} for row in inputs]}
+
     async def _finish_turn_records(self, db, turn_id: str) -> None:
         inputs = (await db.execute(select(TurnInputRow).where(
             TurnInputRow.turn_id == turn_id, TurnInputRow.status.in_(["pending", "delivered", "unknown"])

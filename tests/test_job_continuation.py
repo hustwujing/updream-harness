@@ -1,7 +1,7 @@
 import pytest
 
 from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.domain import Harness, ThreadCreate, TurnCreate, TurnState
+from sandbox_harness.domain import Harness, ThreadCreate, TurnCreate, TurnInputCreate, TurnState
 from sandbox_harness.job_continuation import ContinuationDispatcher
 from sandbox_harness.job_contracts import JobGroupCreate, JobKind, JobRequest, JobState
 from sandbox_harness.store import Store
@@ -56,6 +56,23 @@ async def test_user_turn_queued_before_completion_precedes_factual_continuation(
         assert (await store.claim_next_turn(thread.id,origin.id)).id==user.id
         await store.set_turn_state(user.id,TurnState.COMPLETED)
         assert (await store.claim_next_turn(thread.id,user.id)).id==continuation.id
+    finally:await store.close()
+
+
+async def test_continuation_carries_authoritative_applied_user_inputs(tmp_path):
+    store,_,thread,origin=await setup(tmp_path)
+    try:
+        changed,_=await store.create_turn_input(origin.id,TurnInputCreate(
+            message='把最终尺寸改为256x128，并同时交付PNG和WebP。',
+            idempotency_key='resize-format-change'),thread.owner_id)
+        assert await store.set_input_status(changed.id,'applied')
+        await terminal_group(store,thread,origin,'changed-result')
+        broker=StoreBroker(store);dispatcher=ContinuationDispatcher(store,broker)
+        assert await dispatcher.run_once()==1
+        message=broker.submissions[-1][3]
+        assert '[authoritative_user_inputs]' in message
+        assert '把最终尺寸改为256x128，并同时交付PNG和WebP。' in message
+        assert 'These program-recorded inputs are authoritative' in message
     finally:await store.close()
 
 
