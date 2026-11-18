@@ -82,6 +82,7 @@ def command(harness: str, model: str, native_thread_id: str = "") -> HarnessComm
         argv = ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                 "--include-partial-messages", "--replay-user-messages",
                 "--permission-mode", "bypassPermissions", "--append-system-prompt", runtime_instructions(),
+                "--disallowedTools", "Agent,Task",
                 "--model", model]
         if native_thread_id:
             argv += ["--resume", native_thread_id]

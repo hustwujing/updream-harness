@@ -237,7 +237,10 @@ def test_harness_commands_preload_the_playwright_proxy_bridge(monkeypatch, tmp_p
     for harness in ('codex','claude','deepseek'):
         configured=__import__('sandbox_runtime.adapters',fromlist=['command']).command(harness,'model')
         assert '--require=/usr/local/lib/sandbox-playwright-proxy.cjs' in configured.environment['NODE_OPTIONS']
-        if harness=='claude':assert configured.environment['CLAUDE_CONFIG_DIR']=='/workspace/state/claude'
+        if harness=='claude':
+            assert configured.environment['CLAUDE_CONFIG_DIR']=='/workspace/state/claude'
+            denied=configured.argv[configured.argv.index('--disallowedTools')+1]
+            assert denied=='Agent,Task'
 
 
 def test_runtime_stream_accepts_bounded_large_native_json_lines(tmp_path, monkeypatch):
