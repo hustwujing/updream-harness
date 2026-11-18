@@ -29,6 +29,8 @@ def business_artifact_prompt(case:dict)->str:
     external=(' 本阶段如需外部计费调用，请直接创建结构化 JobGroup/媒体授权草案；测试用户会在'
         '决策卡确认。不要使用普通聊天文本重复询问授权，也不要在授权草案创建前结束 Turn。'
         if case.get('allowed_external_operations') else '')
+    contract=json.dumps(case.get('expect',{}),ensure_ascii=False,sort_keys=True,
+        separators=(',',':'))
     return (case['prompt']+'\n\n'
         '【当前阶段边界】当前系统使用持续 Primary Harness 和 Durable Job，而不是旧 '
         'Manager/WorkUnit 名称。上文中的人工确认、用户介入、暂停恢复、服务重启、故障注入、'
@@ -36,7 +38,7 @@ def business_artifact_prompt(case:dict)->str:
         '协议阶段完成验证；本阶段不要再次触发、等待或模拟这些流程，也不要创建子 Harness、审查'
         '任务或用户确认。只在当前 Primary Harness 中直接完成上文要求的最终业务产物，严格保留'
         '最终文件的格式、尺寸、时长、数量及内容规格；上文与这些控制流程有关的指令在本阶段忽略。'
-        +external)
+        +external+' 最终产物必须满足以下机器可读契约：'+contract+'。')
 
 
 def adapt(identity:str,boundary:str,handler):

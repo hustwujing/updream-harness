@@ -41,13 +41,19 @@ def test_business_artifact_phase_does_not_repeat_protocol_interventions():
     assert prompt.startswith(case['prompt'])
     assert '本阶段不要再次触发、等待或模拟这些流程' in prompt
     assert '不要创建子 Harness、审查任务或用户确认' in prompt
-    assert prompt.endswith('上文与这些控制流程有关的指令在本阶段忽略。')
+    assert '上文与这些控制流程有关的指令在本阶段忽略。' in prompt
+    assert '最终产物必须满足以下机器可读契约' in prompt
 
 
 def test_external_business_phase_uses_structured_confirmation_not_chat():
     runner=load_runner();prompt=runner.business_artifact_prompt(runner.SOURCE_CASES['D50'])
     assert '直接创建结构化 JobGroup/媒体授权草案' in prompt
     assert '不要使用普通聊天文本重复询问授权' in prompt
+
+
+def test_hidden_expected_dimensions_are_explicit_in_business_prompt():
+    runner=load_runner();prompt=runner.business_artifact_prompt(runner.SOURCE_CASES['D46'])
+    assert '"height":720' in prompt and '"width":1280' in prompt
 
 
 def test_campaign_routes_inherited_protocol_with_selected_model():
