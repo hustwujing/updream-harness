@@ -48,3 +48,8 @@ def test_delivery_contract_comes_from_declared_options_not_internal_demo_files()
     assert by_source['image-watermark-batch']['expect']['height']==600
     assert 'speech.json' in by_source['local-word-edit']['assets']
     assert by_source['image-cutout']['allowed_external_operations']==['image.segment']
+    erase=by_source['image-erase']
+    assert all('图片工作台' not in option and '载入为新图层' not in option
+        for option in erase['content_checks'])
+    assert any('图片工作台' in option or '载入' in option for option in erase['source_ui_notes'])
+    assert '图片工作台' not in erase['prompt'] and '载入为新图层' not in erase['prompt']

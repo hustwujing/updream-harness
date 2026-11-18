@@ -37,6 +37,16 @@ def declared_source_files(entry:dict)->list[str]:
     return list(dict.fromkeys(files))
 
 
+def partition_options(entry:dict)->tuple[list[str],list[str]]:
+    task=[];ui=[]
+    for raw in entry.get('options',[]):
+        option=str(raw)
+        if '图片工作台' in option or (option.startswith('原图保留，结果可') and '载入' in option):
+            ui.append(option)
+        else:task.append(option)
+    return task,ui
+
+
 def media_probe(path:Path)->dict:
     value=json.loads(subprocess.check_output(['ffprobe','-v','error','-show_streams',
         '-show_format','-of','json',str(path)],text=True))
@@ -56,7 +66,8 @@ def has_audio_stream(path:Path)->bool:
 
 
 def declared_sidecar(entry:dict,result_suffix:str)->str:
-    requirement=' '.join([str(entry.get('prompt','')),*map(str,entry.get('options',[]))]).lower()
+    task_options,_=partition_options(entry)
+    requirement=' '.join([str(entry.get('prompt','')),*task_options]).lower()
     for suffix,markers in (('.srt',('srt','字幕文件')),('.ora',('ora','可编辑图层')),
             ('.json',('json','结构化报告'))):
         if suffix!=result_suffix and any(marker in requirement for marker in markers):return suffix
@@ -79,7 +90,8 @@ def result_probe(entry:dict,demo_root:Path)->dict:
 
 def expectation(entry:dict,demo_root:Path)->dict:
     probe=result_probe(entry,demo_root);value={'kind':probe['kind']}
-    requirement='；'.join([str(entry.get('prompt','')),*map(str,entry.get('options',[]))])
+    task_options,_=partition_options(entry)
+    requirement='；'.join([str(entry.get('prompt','')),*task_options])
     if value['kind']=='image':
         match=re.search(r'(?:输出|制作成|导出为)[^。；]{0,24}?(\d{2,5})\s*[×xX]\s*(\d{2,5})',requirement)
         if not match:
@@ -111,7 +123,8 @@ def build(source:Path)->dict:
         assets=declared_source_files(entry)
         missing=[name for name in assets if not (asset_root/name).is_file()]
         if missing:raise ValueError('missing_demo_sources:'+','.join(missing))
-        expected=expectation(entry,demo_root);options='；'.join(map(str,entry.get('options',[])))
+        expected=expectation(entry,demo_root);task_options,ui_notes=partition_options(entry)
+        options='；'.join(task_options)
         sidecar=('，并同时交付 '+expected['extra_extension']+' 伴随文件'
             if expected.get('extra_extension') else '')
         prompt=('已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。'+
@@ -121,7 +134,8 @@ def build(source:Path)->dict:
             'source_demo_id':entry['id'],'title':entry['title'],'category':entry.get('category',''),
             'complexity':'example_library','assets':assets,'prompt':prompt,
             'source_prompt':entry['prompt'],'expect':expected,
-            'content_checks':list(entry.get('options',[])),'workflow_min_steps':0,'hook':None,
+            'content_checks':task_options,'source_ui_notes':ui_notes,
+            'workflow_min_steps':0,'hook':None,
             'status':'not_run','attempts':[],'allowed_external_operations':list(
                 OPERATIONS.get(entry['id'],())), 'entry_mode':'deployed_browser',
             'executor':'primary_harness','provenance':'distributed-agent-system:'+entry['id'],

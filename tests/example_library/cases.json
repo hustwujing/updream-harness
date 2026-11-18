@@ -31,6 +31,7 @@
         "底部中文标题“寻找旅伴”",
         "由 Codex 编写脚本并抽帧检查，可继续用对话修改"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -70,6 +71,7 @@
         "音轨：0",
         "复用已完成的真实转写"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -108,6 +110,7 @@
         "分段停顿：0.5 秒",
         "输出：Markdown"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -146,6 +149,7 @@
         "逐词边界外保留约 80 毫秒",
         "720p 草稿 · 统一音量"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -186,6 +190,7 @@
         "片段：0–8 秒",
         "720p 草稿 · 30 fps"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -228,6 +233,7 @@
         "输出：视频 + SRT",
         "片段：0–8.8 秒"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -268,6 +274,7 @@
         "出场：1 秒，持续：5 秒",
         "叠加素材音频不混入主音轨"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -309,6 +316,7 @@
         "真峰值：−1 dBTP",
         "片段：0–8.8 秒"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -348,6 +356,7 @@
         "自动读取缓存转写",
         "输出：PNG"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -383,6 +392,7 @@
         "分析范围：0–8 秒",
         "输出：测量数据与建议滤镜"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -418,6 +428,7 @@
         "语言：英语，说话人：2",
         "复用相同对白的转写缓存"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -454,6 +465,7 @@
         "后段 0.5 倍速",
         "末帧定格 1 秒；总计 7 秒"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -494,6 +506,7 @@
         "转场重叠 0.6 秒",
         "成片 5.4 秒"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -532,6 +545,7 @@
         "每轮定格 0.5 秒",
         "循环两次，共 7 秒"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -570,6 +584,7 @@
         "旋转 90°＋水平镜像",
         "540×960 竖屏、模糊填充"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -610,6 +625,7 @@
         "左原色，右暖调",
         "每格居中裁满，保留左侧音轨"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -650,6 +666,7 @@
         "马赛克：第 1–4 秒",
         "中文标题全程显示；不跟踪目标"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -691,6 +708,7 @@
         "配乐音量 0.3、循环",
         "讲话时自动压低配乐"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -732,6 +750,7 @@
         "音乐延迟 1 秒、循环",
         "结尾淡出 0.5 秒"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -770,6 +789,7 @@
         "FFT 基础降噪＋80 Hz 高通",
         "输出 WAV；可对比试听"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -807,6 +827,7 @@
         "按词索引 0–8、9–12 保留两句",
         "四词字幕，逐词黄色填色"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -834,13 +855,15 @@
       "assets": [
         "image-cup.png"
       ],
-      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。请先给方案，再把杯子抠成透明 PNG，保留原图。 原示例验收要求：BiRefNet 实际生成的前景蒙版；可在图片工作台手动框选和调整图层；原图保留，结果可重新载入图层。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
+      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。请先给方案，再把杯子抠成透明 PNG，保留原图。 原示例验收要求：BiRefNet 实际生成的前景蒙版。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
       "source_prompt": "请先给方案，再把杯子抠成透明 PNG，保留原图。",
       "expect": {
         "kind": "image"
       },
       "content_checks": [
-        "BiRefNet 实际生成的前景蒙版",
+        "BiRefNet 实际生成的前景蒙版"
+      ],
+      "source_ui_notes": [
         "可在图片工作台手动框选和调整图层",
         "原图保留，结果可重新载入图层"
       ],
@@ -871,13 +894,15 @@
       "assets": [
         "image-cup.png"
       ],
-      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。框选杯子范围 x=110,y=50,宽200,高170，用 SAM2 生成主体蒙版和透明前景。先给方案。 原示例验收要求：SAM2.1 实际框选结果；可在图片工作台手动框选和调整图层；原图保留，结果可重新载入图层。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
+      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。框选杯子范围 x=110,y=50,宽200,高170，用 SAM2 生成主体蒙版和透明前景。先给方案。 原示例验收要求：SAM2.1 实际框选结果。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
       "source_prompt": "框选杯子范围 x=110,y=50,宽200,高170，用 SAM2 生成主体蒙版和透明前景。先给方案。",
       "expect": {
         "kind": "image"
       },
       "content_checks": [
-        "SAM2.1 实际框选结果",
+        "SAM2.1 实际框选结果"
+      ],
+      "source_ui_notes": [
         "可在图片工作台手动框选和调整图层",
         "原图保留，结果可重新载入图层"
       ],
@@ -908,13 +933,15 @@
       "assets": [
         "image-cup.png"
       ],
-      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。把杯子改为蓝色，保留上方文字和背景；范围 x=110,y=50,宽200,高170。先给方案。 原示例验收要求：Qwen 编辑后按原分辨率选区合成，选区外像素保留；可在图片工作台手动框选和调整图层；原图保留，结果可重新载入图层。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
+      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。把杯子改为蓝色，保留上方文字和背景；范围 x=110,y=50,宽200,高170。先给方案。 原示例验收要求：Qwen 编辑后按原分辨率选区合成，选区外像素保留。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
       "source_prompt": "把杯子改为蓝色，保留上方文字和背景；范围 x=110,y=50,宽200,高170。先给方案。",
       "expect": {
         "kind": "image"
       },
       "content_checks": [
-        "Qwen 编辑后按原分辨率选区合成，选区外像素保留",
+        "Qwen 编辑后按原分辨率选区合成，选区外像素保留"
+      ],
+      "source_ui_notes": [
         "可在图片工作台手动框选和调整图层",
         "原图保留，结果可重新载入图层"
       ],
@@ -945,14 +972,16 @@
       "assets": [
         "image-cup.png"
       ],
-      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。将这张图片拆成3个 RGBA 图层，提供合成预览和 PSD/ORA。先给方案。 原示例验收要求：Qwen-Layered 实际分层；生成式重建可能含重复内容；可在图片工作台手动框选和调整图层；原图保留，结果可重新载入图层。主交付必须包含 image/png 类型成品（参考文件名 result.png），并同时交付 .ora 伴随文件。",
+      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。将这张图片拆成3个 RGBA 图层，提供合成预览和 PSD/ORA。先给方案。 原示例验收要求：Qwen-Layered 实际分层；生成式重建可能含重复内容。主交付必须包含 image/png 类型成品（参考文件名 result.png），并同时交付 .ora 伴随文件。",
       "source_prompt": "将这张图片拆成3个 RGBA 图层，提供合成预览和 PSD/ORA。先给方案。",
       "expect": {
         "kind": "image",
         "extra_extension": ".ora"
       },
       "content_checks": [
-        "Qwen-Layered 实际分层；生成式重建可能含重复内容",
+        "Qwen-Layered 实际分层；生成式重建可能含重复内容"
+      ],
+      "source_ui_notes": [
         "可在图片工作台手动框选和调整图层",
         "原图保留，结果可重新载入图层"
       ],
@@ -983,13 +1012,15 @@
       "assets": [
         "image-cup.png"
       ],
-      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。消除上方标题，范围 x=26,y=13,宽123,高38，其余原图像素保留。先给方案。 原示例验收要求：Qwen 消除选区内容并以蒙版合成结果；可在图片工作台手动框选和调整图层；原图保留，结果可重新载入图层。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
+      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。消除上方标题，范围 x=26,y=13,宽123,高38，其余原图像素保留。先给方案。 原示例验收要求：Qwen 消除选区内容并以蒙版合成结果。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
       "source_prompt": "消除上方标题，范围 x=26,y=13,宽123,高38，其余原图像素保留。先给方案。",
       "expect": {
         "kind": "image"
       },
       "content_checks": [
-        "Qwen 消除选区内容并以蒙版合成结果",
+        "Qwen 消除选区内容并以蒙版合成结果"
+      ],
+      "source_ui_notes": [
         "可在图片工作台手动框选和调整图层",
         "原图保留，结果可重新载入图层"
       ],
@@ -1030,6 +1061,7 @@
         "ZIM 软 Alpha",
         "输出透明前景与蒙版"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -1057,13 +1089,15 @@
       "assets": [
         "image-mask.png"
       ],
-      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。精修这张蒙版：扩张2像素、羽化2像素、填补孔洞。 原示例验收要求：扩张、羽化、去小区域并填补孔洞。；原图保留，结果可载入为新图层。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
+      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。精修这张蒙版：扩张2像素、羽化2像素、填补孔洞。 原示例验收要求：扩张、羽化、去小区域并填补孔洞。。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
       "source_prompt": "精修这张蒙版：扩张2像素、羽化2像素、填补孔洞。",
       "expect": {
         "kind": "image"
       },
       "content_checks": [
-        "扩张、羽化、去小区域并填补孔洞。",
+        "扩张、羽化、去小区域并填补孔洞。"
+      ],
+      "source_ui_notes": [
         "原图保留，结果可载入为新图层"
       ],
       "workflow_min_steps": 0,
@@ -1091,13 +1125,15 @@
       "assets": [
         "image-cup.png"
       ],
-      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。自动修正白平衡和色阶，Gamma设为1.1，轻微锐化。 原示例验收要求：本地调整白平衡、色阶、Gamma、饱和度与锐化。；原图保留，结果可载入为新图层。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
+      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。自动修正白平衡和色阶，Gamma设为1.1，轻微锐化。 原示例验收要求：本地调整白平衡、色阶、Gamma、饱和度与锐化。。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
       "source_prompt": "自动修正白平衡和色阶，Gamma设为1.1，轻微锐化。",
       "expect": {
         "kind": "image"
       },
       "content_checks": [
-        "本地调整白平衡、色阶、Gamma、饱和度与锐化。",
+        "本地调整白平衡、色阶、Gamma、饱和度与锐化。"
+      ],
+      "source_ui_notes": [
         "原图保留，结果可载入为新图层"
       ],
       "workflow_min_steps": 0,
@@ -1126,13 +1162,15 @@
         "image-cup.png",
         "image-color-reference.png"
       ],
-      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。让原图按参考图匹配色彩，强度0.7。 原示例验收要求：按参考图的通道统计匹配色彩，可调节强度。；原图保留，结果可载入为新图层。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
+      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。让原图按参考图匹配色彩，强度0.7。 原示例验收要求：按参考图的通道统计匹配色彩，可调节强度。。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
       "source_prompt": "让原图按参考图匹配色彩，强度0.7。",
       "expect": {
         "kind": "image"
       },
       "content_checks": [
-        "按参考图的通道统计匹配色彩，可调节强度。",
+        "按参考图的通道统计匹配色彩，可调节强度。"
+      ],
+      "source_ui_notes": [
         "原图保留，结果可载入为新图层"
       ],
       "workflow_min_steps": 0,
@@ -1162,7 +1200,7 @@
       "assets": [
         "image-foreground.png"
       ],
-      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。把透明杯子放进1200×1200白底商品画布，统一留白并添加投影。 原示例验收要求：透明主体居中、统一留白、白底和自然投影。；原图保留，结果可载入为新图层。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
+      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。把透明杯子放进1200×1200白底商品画布，统一留白并添加投影。 原示例验收要求：透明主体居中、统一留白、白底和自然投影。。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
       "source_prompt": "把透明杯子放进1200×1200白底商品画布，统一留白并添加投影。",
       "expect": {
         "kind": "image",
@@ -1170,7 +1208,9 @@
         "height": 1200
       },
       "content_checks": [
-        "透明主体居中、统一留白、白底和自然投影。",
+        "透明主体居中、统一留白、白底和自然投影。"
+      ],
+      "source_ui_notes": [
         "原图保留，结果可载入为新图层"
       ],
       "workflow_min_steps": 0,
@@ -1198,7 +1238,7 @@
       "assets": [
         "image-cup.png"
       ],
-      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。把项目图片批量导出为600×600并添加“UPDREAM”水印。 原示例验收要求：批量导出统一尺寸、背景、格式和文字水印。；原图保留，结果可载入为新图层。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
+      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。把项目图片批量导出为600×600并添加“UPDREAM”水印。 原示例验收要求：批量导出统一尺寸、背景、格式和文字水印。。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
       "source_prompt": "把项目图片批量导出为600×600并添加“UPDREAM”水印。",
       "expect": {
         "kind": "image",
@@ -1206,7 +1246,9 @@
         "height": 600
       },
       "content_checks": [
-        "批量导出统一尺寸、背景、格式和文字水印。",
+        "批量导出统一尺寸、背景、格式和文字水印。"
+      ],
+      "source_ui_notes": [
         "原图保留，结果可载入为新图层"
       ],
       "workflow_min_steps": 0,
@@ -1234,13 +1276,15 @@
       "assets": [
         "image-cup.png"
       ],
-      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。识别图片中的文字，展示文字框和置信度。 原示例验收要求：识别中文内容、置信度和文字框，不修改原图。；原图保留，结果可载入为新图层。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
+      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。识别图片中的文字，展示文字框和置信度。 原示例验收要求：识别中文内容、置信度和文字框，不修改原图。。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
       "source_prompt": "识别图片中的文字，展示文字框和置信度。",
       "expect": {
         "kind": "image"
       },
       "content_checks": [
-        "识别中文内容、置信度和文字框，不修改原图。",
+        "识别中文内容、置信度和文字框，不修改原图。"
+      ],
+      "source_ui_notes": [
         "原图保留，结果可载入为新图层"
       ],
       "workflow_min_steps": 0,
@@ -1270,13 +1314,15 @@
       "assets": [
         "image-cup.png"
       ],
-      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。把“春季新品”改成“夏日新品”，保留杯子和背景。 原示例验收要求：识别文字框后修补背景并栅格化新中文字。；原图保留，结果可载入为新图层。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
+      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。把“春季新品”改成“夏日新品”，保留杯子和背景。 原示例验收要求：识别文字框后修补背景并栅格化新中文字。。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
       "source_prompt": "把“春季新品”改成“夏日新品”，保留杯子和背景。",
       "expect": {
         "kind": "image"
       },
       "content_checks": [
-        "识别文字框后修补背景并栅格化新中文字。",
+        "识别文字框后修补背景并栅格化新中文字。"
+      ],
+      "source_ui_notes": [
         "原图保留，结果可载入为新图层"
       ],
       "workflow_min_steps": 0,
@@ -1306,13 +1352,15 @@
       "assets": [
         "image-document-skew.png"
       ],
-      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。依次选择文档四角，校正透视并导出。 原示例验收要求：按四个角点拉正倾斜文档。；原图保留，结果可载入为新图层。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
+      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。依次选择文档四角，校正透视并导出。 原示例验收要求：按四个角点拉正倾斜文档。。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
       "source_prompt": "依次选择文档四角，校正透视并导出。",
       "expect": {
         "kind": "image"
       },
       "content_checks": [
-        "按四个角点拉正倾斜文档。",
+        "按四个角点拉正倾斜文档。"
+      ],
+      "source_ui_notes": [
         "原图保留，结果可载入为新图层"
       ],
       "workflow_min_steps": 0,
@@ -1340,13 +1388,15 @@
       "assets": [
         "image-cup.png"
       ],
-      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。添加调整图层，提高对比度、降低饱和度并使用暖色温。 原示例验收要求：调整图层保留参数，可随时修改或关闭。；原图保留，结果可载入为新图层。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
+      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。添加调整图层，提高对比度、降低饱和度并使用暖色温。 原示例验收要求：调整图层保留参数，可随时修改或关闭。。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
       "source_prompt": "添加调整图层，提高对比度、降低饱和度并使用暖色温。",
       "expect": {
         "kind": "image"
       },
       "content_checks": [
-        "调整图层保留参数，可随时修改或关闭。",
+        "调整图层保留参数，可随时修改或关闭。"
+      ],
+      "source_ui_notes": [
         "原图保留，结果可载入为新图层"
       ],
       "workflow_min_steps": 0,
@@ -1374,13 +1424,15 @@
       "assets": [
         "image-cup.png"
       ],
-      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。添加居中的中文标题，自动换行，使用白色文字、黑色描边和阴影。 原示例验收要求：文字保持可编辑并自动换行，支持描边、阴影和居中。；原图保留，结果可载入为新图层。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
+      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。添加居中的中文标题，自动换行，使用白色文字、黑色描边和阴影。 原示例验收要求：文字保持可编辑并自动换行，支持描边、阴影和居中。。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
       "source_prompt": "添加居中的中文标题，自动换行，使用白色文字、黑色描边和阴影。",
       "expect": {
         "kind": "image"
       },
       "content_checks": [
-        "文字保持可编辑并自动换行，支持描边、阴影和居中。",
+        "文字保持可编辑并自动换行，支持描边、阴影和居中。"
+      ],
+      "source_ui_notes": [
         "原图保留，结果可载入为新图层"
       ],
       "workflow_min_steps": 0,
@@ -1408,13 +1460,15 @@
       "assets": [
         "image-cup.png"
       ],
-      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。把三张图片在画布中水平等距排列并居中对齐。 原示例验收要求：多个图层按画布对齐并保持等距。；原图保留，结果可载入为新图层。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
+      "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。把三张图片在画布中水平等距排列并居中对齐。 原示例验收要求：多个图层按画布对齐并保持等距。。主交付必须包含 image/png 类型成品（参考文件名 result.png）。",
       "source_prompt": "把三张图片在画布中水平等距排列并居中对齐。",
       "expect": {
         "kind": "image"
       },
       "content_checks": [
-        "多个图层按画布对齐并保持等距。",
+        "多个图层按画布对齐并保持等距。"
+      ],
+      "source_ui_notes": [
         "原图保留，结果可载入为新图层"
       ],
       "workflow_min_steps": 0,
@@ -1451,6 +1505,7 @@
         "左右同步播放并选择要继续使用的版本。",
         "可载入项目继续编辑"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -1489,6 +1544,7 @@
         "逐句编辑字幕并另存为新 SRT，不覆盖转写。",
         "可载入项目继续编辑"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -1526,6 +1582,7 @@
         "保存章节范围并作为独立短片进入 Agent。",
         "可载入项目继续编辑"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -1564,6 +1621,7 @@
         "统一画幅、字幕样式和响度并批量排队。",
         "可载入项目继续编辑"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -1601,6 +1659,7 @@
         "在具体时间段记录修改要求，交给 Agent 生成返工方案。",
         "可载入项目继续编辑"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
@@ -1639,6 +1698,7 @@
         "时长与音视频轨",
         "输出 JSON 报告"
       ],
+      "source_ui_notes": [],
       "workflow_min_steps": 0,
       "hook": null,
       "status": "not_run",
