@@ -254,8 +254,7 @@
       "source_prompt": "在森林画面左上角叠加一段对白小窗，从第 1 秒出现，持续 5 秒。",
       "expect": {
         "kind": "video",
-        "duration": 8.0,
-        "audio": true
+        "duration": 8.0
       },
       "content_checks": [
         "主片段：0–8 秒",
@@ -597,8 +596,7 @@
         "kind": "video",
         "width": 960,
         "height": 540,
-        "duration": 5.0,
-        "audio": true
+        "duration": 5.0
       },
       "content_checks": [
         "左右分屏、同步播放",

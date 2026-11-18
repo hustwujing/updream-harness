@@ -39,6 +39,12 @@ def media_probe(path:Path)->dict:
     return result
 
 
+def has_audio_stream(path:Path)->bool:
+    result=subprocess.run(['ffprobe','-v','error','-select_streams','a',
+        '-show_entries','stream=index','-of','csv=p=0',str(path)],capture_output=True,text=True)
+    return result.returncode==0 and bool(result.stdout.strip())
+
+
 def declared_sidecar(entry:dict,result_suffix:str)->str:
     requirement=' '.join([str(entry.get('prompt','')),*map(str,entry.get('options',[]))]).lower()
     for suffix,markers in (('.srt',('srt','字幕文件')),('.ora',('ora','可编辑图层')),
@@ -75,7 +81,9 @@ def expectation(entry:dict,demo_root:Path)->dict:
         segments=(entry.get('preset') or {}).get('segments') or []
         if segments:value['duration']=round(sum(float(row['end'])-float(row['start']) for row in segments),3)
         elif re.search(r'\d+(?:\.\d+)?\s*秒',requirement):value['duration']=probe.get('duration',0)
-        if any(marker in requirement for marker in ('声音','音量','响度','音轨','音频','配乐','对白')):
+        sources=[demo_root/'sources'/str(row['file']) for row in entry.get('sources',[])]
+        if any(marker in requirement for marker in ('声音','音量','响度','音轨','音频','配乐','对白')) and any(
+                has_audio_stream(path) for path in sources):
             value['audio']=True
     if value['kind']=='audio' and 'duration' in probe:value['duration']=probe['duration']
     result=demo_root/entry['id']/entry['result']

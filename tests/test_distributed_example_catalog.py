@@ -37,3 +37,6 @@ def test_delivery_contract_comes_from_declared_options_not_internal_demo_files()
     assert by_source['grade']['expect']=={'kind':'video','width':1280,'height':720,'duration':8.0}
     assert by_source['grade']['source_result_probe']['audio'] is True
     assert by_source['overlay']['expect']['duration']==8.0
+    assert 'audio' not in by_source['overlay']['expect']
+    assert 'audio' not in by_source['local-split']['expect']
+    assert by_source['agent-portrait']['expect']['audio'] is True
