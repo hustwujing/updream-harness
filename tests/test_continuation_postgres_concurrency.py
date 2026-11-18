@@ -4,7 +4,7 @@ import os
 import pytest
 
 from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate,identifier
+from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate,TurnState,identifier
 from sandbox_harness.job_continuation import ContinuationDispatcher
 from sandbox_harness.job_contracts import JobGroupCreate,JobKind,JobRequest,JobState
 from sandbox_harness.store import Store
@@ -31,6 +31,8 @@ async def test_concurrent_dispatchers_create_one_continuation_turn():
         group,jobs=await primary.create_job_group(owner,JobGroupCreate(thread_id=thread.id,
             origin_turn_id=origin.id,idempotency_key='group-'+identifier(),jobs=[request]))
         await primary.transition_job(jobs[0].id,JobState.SUCCEEDED,expected_generation=0,result={'ok':True})
+        await primary.set_turn_state(origin.id,TurnState.COMPLETED)
+        assert await primary.claim_next_turn(thread.id,origin.id) is None
         dispatchers=[ContinuationDispatcher(store,StoreBroker(store),owner='dispatcher-'+identifier())
             for store in stores]
         counts=await asyncio.gather(*(dispatcher.run_once() for dispatcher in dispatchers))
