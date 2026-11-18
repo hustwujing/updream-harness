@@ -104,9 +104,11 @@ def test_example_job_catalog_is_parseable_and_digest_verified():
     segment=value.operation('image.segment','1','1'*64)
     assert segment.input_roles==('source',) and set(segment.output_roles)=={
         'foreground','mask','segmentation_report'}
-    assert segment.resources['gpu']==1 and segment.creates_artifacts
+    assert segment.resources['gpu']==1 and segment.resources['gpu_memory_mb']==16384
+    assert segment.creates_artifacts
     assert segment.retry_policy['max_pre_accept_attempts']==1
-    assert 'SAM3' in segment.guidance and 'box' in segment.guidance and 'points' in segment.guidance
+    assert all(value in segment.guidance for value in (
+        'SAM3','model-native category','no_target_found','box','points','never repeat'))
     transcribe=value.operation('audio.transcribe','1','2'*64)
     assert transcribe.input_roles==('source',) and set(transcribe.output_roles)=={
         'transcript_json','transcript_text','transcript_srt'}
@@ -119,19 +121,23 @@ def test_runtime_instructions_route_controlled_operations_through_job_catalog():
     assert 'image.segment' in RUNTIME_INSTRUCTIONS
     assert 'audio.transcribe' in RUNTIME_INSTRUCTIONS
     assert 'sandbox-job catalog' in RUNTIME_INSTRUCTIONS
+    assert 'sandbox-job delegate --request JSON' in RUNTIME_INSTRUCTIONS
     assert 'sandbox-media catalog' in RUNTIME_INSTRUCTIONS
     assert 'ordinary Sandbox cannot see the host device' in RUNTIME_INSTRUCTIONS
+    assert 'only confirmation channel' in RUNTIME_INSTRUCTIONS
+    assert 'A progress sentence is not execution' in RUNTIME_INSTRUCTIONS
 
 
 def test_public_child_profiles_expose_frozen_harness_job_template():
     raw=(ROOT/'deploy/job-catalog.example.json').read_text()
     value=JobCatalog.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest())
     child=SimpleNamespace(id='child-general',supported_harnesses=('codex','claude'),
-        max_delegation_depth=1)
+        allowed_skill_ids=('writing-plans',),max_delegation_depth=1)
     public=HarnessCatalog(job_catalog=value,profile_resolver=SimpleNamespace(
         skills={},children={'child-general':child})).public_execution_metadata()
     profile=public['child_execution_profiles'][0];template=profile['job_template']
     assert template=={'kind':'harness','adapter':'child-harness',
         'descriptor_id':'delegate.harness','descriptor_version':'1','descriptor_digest':'d'*64,
         'child_profile_id':'child-general'}
+    assert profile['allowed_skill_ids']==['writing-plans']
     assert profile['parameter_schema']['properties']['harness']['enum']==['codex','claude']
