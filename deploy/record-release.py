@@ -85,6 +85,12 @@ def build_frontend(code_root: Path) -> str:
     return directory_digest(output)
 
 
+def grant_service_release_read_access(code_root: Path) -> None:
+    subprocess.run(['setfacl','-m','u:sandbox-harness:r-x',str(code_root)],check=True)
+    subprocess.run(['setfacl','-R','-m','u:sandbox-harness:rX',str(code_root/'src'),
+        str(code_root/'web'/'dist')],check=True)
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--env-file',default='/data2/wujing03/sandbox-harness-platform-parallel/.data/config/platform.env')
@@ -100,6 +106,7 @@ def main():
     revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=code_root,text=True).strip()
     if not re.fullmatch('[0-9a-f]{40}',revision):raise ValueError('Invalid Git revision')
     web_dist_digest=build_frontend(code_root)
+    grant_service_release_read_access(code_root)
     bundle_dir=root/'.data'/'runtime-bundles'
     bundle_dir.mkdir(parents=True,exist_ok=True)
     os.chmod(bundle_dir,0o755)

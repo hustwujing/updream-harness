@@ -157,6 +157,8 @@ def test_release_requires_complete_signed_profile_catalog_under_data2():
     assert "openssl','pkeyutl','-verify" in source
     assert "root/'.data'/'profile-catalogs'" in source
     assert "SANDBOX_HARNESS_PROFILE_CATALOG_PATH" in source
+    assert "grant_service_release_read_access" in source
+    assert "u:sandbox-harness:rX" in source
 
 
 def test_units_are_hardened_and_recover_without_graceful_shutdown():
