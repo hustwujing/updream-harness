@@ -26,14 +26,17 @@ OPERATIONS={
     'image-color-match':('image.edit',),
     'image-replace-text':('image.edit',),
 }
+SUPPLEMENTAL_DEMO_ASSETS={'video-version-compare':('final.mp4',)}
 
 
-def declared_source_files(entry:dict)->list[str]:
+def declared_source_files(entry:dict,demo_root:Path)->list[str]:
     files=[]
     for source in entry.get('sources',[]):
         files.append(str(source['file']))
         transcripts=source.get('transcripts') or {}
         if isinstance(transcripts,dict):files.extend(map(str,transcripts.values()))
+    files.extend(str((demo_root/str(entry['id'])/name).resolve())
+        for name in SUPPLEMENTAL_DEMO_ASSETS.get(str(entry['id']),()))
     return list(dict.fromkeys(files))
 
 
@@ -41,7 +44,8 @@ def partition_options(entry:dict)->tuple[list[str],list[str]]:
     task=[];ui=[]
     for raw in entry.get('options',[]):
         option=str(raw)
-        if '图片工作台' in option or (option.startswith('原图保留，结果可') and '载入' in option):
+        if ('图片工作台' in option or option.startswith('可载入项目')
+                or (option.startswith('原图保留，结果可') and '载入' in option)):
             ui.append(option)
         else:task.append(option)
     return task,ui
@@ -120,11 +124,11 @@ def build(source:Path)->dict:
     if not isinstance(entries,list) or len(entries)!=44:raise ValueError('expected_exactly_44_examples')
     cases=[]
     for index,entry in enumerate(entries,1):
-        assets=declared_source_files(entry)
+        assets=declared_source_files(entry,demo_root)
         missing=[name for name in assets if not (asset_root/name).is_file()]
         if missing:raise ValueError('missing_demo_sources:'+','.join(missing))
         expected=expectation(entry,demo_root);task_options,ui_notes=partition_options(entry)
-        options='；'.join(task_options)
+        options='；'.join(option.rstrip('。；') for option in task_options)
         sidecar=('，并同时交付 '+expected['extra_extension']+' 伴随文件'
             if expected.get('extra_extension') else '')
         prompt=('已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。'+

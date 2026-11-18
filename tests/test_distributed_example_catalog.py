@@ -53,3 +53,8 @@ def test_delivery_contract_comes_from_declared_options_not_internal_demo_files()
         for option in erase['content_checks'])
     assert any('图片工作台' in option or '载入' in option for option in erase['source_ui_notes'])
     assert '图片工作台' not in erase['prompt'] and '载入为新图层' not in erase['prompt']
+    compare=by_source['video-version-compare']
+    assert len(compare['assets'])==2
+    assert Path(compare['assets'][1]).name=='final.mp4' and Path(compare['assets'][1]).is_file()
+    assert '可载入项目继续编辑' in compare['source_ui_notes']
+    assert '可载入项目继续编辑' not in compare['prompt']
