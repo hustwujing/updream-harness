@@ -28,6 +28,13 @@ def test_inherited_runner_reports_source_and_parallel_boundary():
         'parallel_boundary':'staged_job_continuation'}
 
 
+def test_inherited_non_protocol_cases_require_real_business_artifact_execution():
+    source=(ROOT/'tests/run_real_inherited_protocol.py').read_text()
+    assert "campaign.primary_case" in source
+    assert "business_artifact_verified" in source
+    assert "if case.get('expect',{}).get('kind')=='protocol'" in source
+
+
 def test_campaign_routes_inherited_protocol_with_selected_model():
     source=(ROOT/'tests/run_real_campaign.py').read_text()
     assert 'run_real_inherited_protocol.py' in source

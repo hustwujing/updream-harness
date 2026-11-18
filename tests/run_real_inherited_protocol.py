@@ -13,6 +13,11 @@ import httpx
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'tests'))
 import run_real_parallel_protocol as parallel
+import run_real_campaign as campaign
+
+
+SOURCE_CASES={value['id']:value for value in json.loads(
+    (ROOT/'tests/real_cases/cases.json').read_text())['cases'] if value['id'].startswith('D')}
 
 
 def decorate(identity:str,boundary:str,value:dict)->dict:
@@ -22,7 +27,21 @@ def decorate(identity:str,boundary:str,value:dict)->dict:
 
 def adapt(identity:str,boundary:str,handler):
     async def run(client,args):
-        return decorate(identity,boundary,await handler(client,args))
+        protocol=await handler(client,args)
+        if protocol.get('classification')!='success':return decorate(identity,boundary,protocol)
+        case=SOURCE_CASES[identity]
+        if case.get('expect',{}).get('kind')=='protocol':
+            return decorate(identity,boundary,protocol)
+        business={**case,'dynamic_hook':None,'prompt':(
+            '当前系统使用持续 Primary Harness 和 Durable Job，而不是旧 Manager/WorkUnit 名称。'
+            '请保留下面业务目标和文件规格；协议故障边界已由独立测试验证，本阶段已授权执行，'
+            '不要请求额外人工确认。\n\n'+case['prompt'])}
+        running={identity:{'state':'STARTING','expected':case.get('expect',{})}}
+        artifact=await campaign.primary_case(client,business,args,running)
+        if artifact.get('classification')!='success':
+            return decorate(identity,boundary,{**artifact,'protocol_evidence':protocol})
+        return decorate(identity,boundary,{**artifact,'protocol_evidence':protocol,
+            'business_artifact_verified':True})
     run.__name__='case_'+identity.lower()
     return run
 
@@ -118,7 +137,8 @@ async def main():
     parser.add_argument('--case',required=True,choices=[f'D{value:02d}' for value in range(1,52)])
     parser.add_argument('--report',type=Path,required=True)
     parser.add_argument('--harness',default='claude');parser.add_argument('--model',default='claude-opus-5-5')
-    parser.add_argument('--reasoning',default='deep');args=parser.parse_args();value={}
+    parser.add_argument('--reasoning',default='deep');parser.add_argument('--timeout',type=int,default=7200)
+    parser.add_argument('--intervention-delay',type=int,default=10);args=parser.parse_args();value={}
     try:
         async with httpx.AsyncClient(base_url=args.base_url,timeout=None,trust_env=False) as client:
             parallel.require(await client.get('api/session'))
