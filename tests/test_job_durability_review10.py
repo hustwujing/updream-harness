@@ -363,6 +363,27 @@ async def test_preaccept_cleanup_skips_external_quiescence_and_recovers_legacy_r
     finally:await store.close()
 
 
+async def test_takeover_terminal_state_cleans_older_accepted_generation(tmp_path):
+    store,_,job=await setup(tmp_path,request('takeover-cleanup'))
+    first=await store.claim_job(job.id,'first','node',30)
+    await store.record_job_acceptance(job.id,'first',first.generation,
+        external_execution_id='external',receipt={'accepted':True})
+    await store.release_job_lease(job.id,'first',first.generation)
+    second=await store.claim_job(job.id,'second','node',30,retry_kind='recovery')
+    await store.transition_job(job.id,JobState.SUCCEEDED,expected_generation=second.generation,
+        result={'recovered':True})
+    adapter=PhasedCleanupAdapter();worker=JobWorker(store,{'provider':adapter},
+        node_id='node',worker_id='cleanup')
+    try:
+        cleanup=await store.get_job_cleanup(job.id)
+        assert cleanup['generation']==first.generation and cleanup['state']=='pending'
+        await worker.run_cleanup_once(limit=1)
+        cleanup=await store.get_job_cleanup(job.id)
+        assert cleanup['state']=='completed'
+        assert adapter.external_calls==1 and adapter.release_calls==1
+    finally:await store.close()
+
+
 async def cleanup_fixture(tmp_path,name):
     store,_,job=await setup(tmp_path,request(name));attempt=await store.claim_job(job.id,"business","node",30)
     await store.record_job_acceptance(job.id,"business",attempt.generation,

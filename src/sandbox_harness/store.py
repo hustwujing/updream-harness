@@ -2569,19 +2569,26 @@ class Store:
                         if attempt:
                             attempt.finished_at = now()
                             attempt.outcome = state.value
-                            if attempt.accepted_at and attempt.external_execution_id:
+                            accepted_attempt=(attempt if attempt.accepted_at and
+                                attempt.external_execution_id else (await db.execute(
+                                select(JobAttemptRow).where(JobAttemptRow.job_id==job.id,
+                                    JobAttemptRow.accepted_at.is_not(None),
+                                    JobAttemptRow.external_execution_id!="").order_by(
+                                    JobAttemptRow.generation.desc()).limit(1).with_for_update()
+                                )).scalar_one_or_none())
+                            if accepted_attempt:
                                 cleanup=(await db.execute(select(JobCleanupRow).where(
                                     JobCleanupRow.job_id==job.id,
-                                    JobCleanupRow.generation==job.generation)
+                                    JobCleanupRow.generation==accepted_attempt.generation)
                                     .with_for_update())).scalar_one_or_none()
                                 if not cleanup:
                                     db.add(JobCleanupRow(id=identifier(),job_id=job.id,adapter=job.adapter,
-                                        generation=job.generation,
-                                        external_execution_id=attempt.external_execution_id,
-                                        acceptance_receipt_json=attempt.acceptance_receipt_json,
+                                        generation=accepted_attempt.generation,
+                                        external_execution_id=accepted_attempt.external_execution_id,
+                                        acceptance_receipt_json=accepted_attempt.acceptance_receipt_json,
                                         state="pending",phase="external_quiescence",attempt_count=0,last_error="",claim_owner="",
                                         claim_expires_at=None,created_at=now(),updated_at=now()))
-                            elif not attempt.accepted_at:
+                            else:
                                 reservation=(await db.execute(select(ResourceReservationRow).where(
                                     ResourceReservationRow.job_id==job.id,
                                     ResourceReservationRow.job_generation==job.generation)
