@@ -293,3 +293,19 @@ async def test_artifact_validator_checks_image_dimensions_and_text_contract():
     errors,_=await campaign.validate_artifacts(client,{"expect":{"kind":"image","width":64,
         "height":24,"terms":["missing"]}},artifacts)
     assert "missing_term:missing" in errors and any(row.startswith("dimensions:") for row in errors)
+
+
+@pytest.mark.asyncio
+async def test_artifact_validator_checks_declared_image_source_order(tmp_path):
+    campaign=campaign_module();left=tmp_path/'left.png';right=tmp_path/'right.png'
+    Image.new('RGB',(40,40),(220,20,20)).save(left)
+    Image.new('RGB',(40,40),(20,20,220)).save(right)
+    composite=io.BytesIO();image=Image.new('RGB',(80,40));image.paste(Image.open(right),(0,0));image.paste(
+        Image.open(left),(40,0));image.save(composite,'PNG')
+    artifacts=[{'summary':'result.png','payload':{'artifact_id':'image-1','mime':'image/png'}}]
+    errors,evidence=await campaign.validate_artifacts(ArtifactClient({'image-1':composite.getvalue()}),
+        {'expect':{'kind':'image','width':80,'height':40,
+            'source_order':['left.png','right.png']}},artifacts,asset_root=tmp_path)
+    assert errors==['source_order:result.png:0:right.png:left.png',
+        'source_order:result.png:1:left.png:right.png']
+    assert evidence[0]['source_matches']==['right.png','left.png']

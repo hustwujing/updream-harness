@@ -3467,7 +3467,11 @@
       "expect": {
         "kind": "image",
         "width": 128,
-        "height": 64
+        "height": 64,
+        "source_order": [
+          "rocket.png",
+          "portrait.png"
+        ]
       },
       "content_checks": [
         "来源产物由真实执行器生成并通过验收",

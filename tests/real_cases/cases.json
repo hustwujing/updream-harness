@@ -4,7 +4,7 @@
   "default_concurrency": 8,
   "source_snapshot": {
     "path": "tests/real_cases/source-plus-cases.json",
-    "sha256": "784bcb4157e30135302845b5977078d24215bd59d2720d8ea113b56ab90a6728",
+    "sha256": "8b6c7d54fcdc3549e1935f6e6441543ba29af12b3254fb3fb0637eceb3063264",
     "source_case_count": 129
   },
   "rules": {
@@ -3064,7 +3064,11 @@
       "expect": {
         "kind": "image",
         "width": 128,
-        "height": 64
+        "height": 64,
+        "source_order": [
+          "rocket.png",
+          "portrait.png"
+        ]
       },
       "content_checks": [
         "来源产物由真实执行器生成并通过验收",

@@ -18,7 +18,7 @@ import time
 import uuid
 
 import httpx
-from PIL import Image
+from PIL import Image,ImageChops,ImageOps,ImageStat
 
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -160,7 +160,24 @@ def volume_is_silent(report,threshold_db=-80.0):
     return bool(match and (match.group(1)=="-inf" or float(match.group(1))<=threshold_db))
 
 
-async def validate_artifacts(client,case,artifacts):
+def image_source_matches(image,source_names,asset_root):
+    target=image.convert('RGB');count=len(source_names)
+    if not count or target.width%count:return []
+    width=target.width//count;sources=[]
+    for name in source_names:
+        with Image.open(asset_root/name) as source:
+            sources.append(ImageOps.fit(source.convert('RGB'),(width,target.height),
+                method=Image.Resampling.LANCZOS,centering=(.5,.5)))
+    matches=[]
+    for index in range(count):
+        segment=target.crop((index*width,0,(index+1)*width,target.height))
+        distances=[sum(value*value for value in ImageStat.Stat(
+            ImageChops.difference(segment,source)).rms) for source in sources]
+        matches.append(source_names[min(range(count),key=distances.__getitem__)])
+    return matches
+
+
+async def validate_artifacts(client,case,artifacts,asset_root=None):
     expected=case.get("expect",{});records=[]
     temp_root=ROOT/".data/evidence/real-campaign/validation";temp_root.mkdir(parents=True,exist_ok=True)
     for item in artifacts:
@@ -175,6 +192,10 @@ async def validate_artifacts(client,case,artifacts):
                 with Image.open(io.BytesIO(data)) as image:
                     record.update(width=image.width,height=image.height,
                         alpha="A" in image.getbands())
+                    source_order=expected.get('source_order',[])
+                    if (source_order and asset_root and image.width==expected.get('width')
+                            and image.height==expected.get('height')):
+                        record['source_matches']=image_source_matches(image,source_order,asset_root)
             elif record["kind"] in {"video","audio"}:
                 suffix=Path(name).suffix or (".mp4" if record["kind"]=="video" else ".wav")
                 with tempfile.NamedTemporaryFile(dir=temp_root,suffix=suffix) as handle:
@@ -190,6 +211,12 @@ async def validate_artifacts(client,case,artifacts):
     errors=[]
     if any(row.get("error") for row in records):
         errors.extend(row["name"]+":"+row["error"] for row in records if row.get("error"))
+    for row in records:
+        if 'source_matches' not in row:continue
+        for index,(actual,wanted) in enumerate(zip(row.get('source_matches',[]),
+                expected.get('source_order',[]),strict=True)):
+            if actual!=wanted:
+                errors.append(f"source_order:{row['name']}:{index}:{actual}:{wanted}")
     kind=expected.get("kind");primary_kind="video" if kind=="video_variants" else kind
     primary=[row for row in records if row["kind"]==primary_kind]
     if kind and not primary:errors.append("missing_"+primary_kind)
@@ -391,7 +418,8 @@ async def primary_case(client,case,args,running):
     if final.get('state') in {'AWAITING_USER','WAITING_USER'}:
         response=await client.get(f"api/threads/{thread['id']}/interactions");response.raise_for_status()
         reason=waiting_interaction_reason(response.json(),final['id'])
-    validation_errors,validation=await validate_artifacts(client,case,artifacts) if artifacts else ([],[])
+    validation_errors,validation=await validate_artifacts(
+        client,case,artifacts,asset_root=args.asset_root) if artifacts else ([],[])
     if classification=="success" and validation_errors:
         classification,reason="program_failure","artifact_contract:"+",".join(validation_errors[:12])
     return {"classification":classification,"reason":reason,"thread_id":thread["id"],
