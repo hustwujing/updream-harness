@@ -376,6 +376,22 @@ async def protocol_case(case,args,running):
     return value
 
 
+async def inherited_protocol_case(case,args,running):
+    report=Path(args.report).parent/(case["id"]+".json")
+    process=await asyncio.create_subprocess_exec(str(ROOT/".venv/bin/python"),
+        str(ROOT/"tests/run_real_inherited_protocol.py"),"--base-url",args.base_url,
+        "--case",case["id"],"--report",str(report),"--harness",args.harness,
+        "--model",args.model,"--reasoning",args.reasoning)
+    running[case["id"]]["state"]="INHERITED_PROTOCOL_RUNNING"
+    try:return_code=await asyncio.wait_for(process.wait(),args.timeout)
+    except asyncio.TimeoutError:process.kill();await process.wait();raise TimeoutError("inherited_protocol_timeout")
+    if report.is_file():value=json.loads(report.read_text())
+    else:value={"classification":"program_failure","reason":"inherited_protocol_report_missing"}
+    if return_code and value.get("classification") not in DEFECT_CLASSES:
+        value.update(classification="program_failure",reason=value.get("reason") or "inherited_protocol_failed")
+    return value
+
+
 async def progress(total,running,results,started_count,stop,interval):
     while not stop.is_set():
         try:await asyncio.wait_for(stop.wait(),interval);continue
@@ -437,7 +453,8 @@ async def main():
                     "expected":case.get("expect",{})}
                 try:
                     value=(await primary_case(client,case,args,running) if case["executor"]=="primary_harness"
-                        else await protocol_case(case,args,running))
+                        else await inherited_protocol_case(case,args,running)
+                        if case["executor"]=="inherited_protocol" else await protocol_case(case,args,running))
                 except Exception as exc:
                     value={"classification":"program_failure","reason":type(exc).__name__+":"+str(exc)[:500]}
                 value.update(case_id=identity,title=case["title"],elapsed_seconds=round(time.monotonic()-started,3),

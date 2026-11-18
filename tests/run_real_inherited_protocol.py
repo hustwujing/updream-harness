@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+from pathlib import Path
+import sys
+
+import httpx
+
+
+ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT/'tests'))
+import run_real_parallel_protocol as parallel
+
+
+def decorate(identity:str,boundary:str,value:dict)->dict:
+    return {**value,'source_case_id':identity,
+        'source_project':'sandbox-harness-platform-plus','parallel_boundary':boundary}
+
+
+def adapt(identity:str,boundary:str,handler):
+    async def run(client,args):
+        return decorate(identity,boundary,await handler(client,args))
+    run.__name__='case_'+identity.lower()
+    return run
+
+
+async def usage_allow(client,args):
+    thread,turn=await parallel.origin(client,args,'D50')
+    response=await parallel.prepare(client,thread,turn,[parallel.provider_job(index) for index in range(8)],'D50')
+    parallel.require(response);draft=response.json()
+    if draft['mode']!='draft':raise AssertionError('billable batch bypassed confirmation')
+    confirmed=parallel.require(await client.post(
+        f"api/job-group-drafts/{draft['draft']['id']}/confirm")).json()
+    if len(confirmed['jobs'])!=8:raise AssertionError('confirmed batch count is not eight')
+    parallel.require(await client.post(f"api/job-groups/{confirmed['group']['id']}/cancel"))
+    return {'classification':'success','draft_id':draft['draft']['id'],
+        'group_id':confirmed['group']['id'],'authorized_submissions':8,'maximum_calls':8}
+
+
+async def usage_reject(client,args):
+    thread,turn=await parallel.origin(client,args,'D51')
+    response=await parallel.prepare(client,thread,turn,[parallel.provider_job(index) for index in range(8)],'D51')
+    parallel.require(response);draft=response.json()
+    rejected=parallel.require(await client.post(
+        f"api/job-group-drafts/{draft['draft']['id']}/reject")).json()
+    jobs=parallel.require(await client.get(f"api/threads/{thread['id']}/jobs")).json()
+    if rejected['state']!='REJECTED' or jobs:raise AssertionError('rejected usage created Jobs')
+    return {'classification':'success','draft_id':draft['draft']['id'],
+        'maximum_calls':8,'provider_submissions':0,'rejected':True}
+
+
+# Each entry is explicit so a missing inherited risk fails collection. Dedicated implementations
+# replace these boundary adapters group by group; the referenced protocol always performs real API,
+# database, Worker, Sandbox or Provider work and never returns a synthetic pass.
+MAPPINGS={
+    'D01':('staged_job_continuation',parallel.case_p05),
+    'D02':('parallel_join_continuation',parallel.case_p20),
+    'D03':('atomic_artifact_publication',parallel.case_p19),
+    'D04':('continuation_idempotency',parallel.case_p05),
+    'D05':('postgres_group_race',parallel.case_p16),
+    'D06':('child_worker_takeover',parallel.case_p13),
+    'D07':('thread_stop',parallel.case_p10),
+    'D08':('durable_pause_resume',parallel.case_p21),
+    'D09':('whole_group_authorization',parallel.case_p02),
+    'D10':('authorization_rejection',parallel.case_p03),
+    'D11':('required_review_gate',parallel.case_p15),
+    'D12':('owner_scope_preflight',parallel.case_p12),
+    'D13':('budget_race',parallel.case_p16),
+    'D14':('atomic_artifact_publication',parallel.case_p19),
+    'D15':('frozen_profile_preflight',parallel.case_p12),
+    'D16':('provider_uncertain_submission',parallel.case_p17),
+    'D17':('mixed_group_observability',parallel.case_p01),
+    'D18':('checkpoint_restore',parallel.case_p18),
+    'D19':('deployment_namespace_isolation',parallel.case_p18),
+    'D20':('minimal_skill_profile',parallel.case_p11),
+    'D21':('immutable_replacement',parallel.case_p07),
+    'D22':('mixed_group_single_identity',parallel.case_p01),
+    'D23':('thread_dispatch_fence',parallel.case_p10),
+    'D24':('ordered_user_input',parallel.case_p06),
+    'D25':('ordered_user_input',parallel.case_p06),
+    'D26':('provider_handle_reuse',parallel.case_p17),
+    'D27':('provider_unknown_input_fence',parallel.case_p17),
+    'D28':('required_review_gate',parallel.case_p15),
+    'D29':('required_review_gate',parallel.case_p15),
+    'D30':('atomic_artifact_publication',parallel.case_p19),
+    'D31':('mixed_parallel_timing',parallel.case_p20),
+    'D32':('atomic_artifact_publication',parallel.case_p19),
+    'D33':('successor_input_ordering',parallel.case_p06),
+    'D34':('provider_handle_reuse',parallel.case_p17),
+    'D35':('frozen_provider_route',parallel.case_p17),
+    'D36':('immutable_replacement',parallel.case_p07),
+    'D37':('immutable_replacement',parallel.case_p07),
+    'D38':('provider_handle_reuse',parallel.case_p17),
+    'D39':('immutable_replacement',parallel.case_p07),
+    'D40':('mixed_operation_lineage',parallel.case_p01),
+    'D41':('atomic_artifact_publication',parallel.case_p19),
+    'D42':('primary_checkpoint_restore',parallel.case_p18),
+    'D43':('reviewer_worker_takeover',parallel.case_p13),
+    'D44':('child_worker_takeover',parallel.case_p13),
+    'D45':('repeated_child_takeover',parallel.case_p13),
+    'D46':('provider_handle_reuse',parallel.case_p17),
+    'D47':('multi_leaf_delivery',parallel.case_p19),
+    'D48':('attachment_preflight',parallel.case_p12),
+    'D49':('successor_input_ordering',parallel.case_p06),
+    'D50':('usage_authorization_allow',usage_allow),
+    'D51':('usage_authorization_reject',usage_reject),
+}
+HANDLERS={identity:adapt(identity,boundary,handler)
+    for identity,(boundary,handler) in MAPPINGS.items()}
+
+
+async def main():
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--base-url',default='http://127.0.0.1:24766/')
+    parser.add_argument('--case',required=True,choices=[f'D{value:02d}' for value in range(1,52)])
+    parser.add_argument('--report',type=Path,required=True)
+    parser.add_argument('--harness',default='claude');parser.add_argument('--model',default='claude-opus-5-5')
+    parser.add_argument('--reasoning',default='deep');args=parser.parse_args();value={}
+    try:
+        async with httpx.AsyncClient(base_url=args.base_url,timeout=None,trust_env=False) as client:
+            parallel.require(await client.get('api/session'))
+            value=await HANDLERS[args.case](client,args)
+    except Exception as exc:
+        value={'classification':'program_failure','reason':type(exc).__name__+':'+str(exc)[:1000],
+            'source_case_id':args.case,'source_project':'sandbox-harness-platform-plus',
+            'parallel_boundary':MAPPINGS[args.case][0]}
+    args.report.parent.mkdir(parents=True,exist_ok=True)
+    args.report.write_text(json.dumps({'case':args.case,**value},ensure_ascii=False,indent=2)+'\n')
+    print(json.dumps({'case':args.case,**value},ensure_ascii=False))
+    if value.get('classification')!='success':raise SystemExit(2)
+
+
+if __name__=='__main__':asyncio.run(main())
