@@ -284,7 +284,18 @@ def test_media_provider_failure_is_not_prompt_failure():
             "non_program_failure","provider_service_unavailable")
     assert campaign.classify({"state":"COMPLETED"},[],[{
         "status":"failed","error_code":"artifact_registration_failed"}]) == (
-            "program_failure","artifact_registration_failed")
+        "program_failure","artifact_registration_failed")
+
+
+def test_durable_job_failure_preserves_model_budget_root_cause():
+    campaign=campaign_module()
+    assert campaign.classify_job_failures([{'state':'FAILED','result':{
+        'error_code':'harness_failed',
+        'error_detail':'API Error: 429 {"detail":"model_token_budget_exhausted"}'}}]) == (
+            'non_program_failure','model_token_budget_exhausted')
+    assert campaign.classify_job_failures([{'state':'FAILED','result':{
+        'error_code':'harness_failed','error_detail':'invalid child output'}}]) == (
+            'program_failure','harness_failed')
 
 
 def test_authoritative_awaiting_user_is_a_terminal_prompt_outcome():

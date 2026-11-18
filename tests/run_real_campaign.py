@@ -127,6 +127,44 @@ def classify(final,artifacts,media_jobs=None):
     return "program_failure",code or state.lower() or "unknown_failure"
 
 
+def embedded_error_code(detail):
+    decoder=json.JSONDecoder()
+    for index,value in enumerate(str(detail or '')):
+        if value!='{':continue
+        try:payload,_=decoder.raw_decode(str(detail)[index:])
+        except json.JSONDecodeError:continue
+        code=payload.get('detail') if isinstance(payload,dict) else ''
+        if isinstance(code,str) and re.fullmatch(r'[a-z][a-z0-9_.-]{0,159}',code):return code
+    return ''
+
+
+def classify_job_failures(rows):
+    outcomes=[]
+    for row in rows:
+        result=row.get('result') or {}
+        code=embedded_error_code(result.get('error_detail')) or str(
+            result.get('error_code') or row.get('state','')).lower()
+        detail=str(result.get('error_detail') or '').lower()
+        non_program=(code.startswith(('provider_','model_','upstream_')) or code in {
+            'budget_exhausted','content_policy_rejected','no_target_found'} or ' 429 ' in (
+                ' '+detail+' '))
+        outcomes.append(('non_program_failure' if non_program else 'program_failure',code))
+    return (next((value for value in outcomes if value[0]=='program_failure'),None)
+        or (outcomes[0] if outcomes else None))
+
+
+async def failed_job_results(client,thread_id):
+    response=await client.get(f"api/threads/{thread_id}/execution-graph",
+        params={"include_history":"true"});response.raise_for_status()
+    identities=[row.get('job_id') for row in response.json().get('nodes',[])
+        if row.get('type')=='job' and row.get('state') in {'FAILED','BLOCKED','UNKNOWN'}
+        and row.get('job_id')]
+    rows=[]
+    for identity in identities:
+        detail=await client.get(f'api/jobs/{identity}');detail.raise_for_status();rows.append(detail.json())
+    return rows
+
+
 def waiting_interaction_reason(interactions,turn_id):
     pending=[row for row in interactions
         if row.get('turn_id')==turn_id and row.get('status')=='pending']
@@ -415,20 +453,26 @@ async def primary_case(client,case,args,running):
         final=await wait_turn(client,turn["id"],running,case["id"],args.timeout)
     final,media_jobs=await settle_media_workflow(client,thread["id"],final,running,case["id"],
         args.timeout,allow_external=bool(case.get("allowed_external_operations")))
+    job_failures=await failed_job_results(client,thread['id'])
     items=await list_all_items(client,thread['id'])
     artifacts=[row for row in items if row.get("type")=="artifact"]
     classification,reason=classify(final,artifacts,media_jobs)
+    job_outcome=classify_job_failures(job_failures)
+    if classification!='success' and job_outcome:classification,reason=job_outcome
     if final.get('state') in {'AWAITING_USER','WAITING_USER'}:
         response=await client.get(f"api/threads/{thread['id']}/interactions");response.raise_for_status()
         reason=waiting_interaction_reason(response.json(),final['id'])
     validation_errors,validation=await validate_artifacts(
         client,case,artifacts,asset_root=args.asset_root) if artifacts else ([],[])
     if classification=="success" and validation_errors:
-        classification,reason="program_failure","artifact_contract:"+",".join(validation_errors[:12])
+        classification,reason=(job_outcome or (
+            "program_failure","artifact_contract:"+",".join(validation_errors[:12])))
     return {"classification":classification,"reason":reason,"thread_id":thread["id"],
         "turn_id":turn["id"],"state":final["state"],"error_code":final.get("error_code",""),
         "artifact_count":len(artifacts),"artifact_names":[row.get("summary","") for row in artifacts],
-        "artifact_validation":validation,"validation_errors":validation_errors}
+        "artifact_validation":validation,"validation_errors":validation_errors,
+        "job_failures":[{'id':row.get('id'),'state':row.get('state'),
+            'error_code':(row.get('result') or {}).get('error_code','')} for row in job_failures]}
 
 
 async def protocol_case(case,args,running):
