@@ -333,7 +333,13 @@ class OpenSandboxChildBackend:
         sandbox=await self.pool.adopt(ready[0],thread_id=self._thread_id(context.job.id),
             turn_id=context.job.id)
         execution_id=context.job.id+":"+str(reservation.job_generation)
-        value=await self._execution_status(sandbox,execution_id)
+        try:value=await self._execution_status(sandbox,execution_id)
+        except httpx.HTTPStatusError as exc:
+            try:detail=str(exc.response.json().get('detail') or '')
+            except (ValueError,AttributeError):detail=''
+            if exc.response.status_code!=503 or detail!='Runtime Code Bundle is not active':raise
+            await self.pool.release(sandbox,keep_attached=False)
+            return SubmissionRecovery(safe_to_retry=True)
         if not value:
             await self.pool.release(sandbox,keep_attached=False)
             return SubmissionRecovery(safe_to_retry=True)
@@ -353,6 +359,9 @@ class OpenSandboxChildBackend:
         while True:
             try:return await self.runtime.execution_status(sandbox,execution_id)
             except httpx.HTTPStatusError as exc:
+                try:detail=str(exc.response.json().get('detail') or '')
+                except (ValueError,AttributeError):detail=''
+                if detail=='Runtime Code Bundle is not active':raise
                 if (exc.response.status_code not in {408,429,500,502,503,504}
                         or time.monotonic()>=deadline):raise
                 await asyncio.sleep(delay);delay=min(2,delay*2)

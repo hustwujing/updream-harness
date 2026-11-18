@@ -375,7 +375,9 @@ async def case_p13(client,args):
     deadline=time.monotonic()+120
     while time.monotonic()<deadline:
         current=require(await client.get(f"api/jobs/{job['id']}")).json()
-        if current['state'] in {'RUNNING','WAITING_EXTERNAL'}:break
+        if current['state']=='WAITING_EXTERNAL':break
+        if current['state'] in TERMINAL_JOBS:
+            raise AssertionError('job_finished_before_acceptance_boundary:'+current['state'])
         await asyncio.sleep(.1)
     else:raise TimeoutError('job_never_accepted')
     await asyncio.to_thread(subprocess.run,['systemctl','kill','--kill-who=main','--signal=KILL',
@@ -717,11 +719,13 @@ async def case_p24(client,args):
         'HARNESS_TURN_ID':turn['id'],'HARNESS_KIND':args.harness,'HARNESS_MODEL':args.model})
     prepared=require(await client.post('api/job-group-drafts',json=compiled)).json()
     parent_job=prepared['jobs'][0]
+    parent_draft=prepared.get('draft')
+    parent_draft_id=parent_draft.get('id') if isinstance(parent_draft,dict) else None
     deadline=time.monotonic()+args.timeout;nested_draft=None
     while time.monotonic()<deadline:
         drafts=require(await client.get(f"api/threads/{thread['id']}/job-group-drafts")).json()
         nested_draft=next((row for row in drafts if row.get('state')=='AWAITING_CONFIRMATION'
-            and row.get('id')!=prepared.get('draft',{}).get('id')),None)
+            and row.get('id')!=parent_draft_id),None)
         if nested_draft:break
         current=require(await client.get(f"api/jobs/{parent_job['id']}")).json()
         if current['state'] in TERMINAL_JOBS:raise AssertionError('Child ended before subordinate draft: '+json.dumps(current))
