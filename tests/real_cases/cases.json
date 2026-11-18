@@ -378,7 +378,9 @@
       "hook": null,
       "status": "not_run",
       "attempts": [],
-      "allowed_external_operations": [],
+      "allowed_external_operations": [
+        "image.segment"
+      ],
       "entry_mode": "deployed_browser",
       "source_case_id": "S09",
       "original_definition_sha256": "0ba672aac1793b8836cca345040d993029e584e3ff20cd95a1a7db12c073d558",
