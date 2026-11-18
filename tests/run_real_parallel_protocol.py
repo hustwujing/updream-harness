@@ -17,6 +17,20 @@ from dotenv import dotenv_values
 
 ROOT=Path(__file__).resolve().parents[1]
 TERMINAL_JOBS={'SUCCEEDED','FAILED','CANCELLED','BLOCKED','UNKNOWN'}
+
+
+class ResilientAsyncClient(httpx.AsyncClient):
+    def __init__(self,*args,reconnect_seconds:float=90,**kwargs):
+        super().__init__(*args,**kwargs);self.reconnect_seconds=max(0,float(reconnect_seconds))
+
+    async def request(self,method,url,*args,**kwargs):
+        safe=method.upper() in {'GET','HEAD','OPTIONS'}
+        deadline=time.monotonic()+self.reconnect_seconds;delay=.25
+        while True:
+            try:return await super().request(method,url,*args,**kwargs)
+            except (httpx.ConnectError,httpx.ReadError,httpx.RemoteProtocolError):
+                if not safe or time.monotonic()>=deadline:raise
+                await asyncio.sleep(delay);delay=min(2,delay*2)
 TERMINAL_TURNS={'COMPLETED','FAILED','CANCELLED','WAITING_USER','PAUSED'}
 
 
@@ -665,7 +679,7 @@ async def main():
     try:
         handler=HANDLERS.get(args.case)
         if not handler:raise NotImplementedError('protocol_handler_not_implemented:'+args.case)
-        async with httpx.AsyncClient(base_url=args.base_url,timeout=None,trust_env=False) as client:
+        async with ResilientAsyncClient(base_url=args.base_url,timeout=None,trust_env=False) as client:
             session=await client.get('api/session');session.raise_for_status();value=await handler(client,args)
     except Exception as exc:
         value={'classification':'program_failure','reason':type(exc).__name__+':'+str(exc)[:500]}
