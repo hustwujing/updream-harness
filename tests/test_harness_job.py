@@ -168,6 +168,28 @@ async def test_opensandbox_child_cannot_succeed_without_required_artifact(tmp_pa
     finally:await store.close()
 
 
+async def test_text_only_child_result_returns_persisted_summary(tmp_path):
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'text-output.db'));await store.initialize()
+    _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id='c'*32,
+        origin_turn_id='d'*32,idempotency_key='text-output-group',jobs=[request()]))
+    job=await store.get_job(jobs[0].id);frozen=await store.get_job_request(job.id)
+    class Runtime:
+        async def artifacts(self,*args):return []
+    sandbox=Sandbox(id='sandbox-text',harness=Harness.CODEX,image='image',
+        runtime_url='http://runtime',metadata={})
+    backend=OpenSandboxChildBackend(pool=SimpleNamespace(),runtime=Runtime(),store=store,
+        objects=ObjectStore(tmp_path/'objects'),settings=Settings(backend='fake',data_root=tmp_path),
+        token_factory=lambda *args:None);backend.sessions[job.id]=sandbox
+    try:
+        await store.append_job_activity(job.id,1,'text_delta',{'text':'第一条结论。'})
+        await store.append_job_activity(job.id,2,'text_delta',{'text':'第二条结论。'})
+        result=await backend.collect(JobExecutionContext(job=job,request=frozen,generation=0,
+            previous_acceptance_receipt={'sandbox_id':sandbox.id}),'execution',
+            AdapterStatus(True,JobState.SUCCEEDED,{'status':'completed'}),{'sandbox_id':sandbox.id})
+        assert result['child_summary']=='第一条结论。第二条结论。'
+    finally:await store.close()
+
+
 async def test_missing_child_sandbox_is_terminal_not_an_infinite_pending_status(tmp_path):
     sandbox=Sandbox(id='sandbox-lost',harness=Harness.CODEX,image='image',
         runtime_url='http://runtime',metadata={})

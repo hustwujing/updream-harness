@@ -484,7 +484,7 @@ class OpenSandboxChildBackend:
         contracts={value.artifact_role:value for value in context.request.expected_outputs}
         if not contracts:
             if by_path:raise ValueError('unexpected_child_artifacts')
-            return status.result
+            return {**status.result,**({'child_summary':child_summary} if child_summary else {})}
         manifest_path='job-output-manifest.json';manifest=None
         if manifest_path in by_path:
             staged=await self.runtime.artifact(sandbox,manifest_path,maximum=1024*1024)
