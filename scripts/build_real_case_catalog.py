@@ -11,9 +11,9 @@ SOURCE=ROOT/"tests/real_cases/source-plus-cases.json"
 OUTPUT=ROOT/"tests/real_cases/cases.json"
 
 
-def protocol(identity,title,prompt,expect,*,assets=(),features=(),hook=None):
+def protocol(identity,title,prompt,expect,*,assets=(),features=(),hook=None,content_checks=()):
     return {"id":identity,"title":title,"complexity":"parallel_protocol","assets":list(assets),
-        "prompt":prompt,"expect":expect,"content_checks":[],"hook":hook,"status":"not_run",
+        "prompt":prompt,"expect":expect,"content_checks":list(content_checks),"hook":hook,"status":"not_run",
         "attempts":[],"entry_mode":"deployed_browser_or_api","executor":"parallel_protocol",
         "required_features":list(features),"provenance":"parallel-design"}
 
@@ -73,6 +73,13 @@ PARALLEL_CASES=[
         {"primary_delegated":True,"child_harnesses":2,"same_group":True,
             "attempts_overlapped":True,"one_primary_continuation":True},
         features=("primary_decision","delegation","overlap","continuation")),
+    protocol("P24","Child受限Operation续接",
+        "Child Harness 使用父级预授权的 image.segment 下级 JobGroup，等待真实 Operation 完成后恢复同一会话并交付透明 PNG。",
+        {"nested_operation":"image.segment","child_resumed":True,
+            "delivery":"segmented-person.png"},assets=("portrait.png",),
+        features=("child_tool_group","image_segment","child_continuation","artifact_delivery"),
+        content_checks=("真实 image.segment Operation 执行","透明和可见 alpha 像素同时存在",
+            "下级组结果返回原 Child 而不是 Primary")),
 ]
 
 

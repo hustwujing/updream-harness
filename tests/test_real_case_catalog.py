@@ -23,7 +23,7 @@ def test_real_case_catalog_is_reproducible_complete_and_parallel_specific():
     assert {row["id"] for row in catalog["cases"] if row.get("executor")=="inherited_protocol"}=={
         f"D{value:02d}" for value in range(1,52)}
     assert {row["id"] for row in catalog["cases"] if row["id"].startswith("P")}=={
-        *(f"P{value:02d}" for value in range(1,21)),"P22","P23"}
+        *(f"P{value:02d}" for value in range(1,21)),"P22","P23","P24"}
     compact=next(row for row in catalog["cases"] if row["id"]=="P22")
     assert compact["executor"]=="parallel_protocol"
     assert compact["expect"]=={"compiled_jobs":2,"metadata_required":False,
