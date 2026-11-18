@@ -25,7 +25,8 @@ async def test_media_render_adapter_reserves_profile_injects_frozen_input_and_bi
     artifact=await store.add_artifact(turn.id,path='source.png',sha256=digest,size=len(source),
         mime='image/png',object_ref=object_ref)
     output=JobExpectedOutput(artifact_role='rendered_media',output_disposition=OutputDisposition.DELIVERY,
-        min_items=1,max_items=1,mime_patterns=('image/png',))
+        min_items=1,max_items=1,mime_patterns=('image/png',),
+        validators=('image.dimensions_exact','image.png'))
     request=JobRequest(local_job_id='resize',kind=JobKind.OPERATION,adapter='media.render',
         descriptor_id='media.render',descriptor_version='1',descriptor_digest='b'*64,
         idempotency_key='render-operation-job',parameters={'recipe':{'operation':'image.resize',

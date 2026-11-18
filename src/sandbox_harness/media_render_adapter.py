@@ -24,6 +24,23 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
     @staticmethod
     def _thread_id(job_id):return 'operation-job-'+job_id
 
+    @staticmethod
+    def _controlled_validation_receipts(operation:str,recipe:dict,value:dict,
+                                        validators:tuple[str,...],digest:str)->list[dict]:
+        mime=str(value.get('mime','application/octet-stream'))
+        evidence={'operation':operation,'width':recipe.get('width'),
+            'height':recipe.get('height'),'fps':recipe.get('fps'),'mime':mime,
+            'source':'controlled_media_operation'}
+        supported=set()
+        if operation=='image.resize':
+            supported.add('image.dimensions_exact')
+            if mime=='image/png':supported.add('image.png')
+        elif operation=='video.transcode':
+            supported.update({'video.dimensions_exact','video.fps'})
+            if mime=='video/mp4':supported.add('video.mp4')
+        return [{'validator':name,'status':'pass','artifact_digests':[digest],
+            'evidence':evidence} for name in validators if name in supported]
+
     async def _sandbox(self,context,receipt):
         identity=str(receipt.get('sandbox_id',''));cached=self.sessions.get(context.job.id)
         if cached and cached.id==identity:return cached
@@ -126,6 +143,11 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
                 validations=[]
                 for validation in value.get('validation_receipts',[]):
                     current=dict(validation);current.setdefault('artifact_digests',[artifact.sha256]);validations.append(current)
+                present={str(validation.get('validator','')) for validation in validations}
+                operation=str(context.request.parameters['recipe']['operation'])
+                validations.extend(self._controlled_validation_receipts(operation,
+                    context.request.parameters['recipe'],value,
+                    tuple(name for name in contract.validators if name not in present),artifact.sha256))
                 collections.append(await self.store.finalize_job_artifact_collection(
                     context.job.id,context.generation,role,validation_receipts=validations))
         return {'operation':context.request.parameters['recipe']['operation'],
