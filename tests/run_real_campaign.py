@@ -51,6 +51,20 @@ AFTER_ARTIFACT_INTERVENTIONS={"intervention_thumbnail","intervention_new_goal",
 INPUT_ACCEPTING={"QUEUED","RESTORING","STARTING","RUNNING","AWAITING_USER"}
 
 
+class ResilientAsyncClient(httpx.AsyncClient):
+    def __init__(self,*args,reconnect_seconds:float=90,**kwargs):
+        super().__init__(*args,**kwargs);self.reconnect_seconds=max(0,float(reconnect_seconds))
+
+    async def request(self,method,url,*args,**kwargs):
+        safe=method.upper() in {"GET","HEAD","OPTIONS"}
+        deadline=time.monotonic()+self.reconnect_seconds;delay=.25
+        while True:
+            try:return await super().request(method,url,*args,**kwargs)
+            except (httpx.ConnectError,httpx.ReadError,httpx.RemoteProtocolError):
+                if not safe or time.monotonic()>=deadline:raise
+                await asyncio.sleep(delay);delay=min(2,delay*2)
+
+
 def now():return datetime.now(timezone.utc).isoformat()
 
 
@@ -443,7 +457,7 @@ async def main():
     target=Path(args.report);report_lock=asyncio.Lock()
     queue=asyncio.Queue()
     for case in selected:queue.put_nowait(case)
-    async with httpx.AsyncClient(base_url=args.base_url,timeout=None,trust_env=False) as client:
+    async with ResilientAsyncClient(base_url=args.base_url,timeout=None,trust_env=False) as client:
         session=await client.get("api/session");session.raise_for_status()
         async def worker():
             while not queue.empty() and not defect.is_set():
