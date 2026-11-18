@@ -50,6 +50,7 @@ INSPECT_ROOTS = {
 INSPECT_TEXT_LIMIT = 2 * 1024 * 1024
 INSPECT_INTERNAL_PORTS = {8080, 18080, 29880, 29881, 44772}
 RUN = Path("/run/harness")
+OUTPUT_BATCH_MARKER = RUN / "output-batch"
 HARNESS_JSONL_LIMIT = 16 * 1024 * 1024
 RUNTIME_EVENT_JOURNAL_LIMIT = 256 * 1024 * 1024
 MAX_OUTPUT_ARTIFACTS = 50_000
@@ -59,6 +60,17 @@ MAX_CHECKPOINT_BYTES = 4 * 1024 * 1024 * 1024
 def require_output_artifact_count(count: int) -> None:
     if count > MAX_OUTPUT_ARTIFACTS:
         raise HTTPException(413, "artifact_count_limit_exceeded")
+
+
+def reset_outputs(batch_id: str) -> None:
+    OUTPUTS.mkdir(parents=True, exist_ok=True)
+    for path in OUTPUTS.iterdir():
+        if path.is_symlink() or not path.is_dir():
+            path.unlink(missing_ok=True)
+        else:
+            shutil.rmtree(path)
+    OUTPUT_BATCH_MARKER.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT_BATCH_MARKER.write_text(batch_id)
 
 
 async def stage_checkpoint_request(request: Request) -> Path:
@@ -1301,15 +1313,6 @@ def create_app() -> FastAPI:
                 execution.process.stdin.close()
             return True
 
-    def reset_outputs(batch_id: str) -> None:
-        OUTPUTS.mkdir(parents=True, exist_ok=True)
-        for path in OUTPUTS.iterdir():
-            if path.is_symlink() or not path.is_dir():
-                path.unlink(missing_ok=True)
-            else:
-                shutil.rmtree(path)
-        (OUTPUTS / ".sandbox-output-batch").write_text(batch_id)
-
     async def start_execution_locked(value: TurnRequest) -> tuple[Execution, bool, bool]:
         execution = app.state.execution
         if execution is not None and execution.id != value.execution_id and execution.result is None:
@@ -1783,8 +1786,8 @@ def create_app() -> FastAPI:
             with path.open("rb") as stream:
                 digest = hashlib.file_digest(stream, "sha256").hexdigest()
             items.append({"path": relative, "size": path.stat().st_size, "sha256": digest, "mime": mimetypes.guess_type(path.name)[0] or "application/octet-stream"})
-        marker = OUTPUTS / ".sandbox-output-batch"
-        return {"batch_id": marker.read_text().strip() if marker.is_file() else "",
+        return {"batch_id": OUTPUT_BATCH_MARKER.read_text().strip()
+            if OUTPUT_BATCH_MARKER.is_file() else "",
             "items": items, "truncated": False}
 
     @app.get("/v1/artifacts/file")

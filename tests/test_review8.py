@@ -165,14 +165,29 @@ async def test_artifact_count_limit_is_public_turn_failure(tmp_path):
 
 def test_runtime_artifact_endpoint_rejects_count_over_limit(tmp_path, monkeypatch):
     outputs = tmp_path / "outputs"; outputs.mkdir()
-    (outputs / ".sandbox-output-batch").write_text("turn")
+    marker = tmp_path / "run" / "output-batch"; marker.parent.mkdir(); marker.write_text("turn")
     for name in ("a.txt", "b.txt", "c.txt"):
         (outputs / name).write_text(name)
     monkeypatch.setattr(runtime_app, "OUTPUTS", outputs)
+    monkeypatch.setattr(runtime_app, "OUTPUT_BATCH_MARKER", marker)
     monkeypatch.setattr(runtime_app, "MAX_OUTPUT_ARTIFACTS", 2)
     response = TestClient(runtime_app.create_app()).get("/v1/artifacts")
     assert response.status_code == 413
     assert response.json()["detail"] == "artifact_count_limit_exceeded"
+
+
+def test_runtime_output_batch_identity_survives_publication_cleanup(tmp_path, monkeypatch):
+    outputs=tmp_path/'outputs';outputs.mkdir();(outputs/'old.txt').write_text('old')
+    marker=tmp_path/'run'/'output-batch'
+    monkeypatch.setattr(runtime_app,'OUTPUTS',outputs)
+    monkeypatch.setattr(runtime_app,'OUTPUT_BATCH_MARKER',marker)
+    app=runtime_app.create_app();runtime_app.reset_outputs('turn-1')
+    for path in outputs.iterdir():path.unlink()
+    (outputs/'final.txt').write_text('final')
+    response=TestClient(app).get('/v1/artifacts')
+    assert response.status_code==200
+    assert response.json()['batch_id']=='turn-1'
+    assert [row['path'] for row in response.json()['items']]==['final.txt']
 
 
 def test_runtime_artifact_count_exact_boundaries():
