@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "bundle_version": "2026.11.18.1",
+  "bundle_version": "2026.11.18.2",
   "retired_skills": ["pptx"],
   "dependency_profiles": {
     "instructions": {
@@ -57,9 +57,21 @@
       "commands": ["python3", "manim", "latex", "dvisvgm", "ffmpeg", "ffprobe"],
       "python_modules": ["manim"],
       "node_modules": []
+    },
+    "media": {
+      "commands": ["python3", "ffmpeg", "ffprobe"],
+      "python_modules": ["PIL", "numpy"],
+      "node_modules": []
     }
   },
   "sources": [
+    {
+      "id": "sandbox-harness-platform-parallel",
+      "url": "https://github.com/hustwujing/sandbox-harness-platform-parallel",
+      "commit": "builtin-2026-11-18",
+      "license": "per-skill LICENSE.txt",
+      "skills": [{"id": "media-processing", "version": "1.0.0", "profile": "media", "network": "none", "test_case": "inspect and transcode a deterministic local audio/video fixture"}]
+    },
     {
       "id": "github-awesome-copilot",
       "url": "https://github.com/github/awesome-copilot",

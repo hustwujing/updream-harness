@@ -275,6 +275,20 @@
       },
       "requires_gpu": false
     },
+    "media-processing": {
+      "summary": "Process and validate local audio, video, and raster media with the installed CPU media toolchain.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "requires_gpu": false
+    },
     "mcp-builder": {
       "summary": "Design and implement MCP servers and tool contracts.",
       "supported_harnesses": [

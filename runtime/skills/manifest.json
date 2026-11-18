@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "bundle_version": "2026.11.18.1",
+  "bundle_version": "2026.11.18.2",
   "retired_skills": [
     "pptx"
   ],
@@ -783,6 +783,44 @@
       },
       "content_sha256": "f8e859b421059ba94694ae55e7132475f25ddc61bb14150340cad9d67b474c34",
       "file_count": 11
+    },
+    {
+      "id": "media-processing",
+      "version": "1.0.0",
+      "profile": "media",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "test_case": "inspect and transcode a deterministic local audio/video fixture",
+      "network_notes": "none",
+      "source": "sandbox-harness-platform-parallel",
+      "source_url": "https://github.com/hustwujing/sandbox-harness-platform-parallel",
+      "source_commit": "builtin-2026-11-18",
+      "license": "per-skill LICENSE.txt",
+      "summary": "Process and validate local audio, video, and raster media with the installed CPU media toolchain.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "requires_gpu": false,
+      "entry": "SKILL.md",
+      "dependencies": {
+        "commands": [
+          "python3",
+          "ffmpeg",
+          "ffprobe"
+        ],
+        "python_modules": [
+          "PIL",
+          "numpy"
+        ],
+        "node_modules": []
+      },
+      "content_sha256": "e5b76a2d22f8bf2c9cc81248be9fd20f4f3527fb5d92868d566be0382479467e",
+      "file_count": 2
     },
     {
       "id": "pdf",

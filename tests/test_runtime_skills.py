@@ -20,7 +20,7 @@ def test_skill_bundle_manifest_is_frozen_complete_and_licensed():
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     expected=json.loads((ROOT/'runtime/skills/manifest.json').read_text())
     assert module.expanded()==expected
-    assert len(expected['skills'])==32
+    assert len(expected['skills'])==33
     assert expected['retired_skills']==['pptx']
     assert 'pptx' not in {row['id'] for row in expected['skills']}
     assert {row['id'] for row in expected['skills']}=={
@@ -88,11 +88,11 @@ def test_skills_materialize_for_each_native_harness_and_upgrade_managed_entries(
         (root/'.image-bundle.json').write_text(json.dumps({'bundle_version':'old','skills':['anatomy','removed-skill']}))
         (root/'removed-skill').mkdir()
         result=materialize_skills(harness,workspace,all_ids)
-        assert result['bundle_version']=='2026.11.18.1' and result['skill_count']==32
+        assert result['bundle_version']=='2026.11.18.2' and result['skill_count']==33
         assert (root/'anatomy').is_symlink() and (root/'anatomy/SKILL.md').is_file()
         assert not (root/'removed-skill').exists()
         assert (root/'custom-skill').is_dir()
-        assert len(list(root.glob('*/SKILL.md')))==32
+        assert len(list(root.glob('*/SKILL.md')))==33
 
 
 def test_deferred_skill_install_replaces_checkpoint_copy_after_restore(tmp_path, monkeypatch):

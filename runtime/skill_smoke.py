@@ -39,6 +39,7 @@ REQUIRED_FILES = {
     "internal-comms": ["examples/3p-updates.md", "examples/faq-answers.md"],
     "mcp-builder": ["scripts/connections.py", "reference/python_mcp_server.md"],
     "manim-video": ["README.md", "references/scene-planning.md", "scripts/setup.sh", "LICENSE"],
+    "media-processing": ["LICENSE.txt"],
     "pdf": ["forms.md", "scripts/convert_pdf_to_images.py"],
     "programmatic-eda": ["LICENSE", "scripts/data_overview.py", "scripts/null_profiler.py"],
     "query-validation": ["LICENSE", "scripts/sql_lint.py", "references/sql_anti_patterns.md"],
@@ -90,7 +91,7 @@ def main() -> None:
     for harness in ("codex", "claude", "deepseek"):
         installed = materialize_skills(harness, Path("/workspace"))
         root = Path(installed["root"])
-        assert len(list(root.glob("*/SKILL.md"))) == 32
+        assert len(list(root.glob("*/SKILL.md"))) == 33
         results["harnesses"][harness] = installed["skill_count"]
 
     run("node", "--check", str(ROOT / "algorithmic-art/templates/generator_template.js"))
@@ -271,7 +272,7 @@ Follow the requested sample workflow and return the resulting artifact.
             "doc-and-modernize", "doc-coauthoring", "frontend-design", "internal-comms"):
         evidence(skill_id, "instruction_resource_contract")
 
-    assert len(results["skills"]) == 32
+    assert len(results["skills"]) == 33
 
     print(json.dumps({"passed":True,**results},sort_keys=True))
 

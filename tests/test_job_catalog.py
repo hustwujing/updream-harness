@@ -137,6 +137,7 @@ def test_runtime_instructions_route_controlled_operations_through_job_catalog():
     assert 'correct a faulty verification script at most once' in RUNTIME_INSTRUCTIONS
     assert 'must not use Python/Pillow frame loops' in RUNTIME_INSTRUCTIONS
     assert 'remove every undeclared file or directory from `/workspace/outputs`' in RUNTIME_INSTRUCTIONS
+    assert 'must select the `media-processing` Skill' in RUNTIME_INSTRUCTIONS
 
 
 def test_public_child_profiles_expose_frozen_harness_job_template():
