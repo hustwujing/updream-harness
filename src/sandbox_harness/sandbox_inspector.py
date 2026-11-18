@@ -430,10 +430,6 @@ class SandboxInspector:
             sandbox = await self.pool.acquire(thread_id=thread_id,
                 turn_id="inspect-" + thread_id, harness=thread.harness, environment={})
             try:
-                if not sandbox.reused:
-                    await self._restore_new(thread, sandbox)
-                else:
-                    await self._materialize_managed(thread, sandbox)
                 token, claims = self.capabilities.issue(thread_id=thread_id,
                     turn_id=thread_id, sandbox_id=sandbox.id, harness=thread.harness,
                     model=thread.model, routes=["/v1/telemetry"], network_access=network_access,
@@ -444,6 +440,10 @@ class SandboxInspector:
                     gateway_url=self.settings.gateway_url, proxy_url=self.settings.public_proxy_url,
                     harness=thread.harness.value, model=thread.model,
                     defer_skill_install=bool(thread.checkpoint_ref and not sandbox.reused))
+                if not sandbox.reused:
+                    await self._restore_new(thread, sandbox)
+                else:
+                    await self._materialize_managed(thread, sandbox)
                 control = await self.store.begin_sandbox_control(thread_id, owner_id, sandbox.id,
                     claims.nonce, now() + timedelta(seconds=self.settings.sandbox_control_ttl_seconds))
             except Exception:

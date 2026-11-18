@@ -319,6 +319,28 @@ async def test_inspector_materializes_managed_files_as_streams(tmp_path):
     finally:await pool.close();await store.close()
 
 
+async def test_new_takeover_activates_runtime_before_restoring_workspace(tmp_path):
+    store,pool,runtime,objects,inspector,owner,thread=await review17_environment(
+        tmp_path,"takeover-order")
+    runtime.active=False;events=[]
+    original_inject=runtime.inject;original_reset=runtime.reset_project_files
+
+    async def inject(*args,**kwargs):
+        events.append('inject');runtime.active=True
+        return await original_inject(*args,**kwargs)
+
+    async def reset(*args,**kwargs):
+        assert runtime.active
+        events.append('restore')
+        return await original_reset(*args,**kwargs)
+
+    runtime.inject=inject;runtime.reset_project_files=reset
+    try:
+        await inspector.takeover(thread.id,owner,network_access='restricted')
+        assert events[:2]==['inject','restore']
+    finally:await pool.close();await store.close()
+
+
 async def test_control_activity_renews_lease_and_expired_status_is_not_active(tmp_path):
     store,pool,runtime,objects,inspector,owner,thread=await review17_environment(tmp_path,"lease")
     try:
