@@ -41,3 +41,12 @@ A real case produces a PPTX and two transparent PNG deliveries using parallel
 Children, real `image.generate` and two real `image.segment` executions. API and
 Job Worker restart recovery, confirmation batching, result delivery, reaper
 safety, activity status and desktop/mobile graph behavior all have evidence.
+
+## Live-case authorization
+
+Real cases that expect a confirmation-gated Operation must declare that
+Operation in `allowed_external_operations`. The campaign driver then exercises
+the ordinary confirmation card; it must not bypass confirmation or classify the
+pre-confirmation Primary response as a missing-delivery prompt defect. C04
+therefore authorizes `image.segment`, while the product authorization boundary
+remains unchanged.

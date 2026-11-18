@@ -76,3 +76,12 @@
 - [ ] Run focused and release-level suites for Store, Broker, Worker, Gateway, Runtime and browser changes.
 - [ ] Add the PDF + image live case and verify real Provider/Operation execution and three deliveries.
 - [ ] Deploy an immutable release, restart through active Child wait states, and verify recovery/cleanup/telemetry.
+
+### Task 7: Confirmation-gated inherited case authorization
+
+**Files:** `scripts/build_real_case_catalog.py`, `tests/real_cases/cases.json`,
+`tests/test_real_case_catalog.py`.
+
+- [ ] Add a failing catalog assertion that C04 explicitly permits `image.segment`.
+- [ ] Add the grant to the catalog generation source and regenerate the frozen catalog.
+- [ ] Run catalog tests, then rerun C04 through the deployed confirmation flow.

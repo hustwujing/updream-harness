@@ -30,6 +30,8 @@ def test_real_case_catalog_is_reproducible_complete_and_parallel_specific():
         "child_harnesses":2,"continuation_count":1}
     autonomous=next(row for row in catalog["cases"] if row["id"]=="P23")
     assert autonomous['expect']['primary_delegated'] and autonomous['expect']['attempts_overlapped']
+    c04=next(row for row in catalog["cases"] if row["id"]=="C04")
+    assert c04["allowed_external_operations"]==["image.segment"]
     review_cases=[row for row in catalog['cases'] if row.get('review_candidate_authorized')]
     assert {row['id'] for row in review_cases}=={f'R{value:02d}' for value in range(1,17)}
     assert all('durable Child Harness' in row['prompt'] for row in review_cases)
