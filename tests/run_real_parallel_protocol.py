@@ -643,7 +643,9 @@ async def case_p23(client,args):
         'reasoning_level':args.reasoning,'title':'Primary autonomous parallel decision'}))
     thread=response.json()
     prompt=('两个事儿，请分别完成后再汇总：第一，给出一份包含依据的 API 向后兼容风险分析；'
-        '第二，给出一份包含依据的 GPU 任务故障恢复风险分析。两项彼此独立，分别给出五条可验收结论。')
+        '第二，给出一份包含依据的 GPU 任务故障恢复风险分析。两项彼此独立，分别给出五条可验收结论。'
+        '两份分析必须由相互隔离的执行上下文独立形成证据，执行时间需要重叠；主任务只在两份结果都返回后汇总，'
+        '不能在主上下文中直接代写其中任何一份。')
     turn=require(await client.post(f"api/threads/{thread['id']}/turns",json={'message':prompt,
         'attachments':[],'idempotency_key':'protocol-'+identity,'delivery_mode':'start'})).json()
     final=await wait_turn(client,turn['id'],args.timeout)

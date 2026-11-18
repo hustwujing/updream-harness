@@ -57,6 +57,8 @@ def test_primary_decision_protocol_stops_after_terminal_model_failure():
     assert "'non_program_failure'" in block and "code.startswith" in block
     assert "'optimizable_prompt'" in block
     assert 'primary_did_not_delegate_parallel_work' in block
+    assert '相互隔离的执行上下文独立形成证据' in block
+    assert 'sandbox-job' not in block
 
 
 def test_business_artifact_phase_does_not_repeat_protocol_interventions():
