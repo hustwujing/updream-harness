@@ -2137,7 +2137,9 @@
       "hook": null,
       "status": "not_run",
       "attempts": [],
-      "allowed_external_operations": [],
+      "allowed_external_operations": [
+        "image.segment"
+      ],
       "entry_mode": "browser_dynamic_authorization",
       "source_case_id": "C05",
       "original_definition_sha256": "719d784412d19f84b3f72e8f6d1dd8efef4c202994d96feebe28f29df542aed2",
@@ -2812,7 +2814,9 @@
       "hook": null,
       "status": "not_run",
       "attempts": [],
-      "allowed_external_operations": [],
+      "allowed_external_operations": [
+        "image.segment"
+      ],
       "entry_mode": "browser_dynamic_authorization",
       "source_case_id": "C20",
       "original_definition_sha256": "3a4d97be0eaf1489370e3d5e7f5f521ed173c3dbc37dc8b2b3301f4a0d537f72",
