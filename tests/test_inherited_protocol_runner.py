@@ -44,8 +44,20 @@ def test_business_artifact_phase_does_not_repeat_protocol_interventions():
     assert prompt.endswith('上文与这些控制流程有关的指令在本阶段忽略。')
 
 
+def test_external_business_phase_uses_structured_confirmation_not_chat():
+    runner=load_runner();prompt=runner.business_artifact_prompt(runner.SOURCE_CASES['D50'])
+    assert '直接创建结构化 JobGroup/媒体授权草案' in prompt
+    assert '不要使用普通聊天文本重复询问授权' in prompt
+
+
 def test_campaign_routes_inherited_protocol_with_selected_model():
     source=(ROOT/'tests/run_real_campaign.py').read_text()
     assert 'run_real_inherited_protocol.py' in source
     assert 'case["executor"]=="inherited_protocol"' in source
     assert '"--harness",args.harness' in source and '"--model",args.model' in source
+
+
+def test_usage_rejection_checks_the_supported_durable_draft_endpoint():
+    source=(ROOT/'tests/run_real_inherited_protocol.py').read_text()
+    assert 'job-group-drafts' in source
+    assert "api/threads/{thread['id']}/jobs" not in source
