@@ -40,7 +40,8 @@ def test_business_artifact_phase_does_not_repeat_protocol_interventions():
     prompt=runner.business_artifact_prompt(case)
     assert prompt.startswith(case['prompt'])
     assert '本阶段不要再次触发、等待或模拟这些流程' in prompt
-    assert prompt.endswith('数量及内容规格。')
+    assert '不要创建子 Harness、审查任务或用户确认' in prompt
+    assert prompt.endswith('上文与这些控制流程有关的指令在本阶段忽略。')
 
 
 def test_campaign_routes_inherited_protocol_with_selected_model():
