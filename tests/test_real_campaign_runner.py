@@ -243,6 +243,13 @@ def test_authoritative_awaiting_user_is_a_terminal_prompt_outcome():
         "optimizable_prompt","unclear_user_intervention")
 
 
+def test_waiting_user_report_includes_the_actual_pending_prompt():
+    campaign=campaign_module()
+    reason=campaign.waiting_interaction_reason([{'turn_id':'turn-1','status':'pending',
+        'request':{'prompt':'请上传逐词转写文件'}}],'turn-1')
+    assert reason=='unexpected_user_decision:请上传逐词转写文件'
+
+
 def test_silence_gate_accepts_codec_floor_but_rejects_audible_signal():
     campaign=campaign_module()
     assert campaign.volume_is_silent("mean_volume: -91.0 dB\nmax_volume: -91.0 dB")

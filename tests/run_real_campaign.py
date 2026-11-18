@@ -104,6 +104,14 @@ def classify(final,artifacts,media_jobs=None):
     return "program_failure",code or state.lower() or "unknown_failure"
 
 
+def waiting_interaction_reason(interactions,turn_id):
+    pending=[row for row in interactions
+        if row.get('turn_id')==turn_id and row.get('status')=='pending']
+    if len(pending)!=1:return 'unexpected_user_decision'
+    prompt=str((pending[0].get('request') or {}).get('prompt') or '').strip()
+    return 'unexpected_user_decision:'+prompt[:500] if prompt else 'unexpected_user_decision'
+
+
 def artifact_kind(name,mime):
     prefix=(mime or "").split("/",1)[0]
     if prefix in MEDIA_SUFFIXES:return prefix
@@ -365,6 +373,9 @@ async def primary_case(client,case,args,running):
     items=await list_all_items(client,thread['id'])
     artifacts=[row for row in items if row.get("type")=="artifact"]
     classification,reason=classify(final,artifacts,media_jobs)
+    if final.get('state') in {'AWAITING_USER','WAITING_USER'}:
+        response=await client.get(f"api/threads/{thread['id']}/interactions");response.raise_for_status()
+        reason=waiting_interaction_reason(response.json(),final['id'])
     validation_errors,validation=await validate_artifacts(client,case,artifacts) if artifacts else ([],[])
     if classification=="success" and validation_errors:
         classification,reason="program_failure","artifact_contract:"+",".join(validation_errors[:12])
