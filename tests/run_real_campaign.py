@@ -323,7 +323,7 @@ async def settle_media_workflow(client,thread_id,initial_final,running,identity,
 
 
 async def primary_case(client,case,args,running):
-    attachments=[await upload(client,ROOT/"tests/real_cases/assets"/name) for name in case.get("assets",[])]
+    attachments=[await upload(client,args.asset_root/name) for name in case.get("assets",[])]
     response=await client.post("api/threads",json={"harness":args.harness,"model":args.model,
         "reasoning_level":args.reasoning,"title":case["id"]+" "+case["title"]})
     response.raise_for_status();thread=response.json();running[case["id"]]["thread_id"]=thread["id"]
@@ -345,7 +345,7 @@ async def primary_case(client,case,args,running):
         else:await asyncio.sleep(args.intervention_delay)
         message=INTERVENTIONS.get(intervention)
         if not message:return
-        intervention_attachments=[await upload(client,ROOT/"tests/real_cases/assets"/name)
+        intervention_attachments=[await upload(client,args.asset_root/name)
             for name in INTERVENTION_ASSETS.get(intervention,[])]
         delivery=await deliver_intervention(client,thread,turn,message,intervention_attachments)
         running[case["id"]]["intervention_delivery"]=delivery;return delivery
@@ -446,6 +446,10 @@ async def main():
     parser.add_argument("--harness",default="codex");parser.add_argument("--model",default="gpt-5.6-sol")
     parser.add_argument("--reasoning",default="deep");args=parser.parse_args()
     catalog=json.loads(args.catalog.read_text());explicit=set(args.case)|set(args.affected_case)
+    configured_root=Path(catalog.get('asset_root') or ROOT/'tests/real_cases/assets')
+    args.asset_root=(configured_root if configured_root.is_absolute()
+        else (args.catalog.parent/configured_root).resolve())
+    if not args.asset_root.is_dir():raise ValueError('campaign_asset_root_missing:'+str(args.asset_root))
     selected=[row for row in catalog["cases"] if not explicit or row["id"] in explicit]
     prior={}
     if args.resume_report and args.resume_report.is_file():
