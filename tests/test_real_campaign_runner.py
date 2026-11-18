@@ -79,6 +79,11 @@ def test_caption_intervention_contains_content_timing_and_style():
     assert '0–2秒显示“PORTRAIT”，2–4秒显示“ROCKET”' in source
 
 
+def test_thumbnail_intervention_fixes_the_fit_decision():
+    source=(ROOT/'tests/run_real_campaign.py').read_text()
+    assert '追加320×180 JPEG缩略图，保持比例居中裁切' in source
+
+
 def test_portrait_intervention_grades_the_post_intervention_contract():
     catalog=__import__('json').loads((ROOT/'tests/real_cases/cases.json').read_text())
     case=next(row for row in catalog['cases'] if row['id']=='R09')

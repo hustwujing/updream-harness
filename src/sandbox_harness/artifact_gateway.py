@@ -19,6 +19,7 @@ MIME_ALIASES = {
     "audio/x-wav": "audio/wav",
     "image/jpg": "image/jpeg",
     "text/x-markdown": "text/markdown",
+    "text/x-sh": "text/plain",
     "application/x-pdf": "application/pdf",
 }
 

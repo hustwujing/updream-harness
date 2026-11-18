@@ -50,3 +50,10 @@ the ordinary confirmation card; it must not bypass confirmation or classify the
 pre-confirmation Primary response as a missing-delivery prompt defect. C04
 therefore authorizes `image.segment`, while the product authorization boundary
 remains unchanged.
+
+Child artifact MIME validation treats an executable shell script as textual
+content: Runtime's `text/x-sh` declaration normalizes to the sniffed
+`text/plain` family instead of becoming `worker_internal_error`. Real-case
+interventions must also include decisions that materially affect output; R10's
+thumbnail request fixes centered cover-crop semantics so the case exercises
+successor reuse rather than an unrelated clarification interaction.

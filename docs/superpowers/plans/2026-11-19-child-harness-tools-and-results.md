@@ -85,3 +85,13 @@
 - [ ] Add a failing catalog assertion that C04 explicitly permits `image.segment`.
 - [ ] Add the grant to the catalog generation source and regenerate the frozen catalog.
 - [ ] Run catalog tests, then rerun C04 through the deployed confirmation flow.
+
+### Task 8: Artifact MIME and intervention closure
+
+**Files:** `src/sandbox_harness/artifact_gateway.py`,
+`tests/run_real_campaign.py`, `tests/test_job_artifacts.py`,
+`tests/test_real_campaign_runner.py`.
+
+- [ ] Reproduce rejection of a valid `.sh` Child artifact declared as `text/x-sh`.
+- [ ] Normalize shell-script MIME to sniffed text and preserve strict cross-family rejection.
+- [ ] Make R10's thumbnail fit decision explicit and rerun R09/R10 on the deployed fix.
