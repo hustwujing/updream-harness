@@ -66,6 +66,7 @@ def test_runtime_bundle_build_is_deterministic_and_activation_is_atomic(tmp_path
     assert "submitting their one dependency-free JobGroup" in RUNTIME_INSTRUCTIONS
     assert "before any Bash, WebSearch, Write, workspace inspection" in RUNTIME_INSTRUCTIONS
     assert "use empty `inputs` for self-contained research" in RUNTIME_INSTRUCTIONS
+    assert "Claude `Agent`/`Task` are not durable platform Child Harnesses" in RUNTIME_INSTRUCTIONS
     assert "Do not poll in a model loop" in RUNTIME_INSTRUCTIONS
     assert "`gpu_runtime_unavailable`" in RUNTIME_INSTRUCTIONS
     assert "Do not change parameters, create a replacement Job" in RUNTIME_INSTRUCTIONS
