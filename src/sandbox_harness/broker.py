@@ -123,6 +123,7 @@ class Broker:
     async def cleanup_startup_orphans(self, *, delete_stale_warm: bool = False) -> None:
         await self.pool.retry_deletions()
         live_turns = await self.store.nonterminal_turn_ids()
+        live_jobs = await self.store.nonterminal_job_ids()
         active_ids = ({sandbox.id for sandbox in self.active_sandboxes.values()}
             | await self.pool.managed_sandbox_ids() | await self.store.active_sandbox_control_ids()
             | await self.store.active_job_sandbox_ids())
@@ -130,7 +131,7 @@ class Broker:
             turn_id = sandbox.metadata.get("sandbox-harness.io/turn", "")
             if turn_id.startswith("warm-") and not delete_stale_warm:
                 continue
-            if sandbox.id not in active_ids and turn_id not in live_turns:
+            if sandbox.id not in active_ids and turn_id not in live_turns and turn_id not in live_jobs:
                 event("sandbox.orphan.delete",level=logging.WARNING,sandbox_id=sandbox.id,turn_id=turn_id)
                 await self.pool.backend.delete(sandbox)
 
