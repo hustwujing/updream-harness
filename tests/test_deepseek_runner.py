@@ -35,3 +35,30 @@ class DeepSeekHarness:
     assert all(row["snapshot"] is True for row in rows if row.get("type") == "assistant_delta")
     assert [row["input_ids"] for row in rows if row.get("type") == "harness.input.completed"] == [["1"], ["2"]]
     assert len({row["thread_id"] for row in rows if row.get("thread_id")}) == 1
+
+
+def test_deepseek_runner_emits_explicit_failed_completion_before_exit(tmp_path):
+    package=tmp_path/'deepseek_harness';package.mkdir()
+    package.joinpath('__init__.py').write_text("""from types import SimpleNamespace
+class Session:
+    def run(self,text,on_notification=None):return SimpleNamespace(final_response='partial',finish_reason='error')
+class DeepSeekHarness:
+    def __init__(self,**kwargs):pass
+    def start(self):pass
+    def start_session(self,id):return Session()
+    def resume_session(self,id):return Session()
+    def close(self):pass
+""")
+    environment={**os.environ,'PYTHONPATH':str(tmp_path)+os.pathsep+str(Path(__file__).resolve().parents[1]/'src'),
+        'DSH_HOME':str(tmp_path/'dsh'),'DEEPSEEK_BASE_URL':'http://gateway',
+        'DEEPSEEK_API_KEY':'test','DEEPSEEK_REASONING_EFFORT':'high'}
+    result=subprocess.run([sys.executable,'-m','sandbox_runtime.deepseek_runner','--model','model'],
+        input=json.dumps({'type':'input','id':'failed-input','message':'work'})+'\n',text=True,
+        capture_output=True,env=environment,timeout=5)
+    assert result.returncode==0,result.stderr
+    rows=[json.loads(line) for line in result.stdout.splitlines()]
+    completed=next(row for row in rows if row.get('type')=='harness.input.completed')
+    assert completed=={'type':'harness.input.completed','input_ids':['failed-input'],
+        'thread_id':next(row['thread_id'] for row in rows if row.get('type')=='thread.started'),
+        'status':'failed','error_code':'harness_failed',
+        'error_detail':'DeepSeek Harness finished with error'}

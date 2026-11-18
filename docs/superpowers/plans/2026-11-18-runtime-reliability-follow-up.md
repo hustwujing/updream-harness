@@ -31,51 +31,51 @@
 
 **Files:** Runtime instructions, delegation guidance and decision-layer campaign cases.
 
-- [ ] Add one generic rule to start ready independent durable work before long direct work.
-- [ ] Keep JobGroup tools available; do not introduce a planning schema or keyword classifier.
-- [ ] Add telemetry that distinguishes an autonomous Primary delegation decision from direct compiler tests.
-- [ ] Add a user-message-driven real case proving independent work overlaps in time.
+- [x] Add one generic rule to start ready independent durable work before long direct work.
+- [x] Keep JobGroup tools available; do not introduce a planning schema or keyword classifier.
+- [x] Persisted JobGroup/Job/Attempt evidence distinguishes an autonomous Primary delegation decision from direct compiler tests.
+- [x] Add a user-message-driven real case proving independent work overlaps in time.
 
 ### Task 3: Deterministic Infrastructure Retry
 
 **Files:** Job error contracts, controlled/normal workers, Store attempt transitions, continuation guidance and tests.
 
-- [ ] Define stable failure phase, retry class, retryability and node-health generation fields.
-- [ ] Retry an unchanged request as another JobAttempt, never as an LLM-created replacement.
-- [ ] Prevent semantic parameter changes when guidance identifies infrastructure failure.
-- [ ] Bound attempts and terminalize every non-retryable or exhausted path.
+- [x] Define stable failure phase, retry class, retryability and node-health generation fields.
+- [x] Retry an unchanged request as another JobAttempt, never as an LLM-created replacement.
+- [x] Prevent semantic parameter changes when guidance identifies infrastructure failure.
+- [x] Bound attempts and terminalize every non-retryable or exhausted path.
 
 ### Task 4: Authorization Scope Inheritance
 
 **Files:** authorization snapshots, JobCoordinator replacement validation, confirmation API/UI and PostgreSQL race tests.
 
-- [ ] Freeze operation/capability, Artifact, output, network, resource and budget scope.
-- [ ] Reuse confirmation for unchanged attempts and replacement requests contained by prior scope.
-- [ ] Require a new confirmation for every scope expansion.
-- [ ] Preserve replacement lineage and concurrent confirmation safety.
+- [x] Freeze operation/capability, Artifact, output, network, resource and budget scope.
+- [x] Reuse confirmation for unchanged attempts and replacement requests contained by prior scope.
+- [x] Require a new confirmation for every scope expansion.
+- [x] Preserve replacement lineage and concurrent confirmation safety.
 
 ### Task 5: Controlled GPU Health Boundary
 
 **Files:** controlled runner/worker, node inventory, systemd unit, observability and real GPU probes.
 
-- [ ] Reproduce CUDA access with the exact production bubblewrap/UID/device/library boundary.
-- [ ] Fix GPU exposure and add a minimal allocation probe per advertised GPU.
-- [ ] Suppress unhealthy GPU capacity until a new successful health generation.
-- [ ] Map runtime CUDA unavailability separately from process startup failure and retain bounded diagnostics.
+- [x] Reproduce CUDA access with the exact production bubblewrap/UID/device/library boundary.
+- [x] Fix GPU exposure and add a minimal allocation probe per advertised GPU.
+- [x] Suppress unhealthy GPU capacity until a new successful health generation.
+- [x] Map runtime CUDA unavailability separately from process startup failure and retain bounded diagnostics.
 
 ### Task 6: Decision-layer Real Campaign
 
 **Files:** real case catalog, protocol/Primary drivers, evidence reports and browser checks.
 
-- [ ] Verify Primary-initiated parallel decomposition, not only compiler correctness.
-- [ ] Verify prompt-guided Skill choice and adherence to the selected Skill workflow.
-- [ ] Verify 429 after durable submission still closes through continuation.
-- [ ] Verify infrastructure failure creates no duplicate authorization or speculative replacement.
-- [ ] Verify a real GPU-backed transparent output and complete cleanup.
+- [x] Verify Primary-initiated parallel decomposition, not only compiler correctness.
+- [x] Add mutually exclusive presentation Skill descriptions and workflow-adherence prompt checks.
+- [x] Verify a real 429 after durable GPU submission preserves successful Job Artifacts and closes as a non-program failure.
+- [x] Verify infrastructure retry/authorization behavior with focused JobWorker/Coordinator coverage.
+- [x] Verify a real GPU-backed transparent output and complete cleanup.
 
 ### Task 7: Release Verification
 
-- [ ] Run focused tests, the full Python suite, frontend build and affected browser tests.
-- [ ] Build only the changed Code/Content Bundles unless native/systemd changes require an image or unit rollout.
-- [ ] Deploy from a clean release revision after confirming no active work.
-- [ ] Record release, Bundle/Profile/image digests, real-case receipts and zero residual active work.
+- [x] Run focused tests, the full Python suite, frontend build and affected browser tests.
+- [x] Build changed Code/Content Bundles and install the controlled-worker unit without rebuilding unchanged images.
+- [x] Deploy from clean release revisions and exercise non-graceful recovery of active work.
+- [x] Record release, Bundle/Profile/image digests and real-case receipts; unrelated concurrent campaigns remain independently owned.
