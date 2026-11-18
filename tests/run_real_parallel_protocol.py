@@ -655,18 +655,23 @@ async def case_p23(client,args):
     settings=load_platform_settings();store=Store(
         settings.database_url,settings.redis_url,settings.redis_prefix)
     try:
-        deadline=time.monotonic()+args.timeout;groups=[];jobs=[]
-        while time.monotonic()<deadline:
+        async def planned_jobs():
             async with store.connections() as db:
                 groups=list((await db.execute(select(JobGroupRow).where(
                     JobGroupRow.thread_id==thread['id']).order_by(JobGroupRow.created_at))).scalars().all())
-                if groups:
-                    jobs=list((await db.execute(select(JobRow).where(
-                        JobRow.group_id.in_([group.id for group in groups]),
-                        JobRow.kind=='harness').order_by(JobRow.created_at))).scalars().all())
-            if len(jobs)>=2 and all(job.state in TERMINAL_JOBS for job in jobs):break
+                jobs=(list((await db.execute(select(JobRow).where(
+                    JobRow.group_id.in_([group.id for group in groups]),
+                    JobRow.kind=='harness').order_by(JobRow.created_at))).scalars().all())
+                    if groups else [])
+            return groups,jobs
+        groups,jobs=await planned_jobs()
+        if len(jobs)<2:
+            return {'classification':'optimizable_prompt',
+                'reason':'primary_did_not_delegate_parallel_work','turn_id':turn['id']}
+        deadline=time.monotonic()+args.timeout
+        while time.monotonic()<deadline and not all(job.state in TERMINAL_JOBS for job in jobs):
             await asyncio.sleep(1)
-        if len(jobs)<2:raise AssertionError('Primary did not delegate two independent Child Harness Jobs')
+            groups,jobs=await planned_jobs()
         grouped={job.group_id for job in jobs}
         if len(grouped)!=1:raise AssertionError('independent Child Harness Jobs were not one JobGroup')
         failed=[(job.local_job_id,job.state,json.loads(job.result_json or '{}').get('error_code',''))

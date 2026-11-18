@@ -55,6 +55,8 @@ def test_primary_decision_protocol_stops_after_terminal_model_failure():
     block=source[source.index('async def case_p23'):source.index('async def case_p24')]
     assert "if final['state']!='COMPLETED'" in block
     assert "'non_program_failure'" in block and "code.startswith" in block
+    assert "'optimizable_prompt'" in block
+    assert 'primary_did_not_delegate_parallel_work' in block
 
 
 def test_business_artifact_phase_does_not_repeat_protocol_interventions():
