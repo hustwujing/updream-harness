@@ -37,6 +37,7 @@ class MimeRegistry:
         elif head.startswith(b"\xff\xd8\xff"): detected = "image/jpeg"
         elif head.startswith((b"GIF87a", b"GIF89a")): detected = "image/gif"
         elif head.startswith(b"%PDF-"): detected = "application/pdf"
+        elif head.startswith(b"RIFF") and head[8:12] == b"WEBP": detected = "image/webp"
         elif head.startswith(b"RIFF") and head[8:12] == b"WAVE": detected = "audio/wav"
         elif head.startswith(b"ID3") or len(head)>=2 and head[0]==0xff and head[1]&0xe0==0xe0:
             detected = "audio/mpeg"

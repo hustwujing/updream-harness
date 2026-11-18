@@ -153,6 +153,8 @@ def test_mime_registry_sniffs_aliases_and_unknowns(tmp_path):
     assert MimeRegistry.detect(mp3,'audio/mpeg')=='audio/mpeg'
     m4a=tmp_path/'audio.m4a';m4a.write_bytes(b'\x00\x00\x00\x18ftypM4A \x00\x00\x00\x00')
     assert MimeRegistry.detect(m4a,'audio/mp4')=='audio/mp4'
+    webp=tmp_path/'image.webp';webp.write_bytes(b'RIFF\x04\x00\x00\x00WEBPVP8 ')
+    assert MimeRegistry.detect(webp,'image/webp')=='image/webp'
     invalid=tmp_path/'invalid.svg';invalid.write_text('<svg>')
     with pytest.raises(ValueError,match='does not match'):
         MimeRegistry.detect(invalid,'image/svg+xml')
