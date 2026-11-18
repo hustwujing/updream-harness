@@ -67,27 +67,40 @@ PARALLEL_CASES=[
 ]
 
 
+def inherited_adaptation(value):
+    hook=value.get("dynamic_hook") or "artifact_contract"
+    return ("Preserve the original "+value["id"]+" risk and assertions through the Parallel "
+        "Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway "
+        "boundaries. Plus hook="+hook+" is exercised by the inherited protocol driver; no "
+        "Manager/Orchestrator compatibility layer is introduced.")
+
+
 def main():
-    raw=SOURCE.read_bytes();source=json.loads(raw);business=[];superseded=[]
+    raw=SOURCE.read_bytes();source=json.loads(raw);business=[];inherited=[];superseded=[]
     for value in source["cases"]:
         if value["id"].startswith(("S","C","R")):
             migrated={**value,"status":"not_run","attempts":[],"executor":"primary_harness",
                 "entry_mode":"deployed_browser","provenance":"sandbox-harness-platform-plus:"+value["id"]}
             business.append(migrated)
-        else:
-            superseded.append({"id":value["id"],"title":value["title"],
-                "reason":"Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-                "replacement_case_ids":[row["id"] for row in PARALLEL_CASES
-                    if set(row["required_features"]) & {"mixed_group","continuation","input_ordering",
-                        "replacement","node_loss","recovery","reviewer","budget","provider_reconcile"}]})
+        elif value["id"].startswith("D"):
+            migrated={**value,"status":"not_run","attempts":[],"executor":"inherited_protocol",
+                "entry_mode":"deployed_browser_or_api",
+                "provenance":"sandbox-harness-platform-plus:"+value["id"],
+                "source_project":"sandbox-harness-platform-plus",
+                "source_definition_sha256":value.get("original_definition_sha256") or hashlib.sha256(
+                    json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(",",":")).encode()).hexdigest(),
+                "parallel_adaptation":inherited_adaptation(value)}
+            inherited.append(migrated)
+        else:raise ValueError("Unmapped source case: "+value["id"])
     result={"schema_version":1,"campaign":"primary-harness-parallel","default_concurrency":8,
         "source_snapshot":{"path":str(SOURCE.relative_to(ROOT)),"sha256":hashlib.sha256(raw).hexdigest(),
             "source_case_count":len(source["cases"])},
         "rules":{"stop_on_program_or_prompt_defect":True,"rerun_failed_then_affected_only":True,
             "success_requires_user_surface_and_internal_audit":True,"evidence_root":".data/evidence/real-campaign",
             "forbid_case_specific_product_fixes":True},
-        "runnable_case_count":len(business)+len(PARALLEL_CASES),"business_case_count":len(business),
-        "parallel_case_count":len(PARALLEL_CASES),"cases":[*business,*PARALLEL_CASES],
+        "runnable_case_count":len(business)+len(inherited)+len(PARALLEL_CASES),
+        "business_case_count":len(business),"inherited_protocol_case_count":len(inherited),
+        "parallel_case_count":len(PARALLEL_CASES),"cases":[*business,*inherited,*PARALLEL_CASES],
         "superseded_cases":superseded}
     OUTPUT.write_text(json.dumps(result,ensure_ascii=False,indent=2)+"\n")
     print(json.dumps({"output":str(OUTPUT),"runnable":len(result["cases"]),

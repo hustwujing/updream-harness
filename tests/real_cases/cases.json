@@ -14,8 +14,9 @@
     "evidence_root": ".data/evidence/real-campaign",
     "forbid_case_specific_product_fixes": true
   },
-  "runnable_case_count": 98,
+  "runnable_case_count": 149,
   "business_case_count": 78,
+  "inherited_protocol_case_count": 51,
   "parallel_case_count": 20,
   "cases": [
     {
@@ -4086,6 +4087,2308 @@
       "provenance": "sandbox-harness-platform-plus:R17"
     },
     {
+      "id": "D01",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "真实 Manager 多轮扩图",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "采用滚动规划。initial 只创建一个Native Harness分析WorkUnit，读取portrait.png并输出analysis.json，必须设置delivery=false，不能同时创建图像交付步骤。该内部frontier验收完成后，以planning_mode=expansion新增下游WorkUnit，显式引用已验收analysis.json和portrait.png，生成精确128×128 final.png并设置delivery=true。最终只交付PNG。",
+      "expect": {
+        "kind": "image",
+        "width": 128,
+        "height": 128
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "rolling_plan",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖动态图新增的版本、控制、恢复、授权或隔离协议。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D01",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "5e23d26a435d69c35c1c0bf8c972bdb7661f5f640fcde96c502b39f087495768",
+      "parallel_adaptation": "Preserve the original D01 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=rolling_plan is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D02",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "并行分支完成后触发汇合规划",
+      "assets": [
+        "portrait.png",
+        "rocket.png"
+      ],
+      "prompt": "采用滚动规划。initial 只并行创建两个互不依赖的Native Harness分析WorkUnit，分别分析portrait.png和rocket.png，各自输出delivery=false的JSON，不得创建拼接节点。两份内部结果都验收后，以planning_mode=expansion新增一个下游WorkUnit，显式引用两份已验收JSON及原图，拼成精确256×128 final.png并设置delivery=true。",
+      "expect": {
+        "kind": "image",
+        "width": 256,
+        "height": 128
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "parallel_replan",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖动态图新增的版本、控制、恢复、授权或隔离协议。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D02",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "43e0fcad4290013ba3e83a8da2eb287a14dab49f148092e133c4c290c6cb001f",
+      "parallel_adaptation": "Preserve the original D02 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=parallel_replan is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D03",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "未封口禁止提前交付",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "采用滚动规划。initial 只创建一个Native Harness WorkUnit生成128×128 preview.png，明确设置delivery=false，不能创建最终步骤。中间预览验收后，以planning_mode=expansion新增下游WorkUnit，显式引用已验收preview.png并生成精确64×64 final.png，设置delivery=true；绝不能把preview.png提前交付。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "unsealed_hold",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖动态图新增的版本、控制、恢复、授权或隔离协议。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D03",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "de6546be8d7eec83da59b55980de735c3f378cda73bb944c58fd2481ecddbff1",
+      "parallel_adaptation": "Preserve the original D03 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=unsealed_hold is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D04",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "Orchestrator 重启与提案去重",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "分析 portrait.png 后生成64×64 PNG并交付。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "orchestrator_restart",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖动态图新增的版本、控制、恢复、授权或隔离协议。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D04",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "4578ec90939d3800e875361eebcab1fb8a8a8a531310fa0ac1845ed29d331912",
+      "parallel_adaptation": "Preserve the original D04 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=orchestrator_restart is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D05",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "两个 Orchestrator 竞争推进",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "生成 portrait.png 的128×128和64×64两种PNG，最终一并交付。",
+      "expect": {
+        "kind": "image",
+        "width": 128,
+        "height": 128,
+        "min_images": 2,
+        "extra_image_sizes": [
+          [
+            64,
+            64
+          ]
+        ]
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "orchestrator_competition",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖动态图新增的版本、控制、恢复、授权或隔离协议。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D05",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "9a4be8c4442d49c8abc827334c7565e6955e46343e8a3ffbc2b5b0b780428189",
+      "parallel_adaptation": "Preserve the original D05 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=orchestrator_competition is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D06",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "执行器退出后换节点恢复",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "使用Native Harness本地工具先生成128×128 preview.png（delivery=false），再由显式依赖它的第二个WorkUnit生成64×64 final.png并交付。第二步开始时必须等待15秒，声明retry_policy=safe_once；执行器意外退出后只允许一次安全重放，复用已完成preview。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "executor_restart",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖动态图新增的版本、控制、恢复、授权或隔离协议。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D06",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "55eb4048b6e0daf5857635a1a057a64a00c8364171d6030cd3767c2f1e471542",
+      "parallel_adaptation": "Preserve the original D06 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=executor_restart is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D07",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "Manager 执行中取消",
+      "assets": [
+        "portrait.png",
+        "rocket.png"
+      ],
+      "prompt": "分析所有素材，分别列出可执行编辑方案并生成64×64 PNG预览。",
+      "expect": {
+        "kind": "protocol"
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "cancel_planning",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖动态图新增的版本、控制、恢复、授权或隔离协议。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D07",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "eb9141ac5afe8c34fe342f3435cb30ea923dd3e175789777be68826f3ccffe11",
+      "parallel_adaptation": "Preserve the original D07 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=cancel_planning is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D08",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "暂停边界不启动新任务",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "先由两个type=agent、profile=editing_implementer的业务Task依次生成128×128 PNG和64×64 PNG，第二步启动前必须依赖第一步完成。第一步由Agent在受限沙箱内等待10秒再处理，确保用户能够在实际执行期间暂停；第一步只需程序校验128×128尺寸。测试会保持暂停直到在途第一步完成，再验证第二步没有启动。Manager不得直接提交脚本或代码。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "pause_resume",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "真实暂停保持到在途上游完成，核对下游未启动；恢复命令实际应用后再继续执行。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D08",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "dfc0d37257e5a336e388c1f56d047004d7832af86a36e237aad4faec00aade1e",
+      "parallel_adaptation": "Preserve the original D08 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=pause_resume is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D09",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "外部调用超范围审批",
+      "assets": [],
+      "prompt": "使用真实文生图生成蓝色杯子PNG，原授权没有收费调用额度时先请求授权，不得擅自调用。",
+      "expect": {
+        "kind": "protocol"
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "authorize_provider",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖动态图新增的版本、控制、恢复、授权或隔离协议。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D09",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "399f5547a5207dfad436ba3ca2413a7946d70ae758608efd6259d2ae670b717a",
+      "parallel_adaptation": "Preserve the original D09 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=authorize_provider is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D10",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "拒绝扩大授权后不调用供应商",
+      "assets": [],
+      "prompt": "使用真实文生图生成蓝色杯子PNG，先请求必要授权。",
+      "expect": {
+        "kind": "protocol"
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "reject_provider",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖动态图新增的版本、控制、恢复、授权或隔离协议。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D10",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "dbd0b3ba72f4de7eb52ea3ed40c902434bf39cc5ec7e0dd226811daaa975f3a3",
+      "parallel_adaptation": "Preserve the original D10 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=reject_provider is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D11",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "过期审批与重复命令拒绝",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "生成128×128 PNG并要求人工内容验收，之后再交付64×64 PNG。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "stale_decision",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖动态图新增的版本、控制、恢复、授权或隔离协议。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D11",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "0230891886987610e761be5c554ff60b74e6f6bb41a99e7f4df092e6d82ceb7b",
+      "parallel_adaptation": "Preserve the original D11 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=stale_decision is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D12",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "跨项目读取与控制拒绝",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "把 portrait.png 缩小为64×64 PNG。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "foreign_project",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖动态图新增的版本、控制、恢复、授权或隔离协议。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D12",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "cda477c23230ade06bbaad520e72c93ac3b2c8d59a0a95f0078a46b85789ecc1",
+      "parallel_adaptation": "Preserve the original D12 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=foreign_project is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D13",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "模型预算耗尽有界暂停",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "使用一个Native Harness WorkUnit分析portrait.png并生成精确64×64 final.png；一次完成，保持模型上下文有界，经过最终审查后交付。",
+      "expect": {
+        "kind": "protocol"
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "token_budget",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖动态图新增的版本、控制、恢复、授权或隔离协议。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D13",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "625230ef215d530640ad1139a34fe4f1db5b3d8435ff31bc68a57e688ea13c84",
+      "parallel_adaptation": "Preserve the original D13 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=token_budget is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D14",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "BOSS 内容校验与候选不放行",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "创建两个有依赖的Native Harness WorkUnit：第一步从portrait.png生成128×128 intermediate.png，设置delivery=false；第二步显式依赖该已验收Artifact并生成精确64×64 final.png，设置delivery=true。不得从原素材绕过中间Artifact重做最终图。",
+      "expect": {
+        "kind": "protocol"
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "artifact_integrity",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖动态图新增的版本、控制、恢复、授权或隔离协议。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D14",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "2c6806e4407b676fab8e01dac76e77467c3981f3afec1c6f3b49ee959453e018",
+      "parallel_adaptation": "Preserve the original D14 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=artifact_integrity is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D15",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "授权内容指纹失效拒绝",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "先使用media.evidence检查portrait.png，再由同一个Native Harness WorkUnit生成精确64×64 final.png并交付。授权决策必须绑定当前snapshot。",
+      "expect": {
+        "kind": "protocol"
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "stale_authorization",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖动态图新增的版本、控制、恢复、授权或隔离协议。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D15",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "8f47253b3688e64135f0ce82ad5993ca0bb301b511b979110b5274afcc9b4c82",
+      "parallel_adaptation": "Preserve the original D15 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=stale_authorization is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D16",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "外部提交未知不重复生成",
+      "assets": [],
+      "prompt": "调用真实image.generate_from_text生成蓝色杯子PNG并交付。无论Provider返回成功、失败或未知，只允许一次submit，后续必须复用同一平台call身份。",
+      "expect": {
+        "kind": "protocol"
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "submission_unknown",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [
+        "image.generate_from_text"
+      ],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖动态图新增的版本、控制、恢复、授权或隔离协议。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D16",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "330cd61fd866d948b6a8fdfec7ff929f037deac9bff64fec9c308b7f5774ae21",
+      "parallel_adaptation": "Preserve the original D16 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=submission_unknown is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D17",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "观测服务中断不影响业务状态",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "把 portrait.png 缩小为64×64 PNG并交付。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "observer_restart",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖动态图新增的版本、控制、恢复、授权或隔离协议。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D17",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "7e115b9a1fb2c1097918bbc806104bb137525aa1bfd504db6475f7538e1f186d",
+      "parallel_adaptation": "Preserve the original D17 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=observer_restart is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D18",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "API 切换与浏览器恢复",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "把 portrait.png 缩小为64×64 PNG，完成后保持可下载。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "api_restart",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖动态图新增的版本、控制、恢复、授权或隔离协议。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D18",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "02e785dcaf7af9793bea287bc7b5e4d8ebdec1b66857b89c8be13209fb2c56c5",
+      "parallel_adaptation": "Preserve the original D18 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=api_restart is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D19",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "独立部署与 main 数据隔离",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "把 portrait.png 缩小为64×64 PNG。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "deployment_isolation",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖动态图新增的版本、控制、恢复、授权或隔离协议。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D19",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "00f9ca6c142c8228748920d1ae70de91539cb43aec4f9e6e8fcd480f4cf52b20",
+      "parallel_adaptation": "Preserve the original D19 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=deployment_isolation is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D20",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "专业 Agent 权限与实际模型用量",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "使用已注册的canvas-design Skill创建一个Native Harness WorkUnit，把portrait.png缩小为精确64×64 PNG；不得访问项目外文件或调用未授权Capability，最终审查后交付。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "specialist_scope",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖动态图新增的版本、控制、恢复、授权或隔离协议。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D20",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "d549e51b18fbe2d8577df79de1179d9a44f95a54caae4a234c3500ff9137f48c",
+      "parallel_adaptation": "Preserve the original D20 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=specialist_scope is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D21",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "诊断后不可变修订并衔接下游",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "创建两个有依赖的Native Harness WorkUnit。render把portrait.png生成64×64 rendered.png，delivery=false并要求user_acceptance=true；package依赖render的已验收Artifact，复制为64×64 delivered.png并交付。测试会在render首次验收时要求加入红色边框，必须创建render revision 2，保留revision 1历史，下游只能消费新修订。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "失败revision保留",
+        "修复根计数一次",
+        "下游使用新revision",
+        "无关授权不扩大"
+      ],
+      "workflow_min_steps": 2,
+      "dynamic_hook": "repair_revision",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖失败节点交回Manager、同一逻辑Task新revision、修复计数、后代失效和正式交付。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D21",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "92d0a335f8a35454699675f419e9c2bc673430b131ea1352f4ffc0a38040772b",
+      "parallel_adaptation": "Preserve the original D21 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=repair_revision is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D22",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "单一Run身份与独立Control Job",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "用本地脚本把portrait.png缩小为64×64 final.png，程序检查后交付。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "identity",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖统一Run、输入屏障、版本修订或Provider冻结协议；必须实际触发边界并保留独立证据。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D22",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "f36850e64963caf9653e06aabccf92b195933b26064aafdbe96713e43b1bc556",
+      "parallel_adaptation": "Preserve the original D22 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=identity is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D23",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "业务排空与全Run派发屏障",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "创建三个Native Harness WorkUnit。left与right互不依赖：left在隔离沙箱内等待12秒后将portrait.png等比居中适配为64×64 left.png；right将portrait.png亮度调整为1.1并等比居中适配为64×64 right.png；两者均为delivery=false可复用中间结果。export显式依赖left/right，用Pillow左右拼接为128×64 final.png，设置semantic_review=required和user_acceptance=true并交付。执行中我会补充要求；存量工作应排空，输入fence应用前不得发布旧结果。",
+      "expect": {
+        "kind": "image",
+        "width": 128,
+        "height": 64
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "drain_local",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖统一Run、输入屏障、版本修订或Provider冻结协议；必须实际触发边界并保留独立证据。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D23",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "78e1ff468f303d226877474f753bb3abf3aeb075a7273e8cce7f9b021058173b",
+      "parallel_adaptation": "Preserve the original D23 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=drain_local is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D24",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "专业Agent在途输入排空",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "创建一个Native Harness WorkUnit，在隔离沙箱内先等待8秒，再读取portrait.png并等比居中适配为64×64 final.png。输出必须来自该WorkUnit实际脚本处理，设置semantic_review=required和user_acceptance=true后交付；不得通过事后复制或修改元数据伪造结果。执行中我会补充保持原目标的输入，必须在同一Harness会话中排空并应用后再发布。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "drain_agent",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖统一Run、输入屏障、版本修订或Provider冻结协议；必须实际触发边界并保留独立证据。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D24",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "d90bf2510df6cd5483a2f1eeb2d06d30271447c5c2567121d8542148ccc1ad6b",
+      "parallel_adaptation": "Preserve the original D24 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=drain_agent is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D25",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "规划期间连续输入分批处理",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "将portrait.png等比居中适配为精确64×64 final.png，格式PNG；使用Native Harness本地工具实际生成，设置semantic_review=required和user_acceptance=true。规划期间我会再次明确仍保持64×64 PNG；系统必须分批应用输入且不得产生矛盾契约。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "planning_inputs",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖统一Run、输入屏障、版本修订或Provider冻结协议；必须实际触发边界并保留独立证据。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D25",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "a366888690d6d135faa314d28301ddfa181344ac21f40cbcb5c4fda897fa5210",
+      "parallel_adaptation": "Preserve the original D25 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=planning_inputs is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D26",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "Wan在途输入保持原句柄",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "使用真实video.generate_from_image，以portrait.png生成5秒1280×720轻微推镜视频，保持服装与整体形象。只允许一次生成。",
+      "expect": {
+        "kind": "video",
+        "duration": 5,
+        "width": 1280,
+        "height": 720
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "drain_wan",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [
+        "video.generate_from_image"
+      ],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖统一Run、输入屏障、版本修订或Provider冻结协议；必须实际触发边界并保留独立证据。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D26",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "f00b9d199c1984aa49460f53dfeb4cd6f3e3456e982d17b1b4aa0b1549b0b41b",
+      "parallel_adaptation": "Preserve the original D26 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=drain_wan is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D27",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "外部提交未知时输入屏障",
+      "assets": [],
+      "prompt": "使用真实image.generate_from_text生成蓝色杯子PNG，只允许一次生成。",
+      "expect": {
+        "kind": "protocol"
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "unknown_input",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [
+        "image.generate_from_text"
+      ],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖统一Run、输入屏障、版本修订或Provider冻结协议；必须实际触发边界并保留独立证据。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D27",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "99d72e4826d1f38f98ac391aa3cd5665ec28b435c1d328b64e6b9551e9fa5feb",
+      "parallel_adaptation": "Preserve the original D27 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=unknown_input is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D28",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "质量反馈幂等与过期快照",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "创建一个Native Harness WorkUnit，在隔离沙箱内将portrait.png等比居中适配为128×64 final.png，设置semantic_review=required和user_acceptance=true。首次用户验收时我会反馈加入4像素红色内边框；系统必须创建新revision、拒绝重复/过期反馈，并仅在我最终接受后发布。Reviewer不能代替用户批准。",
+      "expect": {
+        "kind": "image",
+        "width": 128,
+        "height": 64
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "feedback_idempotency",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "保留原人工Review并检查新候选后批准",
+      "review_reason": "反馈不等于批准；新版候选通过独立像素检查后，在原声明的Review中approve，仍保留技术/Agent/最终验收。",
+      "status": "not_run",
+      "attempts": [],
+      "intervention_actions": [
+        "独立检查新版候选后批准原声明的人工Review"
+      ],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D28",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "b53113e845e3f6be213361220b66c82fe6fd6c315a72d4dddb113ee416e84b3f",
+      "parallel_adaptation": "Preserve the original D28 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=feedback_idempotency is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D29",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "拒绝不能被人工批准且可补证据",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "创建一个Native Harness WorkUnit，将portrait.png处理为64×64 final.png，并在画面中央加入清晰红色实心圆。必须设置semantic_review=required且user_acceptance=false；只有Reviewer pass后才能交付，不能通过用户确认绕过语义审查。",
+      "expect": {
+        "kind": "protocol"
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "no_waiver",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖统一Run、输入屏障、版本修订或Provider冻结协议；必须实际触发边界并保留独立证据。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D29",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "5efb41c0d592fb04c5263722d8a8706d732f7f069518c85589157129bfc81676",
+      "parallel_adaptation": "Preserve the original D29 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=no_waiver is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D30",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "局部蒙版修复比例边界",
+      "assets": [],
+      "prompt": "创建两个有依赖的Native Harness WorkUnit。第一步生成128×128灰度mask.png：背景0，中央[32,32]到[95,95]为255，只有(63,63)单像素置0，delivery=false。第二步只填补该单像素孔并输出128×128 repaired.png，delivery=true；除该孔外不得改动其他像素，变化比例必须不超过1%。",
+      "expect": {
+        "kind": "image",
+        "width": 128,
+        "height": 128
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "mask_boundary",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖统一Run、输入屏障、版本修订或Provider冻结协议；必须实际触发边界并保留独立证据。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D30",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "6e77c4fe5f23f33faadbd46f733b2caa39b5bb1071c6dd0f3293b38aa673b935",
+      "parallel_adaptation": "Preserve the original D30 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=mask_boundary is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D31",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "持续动作的真实时序证据",
+      "assets": [],
+      "prompt": "创建一个Native Harness WorkUnit生成4秒128×96、25fps H.264 yuv420p无音轨MP4：白背景、红色方块从左向右持续匀速移动，前0.2秒内开始且全程不中断。设置semantic_review=required，Reviewer必须基于覆盖全4秒的时序证据确认动作连续后才能交付final.mp4。",
+      "expect": {
+        "kind": "video",
+        "duration": 4,
+        "width": 128,
+        "height": 96
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "temporal_boundary",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖统一Run、输入屏障、版本修订或Provider冻结协议；必须实际触发边界并保留独立证据。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D31",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "6ad5f80b32c4066fa98658f83e1c288c4e5040fbdb8553982bd37c8ba8d0aa90",
+      "parallel_adaptation": "Preserve the original D31 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=temporal_boundary is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D32",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "输入与最终发布竞争",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "创建一个Native Harness WorkUnit，把portrait.png缩小为精确64×64 final.png，经过程序和最终审查后交付。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "publish_input",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖统一Run、输入屏障、版本修订或Provider冻结协议；必须实际触发边界并保留独立证据。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D32",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "193a078e82952d260a2e062ee9f06e76807c6f88884e01144e1bc6af7efe0b49",
+      "parallel_adaptation": "Preserve the original D32 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=publish_input is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D33",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "交付后successor输入幂等",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "创建一个Native Harness WorkUnit，把portrait.png缩小为精确64×64 final.png，经过程序和最终审查后交付；父Run结束后测试会重复提交同一successor输入。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "successor_inputs",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖统一Run、输入屏障、版本修订或Provider冻结协议；必须实际触发边界并保留独立证据。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D33",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "1b910bd811347bb98d33757c2beef66e565ebed60e6d61c347a3e92596ce50f2",
+      "parallel_adaptation": "Preserve the original D33 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=successor_inputs is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D34",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "同步外部请求在途输入",
+      "assets": [],
+      "prompt": "使用真实image.generate_from_text生成蓝色杯子PNG，使用同步图片实现image_sync@1，只允许一次请求。",
+      "expect": {
+        "kind": "protocol"
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "drain_sync",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [
+        "image.generate_from_text"
+      ],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖统一Run、输入屏障、版本修订或Provider冻结协议；必须实际触发边界并保留独立证据。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D34",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "0fdf353fd591ff67fc219b7faab72ac940c40cc2141ef54f0239d10e2ff4704c",
+      "parallel_adaptation": "Preserve the original D34 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=drain_sync is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D35",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "Provider配置切换后冻结路由恢复",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "使用真实video.generate_from_image，以portrait.png生成5秒1280×720轻微推镜视频，保持整体形象，只允许一次生成。",
+      "expect": {
+        "kind": "video",
+        "duration": 5,
+        "width": 1280,
+        "height": 720
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "frozen_route",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [
+        "video.generate_from_image"
+      ],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖统一Run、输入屏障、版本修订或Provider冻结协议；必须实际触发边界并保留独立证据。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D35",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "13887825a3875a175e73bf1206e5524452174016ba02f7ae5e8c480a089dcf4d",
+      "parallel_adaptation": "Preserve the original D35 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=frozen_route is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D36",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "抠图候选边缘反馈修订",
+      "assets": [
+        "approved_subject.png"
+      ],
+      "prompt": "使用已提供的512×512透明approved_subject.png，不重新分割或生成主体。创建source_cutout Native Harness WorkUnit，按原字节复制为foreground.png，delivery=false，程序检查尺寸、Alpha和非空主体；创建显式依赖它的render Native Harness WorkUnit，按原字节复制为final.png，设置semantic_review=required与user_acceptance=true。首次验收时我会反馈仅精修局部Alpha边缘；只修订render，source_cutout已验收Artifact及其字节必须复用，Reviewer不能代替用户批准。",
+      "expect": {
+        "kind": "image",
+        "width": 512,
+        "height": 512,
+        "alpha": true
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "feedback_cutout",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "保留原人工Review并检查新候选后批准",
+      "review_reason": "固定真实已验收抠图作为输入，单独验证局部Alpha反馈及上游复用；SAM3端到端分割保留在S09。",
+      "status": "not_run",
+      "attempts": [],
+      "intervention_actions": [
+        "独立检查新版候选后批准原声明的人工Review"
+      ],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D36",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "4ab2b64f8f8745f67e887a2070f8704c28279a65176a46df7b9f933e49169551",
+      "parallel_adaptation": "Preserve the original D36 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=feedback_cutout is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D37",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "双图构图反馈修订",
+      "assets": [
+        "portrait.png",
+        "rocket.png"
+      ],
+      "prompt": "创建两个互不依赖的Native Harness准备WorkUnit，将portrait.png和rocket.png分别执行brightness=1.1，输出delivery=false的prepare_a.png、prepare_b.png并验收；创建显式依赖二者的render WorkUnit，用Pillow ImageOps.fit默认方法各适配64×64，a左b右合成128×64 final.png，设置semantic_review=required与user_acceptance=true。首次验收时我会反馈交换左右构图；只修订受影响render并复用两个上游Artifact。",
+      "expect": {
+        "kind": "image",
+        "width": 128,
+        "height": 64
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "feedback_layout",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "保留原人工Review并检查新候选后批准",
+      "review_reason": "反馈不等于批准；新版候选通过独立像素检查后，在原声明的Review中approve，仍保留技术/Agent/最终验收。",
+      "status": "not_run",
+      "attempts": [],
+      "intervention_actions": [
+        "独立检查新版候选后批准原声明的人工Review"
+      ],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D37",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "1fd126c674ff0028ea99bd0512fc3a00be0ed5fe3fb24a7be73351dcd14b82bb",
+      "parallel_adaptation": "Preserve the original D37 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=feedback_layout is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D38",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "Wan提交前参考图反馈修订",
+      "assets": [
+        "portrait.png",
+        "rocket.png"
+      ],
+      "prompt": "创建reference Native Harness WorkUnit，在隔离沙箱内先等待20秒，再将portrait.png用Pillow ImageOps.fit适配为1280×720 reference.png，delivery=false。创建显式依赖reference的生成WorkUnit，使用video.generate_from_image且artifact_id必须来自reference的已验收Artifact，仅允许一次生成5秒1280×720缓慢推镜视频；创建下游确定性包装与semantic_review/user_acceptance后交付。reference处理期间我会修改参考要求；旧参考不得提交给Provider。",
+      "expect": {
+        "kind": "video",
+        "width": 1280,
+        "height": 720,
+        "duration": 5
+      },
+      "content_checks": [
+        "真实浏览器状态与持久化状态一致",
+        "操作不越过授权与租约边界",
+        "无重复外部副作用或提前交付",
+        "缓存、BOSS 引用及清理状态符合协议"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "reference_before_wan",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [
+        "video.generate_from_image"
+      ],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖统一Run、输入屏障、版本修订或Provider冻结协议；必须实际触发边界并保留独立证据。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D38",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "3151aeb672317f304e16e19d7656b28a44bf88a13db607b626a0045ff5b414a1",
+      "parallel_adaptation": "Preserve the original D38 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=reference_before_wan is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D39",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "合法替代失败节点与历史读取",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "创建两个有依赖的Native Harness WorkUnit。render把portrait.png生成64×64 rendered.png，delivery=false并要求user_acceptance=true；package依赖render并交付64×64 delivered.png。测试会在render首次验收时要求蓝色边框；必须保留同一render身份并创建不可变revision 2，旧revision和候选历史仍可读取，package只能消费revision 2的已验收Artifact。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "失败revision保留",
+        "修复根计数一次",
+        "下游使用新revision",
+        "无关授权不扩大"
+      ],
+      "workflow_min_steps": 2,
+      "dynamic_hook": "legal_replacement",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "实际触发合法replacement后旧节点详情读取，覆盖F49，同时验证原失败保留、下游重绑和新交付。",
+      "status": "not_run",
+      "attempts": [],
+      "expected_business_objective": "将portrait.png缩放为64×64 final.png。",
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D39",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "49e9a26dbfd6a1ba627c2b450935c98d7c78521c096ea7a4aab6b3575b180405",
+      "parallel_adaptation": "Preserve the original D39 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=legal_replacement is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D40",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "已验收音频下游Operation取证",
+      "assets": [
+        "music.wav"
+      ],
+      "prompt": "已确认本次执行范围。使用注册audio.process将music.wav全段降低6dB，保持30秒、原采样率和声道，输出WAV，不做响度归一化。该Task通过验收后，必须创建另一个注册media.evidence Task，purpose=evidence、mode=audio，通过step加audio输出角色引用前一Task已验收的WAV，并显式声明依赖；不得直接读取原素材代替候选，不得用Script代替这两个Operation。两个Task均实际成功后交付处理后的WAV；证据报告留在工作流中供系统最终Review检查，不将evidence Task设为delivery_stage。不需要额外新增业务Review Task。",
+      "expect": {
+        "kind": "audio",
+        "duration": 30,
+        "duration_tolerance": 0.2
+      },
+      "content_checks": [
+        "实际音频RMS比例符合-6dB",
+        "下游Operation绑定已验收音频",
+        "输入kind为audio且SHA与上游一致",
+        "注册证据结果源SHA相同"
+      ],
+      "workflow_min_steps": 2,
+      "dynamic_hook": null,
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "S14可能不产生下游Operation；独立覆盖通用已验收音频类型传递、角色绑定和证据源哈希，防止F59回归。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D40",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "bee1d902a2d3a5fdb79a6624d49b8034fff40c2b54c59d8e39e7bcbde62ab73f",
+      "parallel_adaptation": "Preserve the original D40 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=artifact_contract is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D41",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "最终交付选择与多视频时序证据",
+      "assets": [
+        "motion_reference.mp4"
+      ],
+      "prompt": "使用motion_reference.mp4完成本次候选选择验证。创建两个type=agent、profile=editing_implementer的业务Task：candidate在受限沙箱内复制原素材为candidate.mp4；deliver依赖candidate并把同一已验收视频复制为primary.mp4和deliver.mp4，输出角色必须分别为video和alternate。两个Task都声明delivery_stage=true，保留所有候选；两者semantics.temporal都声明红色方块持续向右移动、transition=continuous、start_by_seconds=0.2、required_coverage=0.9、max_interruption_seconds=0.5。保持4秒、128×96、25fps、无音轨、原视频内容及字节。最终只交付deliver Task的alternate角色deliver.mp4，candidate.mp4和primary.mp4不交付。系统Final Review实际检查deliver.mp4的时序证据；无需新增业务Review Task或人工确认。Manager不得直接提交脚本或代码。",
+      "expect": {
+        "kind": "video",
+        "width": 128,
+        "height": 96,
+        "duration": 4,
+        "duration_tolerance": 0.1
+      },
+      "content_checks": [
+        "未选交付Task不阻塞时序验收",
+        "非video主角色的被选视频被实际检查",
+        "唯一交付deliver.mp4且SHA与固定输入一致"
+      ],
+      "workflow_min_steps": 2,
+      "dynamic_hook": null,
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "F63专门回归：同时覆盖未选择的其他Task及同Task非主角色视频选择，不能用单候选成功替代。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D41",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "4aeedd85ed9f13878ac2fe62025440fe581e5b958a61a667f2cfec65583cd197",
+      "parallel_adaptation": "Preserve the original D41 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=artifact_contract is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D42",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "Manager硬杀后同快照接管",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "分析portrait.png并生成64×64 final.png。规划必须使用注册Operation或editing_implementer，不直接提交脚本；经过程序与最终验收后交付。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "Manager Attempt被SIGKILL",
+        "同一冻结请求由更高generation接管",
+        "无重复Proposal或业务Task",
+        "中断Token预留收敛"
+      ],
+      "workflow_min_steps": 1,
+      "dynamic_hook": "manager_hard_kill",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "真实硬杀Manager进程所在worker，验证Control Job、PlanDraft、模型预算和generation恢复。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D42",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "c6a5a84e48b10f66c7e948fdd252fcafba5f4cbcc456e6d2ebfc75d406ca6337",
+      "parallel_adaptation": "Preserve the original D42 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=manager_hard_kill is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D43",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "Reviewer硬杀后证据与预算恢复",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "使用一个Native Harness WorkUnit将portrait.png亮度调整为1.05并导出精确64×64 final.png；声明semantic_review=required和最终用户验收，最终交付PNG。不得调用未注册Capability。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "Reviewer Attempt被SIGKILL",
+        "旧inspection不能冒充新attempt证据",
+        "候选不重复生成",
+        "中断Token预留收敛"
+      ],
+      "workflow_min_steps": 1,
+      "dynamic_hook": "reviewer_hard_kill",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "验证任务Reviewer或Final Reviewer在无finally情况下由新generation重新检查同一不可变候选。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D43",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "9f7611f74f63088a3fc3733b9b727892126e5c50d9cab1ef9e792cc22bd2bdb5",
+      "parallel_adaptation": "Preserve the original D43 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=reviewer_hard_kill is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D44",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "业务Agent默认不可重试契约下的基础设施接管",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "创建一个Native Harness WorkUnit，显式设置retry_policy=none；执行开始后先等待20秒，再将portrait.png等比适配为精确64×64 final.png，经过程序和最终验收交付。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "业务Agent Attempt被SIGKILL",
+        "基础设施中断不消耗业务失败次数",
+        "新generation安全重跑本地隔离工作",
+        "无WAITING_USER僵尸"
+      ],
+      "workflow_min_steps": 1,
+      "dynamic_hook": "agent_hard_kill",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖现场make_srt同类业务Agent被部署硬杀后不应直接result_unavailable。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D44",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "f2f1822f345a04a9ebc2b907e28bc6a47a17e24dfb9106fe19e04997518a29a7",
+      "parallel_adaptation": "Preserve the original D44 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=agent_hard_kill is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D45",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "业务Agent连续两次硬杀与恢复预算分账",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "创建一个Native Harness WorkUnit，显式设置retry_policy=none；每次执行开始后先等待30秒，再将portrait.png复制并适配为精确64×64 final.png。保持业务修订不变，经过程序和最终验收交付。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "同一revision连续两个Attempt被SIGKILL",
+        "第三generation接管",
+        "infrastructure_interruptions独立累计",
+        "业务失败和修订次数不增加"
+      ],
+      "workflow_min_steps": 1,
+      "dynamic_hook": "repeated_agent_hard_kill",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "证明重复部署/节点退出不会耗尽模型纠错或业务retry预算。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D45",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "5df92b169e5fc51637f2b0d66c8517e89cfbe896614499c465452ef4460fe665",
+      "parallel_adaptation": "Preserve the original D45 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=repeated_agent_hard_kill is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D46",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "异步Provider轮询硬杀后沿用原句柄",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "调用已授权图生视频服务，让portrait.png产生5秒轻微镜头运动视频并交付。必须使用原Provider任务句柄完成poll和collect，不得重复submit。",
+      "expect": {
+        "kind": "video",
+        "width": 1280,
+        "height": 720,
+        "duration": 5,
+        "duration_tolerance": 1.0
+      },
+      "content_checks": [
+        "Provider已有external ID后poll Attempt被SIGKILL",
+        "恢复沿用原request key和external ID",
+        "Provider调用预算只消耗一次",
+        "collect与最终验收正常"
+      ],
+      "workflow_min_steps": 1,
+      "dynamic_hook": "provider_poll_hard_kill",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [
+        "video.generate_from_image"
+      ],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖ASYNC Provider在query/collect恢复时的终态优先和防重提交。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D46",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "4456e1fc4bec7a282a03b5aab1708baf96f270b69c0945d714a6467d2163dd28",
+      "parallel_adaptation": "Preserve the original D46 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=provider_poll_hard_kill is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D47",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "自然语言附加交付与Delivery叶节点完整选择",
+      "assets": [
+        "clip_a.mp4",
+        "captions.srt"
+      ],
+      "prompt": "取clip_a.mp4前9秒，烧入captions.srt中对应前9秒的英文字幕；交付烧入字幕的9秒640×360 MP4，同时把同一段字幕按原时间码导出为subtitles.srt。视频和SRT必须由两个真实delivery-stage叶Task分别拥有，不增加复制媒体的空转Task。",
+      "delivery_target_text": "成片 MP4",
+      "expect": {
+        "kind": "video",
+        "width": 640,
+        "height": 360,
+        "duration": 9,
+        "duration_tolerance": 0.3,
+        "audio": true
+      },
+      "content_checks": [
+        "业务DAG同时完成视频与SRT交付叶节点",
+        "Final Review检查并选择每个交付叶节点",
+        "结构化目标遗漏SRT时程序仍不允许漏交付",
+        "唯一发布事务包含MP4和SRT"
+      ],
+      "workflow_min_steps": 2,
+      "dynamic_hook": null,
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "复现现场自然语言要求字幕文件但页面结构化交付目标仅含MP4的契约分歧，验证Final Review确定性叶节点完整性。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D47",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "51da98cc8b993cd89094b47cfe691d3987ee8ef9c596f8de91c2ae59b64f3b52",
+      "parallel_adaptation": "Preserve the original D47 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=artifact_contract is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D48",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "不可用附件在输入接收前原子拒绝",
+      "assets": [
+        "portrait.png",
+        "rocket.png"
+      ],
+      "prompt": "创建一个Native Harness WorkUnit；执行开始后先等待20秒，再将portrait.png等比适配为精确64×64 final.png。保持原图内容，完成程序验收和最终Review后交付PNG。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "执行中提交包含不可用upload身份的补充输入",
+        "输入API原子拒绝且不创建run_input",
+        "Run不建立input barrier且不要求用户处理虚假问题",
+        "已开始WorkUnit不取消且原图正常交付"
+      ],
+      "workflow_min_steps": 1,
+      "dynamic_hook": "attachment_change_reject",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "新协议在接收输入前原子校验upload，并把已接收附件固化为不可变Artifact；覆盖无效附件不能留下输入、barrier或破坏在途WorkUnit。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D48",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "297ee1c4506e56264e711f93c11a57a8ad936c64bd2069ad97b0a9a03d7eb571",
+      "parallel_adaptation": "Preserve the original D48 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=attachment_change_reject is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D49",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "已交付Run首条successor输入携带原素材授权",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "创建一个Native Harness WorkUnit，在受限沙箱内把portrait.png缩小为精确64×64 final.png，经过程序和最终审查交付。",
+      "expect": {
+        "kind": "image",
+        "width": 64,
+        "height": 64
+      },
+      "content_checks": [
+        "首轮真实交付完成后通过浏览器发送successor输入",
+        "首条输入显式携带上一轮原素材",
+        "successor在业务Task启动前绑定素材摘要并记录authorized",
+        "父子Run、方案确认、最终交付和清理均收敛"
+      ],
+      "workflow_min_steps": 1,
+      "dynamic_hook": "successor_reusable_assets",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "cache",
+        "boss",
+        "candidate_archive",
+        "local_cleanup",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "覆盖统一用户介入协议在已交付父Run首条消息内创建successor时的素材授权时序；不得丢失附件、重复上传或在确认前启动业务Task。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D49",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "53f0ac040fdce0578d0a1271f02cbb21ff76edba4d27bcdc157cfda24442a59b",
+      "parallel_adaptation": "Preserve the original D49 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=successor_reusable_assets is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D50",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "SeedDream批量调用次数授权允许",
+      "assets": [],
+      "prompt": "调用真实SeedDream文生图服务生成8张彼此不同的蓝色杯子PNG，每张都必须来自独立的外部生成提交并全部交付。开始前明确告诉我外部计费服务和最多调用次数，得到授权后才能执行。",
+      "expect": {
+        "kind": "image",
+        "min_images": 8
+      },
+      "expected_capability_limit": 8,
+      "content_checks": [
+        "授权卡明确展示SeedDream能力、外部计费和最多8次",
+        "用户授权后最多创建8个真实Provider submission",
+        "轮询和收集不额外消耗提交额度",
+        "页面展示授权与最终交付状态"
+      ],
+      "workflow_min_steps": 1,
+      "dynamic_hook": "usage_authorization_allow",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [
+        "image.generate_from_text"
+      ],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "boss",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "验证计费Capability的调用次数在真实授权交互、Gateway和Provider执行之间一致。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D50",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "5888518e7ec6cb180b29bc12b2f96a9af4e9de785faf0cbb11d440f966044c02",
+      "parallel_adaptation": "Preserve the original D50 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=usage_authorization_allow is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
+      "id": "D51",
+      "source_case_id": null,
+      "complexity": "dynamic_protocol",
+      "title": "SeedDream批量调用次数授权拒绝",
+      "assets": [],
+      "prompt": "调用真实SeedDream文生图服务生成8张彼此不同的蓝色杯子PNG，每张都来自独立外部生成提交。开始前必须请求包含外部计费和最多调用次数的授权。",
+      "expect": {
+        "kind": "protocol"
+      },
+      "expected_capability_limit": 8,
+      "content_checks": [
+        "授权卡明确展示SeedDream能力、外部计费和最多8次",
+        "用户拒绝后不创建任何CapabilityCall或Provider任务",
+        "聊天明确说明授权已拒绝且未调用外部服务",
+        "页面显示任务已停止而非补充信息或系统错误"
+      ],
+      "workflow_min_steps": 0,
+      "dynamic_hook": "usage_authorization_reject",
+      "entry_mode": "deployed_browser_or_api",
+      "allowed_external_operations": [
+        "image.generate_from_text"
+      ],
+      "audit_dimensions": [
+        "browser",
+        "logs",
+        "observability",
+        "database",
+        "external_cleanup"
+      ],
+      "review_decision": "新增",
+      "review_reason": "验证用户拒绝计费调用次数授权后不产生外部副作用并得到清晰反馈。",
+      "status": "not_run",
+      "attempts": [],
+      "executor": "inherited_protocol",
+      "provenance": "sandbox-harness-platform-plus:D51",
+      "source_project": "sandbox-harness-platform-plus",
+      "source_definition_sha256": "ad8380498151f00c5e7342c82c4e502cf6f002e86b72588b8390bc9b71b5908f",
+      "parallel_adaptation": "Preserve the original D51 risk and assertions through the Parallel Primary Harness, Durable JobGroup, JobAttempt, Reviewer, continuation and Gateway boundaries. Plus hook=usage_authorization_reject is exercised by the inherited protocol driver; no Manager/Orchestrator compatibility layer is introduced."
+    },
+    {
       "id": "P01",
       "title": "混合并行 JobGroup",
       "complexity": "parallel_protocol",
@@ -4548,1026 +6851,5 @@
       "provenance": "parallel-design"
     }
   ],
-  "superseded_cases": [
-    {
-      "id": "D01",
-      "title": "真实 Manager 多轮扩图",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D02",
-      "title": "并行分支完成后触发汇合规划",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D03",
-      "title": "未封口禁止提前交付",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D04",
-      "title": "Orchestrator 重启与提案去重",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D05",
-      "title": "两个 Orchestrator 竞争推进",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D06",
-      "title": "执行器退出后换节点恢复",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D07",
-      "title": "Manager 执行中取消",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D08",
-      "title": "暂停边界不启动新任务",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D09",
-      "title": "外部调用超范围审批",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D10",
-      "title": "拒绝扩大授权后不调用供应商",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D11",
-      "title": "过期审批与重复命令拒绝",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D12",
-      "title": "跨项目读取与控制拒绝",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D13",
-      "title": "模型预算耗尽有界暂停",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D14",
-      "title": "BOSS 内容校验与候选不放行",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D15",
-      "title": "授权内容指纹失效拒绝",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D16",
-      "title": "外部提交未知不重复生成",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D17",
-      "title": "观测服务中断不影响业务状态",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D18",
-      "title": "API 切换与浏览器恢复",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D19",
-      "title": "独立部署与 main 数据隔离",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D20",
-      "title": "专业 Agent 权限与实际模型用量",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D21",
-      "title": "诊断后不可变修订并衔接下游",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D22",
-      "title": "单一Run身份与独立Control Job",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D23",
-      "title": "业务排空与全Run派发屏障",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D24",
-      "title": "专业Agent在途输入排空",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D25",
-      "title": "规划期间连续输入分批处理",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D26",
-      "title": "Wan在途输入保持原句柄",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D27",
-      "title": "外部提交未知时输入屏障",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D28",
-      "title": "质量反馈幂等与过期快照",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D29",
-      "title": "拒绝不能被人工批准且可补证据",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D30",
-      "title": "局部蒙版修复比例边界",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D31",
-      "title": "持续动作的真实时序证据",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D32",
-      "title": "输入与最终发布竞争",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D33",
-      "title": "交付后successor输入幂等",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D34",
-      "title": "同步外部请求在途输入",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D35",
-      "title": "Provider配置切换后冻结路由恢复",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D36",
-      "title": "抠图候选边缘反馈修订",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D37",
-      "title": "双图构图反馈修订",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D38",
-      "title": "Wan提交前参考图反馈修订",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D39",
-      "title": "合法替代失败节点与历史读取",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D40",
-      "title": "已验收音频下游Operation取证",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D41",
-      "title": "最终交付选择与多视频时序证据",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D42",
-      "title": "Manager硬杀后同快照接管",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D43",
-      "title": "Reviewer硬杀后证据与预算恢复",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D44",
-      "title": "业务Agent默认不可重试契约下的基础设施接管",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D45",
-      "title": "业务Agent连续两次硬杀与恢复预算分账",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D46",
-      "title": "异步Provider轮询硬杀后沿用原句柄",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D47",
-      "title": "自然语言附加交付与Delivery叶节点完整选择",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D48",
-      "title": "不可用附件在输入接收前原子拒绝",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D49",
-      "title": "已交付Run首条successor输入携带原素材授权",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D50",
-      "title": "SeedDream批量调用次数授权允许",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    },
-    {
-      "id": "D51",
-      "title": "SeedDream批量调用次数授权拒绝",
-      "reason": "Old Manager/Orchestrator/WorkUnit assertion is not part of the Primary Harness architecture",
-      "replacement_case_ids": [
-        "P01",
-        "P02",
-        "P03",
-        "P05",
-        "P06",
-        "P07",
-        "P13",
-        "P14",
-        "P15",
-        "P16",
-        "P17",
-        "P19",
-        "P20"
-      ]
-    }
-  ]
+  "superseded_cases": []
 }
