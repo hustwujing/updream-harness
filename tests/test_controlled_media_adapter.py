@@ -138,3 +138,35 @@ async def test_segment_exposes_no_selection_as_stable_domain_failure(tmp_path):
         assert raised.value.error_code=='no_target_found'
         assert not await scheduler.active_reservation(job.id)
     finally:await store.close()
+
+
+async def test_collect_publishes_requested_output_subset_and_ignores_runner_diagnostics(tmp_path):
+    outputs=(
+        JobExpectedOutput(artifact_role='foreground',output_disposition=OutputDisposition.DELIVERY,
+            min_items=1),
+        JobExpectedOutput(artifact_role='mask',output_disposition=OutputDisposition.DELIVERY,
+            min_items=1),
+    )
+    store,objects,scheduler,settings,job,attempt,request=await setup(tmp_path,'image.segment',
+        {'prompt':'person'},outputs,{'cpu':2,'memory_mb':32768,'disk_mb':4096,'gpu':1})
+    async def runner(operation,work,*_):
+        (work/'foreground.png').write_bytes(png('RGBA',(0,0,255,128)))
+        (work/'mask.png').write_bytes(png('L',128))
+        (work/'segmentation.json').write_text('{}')
+        return {'outputs':[
+            {'role':'foreground','path':'foreground.png','mime':'image/png'},
+            {'role':'mask','path':'mask.png','mime':'image/png'},
+            {'role':'segmentation_report','path':'segmentation.json','mime':'application/json'},
+        ]}
+    adapter=ControlledMediaOperationAdapter(scheduler=scheduler,store=store,objects=objects,
+        settings=settings,runner=runner)
+    context=JobExecutionContext(job=job,request=request,generation=attempt.generation)
+    try:
+        submission=await adapter.submit(context)
+        context=JobExecutionContext(job=job,request=request,generation=attempt.generation,
+            previous_external_execution_id=submission.external_execution_id,
+            previous_acceptance_receipt=submission.acceptance_receipt)
+        result=await adapter.collect(context,submission.external_execution_id,
+            AdapterStatus(True,JobState.SUCCEEDED,submission.result))
+        assert {row['artifact_role'] for row in result['artifacts']}=={'foreground','mask'}
+    finally:await store.close()

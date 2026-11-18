@@ -150,11 +150,12 @@ class ControlledMediaOperationAdapter(BaseJobAdapter):
         if status.state!=JobState.SUCCEEDED:return status.result
         work=self._work(context.job.id);contracts={value.artifact_role:value
             for value in context.request.expected_outputs};values=status.result.get('outputs',[])
-        if not contracts or {str(row.get('role','')) for row in values}!=set(contracts):
+        values_by_role={str(row.get('role','')):row for row in values}
+        if not contracts or not set(contracts).issubset(values_by_role):
             raise RuntimeError('controlled_output_roles_mismatch')
         artifacts=[];collections=[]
-        for value in values:
-            role=str(value['role']);contract=contracts[role];path=work/str(value['path'])
+        for role,contract in contracts.items():
+            value=values_by_role[role];path=work/str(value['path'])
             artifact=await self.artifacts.emit(ArtifactEmission(job_id=context.job.id,
                 generation=context.generation,artifact_role=role,item_key='primary',position=0,
                 filename=path.name,output_disposition=contract.output_disposition,
