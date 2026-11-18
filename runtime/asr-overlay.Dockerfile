@@ -1,5 +1,6 @@
 ARG ASR_SOURCE_IMAGE=sandbox-harness-runtime-base:0027ec835f16
 ARG PROFILE_IMAGE=sandbox-harness-parallel-primary-full-cpu:build
+ARG PROFILE_ID=primary-full-cpu
 FROM ${ASR_SOURCE_IMAGE} AS asr_source
 FROM ${PROFILE_IMAGE}
 USER root
@@ -19,6 +20,7 @@ RUN printf '%s  %s\n' \
     install -m 0755 /opt/platform/runtime/asr_cli.py /usr/local/bin/sandbox-transcribe && \
     chmod -R a+rX /opt/models && \
     python /opt/platform/runtime/asr_probe.py --model /opt/models/faster-whisper-small \
-      --audio /opt/platform/runtime/asr-smoke.wav --expect "blue square"
+      --audio /opt/platform/runtime/asr-smoke.wav --expect "blue square" && \
+    if [ "${PROFILE_ID}" = "primary-full-cpu" ]; then sandbox-original-compatibility-probe; fi
 ENV SANDBOX_WHISPER_MODEL=/opt/models/faster-whisper-small
 USER 10001:10001

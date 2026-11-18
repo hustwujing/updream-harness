@@ -103,6 +103,25 @@ def test_parallel_common_layer_covers_bootstrap_and_dynamic_runtime_imports():
     assert "from cryptography" in bootstrap and "from cryptography" in runtime
 
 
+def test_parallel_primary_restores_original_fonts_graphics_and_executable_probe():
+    common=(ROOT/'runtime/common.Dockerfile').read_text()
+    for package in ('fonts-liberation2','fonts-noto-color-emoji','fonts-wqy-zenhei',
+            'libegl-mesa0','libegl1','libgles2','lmodern','mesa-utils','xauth'):
+        assert package in common
+    probe=ROOT/'runtime/original_compatibility_probe.py'
+    assert probe.is_file()
+    source=probe.read_text()
+    for command in ('chromium','ffmpeg','libreoffice','manim','sandbox-transcribe'):
+        assert repr(command) in source
+    for module in ('faster_whisper','opencv-python-headless','rembg','trimesh'):
+        assert module in source
+    overlay=(ROOT/'runtime/asr-overlay.Dockerfile').read_text()
+    build=(ROOT/'runtime/build-images.sh').read_text()
+    assert 'ARG PROFILE_ID' in overlay
+    assert 'sandbox-original-compatibility-probe' in overlay
+    assert '--build-arg "PROFILE_ID=$profile"' in build
+
+
 def test_parallel_profiles_are_dependency_only_and_cover_declared_catalog():
     catalog=json.loads((ROOT/"deploy/profile-catalog.example.json").read_text())
     expected={row["id"] for row in catalog["runtime_dependency_profiles"]}

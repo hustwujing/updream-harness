@@ -39,7 +39,8 @@ if ! "$docker" image inspect "$bootstrap" >/dev/null 2>&1; then
 fi
 common_hash=$(content_hash "$bootstrap_hash" "$root/runtime/common.Dockerfile" \
   "$root/runtime/requirements-common.txt" "$root/runtime/proxy_bridge.cjs" \
-  "$root/runtime/playwright_proxy_patch.cjs" "$root/runtime/apply_patch.py")
+  "$root/runtime/playwright_proxy_patch.cjs" "$root/runtime/apply_patch.py" \
+  "$root/runtime/original_compatibility_probe.py")
 common="sandbox-harness-parallel-common:$common_hash"
 if ! "$docker" image inspect "$common" >/dev/null 2>&1; then
   "$docker" build --network host -f "$root/runtime/common.Dockerfile" \
@@ -90,6 +91,7 @@ for profile in $profiles; do
     if ! "$docker" image inspect "$asr_image" >/dev/null 2>&1; then
       "$docker" build --network host -f "$root/runtime/asr-overlay.Dockerfile" \
         --build-arg "PROFILE_IMAGE=$profile_image" --build-arg "ASR_SOURCE_IMAGE=$asr_source_image" \
+        --build-arg "PROFILE_ID=$profile" \
         -t "$asr_image" "$root"
     fi
     profile_image=$asr_image
