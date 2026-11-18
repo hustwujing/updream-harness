@@ -199,16 +199,29 @@ class JobWorker:
                     await self.store.mark_job_submission_started(job.id,self.worker_id,attempt.generation)
                     submission_started=True
                 try:
-                    submission=(submission or await self._before_deadline(adapter.submit(context),deadline))
-                except PreAcceptFailure as exc:
-                    maximum = int(request.retry_policy.get("max_pre_accept_attempts", 1))
-                    retry = exc.infrastructure or attempt.generation < max(1, maximum)
-                    if retry and exc.retry_after_seconds:
-                        await self._before_deadline(asyncio.sleep(exc.retry_after_seconds),deadline)
-                    await self.store.finish_pre_accept_attempt(job.id, self.worker_id, attempt.generation,
-                        retry=retry,error_code=("infrastructure_capacity_wait" if exc.infrastructure
-                            else "pre_accept_failure"),error_detail=str(exc)[:2000])
-                    return
+                    while True:
+                        try:
+                            submission=(submission or await self._before_deadline(
+                                adapter.submit(context),deadline))
+                            break
+                        except PreAcceptFailure as exc:
+                            maximum = int(request.retry_policy.get("max_pre_accept_attempts", 1))
+                            retry = exc.infrastructure or attempt.generation < max(1, maximum)
+                            if exc.infrastructure and continuous:
+                                await self.store.mark_infrastructure_wait(job.id,self.worker_id,
+                                    attempt.generation,error_detail=str(exc))
+                                if exc.retry_after_seconds:
+                                    await self._before_deadline(
+                                        asyncio.sleep(exc.retry_after_seconds),deadline)
+                                if not self.stop_event.is_set():continue
+                            elif retry and exc.retry_after_seconds:
+                                await self._before_deadline(
+                                    asyncio.sleep(exc.retry_after_seconds),deadline)
+                            await self.store.finish_pre_accept_attempt(job.id,self.worker_id,
+                                attempt.generation,retry=retry,error_code=(
+                                    "infrastructure_capacity_wait" if exc.infrastructure
+                                    else "pre_accept_failure"),error_detail=str(exc)[:2000])
+                            return
                 except SubmissionOutcomeUnknown as exc:
                     await self.store.record_job_acceptance(job.id, self.worker_id, attempt.generation,
                         external_execution_id=exc.external_execution_id,

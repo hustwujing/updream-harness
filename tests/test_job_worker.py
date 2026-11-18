@@ -71,6 +71,27 @@ async def test_infrastructure_pre_accept_failure_does_not_consume_business_retry
     finally:await store.close()
 
 
+async def test_service_capacity_wait_reuses_one_attempt_generation(tmp_path):
+    store,_,job=await setup(tmp_path,request(retry_policy={'max_pre_accept_attempts':1}))
+    adapter=FakeAdapter([PreAcceptFailure('no capacity',infrastructure=True),
+        PreAcceptFailure('no capacity',infrastructure=True),
+        AdapterSubmission('external-1',{'accepted':True},completed=True,result={'ok':True})])
+    worker=JobWorker(store,{'fake':adapter},node_id='node',worker_id='worker',poll_seconds=.01)
+    try:
+        task=__import__('asyncio').create_task(worker.run())
+        for _ in range(200):
+            if (await store.get_job(job.id)).state==JobState.SUCCEEDED:break
+            await __import__('asyncio').sleep(.01)
+        else:raise AssertionError('capacity wait did not recover')
+        worker.stop_event.set();await task
+        async with store.connections() as db:
+            attempts=list((await db.execute(select(JobAttemptRow).where(
+                JobAttemptRow.job_id==job.id))).scalars().all())
+        assert len(attempts)==1 and (await store.get_job(job.id)).generation==1
+        assert adapter.submit_calls==3
+    finally:await store.close()
+
+
 async def test_successful_collection_dispatches_frozen_policy_review_before_terminal(tmp_path):
     store,_,job=await setup(tmp_path,request(kind=JobKind.OPERATION))
     adapter=FakeAdapter([AdapterSubmission('external-1',{'accepted':True},completed=True,

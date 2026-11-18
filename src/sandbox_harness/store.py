@@ -2143,6 +2143,23 @@ class Store:
         return await self.transition_job(job_id, JobState.FAILED, expected_generation=generation,
             result={"error_code": error_code, "error_detail": error_detail})
 
+    async def mark_infrastructure_wait(self,job_id:str,worker_id:str,generation:int,*,
+                                       error_detail:str)->None:
+        async with self.connections.begin() as db:
+            job=await db.get(JobRow,job_id,with_for_update=True)
+            attempt=(await db.execute(select(JobAttemptRow).where(
+                JobAttemptRow.job_id==job_id,JobAttemptRow.generation==generation)
+                .with_for_update())).scalar_one_or_none()
+            lease=await db.get(JobLeaseRow,job_id,with_for_update=True)
+            if (not job or not attempt or not lease or job.generation!=generation
+                    or lease.generation!=generation or lease.worker_id!=worker_id
+                    or attempt.accepted_at is not None):
+                raise RuntimeError('stale_job_generation')
+            attempt.outcome='INFRASTRUCTURE_WAIT'
+            attempt.error_code='infrastructure_capacity_wait'
+            attempt.error_detail=error_detail[:2000]
+            job.updated_at=now()
+
     async def defer_accepted_job(self, job_id: str, worker_id: str, generation: int) -> JobView:
         async with self.job_lock(f"job:{job_id}"):
             async with self.connections.begin() as db:
