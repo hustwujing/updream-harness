@@ -103,7 +103,9 @@ class HarnessJobAdapter(BaseJobAdapter):
                 'artifact_digests must exactly equal: '
                 +json.dumps(context.get('artifact_digests',[]),sort_keys=True))
         contracts=[value.model_dump(mode='json') for value in request.expected_outputs]
-        if not contracts:return objective
+        if not contracts:
+            return (objective+'\n\nFrozen output contract: text-only. Return the complete result in your final '
+                'response. Do not create or copy files under /workspace/outputs and do not publish Artifacts.')
         return (objective+'\n\nFrozen output contract: '+json.dumps(contracts,sort_keys=True)+
             '\nPut final files under /workspace/outputs. When more than one artifact role exists, also write '
             '/workspace/outputs/job-output-manifest.json as {"outputs":[{"path":"relative/file",'

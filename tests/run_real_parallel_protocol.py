@@ -643,6 +643,9 @@ async def case_p23(client,args):
         if len(jobs)<2:raise AssertionError('Primary did not delegate two independent Child Harness Jobs')
         grouped={job.group_id for job in jobs}
         if len(grouped)!=1:raise AssertionError('independent Child Harness Jobs were not one JobGroup')
+        failed=[(job.local_job_id,job.state,json.loads(job.result_json or '{}').get('error_code',''))
+            for job in jobs if job.state!='SUCCEEDED']
+        if failed:raise AssertionError('Child Harness Jobs failed: '+json.dumps(failed,ensure_ascii=False))
         async with store.connections() as db:
             attempts=list((await db.execute(select(JobAttemptRow).where(
                 JobAttemptRow.job_id.in_([job.id for job in jobs])))).scalars().all())

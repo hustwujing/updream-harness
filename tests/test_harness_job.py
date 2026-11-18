@@ -95,6 +95,9 @@ def test_child_prompt_freezes_output_contract_and_reviewer_verdict_path():
         parameters={'objective':'Check reports','harness':'codex','review_context':{
             'artifact_digests':['a'*64],'required':True,'trigger':'user'}}))
     assert 'review-verdict.json' in reviewer and 'artifact_digests' in reviewer
+    text_only=HarnessJobAdapter.execution_prompt(request(expected_outputs=()))
+    assert 'text-only' in text_only and 'Do not create' in text_only
+    assert '/workspace/outputs' in text_only
 
 
 async def test_opensandbox_child_collects_output_into_atomic_delivery(tmp_path):
