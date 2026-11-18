@@ -18,6 +18,10 @@ class SandboxNotFound(RuntimeError):
     pass
 
 
+class SandboxCapacityUnavailable(RuntimeError):
+    error_code='infrastructure_capacity_wait'
+
+
 @dataclass
 class Sandbox:
     id: str
@@ -126,6 +130,8 @@ class OpenSandboxBackend:
         request_id = metadata["sandbox-harness.io/turn"]
         try:
             response = await self.client.post("/v1/sandboxes", json=body, headers={"X-Request-ID": request_id})
+            if response.status_code==429:
+                raise SandboxCapacityUnavailable('OpenSandbox capacity is temporarily unavailable')
             response.raise_for_status()
             sandbox = await self._ready(self._sandbox(response.json(), harness, image, metadata))
             sandbox.expires_at_monotonic = time.monotonic() + self.timeout_seconds

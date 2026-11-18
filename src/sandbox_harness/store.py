@@ -1287,6 +1287,7 @@ class Store:
         )
 
     async def get_thread_control(self, thread_id: str, owner_id: str | None = None) -> ThreadControlView:
+        await self.reconcile_terminal_pause_participants(thread_id)
         async with self.connections() as db:
             query = select(ThreadControlRow).where(ThreadControlRow.thread_id == thread_id)
             if owner_id is not None:
@@ -1300,6 +1301,38 @@ class Store:
             timestamp = utc_datetime(thread.updated_at)
             return ThreadControlView(thread_id=thread_id, state=ThreadControlState.RUNNING,
                 generation=0, updated_at=timestamp)
+
+    async def reconcile_terminal_pause_participants(self,thread_id:str)->int:
+        async with self.job_lock(f"thread-pause:{thread_id}"):
+            async with self.connections.begin() as db:
+                control=await db.get(ThreadControlRow,thread_id,with_for_update=True)
+                if not control or control.state!=ThreadControlState.PAUSING.value:return 0
+                rows=list((await db.execute(select(PauseParticipantRow,TurnRow).join(
+                    TurnRow,and_(PauseParticipantRow.kind=='primary_harness',
+                        PauseParticipantRow.participant_id==TurnRow.id)).where(
+                    PauseParticipantRow.thread_id==thread_id,
+                    PauseParticipantRow.generation==control.generation,
+                    PauseParticipantRow.state==PauseParticipantState.REQUESTED.value,
+                    TurnRow.state.in_([state.value for state in TERMINAL])).with_for_update()
+                )).all())
+                timestamp=now()
+                for participant,turn in rows:
+                    failed=TurnState(turn.state) in {TurnState.FAILED,TurnState.CANCELLED}
+                    participant.state=(PauseParticipantState.FAILED if failed
+                        else PauseParticipantState.PAUSED).value
+                    participant.detail_json=canonical_json({'terminal_state':turn.state})
+                    participant.updated_at=timestamp
+                participants=await self._pause_rows_locked(db,thread_id,control.generation)
+                if participants and all(value.state in {PauseParticipantState.PAUSED.value,
+                        PauseParticipantState.FAILED.value} for value in participants):
+                    control.state=ThreadControlState.PAUSED.value
+                    control.degraded=any(value.state==PauseParticipantState.FAILED.value
+                        for value in participants)
+                    control.detail_json=canonical_json({'participants':len(participants),
+                        'failed':sum(value.state==PauseParticipantState.FAILED.value
+                            for value in participants)})
+                    control.completed_at=timestamp;control.updated_at=timestamp
+                return len(rows)
 
     async def list_pause_participants(self, thread_id: str, generation: int | None = None
                                       ) -> list[PauseParticipantView]:
@@ -4013,6 +4046,10 @@ class Store:
         return self.turn_view(row) if row else None
 
     async def repair_thread_heads(self) -> None:
+        async with self.connections() as db:
+            pausing=list((await db.execute(select(ThreadControlRow.thread_id).where(
+                ThreadControlRow.state==ThreadControlState.PAUSING.value))).scalars().all())
+        for thread_id in pausing:await self.reconcile_terminal_pause_participants(thread_id)
         terminal = [state.value for state in TERMINAL]
         async with self.connections() as db:
             candidates = (await db.execute(select(ThreadRow.id, ThreadRow.active_turn_id)

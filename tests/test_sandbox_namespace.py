@@ -3,9 +3,11 @@ import json
 import time
 
 import httpx
+import pytest
 
 from sandbox_harness.domain import Harness
-from sandbox_harness.sandbox import FakeSandboxBackend, OpenSandboxBackend, SandboxNotFound
+from sandbox_harness.sandbox import (FakeSandboxBackend,OpenSandboxBackend,
+    SandboxCapacityUnavailable,SandboxNotFound)
 from sandbox_harness.pool import SandboxPool
 
 
@@ -95,6 +97,19 @@ async def test_opensandbox_turn_inventory_classifies_failed_and_ready_matches_in
         matches=await backend.find_by_turn('turn')
         assert [(value.id,value.health_state) for value in matches]==[
             ('healthy','ready'),('failed','failed')]
+    finally:await backend.client.aclose()
+
+
+async def test_opensandbox_create_rate_limit_has_infrastructure_error_code():
+    def respond(request:httpx.Request):return httpx.Response(429,json={'detail':'capacity'})
+    backend=OpenSandboxBackend('http://opensandbox','',3600,'sandbox-harness')
+    await backend.client.aclose();backend.client=httpx.AsyncClient(
+        base_url='http://opensandbox',transport=httpx.MockTransport(respond))
+    try:
+        with pytest.raises(SandboxCapacityUnavailable) as failure:
+            await backend.create(Harness.CODEX,'runtime@sha256:'+'1'*64,{
+                'sandbox-harness.io/turn':'turn-1'}, {})
+        assert failure.value.error_code=='infrastructure_capacity_wait'
     finally:await backend.client.aclose()
 
 

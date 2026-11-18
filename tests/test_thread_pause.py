@@ -2,7 +2,7 @@ import pytest
 
 from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.domain import (Harness, PauseParticipantState, ThreadControlState,
-    ThreadCreate, TurnCreate)
+    ThreadCreate, TurnCreate, TurnState)
 from sandbox_harness.job_contracts import JobGroupCreate, JobKind, JobRequest, JobState
 from sandbox_harness.job_adapters import AdapterStatus, AdapterSubmission, BaseJobAdapter
 from sandbox_harness.job_worker import JobWorker
@@ -100,6 +100,26 @@ async def test_paused_thread_holds_ready_continuation_and_new_turn(tmp_path):
         assert len(await store.claim_job_outbox_batch("dispatcher")) == 1
     finally:
         await store.close()
+
+
+async def test_terminal_primary_during_pause_settles_participant_and_control(tmp_path):
+    store,_,thread,turn=await setup(tmp_path)
+    try:
+        await store.set_turn_state(turn.id,TurnState.RUNNING)
+        control=await store.request_thread_pause(thread.id,'owner')
+        participant=await store.get_pause_participant(thread.id,'primary_harness',turn.id,
+            control.generation)
+        assert participant.state==PauseParticipantState.REQUESTED
+        await store.set_turn_state(turn.id,TurnState.FAILED,
+            error_code='infrastructure_capacity_wait',error_detail='capacity unavailable')
+        await store.repair_thread_heads()
+        participant=await store.get_pause_participant(thread.id,'primary_harness',turn.id,
+            control.generation)
+        current=await store.get_thread_control(thread.id)
+        assert participant.state==PauseParticipantState.FAILED
+        assert participant.detail=={'terminal_state':'FAILED'}
+        assert current.state==ThreadControlState.PAUSED and current.degraded
+    finally:await store.close()
 
 
 class PausableAdapter(BaseJobAdapter):

@@ -4,6 +4,8 @@ import re
 
 def public_failure(code: str, detail: str) -> tuple[str, str]:
     text = detail.lower()
+    if code == 'infrastructure_capacity_wait':
+        return code, '沙箱容量暂时不足，本轮未能启动执行环境。请稍后继续；这不是模型限流。'
     if re.search(r'\b503\b', text) or 'servers are currently overloaded' in text:
         return 'model_service_overloaded', '模型服务繁忙（503），本轮未能完成。已保存的阶段文件可在工作区查看，稍后可以继续。'
     if re.search(r'\b429\b', text):
