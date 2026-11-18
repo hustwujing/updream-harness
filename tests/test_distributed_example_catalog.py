@@ -40,3 +40,9 @@ def test_delivery_contract_comes_from_declared_options_not_internal_demo_files()
     assert 'audio' not in by_source['overlay']['expect']
     assert 'audio' not in by_source['local-split']['expect']
     assert by_source['agent-portrait']['expect']['audio'] is True
+    assert by_source['timeline']['expect']=={'kind':'image'}
+    assert by_source['image-cutout']['expect']=={'kind':'image'}
+    assert by_source['image-product-layout']['expect']['width']==1200
+    assert by_source['image-product-layout']['expect']['height']==1200
+    assert by_source['image-watermark-batch']['expect']['width']==600
+    assert by_source['image-watermark-batch']['expect']['height']==600

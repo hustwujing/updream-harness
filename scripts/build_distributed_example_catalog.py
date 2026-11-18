@@ -71,9 +71,10 @@ def expectation(entry:dict,demo_root:Path)->dict:
     probe=result_probe(entry,demo_root);value={'kind':probe['kind']}
     requirement='；'.join([str(entry.get('prompt','')),*map(str,entry.get('options',[]))])
     if value['kind']=='image':
-        match=re.search(r'(?:输出|制作成|画布)[^。；]{0,24}?(\d{2,5})\s*[×xX]\s*(\d{2,5})',requirement)
+        match=re.search(r'(?:输出|制作成|导出为)[^。；]{0,24}?(\d{2,5})\s*[×xX]\s*(\d{2,5})',requirement)
+        if not match:
+            match=re.search(r'(\d{2,5})\s*[×xX]\s*(\d{2,5})[^。；]{0,16}?画布',requirement)
         if match:value.update(width=int(match.group(1)),height=int(match.group(2)))
-        elif 'width' in probe:value.update(width=probe['width'],height=probe['height'])
     if value['kind']=='video':
         match=re.search(r'(?:输出|制作成)[^。；]{0,24}?(\d{2,5})\s*[×xX]\s*(\d{2,5})',requirement)
         if match:value.update(width=int(match.group(1)),height=int(match.group(2)))
