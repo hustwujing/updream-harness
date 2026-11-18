@@ -87,8 +87,9 @@ def build_frontend(code_root: Path) -> str:
 
 def grant_service_release_read_access(code_root: Path) -> None:
     subprocess.run(['setfacl','-m','u:sandbox-harness:r-x',str(code_root)],check=True)
+    subprocess.run(['setfacl','-m','u:sandbox-harness:r-x',str(code_root/'web')],check=True)
     subprocess.run(['setfacl','-R','-m','u:sandbox-harness:rX',str(code_root/'src'),
-        str(code_root/'web'/'dist')],check=True)
+        str(code_root/'runtime'),str(code_root/'web'/'dist')],check=True)
 
 
 def main():
