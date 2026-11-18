@@ -220,7 +220,7 @@ class JobWorker:
                             await self.store.finish_pre_accept_attempt(job.id,self.worker_id,
                                 attempt.generation,retry=retry,error_code=(
                                     "infrastructure_capacity_wait" if exc.infrastructure
-                                    else "pre_accept_failure"),error_detail=str(exc)[:2000])
+                                    else exc.error_code),error_detail=str(exc)[:2000])
                             return
                 except SubmissionOutcomeUnknown as exc:
                     await self.store.record_job_acceptance(job.id, self.worker_id, attempt.generation,

@@ -4,11 +4,12 @@ import json
 from types import SimpleNamespace
 
 from PIL import Image
+import pytest
 
 from sandbox_harness.controlled_media_adapter import ControlledMediaOperationAdapter
 from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate
 from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.job_adapters import AdapterStatus,JobExecutionContext
+from sandbox_harness.job_adapters import AdapterStatus,JobExecutionContext,PreAcceptFailure
 from sandbox_harness.job_contracts import (JobArtifactInput,JobExpectedOutput,JobGroupCreate,JobKind,
     JobRequest,JobState,OutputDisposition)
 from sandbox_harness.objects import ObjectStore
@@ -120,4 +121,20 @@ async def test_transcribe_reserves_cpu_without_gpu_and_publishes_timeline(tmp_pa
         result=await adapter.collect(context,submission.external_execution_id,
             AdapterStatus(True,JobState.SUCCEEDED,submission.result))
         assert len(result['artifacts'])==3
+    finally:await store.close()
+
+
+async def test_segment_exposes_no_selection_as_stable_domain_failure(tmp_path):
+    outputs=(JobExpectedOutput(artifact_role='foreground',min_items=1),)
+    store,objects,scheduler,settings,job,attempt,request=await setup(tmp_path,'image.segment',
+        {'prompt':'overly specific description'},outputs,
+        {'cpu':2,'memory_mb':32768,'disk_mb':4096,'gpu':1})
+    async def runner(*_):raise RuntimeError('no_selection')
+    adapter=ControlledMediaOperationAdapter(scheduler=scheduler,store=store,objects=objects,
+        settings=settings,runner=runner)
+    context=JobExecutionContext(job=job,request=request,generation=attempt.generation)
+    try:
+        with pytest.raises(PreAcceptFailure) as raised:await adapter.submit(context)
+        assert raised.value.error_code=='no_target_found'
+        assert not await scheduler.active_reservation(job.id)
     finally:await store.close()

@@ -103,7 +103,7 @@
       "retry_policy": {"max_pre_accept_attempts": 1, "deterministic": true},
       "cancellation_policy": {"supported": true},
       "reconciliation_policy": {"supported": true},
-      "guidance": "Use this Operation for real SAM3 segmentation. Bind the authorized image Artifact as source. Start with a precise text prompt; after a no_selection result, replace the Job with box or points rather than repeating the same selector. foreground is a transparent PNG, mask is a nontrivial grayscale PNG, and segmentation_report is JSON."
+      "guidance": "Use this Operation for real SAM3 segmentation. Bind the authorized image Artifact as source. Start with one broad model-native category noun such as person, car, animal, or logo instead of a long visual description. If no_target_found is returned, replace the Job with a broader category, box, or points; never repeat the same selector or substitute an approximate local segmentation algorithm. foreground is a transparent PNG, mask is a nontrivial grayscale PNG, and segmentation_report is JSON."
     },
     {
       "id": "audio.transcribe",

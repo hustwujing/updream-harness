@@ -100,9 +100,15 @@ class ControlledMediaOperationAdapter(BaseJobAdapter):
                 if existing is None:
                     if work.exists():shutil.rmtree(work)
                     work.mkdir(parents=True,mode=0o700);source=await self._source(context,work)
-                    value=await self.runner(context.request.adapter,work,source,
-                        dict(context.request.parameters),reservation.gpu_ids,
-                        Path(self.settings.controlled_runtime_root))
+                    try:
+                        value=await self.runner(context.request.adapter,work,source,
+                            dict(context.request.parameters),reservation.gpu_ids,
+                            Path(self.settings.controlled_runtime_root))
+                    except RuntimeError as exc:
+                        if str(exc)=='no_selection':
+                            raise PreAcceptFailure('No target matched the frozen selector',
+                                error_code='no_target_found') from exc
+                        raise
                     result=self._validated_result(work,value)
                     temporary=work/'.result.json.tmp';temporary.write_text(json.dumps(result,sort_keys=True))
                     temporary.replace(work/'result.json')

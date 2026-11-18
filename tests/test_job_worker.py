@@ -57,6 +57,21 @@ async def test_pre_accept_failure_retries_without_acceptance_or_budget(tmp_path)
     finally:await store.close()
 
 
+async def test_pre_accept_failure_preserves_stable_domain_error_code(tmp_path):
+    store,_,job=await setup(tmp_path,request(kind=JobKind.OPERATION,
+        retry_policy={'max_pre_accept_attempts':1}))
+    adapter=FakeAdapter([PreAcceptFailure('selector matched nothing',
+        error_code='no_target_found')])
+    worker=JobWorker(store,{'fake':adapter},node_id='node',concurrency=1,worker_id='worker')
+    try:
+        assert await worker.run_once()==1
+        failed=await store.get_job(job.id)
+        assert failed.state==JobState.FAILED
+        assert failed.result['error_code']=='no_target_found'
+        assert failed.result['error_detail']=='selector matched nothing'
+    finally:await store.close()
+
+
 async def test_infrastructure_pre_accept_failure_does_not_consume_business_retry_limit(tmp_path):
     store,_,job=await setup(tmp_path,request(retry_policy={'max_pre_accept_attempts':1}))
     adapter=FakeAdapter([PreAcceptFailure('no capacity',infrastructure=True),
