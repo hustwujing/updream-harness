@@ -4,7 +4,7 @@ from datetime import timedelta
 from sandbox_harness.domain import Attachment, EventKind, Harness, ItemType, RuntimeEvent, ThreadCreate, TurnCreate, TurnInputCreate, TurnState, now
 from sandbox_harness.artifact_gateway import ArtifactEmission
 from sandbox_harness.job_contracts import (JobExpectedOutput,JobGroupCreate,JobKind,JobRequest,
-    OutputDisposition)
+    JobState,OutputDisposition)
 from sandbox_harness.store import MediaJobRow, Store, ThreadRow, TurnRow, valid_project_file_path
 import pytest
 
@@ -80,6 +80,45 @@ async def test_primary_publication_reuses_authoritative_delivery_job_artifact(tm
             sha256='2'*64,size=20,mime='audio/wav',object_ref='sha256:primary',partial=False,
             lease_owner='turn-worker',recovery_generation=claim.recovery_generation)
         assert not created and reused.id==emitted.artifact_id and reused.sha256=='1'*64
+        visible=[item for item in await store.items_after(thread.id) if item.type==ItemType.ARTIFACT]
+        assert len(visible)==1 and visible[0].payload['artifact_id']==emitted.artifact_id
+    finally:await store.close()
+
+
+async def test_successor_does_not_republish_identical_prior_job_delivery(tmp_path):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"successor-job-delivery.db"));await store.initialize()
+    try:
+        profile=HarnessCatalog().resolve('claude','claude-4.6-sonnet','standard');owner='a'*64
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CLAUDE,model=profile.model,
+            reasoning_level='standard',title='Successor delivery'),profile,owner)
+        first,_,_=await store.create_turn(thread.id,TurnCreate(message='parent',
+            idempotency_key='successor-parent-turn'),profile,owner)
+        first_claim=await store.claim_turn(first.id,'turn-worker-1',30)
+        request=JobRequest(local_job_id='parent',kind=JobKind.HARNESS,adapter='child-harness',
+            descriptor_id='delegate.harness',descriptor_version='1',descriptor_digest='d'*64,
+            idempotency_key='successor-parent-job',parameters={'harness':'claude'},
+            expected_outputs=(JobExpectedOutput(artifact_role='parent_image',
+                output_disposition=OutputDisposition.DELIVERY,min_items=1,max_items=1),))
+        _,jobs=await store.create_job_group(owner,JobGroupCreate(thread_id=thread.id,
+            origin_turn_id=first.id,idempotency_key='successor-parent-group',jobs=(request,)))
+        attempt=await store.claim_job(jobs[0].id,'job-worker','node',30)
+        emitted=await store.bind_job_artifact(ArtifactEmission(job_id=jobs[0].id,
+            generation=attempt.generation,artifact_role='parent_image',item_key='parent',position=0,
+            filename='parent.png',output_disposition=OutputDisposition.DELIVERY),
+            sha256='1'*64,size=10,mime='image/png',object_ref='sha256:parent')
+        await store.finalize_job_artifact_collection(jobs[0].id,attempt.generation,'parent_image')
+        await store.transition_job(jobs[0].id,JobState.SUCCEEDED,
+            expected_generation=attempt.generation,result={'ok':True})
+        await store.set_turn_state(first.id,TurnState.COMPLETED,lease_owner='turn-worker-1',
+            recovery_generation=first_claim.recovery_generation)
+        assert await store.claim_next_turn(thread.id,first.id) is None
+        successor,_,_=await store.create_turn(thread.id,TurnCreate(message='successor',
+            idempotency_key='successor-second-turn'),profile,owner)
+        claim=await store.claim_turn(successor.id,'turn-worker-2',30)
+        replay,_,created=await store.publish_artifact(thread.id,successor.id,path='parent.png',
+            sha256='1'*64,size=10,mime='image/png',object_ref='sha256:parent',partial=False,
+            lease_owner='turn-worker-2',recovery_generation=claim.recovery_generation)
+        assert not created and replay.id==emitted.artifact_id
         visible=[item for item in await store.items_after(thread.id) if item.type==ItemType.ARTIFACT]
         assert len(visible)==1 and visible[0].payload['artifact_id']==emitted.artifact_id
     finally:await store.close()
@@ -180,6 +219,28 @@ async def test_thread_turn_items_and_idempotency(tmp_path):
         assert next(item for item in await store.items_after(thread.id) if item.id == lingering.id).status == "interrupted"
     finally:
         await store.close()
+
+
+async def test_turn_completion_keeps_nonterminal_job_model_activity_live(tmp_path):
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'job-model-activity.db'));await store.initialize()
+    try:
+        profile=HarnessCatalog().resolve('codex','gpt-5.6','standard');owner='a'*64
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level='standard',title='Job model activity'),profile,owner)
+        turn,_,_=await store.create_turn(thread.id,TurnCreate(message='delegate',
+            idempotency_key='job-model-turn'),profile,owner)
+        request=JobRequest(local_job_id='child',kind=JobKind.HARNESS,adapter='child-harness',
+            descriptor_id='delegate.harness',descriptor_version='1',descriptor_digest='d'*64,
+            idempotency_key='job-model-child',parameters={'harness':'codex','model':'gpt-5.6'})
+        _,jobs=await store.create_job_group(owner,JobGroupCreate(thread_id=thread.id,
+            origin_turn_id=turn.id,idempotency_key='job-model-group',jobs=[request]))
+        item=await store.append_item(thread.id,turn.id,ItemType.PLAN,status='in_progress',
+            summary='等待 gpt-5.6 响应',payload={'model_request_id':'request-1',
+                'model':'gpt-5.6','phase':'waiting','job_id':jobs[0].id})
+        await store.set_turn_state(turn.id,TurnState.COMPLETED)
+        current=next(value for value in await store.items_after(thread.id) if value.id==item.id)
+        assert current.status=='in_progress'
+    finally:await store.close()
 
 
 async def test_background_job_finished_event_updates_started_activity(tmp_path):

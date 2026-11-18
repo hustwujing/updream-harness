@@ -3807,6 +3807,12 @@ class Store:
             if isinstance(identity,str) and identity:result.add(identity)
         return result
 
+    async def nonterminal_job_ids(self) -> set[str]:
+        async with self.connections() as db:
+            rows=(await db.execute(select(JobRow.id).where(
+                JobRow.state.not_in([state.value for state in TERMINAL_JOB_STATES])))).scalars().all()
+        return set(rows)
+
     async def expired_sandbox_controls(self, limit: int = 20) -> list[dict]:
         async with self.connections() as db:
             rows = (await db.execute(select(SandboxControlRow).where(
@@ -4356,6 +4362,9 @@ class Store:
                 'attachments':json.loads(row.attachments_json)} for row in inputs]}
 
     async def _finish_turn_records(self, db, turn_id: str) -> None:
+        live_job_ids=set((await db.execute(select(JobRow.id).where(
+            JobRow.origin_turn_id==turn_id,
+            JobRow.state.not_in([state.value for state in TERMINAL_JOB_STATES])))).scalars().all())
         inputs = (await db.execute(select(TurnInputRow).where(
             TurnInputRow.turn_id == turn_id, TurnInputRow.status.in_(["pending", "delivered", "unknown"])
         ).with_for_update())).scalars().all()
@@ -4367,9 +4376,11 @@ class Store:
             InteractionRow.status.in_(["pending", "responding"])).values(status="expired", updated_at=now()))
         items = (await db.execute(select(ItemRow).where(ItemRow.turn_id == turn_id))).scalars().all()
         for item in items:
-            if item.status == "in_progress" and item.type not in {ItemType.USER_MESSAGE.value, ItemType.APPROVAL.value}:
-                item.status = "interrupted"; item.updated_at = now()
             payload=json.loads(item.payload_json)
+            job_activity=bool(payload.get('model_request_id') and payload.get('job_id') in live_job_ids)
+            if (item.status == "in_progress" and not job_activity
+                    and item.type not in {ItemType.USER_MESSAGE.value, ItemType.APPROVAL.value}):
+                item.status = "interrupted"; item.updated_at = now()
             if payload.get("input_id") in ids:
                 value=next(row for row in inputs if row.id==payload["input_id"])
                 payload["input_status"]=value.status
@@ -4785,15 +4796,20 @@ class Store:
                 ArtifactRow.created_at,ArtifactRow.id).limit(1).with_for_update())).scalar_one_or_none()
             authoritative = None
             if artifact_row is None and not partial:
-                query = select(JobArtifactRow).join(JobRow,JobRow.id==JobArtifactRow.job_id).where(
+                base = select(JobArtifactRow).join(JobRow,JobRow.id==JobArtifactRow.job_id).where(
                     JobRow.thread_id==thread_id,JobArtifactRow.filename==path,
                     JobArtifactRow.output_disposition==OutputDisposition.DELIVERY.value,
                     JobArtifactRow.state=='reviewed')
-                if not turn.internal:query=query.where(JobRow.origin_turn_id==turn_id)
-                candidates=list((await db.execute(query.order_by(
-                    JobArtifactRow.created_at,JobArtifactRow.id).limit(2).with_for_update()
-                )).scalars().all())
-                if len(candidates)==1:authoritative=candidates[0]
+                authoritative=(await db.execute(base.where(JobArtifactRow.sha256==sha256,
+                    JobArtifactRow.size==size,JobArtifactRow.mime==mime).order_by(
+                    JobArtifactRow.created_at,JobArtifactRow.id).limit(1).with_for_update()
+                )).scalar_one_or_none()
+                if authoritative is None:
+                    query=base if turn.internal else base.where(JobRow.origin_turn_id==turn_id)
+                    candidates=list((await db.execute(query.order_by(
+                        JobArtifactRow.created_at,JobArtifactRow.id).limit(2).with_for_update()
+                    )).scalars().all())
+                    if len(candidates)==1:authoritative=candidates[0]
             if authoritative is not None:
                 artifact_row=await db.get(ArtifactRow,authoritative.artifact_id,with_for_update=True)
                 project_row,_=await self._register_project_file_locked(db,thread_id,
