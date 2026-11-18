@@ -17,13 +17,16 @@ class StoreBroker:
         return turn
 
 
-async def setup(tmp_path):
+async def setup(tmp_path,*,active_origin=False):
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'continuation.db'));await store.initialize()
     profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
     thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model='gpt-5.6',
         reasoning_level='standard',title='Continuation'),profile,'owner')
     origin,_,_=await store.create_turn(thread.id,TurnCreate(message='start',
         idempotency_key='origin-turn-key'),profile,'owner')
+    if not active_origin:
+        await store.set_turn_state(origin.id,TurnState.COMPLETED)
+        assert await store.claim_next_turn(thread.id,origin.id) is None
     return store,profile,thread,origin
 
 
@@ -40,33 +43,57 @@ async def terminal_group(store,thread,origin,suffix,state=JobState.SUCCEEDED,sup
 
 
 async def test_user_turn_queued_before_completion_precedes_factual_continuation(tmp_path):
-    store,profile,thread,origin=await setup(tmp_path)
+    store,profile,thread,origin=await setup(tmp_path,active_origin=True)
     try:
         user,_,_=await store.create_turn(thread.id,TurnCreate(message='change direction',
             idempotency_key='queued-user-key',delivery_mode='queue'),profile,'owner')
         await terminal_group(store,thread,origin,'later')
         dispatcher=ContinuationDispatcher(store,StoreBroker(store))
+        assert await dispatcher.run_once()==0
+        await store.set_turn_state(origin.id,TurnState.COMPLETED)
+        assert await dispatcher.run_once()==0
+        assert (await store.claim_next_turn(thread.id,origin.id)).id==user.id
         assert await dispatcher.run_once()==1
         assert "result_available=true" in dispatcher.broker.submissions[-1][3]
         assert "sandbox-job job --job-id JOB_ID" in dispatcher.broker.submissions[-1][3]
         turns=await store.list_turns(thread.id,'owner')
         continuation=next(value for value in turns if value.internal)
         assert [value.id for value in turns]==[origin.id,user.id,continuation.id]
-        await store.set_turn_state(origin.id,TurnState.COMPLETED)
-        assert (await store.claim_next_turn(thread.id,origin.id)).id==user.id
         await store.set_turn_state(user.id,TurnState.COMPLETED)
         assert (await store.claim_next_turn(thread.id,user.id)).id==continuation.id
     finally:await store.close()
 
 
+async def test_continuation_snapshots_inputs_only_after_origin_settles(tmp_path):
+    store,_,thread,origin=await setup(tmp_path,active_origin=True)
+    try:
+        changed,_=await store.create_turn_input(origin.id,TurnInputCreate(
+            message='改为rocket在左、portrait在右。',
+            idempotency_key='reorder-before-continuation'),thread.owner_id)
+        assert await store.set_input_status(changed.id,'delivered')
+        await terminal_group(store,thread,origin,'early-result')
+        broker=StoreBroker(store);dispatcher=ContinuationDispatcher(store,broker)
+        assert await dispatcher.run_once()==0
+        await store.apply_delivered_inputs(origin.id)
+        await store.set_turn_state(origin.id,TurnState.COMPLETED)
+        assert await store.claim_next_turn(thread.id,origin.id) is None
+        assert await dispatcher.run_once()==1
+        message=broker.submissions[-1][3]
+        assert '改为rocket在左、portrait在右。' in message
+        assert '"applied_inputs":[]' not in message
+    finally:await store.close()
+
+
 async def test_continuation_carries_authoritative_applied_user_inputs(tmp_path):
-    store,_,thread,origin=await setup(tmp_path)
+    store,_,thread,origin=await setup(tmp_path,active_origin=True)
     try:
         changed,_=await store.create_turn_input(origin.id,TurnInputCreate(
             message='把最终尺寸改为256x128，并同时交付PNG和WebP。',
             idempotency_key='resize-format-change'),thread.owner_id)
         assert await store.set_input_status(changed.id,'applied')
         await terminal_group(store,thread,origin,'changed-result')
+        await store.set_turn_state(origin.id,TurnState.COMPLETED)
+        assert await store.claim_next_turn(thread.id,origin.id) is None
         broker=StoreBroker(store);dispatcher=ContinuationDispatcher(store,broker)
         assert await dispatcher.run_once()==1
         message=broker.submissions[-1][3]

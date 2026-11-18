@@ -2705,9 +2705,14 @@ class Store:
         async with self.connections.begin() as db:
             candidates = list((await db.execute(select(JobOutboxRow)
                 .join(ThreadRow,ThreadRow.id==JobOutboxRow.thread_id)
+                .join(JobGroupRow,JobGroupRow.id==JobOutboxRow.group_id)
+                .join(TurnRow,TurnRow.id==JobGroupRow.origin_turn_id)
                 .outerjoin(ThreadControlRow, ThreadControlRow.thread_id == JobOutboxRow.thread_id)
                 .where(ThreadRow.archived_at.is_(None),or_(ThreadControlRow.thread_id.is_(None),
                     ThreadControlRow.state == ThreadControlState.RUNNING.value),
+                TurnRow.state.in_([state.value for state in TERMINAL]),
+                or_(ThreadRow.active_turn_id != JobGroupRow.origin_turn_id,
+                    TurnRow.state == TurnState.PAUSED.value),
                 or_(JobOutboxRow.state == "ready", and_(
                     JobOutboxRow.state == "claimed", JobOutboxRow.claim_expires_at < now())),
             ).order_by(JobOutboxRow.created_at, JobOutboxRow.id).limit(max_groups * 4)
