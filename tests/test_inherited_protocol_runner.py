@@ -35,6 +35,14 @@ def test_inherited_non_protocol_cases_require_real_business_artifact_execution()
     assert "if case.get('expect',{}).get('kind')=='protocol'" in source
 
 
+def test_destructive_protocols_are_serialized_and_business_assets_are_configured():
+    inherited=(ROOT/'tests/run_real_inherited_protocol.py').read_text()
+    parallel=(ROOT/'tests/run_real_parallel_protocol.py').read_text()
+    assert 'async with parallel.protocol_lock()' in inherited
+    assert 'async with protocol_lock()' in parallel
+    assert "args.asset_root=" in inherited and "ResilientAsyncClient" in inherited
+
+
 def test_business_artifact_phase_does_not_repeat_protocol_interventions():
     runner=load_runner();case=runner.SOURCE_CASES['D11']
     prompt=runner.business_artifact_prompt(case)

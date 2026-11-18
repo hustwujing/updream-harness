@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import asynccontextmanager
+import fcntl
 import hashlib
 import json
 import os
@@ -17,6 +19,18 @@ from dotenv import dotenv_values
 
 ROOT=Path(__file__).resolve().parents[1]
 TERMINAL_JOBS={'SUCCEEDED','FAILED','CANCELLED','BLOCKED','UNKNOWN'}
+PROTOCOL_LOCK=ROOT/'.data/tmp/real-protocol.lock'
+
+
+@asynccontextmanager
+async def protocol_lock():
+    PROTOCOL_LOCK.parent.mkdir(parents=True,exist_ok=True)
+    stream=PROTOCOL_LOCK.open('a+')
+    try:
+        await asyncio.to_thread(fcntl.flock,stream.fileno(),fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(stream.fileno(),fcntl.LOCK_UN);stream.close()
 
 
 class ResilientAsyncClient(httpx.AsyncClient):
@@ -682,8 +696,9 @@ async def main():
     try:
         handler=HANDLERS.get(args.case)
         if not handler:raise NotImplementedError('protocol_handler_not_implemented:'+args.case)
-        async with ResilientAsyncClient(base_url=args.base_url,timeout=None,trust_env=False) as client:
-            session=await client.get('api/session');session.raise_for_status();value=await handler(client,args)
+        async with protocol_lock():
+            async with ResilientAsyncClient(base_url=args.base_url,timeout=None,trust_env=False) as client:
+                session=await client.get('api/session');session.raise_for_status();value=await handler(client,args)
     except Exception as exc:
         value={'classification':'program_failure','reason':type(exc).__name__+':'+str(exc)[:500]}
     args.report.parent.mkdir(parents=True,exist_ok=True);args.report.write_text(

@@ -155,10 +155,15 @@ async def main():
     parser.add_argument('--harness',default='claude');parser.add_argument('--model',default='claude-opus-5-5')
     parser.add_argument('--reasoning',default='deep');parser.add_argument('--timeout',type=int,default=7200)
     parser.add_argument('--intervention-delay',type=int,default=10);args=parser.parse_args();value={}
+    configured_root=Path(json.loads((ROOT/'tests/real_cases/cases.json').read_text()).get(
+        'asset_root') or ROOT/'tests/real_cases/assets')
+    args.asset_root=(configured_root if configured_root.is_absolute()
+        else (ROOT/'tests/real_cases'/configured_root).resolve())
     try:
-        async with httpx.AsyncClient(base_url=args.base_url,timeout=None,trust_env=False) as client:
-            parallel.require(await client.get('api/session'))
-            value=await HANDLERS[args.case](client,args)
+        async with parallel.protocol_lock():
+            async with parallel.ResilientAsyncClient(base_url=args.base_url,timeout=None,trust_env=False) as client:
+                parallel.require(await client.get('api/session'))
+                value=await HANDLERS[args.case](client,args)
     except Exception as exc:
         value={'classification':'program_failure','reason':type(exc).__name__+':'+str(exc)[:1000],
             'source_case_id':args.case,'source_project':'sandbox-harness-platform-plus',
