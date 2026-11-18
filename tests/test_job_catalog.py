@@ -132,6 +132,7 @@ def test_runtime_instructions_route_controlled_operations_through_job_catalog():
     assert 'only confirmation channel' in RUNTIME_INSTRUCTIONS
     assert 'A progress sentence is not execution' in RUNTIME_INSTRUCTIONS
     assert 'must not reopen an objective' in RUNTIME_INSTRUCTIONS
+    assert 'finite set of contract-derived acceptance checks' in RUNTIME_INSTRUCTIONS
 
 
 def test_public_child_profiles_expose_frozen_harness_job_template():
