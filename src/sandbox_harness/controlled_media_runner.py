@@ -1,0 +1,106 @@
+from __future__ import annotations
+
+import grp
+import json
+import os
+from pathlib import Path
+import pwd
+import shutil
+import subprocess
+
+from PIL import Image
+
+
+def _base_args(work:Path,runtime:Path)->list[str]:
+    project_root=runtime.parent.parent
+    return ['/usr/bin/bwrap','--die-with-parent','--new-session','--unshare-pid','--unshare-net',
+        '--unshare-ipc','--unshare-uts','--proc','/proc','--dev','/dev','--ro-bind','/usr','/usr',
+        '--ro-bind','/bin','/bin','--ro-bind','/lib','/lib','--ro-bind','/lib64','/lib64',
+        '--ro-bind','/etc','/etc','--dir','/data2','--dir','/data2/wujing03','--dir',str(project_root),
+        '--dir',str(project_root/'.data'),'--ro-bind',str(runtime),str(runtime),'--bind',str(work),'/work',
+        '--tmpfs','/tmp','--chmod','1777','/tmp']
+
+
+def _run(args:list[str],work:Path,timeout:int)->None:
+    result=subprocess.run(args,capture_output=True,text=True,timeout=timeout)
+    (work/'bwrap.log').write_text(result.stdout+'\n'+result.stderr)
+    if result.returncode:raise RuntimeError('controlled_bwrap_failed:'+result.stderr[-1600:])
+
+
+def _segment(work:Path,source:Path,parameters:dict,gpu_ids:tuple[str,...],runtime:Path)->dict:
+    if os.geteuid()!=0:raise RuntimeError('controlled_worker_requires_root')
+    if len(gpu_ids)!=1:raise RuntimeError('segment_gpu_reservation_invalid')
+    account=pwd.getpwnam('agent-plus');script=work/'sam3_job.py'
+    os.chown(work,account.pw_uid,account.pw_gid)
+    shutil.copyfile(Path(__file__).with_name('sam3_job.py'),script)
+    request={**parameters,'source':'/work/'+source.name};(work/'request.json').write_text(json.dumps(request))
+    for path in work.iterdir():os.chown(path,account.pw_uid,account.pw_gid)
+    groups=','.join(str(grp.getgrnam(name).gr_gid) for name in (
+        'sandbox-agent-runtime','video-use-runtime'))
+    index=gpu_ids[0].removeprefix('gpu-');args=_base_args(work,runtime)
+    if Path('/proc/driver/nvidia').exists():args += ['--ro-bind','/proc/driver/nvidia','/proc/driver/nvidia']
+    for name in (f'nvidia{index}','nvidiactl','nvidia-uvm','nvidia-uvm-tools'):
+        path='/dev/'+name
+        if Path(path).exists():args += ['--dev-bind',path,path]
+    for pattern in ('libnvidia*.so*','libcuda.so*'):
+        for path in Path('/usr/lib/x86_64-linux-gnu').glob(pattern):
+            if path.is_file():args += ['--ro-bind',str(path.resolve()),str(path)]
+    args += ['--clearenv','--setenv','PATH','/usr/bin:/bin','--setenv','HOME','/work',
+        '--setenv','TMPDIR','/tmp','--setenv','CUDA_VISIBLE_DEVICES',index,
+        '--setenv','CONTROLLED_MEDIA_RUNTIME_ROOT',str(runtime),'--setenv','HF_HUB_OFFLINE','1',
+        '--setenv','TRANSFORMERS_OFFLINE','1','--chdir','/work','/usr/bin/setpriv',
+        '--reuid='+str(account.pw_uid),'--regid='+str(account.pw_gid),'--groups='+groups,
+        '--no-new-privs','--bounding-set=-all','/usr/bin/python3','/work/sam3_job.py','/work/request.json']
+    try:_run(args,work,900)
+    except RuntimeError as exc:
+        outcome=work/'model-outcome.json'
+        if outcome.is_file() and json.loads(outcome.read_text()).get('code')=='no_selection':
+            raise RuntimeError('no_selection') from exc
+        raise
+    with Image.open(work/'foreground.png') as foreground:
+        size=foreground.size
+        if foreground.mode!='RGBA':raise RuntimeError('segment_foreground_alpha_missing')
+    with Image.open(work/'mask.png') as mask:
+        values=mask.convert('L').getextrema()
+        if mask.size!=size or values[0]==values[1]:raise RuntimeError('segment_mask_invalid')
+    receipts=[{'validator':'image.dimensions_exact','status':'pass','evidence':{'size':size}}]
+    return {'outputs':[
+        {'role':'foreground','path':'foreground.png','mime':'image/png','validation_receipts':[
+            *receipts,{'validator':'image.alpha','status':'pass'}]},
+        {'role':'mask','path':'mask.png','mime':'image/png','validation_receipts':[
+            *receipts,{'validator':'mask.nontrivial','status':'pass','evidence':{'extrema':values}}]},
+        {'role':'segmentation_report','path':'segmentation.json','mime':'application/json'}]}
+
+
+def _transcribe(work:Path,source:Path,parameters:dict,runtime:Path)->dict:
+    if os.geteuid()!=0:raise RuntimeError('controlled_worker_requires_root')
+    script=work/'transcribe_job.py';shutil.copyfile(Path(__file__).with_name('transcribe_job.py'),script)
+    request={**parameters,'source':'/work/'+source.name,
+        'model':str(runtime/'models/media-foundation/faster-whisper-small'),
+        'threads':max(1,min(8,int(parameters.get('threads',4)))),
+        'beam_size':max(1,min(10,int(parameters.get('beam_size',5))))}
+    (work/'request.json').write_text(json.dumps(request));args=_base_args(work,runtime)
+    args += ['--clearenv','--setenv','HOME','/work','--setenv','TMPDIR','/tmp',
+        '--setenv','HF_HUB_OFFLINE','1','--setenv','TRANSFORMERS_OFFLINE','1','--chdir','/work',
+        '/usr/bin/setpriv','--reuid=0','--regid=0','--clear-groups','--no-new-privs',
+        '--bounding-set=-all',str(runtime/'envs/media-foundation/bin/python'),'/work/transcribe_job.py',
+        '/work/request.json']
+    _run(args,work,1800)
+    report=json.loads((work/'transcript.json').read_text())
+    receipt={'validator':'transcript.timeline','status':'pass','evidence':{
+        'segments':len(report['segments']),'language':report['language']}}
+    return {'outputs':[
+        {'role':'transcript_json','path':'transcript.json','mime':'application/json',
+            'validation_receipts':[receipt]},
+        {'role':'transcript_text','path':'transcript.txt','mime':'text/plain'},
+        {'role':'transcript_srt','path':'transcript.srt','mime':'text/plain'}]}
+
+
+def run_controlled_operation(operation:str,work:Path,source:Path,parameters:dict,
+                             gpu_ids:tuple[str,...],runtime_root:Path)->dict:
+    runtime=runtime_root.resolve()
+    if not runtime.is_relative_to(Path('/data2/wujing03')) or not runtime.is_dir():
+        raise RuntimeError('controlled_runtime_root_invalid')
+    if operation=='image.segment':return _segment(work,source,parameters,gpu_ids,runtime)
+    if operation=='audio.transcribe':return _transcribe(work,source,parameters,runtime)
+    raise RuntimeError('controlled_operation_invalid')

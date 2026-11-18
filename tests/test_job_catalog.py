@@ -105,6 +105,7 @@ def test_example_job_catalog_is_parseable_and_digest_verified():
     assert segment.input_roles==('source',) and set(segment.output_roles)=={
         'foreground','mask','segmentation_report'}
     assert segment.resources['gpu']==1 and segment.creates_artifacts
+    assert segment.retry_policy['max_pre_accept_attempts']==1
     assert 'SAM3' in segment.guidance and 'box' in segment.guidance and 'points' in segment.guidance
     transcribe=value.operation('audio.transcribe','1','2'*64)
     assert transcribe.input_roles==('source',) and set(transcribe.output_roles)=={

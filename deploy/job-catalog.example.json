@@ -100,7 +100,7 @@
       "side_effects": false,
       "billable": false,
       "creates_artifacts": true,
-      "retry_policy": {"max_pre_accept_attempts": 2, "deterministic": true},
+      "retry_policy": {"max_pre_accept_attempts": 1, "deterministic": true},
       "cancellation_policy": {"supported": true},
       "reconciliation_policy": {"supported": true},
       "guidance": "Use this Operation for real SAM3 segmentation. Bind the authorized image Artifact as source. Start with a precise text prompt; after a no_selection result, replace the Job with box or points rather than repeating the same selector. foreground is a transparent PNG, mask is a nontrivial grayscale PNG, and segmentation_report is JSON."
