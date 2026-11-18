@@ -34,3 +34,6 @@ def test_delivery_contract_comes_from_declared_options_not_internal_demo_files()
     assert 'video/mp4' in subtitles['prompt'] and '.srt' in subtitles['prompt']
     assert 'extra_extension' not in by_source['cuts']['expect']
     assert 'extra_extension' not in by_source['grade']['expect']
+    assert by_source['grade']['expect']=={'kind':'video','width':1280,'height':720,'duration':8.0}
+    assert by_source['grade']['source_result_probe']['audio'] is True
+    assert by_source['overlay']['expect']['duration']==8.0

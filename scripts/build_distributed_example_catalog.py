@@ -6,6 +6,7 @@ import hashlib
 import json
 import mimetypes
 from pathlib import Path
+import re
 import subprocess
 
 from PIL import Image
@@ -46,7 +47,7 @@ def declared_sidecar(entry:dict,result_suffix:str)->str:
     return ''
 
 
-def expectation(entry:dict,demo_root:Path)->dict:
+def result_probe(entry:dict,demo_root:Path)->dict:
     result=demo_root/entry['id']/entry['result'];mime=entry.get('result_type') or (
         mimetypes.guess_type(result.name)[0] or 'application/octet-stream')
     if not result.is_file():raise ValueError('missing_demo_result:'+str(result))
@@ -57,6 +58,27 @@ def expectation(entry:dict,demo_root:Path)->dict:
     elif mime.startswith('audio/'):
         value={'kind':'audio',**media_probe(result)}
     else:value={'kind':'text'}
+    return value
+
+
+def expectation(entry:dict,demo_root:Path)->dict:
+    probe=result_probe(entry,demo_root);value={'kind':probe['kind']}
+    requirement='；'.join([str(entry.get('prompt','')),*map(str,entry.get('options',[]))])
+    if value['kind']=='image':
+        match=re.search(r'(?:输出|制作成|画布)[^。；]{0,24}?(\d{2,5})\s*[×xX]\s*(\d{2,5})',requirement)
+        if match:value.update(width=int(match.group(1)),height=int(match.group(2)))
+        elif 'width' in probe:value.update(width=probe['width'],height=probe['height'])
+    if value['kind']=='video':
+        match=re.search(r'(?:输出|制作成)[^。；]{0,24}?(\d{2,5})\s*[×xX]\s*(\d{2,5})',requirement)
+        if match:value.update(width=int(match.group(1)),height=int(match.group(2)))
+        elif re.search(r'\b720p\b',requirement,re.I):value.update(width=1280,height=720)
+        segments=(entry.get('preset') or {}).get('segments') or []
+        if segments:value['duration']=round(sum(float(row['end'])-float(row['start']) for row in segments),3)
+        elif re.search(r'\d+(?:\.\d+)?\s*秒',requirement):value['duration']=probe.get('duration',0)
+        if any(marker in requirement for marker in ('声音','音量','响度','音轨','音频','配乐','对白')):
+            value['audio']=True
+    if value['kind']=='audio' and 'duration' in probe:value['duration']=probe['duration']
+    result=demo_root/entry['id']/entry['result']
     sidecar=declared_sidecar(entry,result.suffix.lower())
     if sidecar:value['extra_extension']=sidecar
     return value
@@ -84,7 +106,7 @@ def build(source:Path)->dict:
             'status':'not_run','attempts':[],'allowed_external_operations':list(
                 OPERATIONS.get(entry['id'],())), 'entry_mode':'deployed_browser',
             'executor':'primary_harness','provenance':'distributed-agent-system:'+entry['id'],
-            'source_result':entry['result']})
+            'source_result':entry['result'],'source_result_probe':result_probe(entry,demo_root)})
     return {'schema_version':1,'family':'distributed-agent-system-example-library-v1',
         'source_catalog':str(source),'source_catalog_sha256':hashlib.sha256(raw).hexdigest(),
         'asset_root':str(asset_root),'runnable_case_count':len(cases),'cases':cases}

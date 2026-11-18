@@ -20,7 +20,6 @@
       "source_prompt": "把这段对白制作成 720×1280 竖屏，完整保留人物画面，用原视频放大模糊填满背景；在底部全程添加中文标题“寻找旅伴”，保留原声音。先分析素材并给我方案。",
       "expect": {
         "kind": "video",
-        "duration": 9.0,
         "width": 720,
         "height": 1280,
         "audio": true
@@ -39,7 +38,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:agent-portrait",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 9.0,
+        "width": 720,
+        "height": 1280,
+        "audio": true
+      }
     },
     {
       "id": "E02",
@@ -72,7 +78,10 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:transcribe",
-      "source_result": "transcript.txt"
+      "source_result": "transcript.txt",
+      "source_result_probe": {
+        "kind": "text"
+      }
     },
     {
       "id": "E03",
@@ -103,7 +112,10 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:batch",
-      "source_result": "takes_packed.md"
+      "source_result": "takes_packed.md",
+      "source_result_probe": {
+        "kind": "text"
+      }
     },
     {
       "id": "E04",
@@ -119,9 +131,9 @@
       "source_prompt": "保留完整提问和回答，删掉中间的停顿，给每个切点加短暂的声音淡入淡出。",
       "expect": {
         "kind": "video",
-        "duration": 3.8,
         "width": 1280,
         "height": 720,
+        "duration": 3.73,
         "audio": true
       },
       "content_checks": [
@@ -137,7 +149,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:cuts",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 3.8,
+        "width": 1280,
+        "height": 720,
+        "audio": true
+      }
     },
     {
       "id": "E05",
@@ -153,10 +172,9 @@
       "source_prompt": "把这段森林画面调成暖调电影风格，保留自然层次，输出 8 秒预览。",
       "expect": {
         "kind": "video",
-        "duration": 8.021,
         "width": 1280,
         "height": 720,
-        "audio": true
+        "duration": 8.0
       },
       "content_checks": [
         "调色：暖调电影感",
@@ -171,7 +189,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:grade",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 8.021,
+        "width": 1280,
+        "height": 720,
+        "audio": true
+      }
     },
     {
       "id": "E06",
@@ -187,9 +212,7 @@
       "source_prompt": "给这段对白加英文字幕，每次显示两个词，按说话时间对齐，并导出字幕文件。",
       "expect": {
         "kind": "video",
-        "duration": 8.9,
-        "width": 1280,
-        "height": 720,
+        "duration": 8.8,
         "audio": true,
         "extra_extension": ".srt"
       },
@@ -207,7 +230,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:subtitles",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 8.9,
+        "width": 1280,
+        "height": 720,
+        "audio": true
+      }
     },
     {
       "id": "E07",
@@ -224,9 +254,7 @@
       "source_prompt": "在森林画面左上角叠加一段对白小窗，从第 1 秒出现，持续 5 秒。",
       "expect": {
         "kind": "video",
-        "duration": 9.967,
-        "width": 1280,
-        "height": 720,
+        "duration": 8.0,
         "audio": true
       },
       "content_checks": [
@@ -243,7 +271,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:overlay",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 9.967,
+        "width": 1280,
+        "height": 720,
+        "audio": true
+      }
     },
     {
       "id": "E08",
@@ -259,9 +294,7 @@
       "source_prompt": "这段对白音量太小，请统一到 −14 LUFS，并限制峰值，保持视频内容不变。",
       "expect": {
         "kind": "video",
-        "duration": 8.9,
-        "width": 1280,
-        "height": 720,
+        "duration": 8.8,
         "audio": true
       },
       "content_checks": [
@@ -278,7 +311,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:loudness",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 8.9,
+        "width": 1280,
+        "height": 720,
+        "audio": true
+      }
     },
     {
       "id": "E09",
@@ -311,7 +351,12 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:timeline",
-      "source_result": "timeline.png"
+      "source_result": "timeline.png",
+      "source_result_probe": {
+        "kind": "image",
+        "width": 2040,
+        "height": 540
+      }
     },
     {
       "id": "E10",
@@ -341,7 +386,10 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:analysis",
-      "source_result": "analysis.json"
+      "source_result": "analysis.json",
+      "source_result_probe": {
+        "kind": "text"
+      }
     },
     {
       "id": "E11",
@@ -372,7 +420,10 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:multitrack",
-      "source_result": "transcript.txt"
+      "source_result": "transcript.txt",
+      "source_result_probe": {
+        "kind": "text"
+      }
     },
     {
       "id": "E12",
@@ -388,10 +439,9 @@
       "source_prompt": "把森林素材 0–4 秒变为 2 倍速，4–6 秒变为半速，最后定格 1 秒，输出 960×540、30fps。先给方案。",
       "expect": {
         "kind": "video",
-        "duration": 7.0,
         "width": 960,
         "height": 540,
-        "audio": true
+        "duration": 7.0
       },
       "content_checks": [
         "前段 2 倍速",
@@ -406,7 +456,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:local-speed",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 7.0,
+        "width": 960,
+        "height": 540,
+        "audio": true
+      }
     },
     {
       "id": "E13",
@@ -422,10 +479,9 @@
       "source_prompt": "选森林素材 0–3 秒和 6–9 秒，两段之间加 0.6 秒叠化，输出 960×540、30fps。先给方案。",
       "expect": {
         "kind": "video",
-        "duration": 5.4,
         "width": 960,
         "height": 540,
-        "audio": true
+        "duration": 5.4
       },
       "content_checks": [
         "两段各 3 秒",
@@ -440,7 +496,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:local-transition",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 5.4,
+        "width": 960,
+        "height": 540,
+        "audio": true
+      }
     },
     {
       "id": "E14",
@@ -456,10 +519,7 @@
       "source_prompt": "将森林素材 2–5 秒倒放，末尾定格 0.5 秒，完整重复两遍，保持静音。先给方案。",
       "expect": {
         "kind": "video",
-        "duration": 7.0,
-        "width": 960,
-        "height": 540,
-        "audio": true
+        "duration": 7.0
       },
       "content_checks": [
         "倒放 2–5 秒",
@@ -474,7 +534,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:local-reverse",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 7.0,
+        "width": 960,
+        "height": 540,
+        "audio": true
+      }
     },
     {
       "id": "E15",
@@ -490,10 +557,7 @@
       "source_prompt": "取森林素材 0–5 秒，裁取 x=160、y=0、宽640、高540 区域，顺时针旋转90度后水平镜像，完整保留处理后的画面，用模糊背景填满540×960竖屏。先给方案。",
       "expect": {
         "kind": "video",
-        "duration": 5.0,
-        "width": 540,
-        "height": 960,
-        "audio": true
+        "duration": 5.0
       },
       "content_checks": [
         "中部 640×540 裁剪",
@@ -508,7 +572,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:local-geometry",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 5.0,
+        "width": 540,
+        "height": 960,
+        "audio": true
+      }
     },
     {
       "id": "E16",
@@ -524,9 +595,9 @@
       "source_prompt": "将森林素材 0–5 秒做左右分屏，同步播放；左侧保持原色，右侧暖调电影感，各自裁满区域，输出960×540。先给方案。",
       "expect": {
         "kind": "video",
-        "duration": 5.0,
         "width": 960,
         "height": 540,
+        "duration": 5.0,
         "audio": true
       },
       "content_checks": [
@@ -542,7 +613,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:local-split",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 5.0,
+        "width": 960,
+        "height": 540,
+        "audio": true
+      }
     },
     {
       "id": "E17",
@@ -558,10 +636,9 @@
       "source_prompt": "截取森林素材0–5秒，输出960×540。在成片 x=360、y=120、宽240、高160 的固定区域，从第1秒到第4秒加马赛克；底部全程显示“局部遮挡示例”。先给方案。",
       "expect": {
         "kind": "video",
-        "duration": 5.0,
         "width": 960,
         "height": 540,
-        "audio": true
+        "duration": 5.0
       },
       "content_checks": [
         "固定矩形：360,120,240,160",
@@ -576,7 +653,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:local-mask",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 5.0,
+        "width": 960,
+        "height": 540,
+        "audio": true
+      }
     },
     {
       "id": "E18",
@@ -594,8 +678,6 @@
       "expect": {
         "kind": "video",
         "duration": 9.0,
-        "width": 960,
-        "height": 540,
         "audio": true
       },
       "content_checks": [
@@ -611,7 +693,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:local-music",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 9.0,
+        "width": 960,
+        "height": 540,
+        "audio": true
+      }
     },
     {
       "id": "E19",
@@ -629,8 +718,6 @@
       "expect": {
         "kind": "video",
         "duration": 9.0,
-        "width": 960,
-        "height": 540,
         "audio": true
       },
       "content_checks": [
@@ -646,7 +733,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:local-audio-replace",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 9.0,
+        "width": 960,
+        "height": 540,
+        "audio": true
+      }
     },
     {
       "id": "E20",
@@ -677,7 +771,11 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:local-audio-clean",
-      "source_result": "final.wav"
+      "source_result": "final.wav",
+      "source_result_probe": {
+        "kind": "audio",
+        "duration": 9.0
+      }
     },
     {
       "id": "E21",
@@ -693,10 +791,8 @@
       "source_prompt": "使用已有转写，完整保留“What brings you to the land of the Gatekeepers?”和“I'm searching for someone.”，去掉中间停顿，词边界留80毫秒；每行4词，字幕白色、已说到的词高亮黄色，输出960×540。先给方案。",
       "expect": {
         "kind": "video",
-        "duration": 3.633,
         "width": 960,
-        "height": 540,
-        "audio": true
+        "height": 540
       },
       "content_checks": [
         "真实逐词缓存，无新转写",
@@ -711,7 +807,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:local-word-edit",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 3.633,
+        "width": 960,
+        "height": 540,
+        "audio": true
+      }
     },
     {
       "id": "E22",
@@ -743,7 +846,12 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:image-cutout",
-      "source_result": "result.png"
+      "source_result": "result.png",
+      "source_result_probe": {
+        "kind": "image",
+        "width": 384,
+        "height": 256
+      }
     },
     {
       "id": "E23",
@@ -777,7 +885,12 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:image-select",
-      "source_result": "result.png"
+      "source_result": "result.png",
+      "source_result_probe": {
+        "kind": "image",
+        "width": 384,
+        "height": 256
+      }
     },
     {
       "id": "E24",
@@ -811,7 +924,12 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:image-local",
-      "source_result": "result.png"
+      "source_result": "result.png",
+      "source_result_probe": {
+        "kind": "image",
+        "width": 384,
+        "height": 256
+      }
     },
     {
       "id": "E25",
@@ -846,7 +964,12 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:image-layers",
-      "source_result": "result.png"
+      "source_result": "result.png",
+      "source_result_probe": {
+        "kind": "image",
+        "width": 720,
+        "height": 560
+      }
     },
     {
       "id": "E26",
@@ -880,7 +1003,12 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:image-erase",
-      "source_result": "result.png"
+      "source_result": "result.png",
+      "source_result_probe": {
+        "kind": "image",
+        "width": 384,
+        "height": 256
+      }
     },
     {
       "id": "E27",
@@ -914,7 +1042,12 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:image-sam3-zim",
-      "source_result": "result.png"
+      "source_result": "result.png",
+      "source_result_probe": {
+        "kind": "image",
+        "width": 384,
+        "height": 256
+      }
     },
     {
       "id": "E28",
@@ -945,7 +1078,12 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:image-mask-refine",
-      "source_result": "result.png"
+      "source_result": "result.png",
+      "source_result_probe": {
+        "kind": "image",
+        "width": 384,
+        "height": 256
+      }
     },
     {
       "id": "E29",
@@ -976,7 +1114,12 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:image-auto-adjust",
-      "source_result": "result.png"
+      "source_result": "result.png",
+      "source_result_probe": {
+        "kind": "image",
+        "width": 384,
+        "height": 256
+      }
     },
     {
       "id": "E30",
@@ -1010,7 +1153,12 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:image-color-match",
-      "source_result": "result.png"
+      "source_result": "result.png",
+      "source_result_probe": {
+        "kind": "image",
+        "width": 384,
+        "height": 256
+      }
     },
     {
       "id": "E31",
@@ -1041,7 +1189,12 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:image-product-layout",
-      "source_result": "result.png"
+      "source_result": "result.png",
+      "source_result_probe": {
+        "kind": "image",
+        "width": 600,
+        "height": 600
+      }
     },
     {
       "id": "E32",
@@ -1072,7 +1225,12 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:image-watermark-batch",
-      "source_result": "result.png"
+      "source_result": "result.png",
+      "source_result_probe": {
+        "kind": "image",
+        "width": 600,
+        "height": 600
+      }
     },
     {
       "id": "E33",
@@ -1105,7 +1263,12 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:image-ocr",
-      "source_result": "result.png"
+      "source_result": "result.png",
+      "source_result_probe": {
+        "kind": "image",
+        "width": 384,
+        "height": 256
+      }
     },
     {
       "id": "E34",
@@ -1138,7 +1301,12 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:image-replace-text",
-      "source_result": "result.png"
+      "source_result": "result.png",
+      "source_result_probe": {
+        "kind": "image",
+        "width": 384,
+        "height": 256
+      }
     },
     {
       "id": "E35",
@@ -1169,7 +1337,12 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:image-perspective",
-      "source_result": "result.png"
+      "source_result": "result.png",
+      "source_result_probe": {
+        "kind": "image",
+        "width": 417,
+        "height": 269
+      }
     },
     {
       "id": "E36",
@@ -1200,7 +1373,12 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:image-adjustment-layers",
-      "source_result": "result.png"
+      "source_result": "result.png",
+      "source_result_probe": {
+        "kind": "image",
+        "width": 384,
+        "height": 256
+      }
     },
     {
       "id": "E37",
@@ -1231,7 +1409,12 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:image-text-effects",
-      "source_result": "result.png"
+      "source_result": "result.png",
+      "source_result_probe": {
+        "kind": "image",
+        "width": 384,
+        "height": 256
+      }
     },
     {
       "id": "E38",
@@ -1262,7 +1445,12 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:image-layout-guides",
-      "source_result": "result.png"
+      "source_result": "result.png",
+      "source_result_probe": {
+        "kind": "image",
+        "width": 720,
+        "height": 300
+      }
     },
     {
       "id": "E39",
@@ -1277,11 +1465,7 @@
       "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。比较当前两个视频版本，指出差异并建议保留哪一个。 原示例验收要求：左右同步播放并选择要继续使用的版本。；可载入项目继续编辑。主交付必须包含 video/mp4 类型成品（参考文件名 final.mp4）。",
       "source_prompt": "比较当前两个视频版本，指出差异并建议保留哪一个。",
       "expect": {
-        "kind": "video",
-        "duration": 8.021,
-        "width": 1280,
-        "height": 720,
-        "audio": true
+        "kind": "video"
       },
       "content_checks": [
         "左右同步播放并选择要继续使用的版本。",
@@ -1295,7 +1479,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:video-version-compare",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 8.021,
+        "width": 1280,
+        "height": 720,
+        "audio": true
+      }
     },
     {
       "id": "E40",
@@ -1311,10 +1502,6 @@
       "source_prompt": "载入现有字幕，逐句检查文本和时间，再生成新字幕版本。",
       "expect": {
         "kind": "video",
-        "duration": 8.9,
-        "width": 1280,
-        "height": 720,
-        "audio": true,
         "extra_extension": ".srt"
       },
       "content_checks": [
@@ -1329,7 +1516,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:video-caption-refine",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 8.9,
+        "width": 1280,
+        "height": 720,
+        "audio": true
+      }
     },
     {
       "id": "E41",
@@ -1344,11 +1538,7 @@
       "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。把这个章节拆成一条独立短片，先给我节奏和字幕方案。 原示例验收要求：保存章节范围并作为独立短片进入 Agent。；可载入项目继续编辑。主交付必须包含 video/mp4 类型成品（参考文件名 final.mp4）。",
       "source_prompt": "把这个章节拆成一条独立短片，先给我节奏和字幕方案。",
       "expect": {
-        "kind": "video",
-        "duration": 3.633,
-        "width": 960,
-        "height": 540,
-        "audio": true
+        "kind": "video"
       },
       "content_checks": [
         "保存章节范围并作为独立短片进入 Agent。",
@@ -1362,7 +1552,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:video-chapter-shorts",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 3.633,
+        "width": 960,
+        "height": 540,
+        "audio": true
+      }
     },
     {
       "id": "E42",
@@ -1378,9 +1575,6 @@
       "source_prompt": "按同一个品牌模板处理这些视频，统一画幅、字幕和响度。",
       "expect": {
         "kind": "video",
-        "duration": 9.0,
-        "width": 720,
-        "height": 1280,
         "audio": true
       },
       "content_checks": [
@@ -1395,7 +1589,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:video-brand-batch",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 9.0,
+        "width": 720,
+        "height": 1280,
+        "audio": true
+      }
     },
     {
       "id": "E43",
@@ -1410,11 +1611,7 @@
       "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。根据时间线批注只修改对应镜头，保留其他成片内容。 原示例验收要求：在具体时间段记录修改要求，交给 Agent 生成返工方案。；可载入项目继续编辑。主交付必须包含 video/mp4 类型成品（参考文件名 final.mp4）。",
       "source_prompt": "根据时间线批注只修改对应镜头，保留其他成片内容。",
       "expect": {
-        "kind": "video",
-        "duration": 3.8,
-        "width": 1280,
-        "height": 720,
-        "audio": true
+        "kind": "video"
       },
       "content_checks": [
         "在具体时间段记录修改要求，交给 Agent 生成返工方案。",
@@ -1428,7 +1625,14 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:video-shot-notes",
-      "source_result": "final.mp4"
+      "source_result": "final.mp4",
+      "source_result_probe": {
+        "kind": "video",
+        "duration": 3.8,
+        "width": 1280,
+        "height": 720,
+        "audio": true
+      }
     },
     {
       "id": "E44",
@@ -1458,7 +1662,10 @@
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:video-quality-review",
-      "source_result": "quality-review.json"
+      "source_result": "quality-review.json",
+      "source_result_probe": {
+        "kind": "text"
+      }
     }
   ]
 }
