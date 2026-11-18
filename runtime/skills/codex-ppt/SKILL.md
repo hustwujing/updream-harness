@@ -33,6 +33,8 @@ Use this when the user wants a visually unified presentation and accepts full-sl
 
 Prefer the built-in image generation/editing tool. Use `scripts/image_gen.py` only when the built-in backend is unavailable, lacks a required capability, or the user explicitly asks for API/CLI mode.
 
+In the isolated sandbox-harness platform, `image.generate` in `sandbox-job catalog` is the built-in image backend. When it is present and authorized, submit the sample or slide batch as Provider members with `sandbox-job prepare`, end the current execution, and continue from the durable Child continuation. Do not use `scripts/image_gen.py` to call a public image API, and do not treat `OPENAI_API_KEY` in this environment as a public Provider credential. Use the returned frozen Artifact paths for assembly.
+
 ## Hard Constraints
 
 - Read the relevant `Reference Map` files before each phase. This file is the orchestration contract; detailed rules live in `docs/` and worker prompts in `prompts/`.

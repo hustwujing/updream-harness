@@ -14,10 +14,10 @@
     "evidence_root": ".data/evidence/real-campaign",
     "forbid_case_specific_product_fixes": true
   },
-  "runnable_case_count": 151,
+  "runnable_case_count": 152,
   "business_case_count": 78,
   "inherited_protocol_case_count": 51,
-  "parallel_case_count": 22,
+  "parallel_case_count": 23,
   "cases": [
     {
       "id": "S01",
@@ -6987,6 +6987,37 @@
         "delegation",
         "overlap",
         "continuation"
+      ],
+      "provenance": "parallel-design"
+    },
+    {
+      "id": "P24",
+      "title": "Child受限Operation续接",
+      "complexity": "parallel_protocol",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "Child Harness 使用父级预授权的 image.segment 下级 JobGroup，等待真实 Operation 完成后恢复同一会话并交付透明 PNG。",
+      "expect": {
+        "nested_operation": "image.segment",
+        "child_resumed": true,
+        "delivery": "segmented-person.png"
+      },
+      "content_checks": [
+        "真实 image.segment Operation 执行",
+        "透明和可见 alpha 像素同时存在",
+        "下级组结果返回原 Child 而不是 Primary"
+      ],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_browser_or_api",
+      "executor": "parallel_protocol",
+      "required_features": [
+        "child_tool_group",
+        "image_segment",
+        "child_continuation",
+        "artifact_delivery"
       ],
       "provenance": "parallel-design"
     }

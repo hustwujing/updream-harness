@@ -41,6 +41,11 @@ class ChildExecutionBackend(Protocol):
                       status:AdapterStatus,receipt:dict[str,Any])->dict[str,Any]: ...
 
 
+class ChildOutputContractError(RuntimeError):
+    def __init__(self,code:str,summary:str):
+        super().__init__(code);self.result={'error_code':code,'child_summary':summary[:65536]}
+
+
 class JobGrantFactory:
     def __init__(self,settings):self.settings=settings;self.authority=GrantAuthority(settings.gateway_signing_key)
     async def __call__(self,context:JobExecutionContext,reservation,sandbox_id:str):
@@ -51,7 +56,10 @@ class JobGrantFactory:
         output_scopes=tuple(f'{value.artifact_role}:{value.output_disposition.value}'
             for value in request.expected_outputs)
         model_routes=((f'/v1/models/{harness.value}',) if request.kind.value=='harness' else ())
+        tool_routes=(('/v1/execution/catalog','/v1/job-group-drafts','/v1/job-groups','/v1/jobs')
+            if capability_ids or len(operation_ids)>1 else ())
         routes=(*model_routes,'/v1/job-artifacts','/v1/telemetry',
+            *tool_routes,
             *(('/v1/media',) if capability_ids else ()),
             *(('/v1/public-http',) if request.network_origins else ()))
         token_budget=max(1,int(request.budget_requirements.get('model_tokens',
@@ -68,6 +76,7 @@ class JobGrantFactory:
             child_profile_ids=(request.child_profile_id,),runtime_profile_ids=(request.runtime_profile_id,),
             network_origins=request.network_origins,output_scopes=output_scopes,budget=request.budget_requirements))
         operations=(*(('model',) if request.kind.value=='harness' else ()),
+            *(('check',) if tool_routes else ()),
             *(('emit',) if request.expected_outputs else ()))
         return self.authority.issue_job(parent,JobGrantRequest(group_id=context.job.group_id,
             job_id=context.job.id,generation=context.generation,source_identity=sandbox_id,
@@ -102,6 +111,11 @@ class HarnessJobAdapter(BaseJobAdapter):
                 +json.dumps(context.get('candidates',[]),sort_keys=True)+'\n'
                 'artifact_digests must exactly equal: '
                 +json.dumps(context.get('artifact_digests',[]),sort_keys=True))
+        inputs='\n'.join(f'- artifact_id={value.artifact_id}; role={value.artifact_role}; '
+            f'materialized_path=assets/inputs/{value.artifact_role}-{value.artifact_id}'
+            for value in request.input_artifacts)
+        if inputs:
+            objective+='\n\nFrozen input bindings (use these exact materialized paths):\n'+inputs
         contracts=[value.model_dump(mode='json') for value in request.expected_outputs]
         if not contracts:
             return (objective+'\n\nFrozen output contract: text-only. Return the complete result in your final '
@@ -358,7 +372,11 @@ class OpenSandboxChildBackend:
             if str(exc)!='child_sandbox_unavailable':raise
             return AdapterStatus(True,JobState.FAILED,{
                 'error_code':'child_sandbox_lost','sandbox_id':str(receipt.get('sandbox_id',''))})
-        value=await self.runtime.execution_status(sandbox,external_execution_id)
+        continuation_method=getattr(self.store,'child_continuation',None)
+        continuation=await continuation_method(context.job.id) if continuation_method else None
+        current_execution_id=(continuation.get('resume_execution_id')
+            if continuation and continuation.get('resume_execution_id') else external_execution_id)
+        value=await self.runtime.execution_status(sandbox,current_execution_id)
         if not value:
             try:await self.pool.backend.get(sandbox.id)
             except SandboxNotFound:
@@ -366,9 +384,37 @@ class OpenSandboxChildBackend:
                 return AdapterStatus(True,JobState.FAILED,{
                     'error_code':'child_sandbox_lost','sandbox_id':sandbox.id})
             return AdapterStatus(False)
-        self._ensure_collector(context,sandbox,external_execution_id)
+        self._ensure_collector(context,sandbox,current_execution_id)
         result=value.get('result')
         if result is None:return AdapterStatus(False)
+        if continuation and continuation['state']=='ready':
+            resumed_id=f"{context.job.id}:{context.generation}:group:{continuation['group_id']}"
+            materialized=[]
+            for artifact in await self.store.child_continuation_artifacts(continuation['group_id']):
+                path=f"artifacts/subjobs/{artifact['job_id']}/{artifact['filename']}"
+                iterator=self.objects.iter_bytes(artifact['object_ref'],maximum=self.settings.max_artifact_bytes)
+                sentinel=object()
+                async def chunks(iterator=iterator,sentinel=sentinel):
+                    while True:
+                        chunk=await asyncio.to_thread(next,iterator,sentinel)
+                        if chunk is sentinel:return
+                        yield chunk
+                await self.runtime.put_project_file_stream(sandbox,path,chunks(),
+                    size=artifact['size'],mime=artifact['mime'])
+                materialized.append({**artifact,'materialized_path':path})
+            message=("[subordinate_job_group_completed] Factual durable tool results. Inspect the "
+                "returned Artifacts, continue the frozen objective, and do not repeat the tool call: "+
+                json.dumps({**continuation['result'],'materialized_artifacts':materialized},
+                    ensure_ascii=False,sort_keys=True,separators=(',',':')))
+            await self.runtime.start_execution(sandbox,message=message,attachments=[],
+                native_thread_id=str(result.get('native_thread_id') or ''),
+                reasoning_effort=str(context.request.parameters.get('reasoning_effort','high')),
+                execution_id=resumed_id,input_id=continuation['outbox_id'])
+            await self.store.mark_child_continuation_resumed(continuation['id'],resumed_id)
+            self._ensure_collector(context,sandbox,resumed_id)
+            return AdapterStatus(False)
+        has_open=getattr(self.store,'child_has_open_group',None)
+        if has_open and await has_open(context.job.id):return AdapterStatus(False)
         status=result.get('status')
         state={'completed':JobState.SUCCEEDED,'failed':JobState.FAILED,
             'cancelled':JobState.CANCELLED,'blocked':JobState.BLOCKED,
@@ -395,7 +441,13 @@ class OpenSandboxChildBackend:
 
     async def collect(self,context:JobExecutionContext,external_execution_id:str,
                       status:AdapterStatus,receipt:dict[str,Any])->dict[str,Any]:
-        if status.state!=JobState.SUCCEEDED:return status.result
+        list_activities=getattr(self.store,'list_job_activities',None)
+        activities=(await list_activities(context.job.id,0,1000)
+            if list_activities and getattr(context,'job',None) else [])
+        child_summary=''.join(str(row.get('summary') or '') for row in activities
+            if row.get('kind')=='text_delta')[-65536:]
+        if status.state!=JobState.SUCCEEDED:return {**status.result,
+            **({'child_summary':child_summary} if child_summary else {})}
         sandbox=await self._sandbox(context,receipt)
         items=await self.runtime.artifacts(sandbox,context.job.id)
         by_path={str(item['path']):item for item in items}
@@ -445,10 +497,16 @@ class OpenSandboxChildBackend:
             finally:staged.remove()
             emitted.append(output.model_dump(mode='json'));roles.add(role)
         collections=[]
-        for role in sorted(roles):
-            collections.append(await self.store.finalize_job_artifact_collection(
-                context.job.id,context.generation,role))
-        return {**status.result,'artifacts':emitted,'collections':collections}
+        try:
+            for role in sorted(contracts):
+                collections.append(await self.store.finalize_job_artifact_collection(
+                    context.job.id,context.generation,role))
+        except RuntimeError as exc:
+            if str(exc)=='artifact_collection_cardinality_invalid':
+                raise ChildOutputContractError('required_child_output_missing',child_summary) from exc
+            raise
+        return {**status.result,'child_summary':child_summary,
+            'artifacts':emitted,'collections':collections}
 
     async def cleanup(self,context:JobExecutionContext,external_execution_id:str,
                       receipt:dict[str,Any])->None:

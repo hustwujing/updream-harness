@@ -817,6 +817,20 @@ class JobOutboxRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class ChildContinuationRow(Base):
+    __tablename__ = "child_job_continuations"
+    __table_args__ = (UniqueConstraint("group_id"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    parent_job_id: Mapped[str] = mapped_column(String(32), index=True)
+    group_id: Mapped[str] = mapped_column(String(32), index=True)
+    outbox_id: Mapped[str] = mapped_column(String(32), index=True)
+    state: Mapped[str] = mapped_column(String(24), index=True)
+    result_json: Mapped[str] = mapped_column(Text)
+    resume_execution_id: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class BudgetAccountRow(Base):
     __tablename__ = "budget_accounts"
     __table_args__ = (UniqueConstraint("owner_id", "thread_id", "budget_key"),)
@@ -2058,6 +2072,77 @@ class Store:
         async with self.connections() as db:
             row = await db.get(JobGroupRow, group_id)
             return self.job_group_view(row) if row else None
+
+    async def child_parent_for_group(self,group_id:str)->str:
+        async with self.connections() as db:
+            encoded=(await db.execute(select(AuthorizationSnapshotRow.snapshot_json).join(
+                JobGroupRow,JobGroupRow.authorization_snapshot_id==AuthorizationSnapshotRow.id).where(
+                JobGroupRow.id==group_id))).scalar_one_or_none()
+        if not encoded:return ''
+        try:value=json.loads(encoded)
+        except (TypeError,ValueError):return ''
+        identity=value.get('parent_job_id','')
+        return identity if isinstance(identity,str) else ''
+
+    async def ready_child_continuation(self,parent_job_id:str,group_id:str,outbox_id:str,
+                                       result:dict)->None:
+        async with self.connections.begin() as db:
+            existing=(await db.execute(select(ChildContinuationRow).where(
+                ChildContinuationRow.group_id==group_id).with_for_update())).scalar_one_or_none()
+            if existing:return
+            db.add(ChildContinuationRow(id=identifier(),parent_job_id=parent_job_id,
+                group_id=group_id,outbox_id=outbox_id,state='ready',
+                result_json=canonical_json(result),resume_execution_id='',
+                created_at=now(),updated_at=now()))
+
+    async def child_continuation(self,parent_job_id:str)->dict|None:
+        async with self.connections() as db:
+            row=(await db.execute(select(ChildContinuationRow).where(
+                ChildContinuationRow.parent_job_id==parent_job_id).order_by(
+                ChildContinuationRow.created_at.desc()).limit(1))).scalar_one_or_none()
+        if not row:return None
+        return {'id':row.id,'group_id':row.group_id,'outbox_id':row.outbox_id,
+            'state':row.state,'result':json.loads(row.result_json),
+            'resume_execution_id':row.resume_execution_id}
+
+    async def child_continuation_artifacts(self,group_id:str)->list[dict]:
+        async with self.connections() as db:
+            rows=(await db.execute(select(JobArtifactRow,JobRow.id).join(
+                JobRow,JobRow.id==JobArtifactRow.job_id).where(
+                JobRow.group_id==group_id).order_by(JobRow.local_job_id,
+                JobArtifactRow.artifact_role,JobArtifactRow.position))).all()
+        return [{'job_id':job_id,'artifact_id':row.artifact_id,'filename':row.filename,
+            'object_ref':row.object_ref,'size':row.size,'mime':row.mime,
+            'artifact_role':row.artifact_role} for row,job_id in rows]
+
+    async def mark_child_continuation_resumed(self,identity:str,execution_id:str)->None:
+        async with self.connections.begin() as db:
+            row=await db.get(ChildContinuationRow,identity,with_for_update=True)
+            if not row:raise KeyError('child_continuation_not_found')
+            if row.resume_execution_id and row.resume_execution_id!=execution_id:
+                raise RuntimeError('child_continuation_execution_conflict')
+            row.resume_execution_id=execution_id;row.state='resumed';row.updated_at=now()
+
+    async def child_has_open_group(self,parent_job_id:str)->bool:
+        async with self.connections() as db:
+            snapshots=(await db.execute(select(AuthorizationSnapshotRow.snapshot_json,JobGroupRow.state).join(
+                JobGroupRow,JobGroupRow.authorization_snapshot_id==AuthorizationSnapshotRow.id).where(
+                JobGroupRow.state.in_([JobGroupState.COMMITTED.value,JobGroupState.RUNNING.value,
+                    JobGroupState.TERMINAL.value])))).all()
+            drafts=(await db.execute(select(JobGroupDraftRow.request_json,JobGroupDraftRow.state).where(
+                JobGroupDraftRow.state.in_([JobGroupDraftState.DRAFT.value,
+                    JobGroupDraftState.AWAITING_CONFIRMATION.value,
+                    JobGroupDraftState.CONFIRMED.value])))).all()
+        for encoded,state in snapshots:
+            try:match=json.loads(encoded).get('parent_job_id')==parent_job_id
+            except (TypeError,ValueError):match=False
+            if match and state!=JobGroupState.CONTINUED.value:return True
+        for encoded,state in drafts:
+            try:match=JobGroupCreate.model_validate_json(encoded).authorization_snapshot.get(
+                'parent_job_id')==parent_job_id
+            except (TypeError,ValueError):match=False
+            if match and state!=JobGroupDraftState.REJECTED.value:return True
+        return False
 
     async def get_job_group_for_owner(self, group_id: str, owner_id: str) -> JobGroupView | None:
         async with self.connections() as db:

@@ -17,8 +17,28 @@ describe('API boundary',()=>{
   globalThis.document={baseURI:'https://example.test/sandbox-harness-platform-parallel/'};
   globalThis.fetch=vi.fn(async()=>new Response(JSON.stringify({detail:'authentication_required'}),{
    status:401,headers:{'x-request-id':'request-1'}}));
-  await expect(api('threads')).rejects.toMatchObject({status:401,code:'authentication_required',
+ await expect(api('threads')).rejects.toMatchObject({status:401,code:'authentication_required',
    requestId:'request-1',message:'请先登录。（排查编号：request-1）'});
+ });
+ it('never exposes an HTML proxy error body',async()=>{
+  globalThis.document={baseURI:'https://example.test/sandbox-harness-platform-parallel/'};
+  globalThis.fetch=vi.fn(async()=>new Response('<!doctype html><title>502 Bad Gateway</title>',{
+   status:502,headers:{'content-type':'text/html','x-request-id':'request-502'}}));
+  await expect(api('threads')).rejects.toMatchObject({status:502,code:'service_temporarily_unavailable',
+   requestId:'request-502',message:'服务暂时不可用，正在恢复。（排查编号：request-502）'});
+ });
+ it('does not expose a plain-text upstream response',async()=>{
+  globalThis.document={baseURI:'https://example.test/sandbox-harness-platform-parallel/'};
+  globalThis.fetch=vi.fn(async()=>new Response('internal upstream address: secret',{
+   status:503,headers:{'content-type':'text/plain'}}));
+  await expect(api('threads')).rejects.toMatchObject({status:503,
+   code:'service_temporarily_unavailable',message:'服务暂时不可用，正在恢复。'});
+ });
+ it('maps a browser network failure to a bounded public error',async()=>{
+  globalThis.document={baseURI:'https://example.test/sandbox-harness-platform-parallel/'};
+  globalThis.fetch=vi.fn(async()=>{throw new TypeError('Failed to fetch internal host')});
+  await expect(api('threads')).rejects.toMatchObject({code:'service_connection_failed',
+   message:'服务连接暂时中断，正在重试。'});
  });
 });
 

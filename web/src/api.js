@@ -1,8 +1,22 @@
 export function apiUrl(path){return new URL(`api/${path}`,document.baseURI).toString();}
 
+const errorLabels={authentication_required:'请先登录。',invalid_credentials:'账号或密码不正确。',login_rate_limited:'尝试次数过多，请稍后再试。',username_taken:'该用户名已被使用。',active_work_prevents_registration:'当前仍有任务执行，请等待结束后注册。',already_authenticated:'当前已经登录。',registration_not_available:'FRPC 入口不开放注册。',account_action_not_available:'FRPC 入口不允许修改用户名。',duplicate_attachment_filename:'不能同时发送两个同名文件，请先重命名其中一个文件。',input_delivery_failed:'追加消息未能确认送达，请查看消息状态后再继续。',interaction_delivery_failed:'回答暂未确认送达，请稍后重试。',interaction_delivery_unknown:'回答可能已经送达，系统不会自动重复发送；请等待任务状态更新或重新进入会话核对。',interaction_response_in_progress:'回答正在处理中，请稍后重试。',interaction_response_conflict:'上一次回答尚未确认，请先重试原回答，不能更改为不同决定。',interaction_expired:'该确认已失效，请按当前任务状态继续。',turn_not_accepting_input:'本轮已进入收尾，请发送到下一轮。',sandbox_takeover_active:'请先保存并释放沙箱，再修改项目文件或继续执行。',managed_project_file_read_only:'托管输入和成果不能直接覆盖，请通过版本操作更新。',managed_files_modified:'托管文件已发生变化，请重新选择释放时的处理方式。',managed_file_changed_during_release:'托管文件在保存过程中再次变化，请检查后重试。',active_turn_prevents_sandbox_takeover:'当前任务仍在执行，请使用“停止并接管”。',sandbox_takeover_waiting_for_turn_cleanup:'任务正在清理，请稍后再次接管。',sandbox_takeover_required:'请先接管沙箱。',sandbox_not_running:'沙箱当前未运行，请先恢复环境。',sandbox_checkpoint_retryable:'保存检查点暂时失败，沙箱仍保留；请重试释放。',sandbox_checkpoint_unavailable:'沙箱已不可用，无法创建新的检查点。确认后可使用上一检查点完成释放。',sandbox_release_in_progress:'沙箱正在释放，请继续当前释放流程。',sandbox_port_not_listening:'沙箱端口当前没有监听服务。',sandbox_port_not_previewable:'该端口属于系统保留端口，不能预览。'};
+
+async function responseError(response){
+ const raw=await response.text(),contentType=(response.headers.get('content-type')||'').toLowerCase();
+ let detail='';
+ try{const parsed=JSON.parse(raw);detail=parsed&&typeof parsed==='object'?parsed.detail||'':''}catch{}
+ const validation=Array.isArray(detail)?detail.map(item=>item?.msg||'').find(Boolean):'';
+ if(validation.includes('Duplicate attachment filename'))detail='duplicate_attachment_filename';
+ const unavailable=[502,503,504].includes(response.status),code=unavailable?'service_temporarily_unavailable':typeof detail==='string'&&detail?detail:'request_failed';
+ const message=unavailable?'服务暂时不可用，正在恢复。':errorLabels[code]||(detail&&typeof detail==='string'?'请求暂时无法完成，请重试。':`请求失败（HTTP ${response.status}）。`);
+ const error=new Error(message);error.code=code;error.status=response.status;error.requestId=response.headers.get('x-request-id');error.traceId=response.headers.get('x-trace-id');if(error.requestId)error.message+=`（排查编号：${error.requestId}）`;return error;
+}
+
 export async function api(path,options={}){
-  const response=await fetch(apiUrl(path),{...options,headers:{...(options.body instanceof Blob?{}:{'Content-Type':'application/json'}),...(options.headers||{})}});
-  if(!response.ok){const raw=await response.text();let detail=raw;try{detail=JSON.parse(raw).detail||raw}catch{}const validation=Array.isArray(detail)?detail.map(item=>item?.msg||'').find(Boolean):'';if(validation.includes('Duplicate attachment filename'))detail='duplicate_attachment_filename';const labels={authentication_required:'请先登录。',invalid_credentials:'账号或密码不正确。',login_rate_limited:'尝试次数过多，请稍后再试。',username_taken:'该用户名已被使用。',active_work_prevents_registration:'当前仍有任务执行，请等待结束后注册。',already_authenticated:'当前已经登录。',registration_not_available:'FRPC 入口不开放注册。',account_action_not_available:'FRPC 入口不允许修改用户名。',duplicate_attachment_filename:'不能同时发送两个同名文件，请先重命名其中一个文件。',input_delivery_failed:'追加消息未能确认送达，请查看消息状态后再继续。',interaction_delivery_failed:'回答暂未确认送达，请稍后重试。',interaction_delivery_unknown:'回答可能已经送达，系统不会自动重复发送；请等待任务状态更新或重新进入会话核对。',interaction_response_in_progress:'回答正在处理中，请稍后重试。',interaction_response_conflict:'上一次回答尚未确认，请先重试原回答，不能更改为不同决定。',interaction_expired:'该确认已失效，请按当前任务状态继续。',turn_not_accepting_input:'本轮已进入收尾，请发送到下一轮。',sandbox_takeover_active:'请先保存并释放沙箱，再修改项目文件或继续执行。',managed_project_file_read_only:'托管输入和成果不能直接覆盖，请通过版本操作更新。',managed_files_modified:'托管文件已发生变化，请重新选择释放时的处理方式。',managed_file_changed_during_release:'托管文件在保存过程中再次变化，请检查后重试。',active_turn_prevents_sandbox_takeover:'当前任务仍在执行，请使用“停止并接管”。',sandbox_takeover_waiting_for_turn_cleanup:'任务正在清理，请稍后再次接管。',sandbox_takeover_required:'请先接管沙箱。',sandbox_not_running:'沙箱当前未运行，请先恢复环境。',sandbox_checkpoint_retryable:'保存检查点暂时失败，沙箱仍保留；请重试释放。',sandbox_checkpoint_unavailable:'沙箱已不可用，无法创建新的检查点。确认后可使用上一检查点完成释放。',sandbox_release_in_progress:'沙箱正在释放，请继续当前释放流程。',sandbox_port_not_listening:'沙箱端口当前没有监听服务。',sandbox_port_not_previewable:'该端口属于系统保留端口，不能预览。'};const error=new Error(labels[detail]|| (typeof detail==='string'?detail:'请求参数不符合要求'));error.code=detail;error.status=response.status;error.requestId=response.headers.get('x-request-id');error.traceId=response.headers.get('x-trace-id');if(error.requestId)error.message+=`（排查编号：${error.requestId}）`;throw error;}
+  let response;
+  try{response=await fetch(apiUrl(path),{...options,headers:{...(options.body instanceof Blob?{}:{'Content-Type':'application/json'}),...(options.headers||{})}})}catch{const error=new Error('服务连接暂时中断，正在重试。');error.code='service_connection_failed';throw error}
+  if(!response.ok)throw await responseError(response);
   return response.status===204?null:response.json();
 }
 
@@ -70,7 +84,7 @@ export const stopAllThread=id=>api(`threads/${id}/stop-all`,{method:'POST'});
 export const getSandbox=id=>api(`threads/${id}/sandbox`);
 export const restoreSandbox=id=>api(`threads/${id}/sandbox/restore`,{method:'POST'});
 export const listSandboxFiles=(id,path='project',depth=2)=>api(`threads/${id}/sandbox/files?path=${encodeURIComponent(path)}&depth=${depth}`);
-export const readSandboxFile=async(id,path)=>{const response=await fetch(apiUrl(`threads/${id}/sandbox/file?path=${encodeURIComponent(path)}`));const text=await response.text();if(!response.ok)throw new Error(text||'文件读取失败');return {text,mime:response.headers.get('content-type')||'text/plain'}};
+export const readSandboxFile=async(id,path)=>{let response;try{response=await fetch(apiUrl(`threads/${id}/sandbox/file?path=${encodeURIComponent(path)}`))}catch{const error=new Error('服务连接暂时中断，正在重试。');error.code='service_connection_failed';throw error}if(!response.ok)throw await responseError(response);return {text:await response.text(),mime:response.headers.get('content-type')||'text/plain'}};
 export const writeSandboxFile=(id,path,text,mime='text/plain')=>api(`threads/${id}/sandbox/file?path=${encodeURIComponent(path)}`,{method:'PUT',body:new Blob([text],{type:mime}),headers:{'Content-Type':mime}});
 export const listSandboxProcesses=id=>api(`threads/${id}/sandbox/processes`);
 export const stopSandboxProcess=(id,pid)=>api(`threads/${id}/sandbox/processes/${pid}/stop`,{method:'POST'});

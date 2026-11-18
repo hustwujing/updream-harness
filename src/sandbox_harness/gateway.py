@@ -470,6 +470,8 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     @app.post("/v1/job-group-drafts")
     async def runtime_prepare_job_group(value: JobGroupCreate, request: Request):
         claims = await authorize_runtime_request(request, "/v1/job-group-drafts")
+        try:value=JobCoordinator.scope_child_group(value,claims)
+        except ValueError as exc:raise HTTPException(403,str(exc)) from exc
         if value.thread_id != claims.thread_id or value.origin_turn_id != claims.turn_id:
             raise HTTPException(403, "JobGroup identity is outside Turn capability")
         try:

@@ -100,6 +100,13 @@ def test_child_prompt_freezes_output_contract_and_reviewer_verdict_path():
     assert '/workspace/outputs' in text_only
 
 
+def test_child_prompt_names_exact_materialized_input_paths():
+    bound=request(input_artifacts=({'artifact_id':'a'*32,'artifact_role':'source'},))
+    prompt=HarnessJobAdapter.execution_prompt(bound)
+    assert 'assets/inputs/source-'+'a'*32 in prompt
+    assert 'artifact_id='+'a'*32 in prompt
+
+
 async def test_opensandbox_child_collects_output_into_atomic_delivery(tmp_path):
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'collect.db'));await store.initialize()
     profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
@@ -135,6 +142,29 @@ async def test_opensandbox_child_collects_output_into_atomic_delivery(tmp_path):
         assert len(artifacts)==1 and artifacts[0].output_disposition==OutputDisposition.DELIVERY
         files=await store.current_project_files(thread.id,'owner')
         assert [value.path for value in files]==['artifacts/jobs/'+job.id+'/result.png']
+    finally:await store.close()
+
+
+async def test_opensandbox_child_cannot_succeed_without_required_artifact(tmp_path):
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'missing-output.db'));await store.initialize()
+    expected=JobExpectedOutput(artifact_role='images',output_disposition=OutputDisposition.DELIVERY,
+        min_items=1,max_items=2,mime_patterns=('image/png',))
+    _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id='c'*32,
+        origin_turn_id='d'*32,idempotency_key='missing-output-group',jobs=[request(expected_outputs=(expected,))]))
+    job=await store.get_job(jobs[0].id);frozen=await store.get_job_request(job.id)
+    class Runtime:
+        async def artifacts(self,*args):return []
+    sandbox=Sandbox(id='sandbox-1',harness=Harness.CODEX,image='image',runtime_url='http://runtime',metadata={})
+    backend=OpenSandboxChildBackend(pool=SimpleNamespace(),runtime=Runtime(),store=store,
+        objects=ObjectStore(tmp_path/'objects'),settings=Settings(backend='fake',data_root=tmp_path),
+        token_factory=lambda *args:None);backend.sessions[job.id]=sandbox
+    try:
+        await store.append_job_activity(job.id,1,'text_delta',{'text':'缺少受控图片能力'})
+        with pytest.raises(RuntimeError,match='required_child_output_missing') as raised:
+            await backend.collect(JobExecutionContext(job=job,request=frozen,generation=0,
+                previous_acceptance_receipt={'sandbox_id':sandbox.id}),'execution',
+                AdapterStatus(True,JobState.SUCCEEDED,{}),{'sandbox_id':sandbox.id})
+        assert raised.value.result['child_summary']=='缺少受控图片能力'
     finally:await store.close()
 
 
@@ -231,6 +261,33 @@ async def test_failed_child_result_does_not_reopen_missing_sandbox(tmp_path):
     result=await backend.collect(SimpleNamespace(), 'execution',
         AdapterStatus(True,JobState.FAILED,{'error_code':'child_sandbox_lost'}),{})
     assert result=={'error_code':'child_sandbox_lost'}
+
+
+async def test_child_resumes_same_native_session_with_nested_group_results(tmp_path):
+    sandbox=Sandbox(id='sandbox-child',harness=Harness.CODEX,image='image',runtime_url='http://runtime',metadata={})
+    class Store:
+        marked=[]
+        async def child_continuation(self,job_id):return {'id':'continuation','group_id':'g'*32,
+            'outbox_id':'o'*32,'state':'ready','result':{'results':[{'state':'SUCCEEDED'}]},
+            'resume_execution_id':''}
+        async def mark_child_continuation_resumed(self,*args):self.marked.append(args)
+        async def child_continuation_artifacts(self,*args):return []
+        async def child_has_open_group(self,*args):return False
+        async def list_job_activities(self,*args):return []
+    class Runtime:
+        started=[]
+        async def execution_status(self,*args):return {'result':{'status':'completed','native_thread_id':'native-child'}}
+        async def start_execution(self,*args,**kwargs):self.started.append(kwargs);return {'accepted':True}
+        async def resume(self,*args,**kwargs):
+            if False:yield None
+    store=Store();runtime=Runtime();backend=OpenSandboxChildBackend(pool=SimpleNamespace(),runtime=runtime,
+        store=store,objects=SimpleNamespace(),settings=Settings(backend='fake',data_root=tmp_path),
+        token_factory=lambda *args:None);backend.sessions['j'*32]=sandbox
+    context=SimpleNamespace(job=SimpleNamespace(id='j'*32),generation=1,
+        request=request(parameters={'objective':'continue','harness':'codex','reasoning_effort':'high'}))
+    status=await backend.status(context,'initial-execution',{'sandbox_id':sandbox.id})
+    assert not status.terminal and runtime.started[0]['native_thread_id']=='native-child'
+    assert store.marked[0][1]=='j'*32+':1:group:'+'g'*32
 
 
 async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(tmp_path):

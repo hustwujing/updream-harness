@@ -103,6 +103,7 @@ class ModelActivity:
             RuntimeEvent(kind=EventKind.STEP_STARTED, payload={
                 'name': f'等待 {self.claims.model} 响应', 'model': self.claims.model,
                 'model_request_id': self.request_id, 'phase': 'waiting',
+                'job_id': getattr(self.claims,'job_id',''),
             }), 'gateway:' + self.request_id))
         if event:
             self.item_id = event.item_id
@@ -128,6 +129,7 @@ class ModelActivity:
         elapsed = round((time.monotonic() - self.started) * 1000)
         await self._observe(self.store.update_model_activity(self.item_id, phase=phase, status=status,
             payload={'model': self.claims.model, 'model_request_id': self.request_id,
+                     'job_id':getattr(self.claims,'job_id',''),
                      'first_output_ms': self.first_output_ms, 'header_ms': self.header_ms,
                      'elapsed_ms': elapsed, **extra}))
 

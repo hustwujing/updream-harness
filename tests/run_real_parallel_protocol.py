@@ -683,16 +683,81 @@ async def case_p23(client,args):
     finally:await store.close()
 
 
+async def case_p24(client,args):
+    identity='P24-'+uuid.uuid4().hex[:8];asset=ROOT/'tests/real_cases/assets/portrait.png'
+    upload=require(await client.post('api/uploads',params={'name':asset.name,'mime':'image/png'},
+        content=asset.read_bytes())).json()
+    thread=require(await client.post('api/threads',json={'harness':args.harness,'model':args.model,
+        'reasoning_level':args.reasoning,'title':'Child scoped image.segment'})).json()
+    turn=require(await client.post(f"api/threads/{thread['id']}/turns",json={
+        'message':'确认输入素材并等待后续受控子任务。','attachments':[upload],
+        'idempotency_key':'protocol-'+identity,'delivery_mode':'start'})).json()
+    await wait_turn(client,turn['id'],args.timeout)
+    catalog=require(await client.get('api/catalog/execution')).json()
+    settings=load_platform_settings()
+    from sandbox_harness.store import Store
+    input_store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    try:
+        owner=(await input_store.get_thread(thread['id'])).owner_id
+        frozen=await input_store.turn_input_artifacts(turn['id'],owner)
+        catalog['input_artifacts']=[{'artifact_id':row['artifact'].id,
+            'project_path':row['project_path']} for row in frozen]
+    finally:await input_store.close()
+    source=next(row for row in catalog['input_artifacts'] if row.get('project_path')=='assets/portrait.png')
+    from sandbox_runtime.job_cli import compile_delegation
+    objective=(f"Use frozen Artifact {source['artifact_id']} and the registered image.segment Operation. "
+        "Run sandbox-job catalog, then sandbox-job prepare one subordinate Operation Job with prompt person, "
+        "input role source, and foreground/mask/segmentation_report outputs. End this execution after prepare. "
+        "When the durable continuation returns, use materialized_artifacts to copy the foreground PNG to "
+        "/workspace/outputs/segmented-person.png, verify it has transparent and visible alpha pixels, and finish.")
+    compiled=compile_delegation({'tasks':[{'id':'segment-child','objective':objective,
+        'inputs':[source['artifact_id']],'skill_ids':['media-processing'],
+        'operation_ids':['image.segment'],'result_mode':'artifacts','output_disposition':'delivery',
+        'mime_patterns':['image/png']}]},catalog,{'HARNESS_THREAD_ID':thread['id'],
+        'HARNESS_TURN_ID':turn['id'],'HARNESS_KIND':args.harness,'HARNESS_MODEL':args.model})
+    prepared=require(await client.post('api/job-group-drafts',json=compiled)).json()
+    parent_job=prepared['jobs'][0]
+    deadline=time.monotonic()+args.timeout;nested_draft=None
+    while time.monotonic()<deadline:
+        drafts=require(await client.get(f"api/threads/{thread['id']}/job-group-drafts")).json()
+        nested_draft=next((row for row in drafts if row.get('state')=='AWAITING_CONFIRMATION'
+            and row.get('id')!=prepared.get('draft',{}).get('id')),None)
+        if nested_draft:break
+        current=require(await client.get(f"api/jobs/{parent_job['id']}")).json()
+        if current['state'] in TERMINAL_JOBS:raise AssertionError('Child ended before subordinate draft: '+json.dumps(current))
+        await asyncio.sleep(1)
+    if not nested_draft:raise TimeoutError('nested_operation_confirmation_timeout')
+    require(await client.post(f"api/job-group-drafts/{nested_draft['id']}/confirm"))
+    child=await wait_job(client,parent_job['id'],args.timeout)
+    if child['state']!='SUCCEEDED':raise AssertionError('Child did not resume successfully: '+json.dumps(child))
+    from sqlalchemy import select
+    from sandbox_harness.store import Store,JobRow
+    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    try:
+        async with store.connections() as db:
+            operations=list((await db.execute(select(JobRow).where(JobRow.thread_id==thread['id'],
+                JobRow.descriptor_id=='image.segment'))).scalars().all())
+        if len(operations)!=1 or operations[0].state!='SUCCEEDED':
+            raise AssertionError('Nested image.segment did not succeed')
+        artifacts=await store.list_job_artifacts(parent_job['id'])
+        if not any(row.filename=='segmented-person.png' for row in artifacts):
+            raise AssertionError('Child delivery was not published')
+        return {'classification':'success','thread_id':thread['id'],'parent_job_id':parent_job['id'],
+            'nested_operation_job_id':operations[0].id,'child_resumed':True,
+            'delivery_names':[row.filename for row in artifacts]}
+    finally:await store.close()
+
+
 HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case_p05,
     'P06':case_p06,'P07':case_p07,'P08':case_p08,'P09':case_p09,'P10':case_p10,
     'P11':case_p11,'P12':case_p12,'P13':case_p13,'P14':case_p14,'P15':case_p15,
     'P16':case_p16,'P17':case_p17,'P18':case_p18,'P19':case_p19,'P20':case_p20,
-    'P21':case_p21,'P22':case_p22,'P23':case_p23}
+    'P21':case_p21,'P22':case_p22,'P23':case_p23,'P24':case_p24}
 
 
 async def main():
     parser=argparse.ArgumentParser();parser.add_argument('--base-url',default='http://127.0.0.1:24766/')
-    parser.add_argument('--case',required=True,choices=[f'P{value:02d}' for value in range(1,24)])
+    parser.add_argument('--case',required=True,choices=[f'P{value:02d}' for value in range(1,25)])
     parser.add_argument('--report',type=Path,required=True);parser.add_argument('--harness',default='codex')
     parser.add_argument('--model',default='gpt-5.6-sol');parser.add_argument('--reasoning',default='deep')
     parser.add_argument('--timeout',type=float,default=1200)

@@ -84,9 +84,10 @@ class JobWorker:
             if not job or job.state in TERMINAL_JOB_STATES:return
             state=JobState.UNKNOWN if job.kind==JobKind.PROVIDER else JobState.FAILED
             try:
+                result=getattr(exc,'result',None) or {'error_code':'worker_internal_error',
+                    'exception_type':type(exc).__name__,'error_detail':str(exc)[:2000]}
                 await self.store.transition_job(job.id,state,expected_generation=attempt.generation,
-                    result={'error_code':'worker_internal_error','exception_type':type(exc).__name__,
-                        'error_detail':str(exc)[:2000]})
+                    result=result)
             except RuntimeError as stale:
                 if str(stale)!='stale_job_generation':raise
                 return

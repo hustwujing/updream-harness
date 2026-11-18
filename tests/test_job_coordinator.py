@@ -1,4 +1,5 @@
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -63,6 +64,21 @@ async def test_free_durable_group_auto_commits_but_inline_operation_is_rejected(
                 thread_id="a"*32,origin_turn_id="b"*32,
                 idempotency_key="inline-group-key",jobs=[job("inline","inline.inspect")]))
     finally:await store.close()
+
+
+def test_child_group_scope_allows_only_pre_authorized_tools():
+    claims=SimpleNamespace(job_id='f'*32,generation=2,thread_id='a'*32,turn_id='b'*32,
+        operation_ids=['free.compute'],capability_ids=['image.generate'])
+    value=JobGroupCreate(thread_id='1'*32,origin_turn_id='2'*32,
+        idempotency_key='child-tool-group',jobs=[job('free')])
+    scoped=JobCoordinator.scope_child_group(value,claims)
+    assert scoped.thread_id==claims.thread_id and scoped.origin_turn_id==claims.turn_id
+    assert scoped.authorization_snapshot['parent_job_id']==claims.job_id
+    with pytest.raises(ValueError,match='child_harness_recursion_forbidden'):
+        JobCoordinator.scope_child_group(value.model_copy(update={'jobs':(JobRequest(
+            local_job_id='nested',kind=JobKind.HARNESS,adapter='child-harness',
+            descriptor_id='delegate.harness',descriptor_version='1',descriptor_digest='d'*64,
+            idempotency_key='nested-harness'),)}),claims)
 
 
 async def test_one_paid_member_holds_complete_mixed_batch_until_single_confirmation(tmp_path):

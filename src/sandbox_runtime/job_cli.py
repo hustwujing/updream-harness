@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -30,6 +31,25 @@ def _value(raw: str) -> dict:
     return value
 
 
+def _job_headers(token:str)->dict[str,str]:
+    try:
+        raw=token.split('.',1)[0];raw+='='*(-len(raw)%4)
+        claims=json.loads(base64.urlsafe_b64decode(raw))
+    except (ValueError,TypeError,json.JSONDecodeError):return {}
+    if claims.get('scope')!='job':return {}
+    mapping={'x-updream-thread-id':'thread_id','x-updream-turn-id':'turn_id',
+        'x-updream-group-id':'group_id','x-updream-job-id':'job_id',
+        'x-updream-job-generation':'generation','x-updream-source-sandbox':'source_identity',
+        'x-updream-descriptor-id':'descriptor_id','x-updream-descriptor-version':'descriptor_version',
+        'x-updream-descriptor-digest':'descriptor_digest','x-updream-child-profile-id':'child_profile_id',
+        'x-updream-runtime-profile-id':'runtime_profile_id'}
+    headers={key:str(claims.get(field,'')) for key,field in mapping.items()}
+    headers.update({'x-updream-operation':'check',
+        'x-updream-artifact-ids':json.dumps(claims.get('artifact_ids',[]),separators=(',',':')),
+        'x-updream-skill-ids':json.dumps(claims.get('skill_ids',[]),separators=(',',':'))})
+    return headers
+
+
 class DelegationTaskSpec(BaseModel):
     model_config=ConfigDict(extra="forbid",frozen=True)
     id:str=Field(min_length=1,max_length=100,pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -40,6 +60,8 @@ class DelegationTaskSpec(BaseModel):
     output_disposition:Literal["candidate","workspace","delivery"]="candidate"
     max_items:int=Field(default=100,ge=1,le=1000)
     mime_patterns:tuple[str,...]=Field(default=(),max_length=100)
+    operation_ids:tuple[str,...]=Field(default=(),max_length=32)
+    capability_ids:tuple[str,...]=Field(default=(),max_length=32)
 
 
 class DelegationGroupSpec(BaseModel):
@@ -75,6 +97,8 @@ def compile_delegation(value:dict,catalog:dict,environment:dict[str,str]|None=No
     template=profile.get("job_template")
     if not isinstance(template,dict):raise ValueError("Child Harness Job template is unavailable")
     skills={item.get("id"):item for item in catalog.get("skills",[])}
+    operations={item.get('id') for item in catalog.get('operations',[])}
+    capabilities={item.get('id') for item in catalog.get('capabilities',[])}
     allowed=set(profile.get("allowed_skill_ids",[]))
     artifacts={}
     for item in catalog.get("input_artifacts",[]):
@@ -89,21 +113,39 @@ def compile_delegation(value:dict,catalog:dict,environment:dict[str,str]|None=No
             if skill_id not in allowed:raise ValueError("Skill is outside child-general: "+skill_id)
             if harness not in skill.get("supported_harnesses",[]):
                 raise ValueError("Skill does not support current Harness: "+skill_id)
+            requirements=list(skill.get('required_capabilities') or [])
+            origins=list((skill.get('network') or {}).get('origins') or skill.get('network_origins') or [])
+            if not set(requirements)<=set(task.capability_ids) or skill.get('requires_gpu'):
+                raise ValueError("Skill requirements are outside child-general: "+skill_id)
             selected.append(skill_id)
         bindings=[]
+        unknown_operations=set(task.operation_ids)-operations
+        unknown_capabilities=set(task.capability_ids)-capabilities
+        if unknown_operations:raise ValueError('Unknown frozen Operation: '+sorted(unknown_operations)[0])
+        if unknown_capabilities:raise ValueError('Unknown frozen Capability: '+sorted(unknown_capabilities)[0])
         for index,reference in enumerate(dict.fromkeys(task.inputs),1):
             artifact=artifacts.get(reference)
             if not artifact:raise ValueError("Input is not a frozen Turn Artifact: "+reference)
             bindings.append({"artifact_id":artifact["artifact_id"],"artifact_role":f"input_{index}"})
         outputs=[] if task.result_mode=="text" else [{
             "artifact_role":"child_deliverables","output_disposition":task.output_disposition,
-            "min_items":0,"max_items":task.max_items,"mime_patterns":list(task.mime_patterns),
+            "min_items":1 if task.result_mode=="artifacts" else 0,
+            "max_items":task.max_items,"mime_patterns":list(task.mime_patterns),
             "max_item_bytes":512*1024*1024,"max_total_bytes":2*1024*1024*1024}]
         task_value=task.model_dump(mode="json")
         jobs.append({**template,"local_job_id":task.id,
             "idempotency_key":"delegate-job-"+_digest({"turn":turn_id,"task":task_value})[:48],
             "parameters":{"harness":harness,"model":model,"objective":task.objective},
             "input_artifacts":bindings,"expected_outputs":outputs,"skill_ids":selected})
+        if task.operation_ids or task.capability_ids:
+            jobs[-1]['resource_requirements']={
+                'required_operation_ids':list(task.operation_ids),
+                'required_capability_ids':list(task.capability_ids)}
+        required_origins=[]
+        for skill_id in selected:
+            skill=skills[skill_id];required_origins.extend(
+                (skill.get('network') or {}).get('origins') or skill.get('network_origins') or [])
+        if required_origins:jobs[-1]['network_origins']=list(dict.fromkeys(required_origins))
     normalized=spec.model_dump(mode="json")
     group={"thread_id":thread_id,"origin_turn_id":turn_id,
         "idempotency_key":spec.idempotency_key or "delegate-"+_digest({
@@ -145,12 +187,13 @@ def main(argv: list[str] | None = None) -> int:
     if not base or not token_file.is_file():
         print(json.dumps({"error": "Harness Gateway capability is not configured"}))
         return 2
-    headers = {"Authorization": "Bearer " + token_file.read_text().strip()}
+    token=token_file.read_text().strip()
+    headers = {"Authorization": "Bearer " + token,**_job_headers(token)}
     try:
         if args.command == "catalog":
             response = httpx.get(base + "/v1/execution/catalog", headers=headers, timeout=20)
         elif args.command in {"prepare","delegate"}:
-            if os.environ.get("HARNESS_CHILD_MODE") == "1":
+            if os.environ.get("HARNESS_CHILD_MODE") == "1" and args.command=="delegate":
                 print(json.dumps({"error":"A Child Harness cannot delegate another JobGroup"}))
                 return 2
             payload=_value(args.request)

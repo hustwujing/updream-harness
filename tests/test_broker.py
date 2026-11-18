@@ -4,6 +4,7 @@ from datetime import timedelta
 from pathlib import Path
 import httpx
 import pytest
+from types import SimpleNamespace
 
 from sandbox_harness.broker import Broker
 from sandbox_harness.catalog import HarnessCatalog
@@ -38,6 +39,26 @@ class Runtime:
         "size":6,"sha256":hashlib.sha256(b"result").hexdigest()}]
     async def artifact(self, sandbox, path, *, maximum): return self.stage(b"result")
     async def cancel(self, sandbox): return {"cancelled": True, "native_thread_id": "native-1"}
+
+
+async def test_orphan_reaper_keeps_provisioning_job_sandbox():
+    sandbox=SimpleNamespace(id='sandbox-job',metadata={'sandbox-harness.io/turn':'job-live'})
+    class Backend:
+        deleted=[]
+        async def list_namespace(self):return [sandbox]
+        async def delete(self,value):self.deleted.append(value.id)
+    backend=Backend()
+    pool=SimpleNamespace(backend=backend,retry_deletions=lambda:None)
+    async def retry():return None
+    async def empty():return set()
+    pool.retry_deletions=retry;pool.managed_sandbox_ids=empty
+    store=SimpleNamespace(nonterminal_turn_ids=empty,active_sandbox_control_ids=empty,
+        active_job_sandbox_ids=empty,nonterminal_job_ids=lambda:None)
+    async def live_jobs():return {'job-live'}
+    store.nonterminal_job_ids=live_jobs
+    broker=SimpleNamespace(pool=pool,store=store,active_sandboxes={})
+    await Broker.cleanup_startup_orphans(broker)
+    assert backend.deleted==[]
 
 
 class PausableRuntime(Runtime):

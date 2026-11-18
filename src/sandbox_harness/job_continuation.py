@@ -46,6 +46,20 @@ class ContinuationDispatcher:
             max_jobs=self.max_jobs, max_bytes=self.max_bytes)
         if not batch:
             return 0
+        primary=[];nested=[]
+        for item in batch:
+            parent_job_id=await self.store.child_parent_for_group(item['group_id'])
+            (nested if parent_job_id else primary).append((item,parent_job_id))
+        for item,parent_job_id in nested:
+            await self.store.ready_child_continuation(parent_job_id,item['group_id'],
+                item['outbox_id'],{'group_id':item['group_id'],
+                    'result_digest':item['result_digest'],'results':item['results']})
+            await self.store.finish_job_outbox_batch([item['outbox_id']],self.owner,
+                continuation_turn_id=parent_job_id,delivered=True)
+            event('job.child_continuation.ready',thread_id=item['thread_id'],
+                job_id=parent_job_id,group_id=item['group_id'])
+        batch=[item for item,_ in primary]
+        if not batch:return len(nested)
         outbox_ids = sorted(item["outbox_id"] for item in batch)
         digest = batch[0]["batch_digest"]
         facts = [{"group_id": item["group_id"], "result_digest": item["result_digest"],
@@ -75,7 +89,7 @@ class ContinuationDispatcher:
                 continuation_turn_id=turn.id, delivered=True)
             event("job.continuation.created", thread_id=thread_id, turn_id=turn.id,
                 group_count=len(batch), job_count=sum(len(item["results"]) for item in batch))
-            return len(batch)
+            return len(batch)+len(nested)
         except Exception as exc:
             permanent=isinstance(exc,RuntimeError) and str(exc) in {
                 "thread_archived","active_jobs_prevent_archival"}

@@ -43,6 +43,23 @@ class JobCoordinator:
         self.profile_resolver = profile_resolver
         self.draft_ttl_seconds = draft_ttl_seconds
 
+    @staticmethod
+    def scope_child_group(value:JobGroupCreate,claims)->JobGroupCreate:
+        if not getattr(claims,'job_id',''):return value
+        allowed_operations=set(getattr(claims,'operation_ids',()))
+        allowed_capabilities=set(getattr(claims,'capability_ids',()))
+        for request in value.jobs:
+            if request.kind==JobKind.HARNESS:
+                raise ValueError('child_harness_recursion_forbidden')
+            allowed=(allowed_operations if request.kind==JobKind.OPERATION else allowed_capabilities)
+            if request.descriptor_id not in allowed:
+                raise ValueError('child_descriptor_outside_scope')
+        snapshot={**value.authorization_snapshot,'parent_job_id':claims.job_id,
+            'parent_generation':claims.generation,'delegation_depth':1}
+        return JobGroupCreate.model_validate({**value.model_dump(),
+            'thread_id':claims.thread_id,'origin_turn_id':claims.turn_id,
+            'authorization_snapshot':snapshot})
+
     def _normalize(self, value: JobGroupCreate) -> JobGroupCreate:
         jobs=[]
         for request in value.jobs:
@@ -96,6 +113,10 @@ class JobCoordinator:
                 raise ValueError("Harness Job must use the frozen delegation Descriptor")
             harness=str(request.parameters.get("harness", ""))
             resources=request.resource_requirements
+            child_profile=self.profile_resolver.children.get(request.child_profile_id)
+            required_operations=set(resources.get('required_operation_ids',()))
+            if not child_profile or not required_operations<=set(child_profile.allowed_operation_ids):
+                raise ValueError('Operation is not authorized by ChildExecutionProfile')
             resolved=self.profile_resolver.resolve(harness,request.child_profile_id,request.skill_ids,
                 ProfileRequirements(commands=tuple(resources.get("commands",())),
                     python_modules=tuple(resources.get("python_modules",())),
@@ -106,7 +127,9 @@ class JobCoordinator:
             sanitized={key:int(resources[key]) for key in ("cpu","memory_mb","disk_mb") if key in resources}
             sanitized.update({"harness":harness,"image_digest":resolved.runtime_profile.image_digests[harness],
                 "delegation_depth":1,"required_bundle_digests":list(resources.get("required_bundle_digests",())),
-                "required_capability_ids":list(resolved.required_capability_ids)})
+                "required_capability_ids":list(dict.fromkeys((*resolved.required_capability_ids,
+                    *resources.get('required_capability_ids',())))),
+                "required_operation_ids":list(dict.fromkeys(resources.get('required_operation_ids',())))})
             parameters={**request.parameters,"skill_digests":resolved.skill_digests}
             jobs.append(JobRequest.model_validate({**request.model_dump(),"parameters":parameters,
                 "runtime_profile_id":resolved.runtime_profile.id,"resource_requirements":sanitized,

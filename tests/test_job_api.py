@@ -111,7 +111,9 @@ def test_sandbox_job_cli_fills_frozen_identity_lists_catalog_and_blocks_child_de
     assert job_cli.main(['prepare','--request',__import__('json').dumps(payload)])==0
     submitted=calls[-1][2]['json'];assert submitted['thread_id']=='a'*32 and submitted['origin_turn_id']=='b'*32
     monkeypatch.setenv('HARNESS_CHILD_MODE','1')
-    assert job_cli.main(['prepare','--request',__import__('json').dumps(payload)])==2
+    assert job_cli.main(['prepare','--request',__import__('json').dumps(payload)])==0
+    assert job_cli.main(['delegate','--request',__import__('json').dumps({'tasks':[
+        {'id':'nested','objective':'nested','result_mode':'text'}]})])==2
     assert 'cannot delegate' in capsys.readouterr().out
 
 

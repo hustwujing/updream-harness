@@ -28,8 +28,8 @@ def test_real_case_catalog_includes_every_inherited_d_case_with_provenance():
     for case in catalog['cases']:
         groups[case['id'][0]].append(case)
     assert {key:len(value) for key,value in groups.items()}=={
-        'S':31,'C':30,'R':17,'D':51,'P':22}
-    assert len(catalog['cases'])==151 and catalog['runnable_case_count']==151
+        'S':31,'C':30,'R':17,'D':51,'P':23}
+    assert len(catalog['cases'])==152 and catalog['runnable_case_count']==152
     assert not catalog['superseded_cases']
     assert [case['id'] for case in groups['D']]==[f'D{index:02d}' for index in range(1,52)]
     assert all(case['executor']=='inherited_protocol' for case in groups['D'])
@@ -56,7 +56,7 @@ def test_parallel_protocol_runner_never_fakes_unimplemented_success():
     source=(ROOT/"tests/run_real_parallel_protocol.py").read_text();ast.parse(source)
     assert "protocol_handler_not_implemented" in source
     assert "HANDLERS" in source and "'P02'" in source and "'P12'" in source
-    assert all(f"'P{index:02d}'" in source for index in range(1,24))
+    assert all(f"'P{index:02d}'" in source for index in range(1,25))
     assert "compile_delegation" in source and "metadata_required':False" in source
     assert 'parser.add_argument(\'--timeout\'' in source
     assert 'parser.add_argument(\'--intervention-delay\'' in source
