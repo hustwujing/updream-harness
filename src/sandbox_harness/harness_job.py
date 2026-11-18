@@ -4,6 +4,7 @@ import asyncio
 import httpx
 import json
 from pathlib import Path
+import time
 from typing import Any, Awaitable, Callable, Protocol
 
 from .domain import Harness
@@ -332,7 +333,7 @@ class OpenSandboxChildBackend:
         sandbox=await self.pool.adopt(ready[0],thread_id=self._thread_id(context.job.id),
             turn_id=context.job.id)
         execution_id=context.job.id+":"+str(reservation.job_generation)
-        value=await self.runtime.execution_status(sandbox,execution_id)
+        value=await self._execution_status(sandbox,execution_id)
         if not value:
             await self.pool.release(sandbox,keep_attached=False)
             return SubmissionRecovery(safe_to_retry=True)
@@ -346,6 +347,15 @@ class OpenSandboxChildBackend:
                 "sandbox_id":sandbox.id,"capability_nonce":"",
                 "runtime_acceptance":{"accepted":True,"created":False,"recovered":True,
                     "execution_id":execution_id}}))
+
+    async def _execution_status(self,sandbox,execution_id,retry_seconds:float=30):
+        deadline=time.monotonic()+retry_seconds;delay=.25
+        while True:
+            try:return await self.runtime.execution_status(sandbox,execution_id)
+            except httpx.HTTPStatusError as exc:
+                if (exc.response.status_code not in {408,429,500,502,503,504}
+                        or time.monotonic()>=deadline):raise
+                await asyncio.sleep(delay);delay=min(2,delay*2)
 
     def _ensure_collector(self,context:JobExecutionContext,sandbox,execution_id:str)->None:
         existing=self.collectors.get(context.job.id)
@@ -376,7 +386,7 @@ class OpenSandboxChildBackend:
         continuation=await continuation_method(context.job.id) if continuation_method else None
         current_execution_id=(continuation.get('resume_execution_id')
             if continuation and continuation.get('resume_execution_id') else external_execution_id)
-        value=await self.runtime.execution_status(sandbox,current_execution_id)
+        value=await self._execution_status(sandbox,current_execution_id)
         if not value:
             try:await self.pool.backend.get(sandbox.id)
             except SandboxNotFound:
