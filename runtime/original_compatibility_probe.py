@@ -28,9 +28,9 @@ PACKAGES = (
     'libgles2','lmodern','mesa-utils','xauth',
 )
 FONTS = {
-    'emoji':'Noto Color Emoji',
-    'latin':'Liberation Sans',
-    'zh-cn':'WenQuanYi Zen Hei',
+    'emoji':('Noto Color Emoji','Noto Color Emoji'),
+    'latin':('Liberation Sans','Liberation Sans'),
+    'zh-cn':(':lang=zh-cn','WenQuanYi Zen Hei'),
 }
 
 
@@ -45,8 +45,8 @@ def main() -> None:
         result=subprocess.run(['dpkg-query','-W','-f=${db:Status-Status}',package],
             capture_output=True,text=True)
         if result.returncode or result.stdout.strip()!='installed':failures.append('package:'+package)
-    for language,family in FONTS.items():
-        result=subprocess.run(['fc-match','-f=%{family}',':lang='+language],capture_output=True,text=True)
+    for language,(query,family) in FONTS.items():
+        result=subprocess.run(['fc-match','-f=%{family}',query],capture_output=True,text=True)
         if result.returncode or family.lower() not in result.stdout.lower():
             failures.append('font:'+language+':'+family)
     value={'commands':len(COMMANDS),'modules':len(MODULES),'packages':len(PACKAGES),
