@@ -46,3 +46,5 @@ def test_delivery_contract_comes_from_declared_options_not_internal_demo_files()
     assert by_source['image-product-layout']['expect']['height']==1200
     assert by_source['image-watermark-batch']['expect']['width']==600
     assert by_source['image-watermark-batch']['expect']['height']==600
+    assert 'speech.json' in by_source['local-word-edit']['assets']
+    assert by_source['image-cutout']['allowed_external_operations']==['image.segment']

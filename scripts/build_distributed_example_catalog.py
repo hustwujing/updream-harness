@@ -17,6 +17,7 @@ DEFAULT_OUTPUT=Path(__file__).resolve().parents[1]/'tests/example_library/cases.
 OPERATIONS={
     'transcribe':('audio.transcribe',),
     'image-layers':('image.decompose',),
+    'image-cutout':('image.segment',),
     'image-select':('image.segment',),
     'image-sam3-zim':('image.segment',),
     'image-erase':('image.erase',),
@@ -25,6 +26,15 @@ OPERATIONS={
     'image-color-match':('image.edit',),
     'image-replace-text':('image.edit',),
 }
+
+
+def declared_source_files(entry:dict)->list[str]:
+    files=[]
+    for source in entry.get('sources',[]):
+        files.append(str(source['file']))
+        transcripts=source.get('transcripts') or {}
+        if isinstance(transcripts,dict):files.extend(map(str,transcripts.values()))
+    return list(dict.fromkeys(files))
 
 
 def media_probe(path:Path)->dict:
@@ -98,7 +108,7 @@ def build(source:Path)->dict:
     if not isinstance(entries,list) or len(entries)!=44:raise ValueError('expected_exactly_44_examples')
     cases=[]
     for index,entry in enumerate(entries,1):
-        assets=[str(row['file']) for row in entry.get('sources',[])]
+        assets=declared_source_files(entry)
         missing=[name for name in assets if not (asset_root/name).is_file()]
         if missing:raise ValueError('missing_demo_sources:'+','.join(missing))
         expected=expectation(entry,demo_root);options='；'.join(map(str,entry.get('options',[])))

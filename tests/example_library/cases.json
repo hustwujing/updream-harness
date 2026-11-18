@@ -14,7 +14,8 @@
       "category": "自然语言剪辑",
       "complexity": "example_library",
       "assets": [
-        "speech.mp4"
+        "speech.mp4",
+        "speech.json"
       ],
       "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。把这段对白制作成 720×1280 竖屏，完整保留人物画面，用原视频放大模糊填满背景；在底部全程添加中文标题“寻找旅伴”，保留原声音。先分析素材并给我方案。 原示例验收要求：输出：720×1280，9:16 竖屏；原画面完整保留，同步模糊背景；底部中文标题“寻找旅伴”；由 Codex 编写脚本并抽帧检查，可继续用对话修改。主交付必须包含 video/mp4 类型成品（参考文件名 final.mp4）。",
       "source_prompt": "把这段对白制作成 720×1280 竖屏，完整保留人物画面，用原视频放大模糊填满背景；在底部全程添加中文标题“寻找旅伴”，保留原声音。先分析素材并给我方案。",
@@ -55,7 +56,8 @@
       "category": "语音转写",
       "complexity": "example_library",
       "assets": [
-        "speech.mp4"
+        "speech.mp4",
+        "speech.json"
       ],
       "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。请转写这段英文对白，区分两位说话人，保留逐词时间戳和声音事件。 原示例验收要求：语言：英语；说话人数：2；音轨：0；复用已完成的真实转写。主交付必须包含 text/plain 类型成品（参考文件名 transcript.txt）。",
       "source_prompt": "请转写这段英文对白，区分两位说话人，保留逐词时间戳和声音事件。",
@@ -92,7 +94,9 @@
       "complexity": "example_library",
       "assets": [
         "question.mp4",
-        "answer.mp4"
+        "question.json",
+        "answer.mp4",
+        "answer.json"
       ],
       "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。把两段已转写的素材整理为一份文字稿，按说话人和超过 0.5 秒的停顿分段。 原示例验收要求：素材：提问、回答，共 2 段；分段停顿：0.5 秒；输出：Markdown。主交付必须包含 text/markdown 类型成品（参考文件名 takes_packed.md）。",
       "source_prompt": "把两段已转写的素材整理为一份文字稿，按说话人和超过 0.5 秒的停顿分段。",
@@ -125,7 +129,8 @@
       "category": "片段剪切",
       "complexity": "example_library",
       "assets": [
-        "speech.mp4"
+        "speech.mp4",
+        "speech.json"
       ],
       "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。保留完整提问和回答，删掉中间的停顿，给每个切点加短暂的声音淡入淡出。 原示例验收要求：保留：0.36–2.64 秒、6.80–8.25 秒；逐词边界外保留约 80 毫秒；720p 草稿 · 统一音量。主交付必须包含 video/mp4 类型成品（参考文件名 final.mp4）。",
       "source_prompt": "保留完整提问和回答，删掉中间的停顿，给每个切点加短暂的声音淡入淡出。",
@@ -206,7 +211,8 @@
       "category": "自动字幕",
       "complexity": "example_library",
       "assets": [
-        "speech.mp4"
+        "speech.mp4",
+        "speech.json"
       ],
       "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。给这段对白加英文字幕，每次显示两个词，按说话时间对齐，并导出字幕文件。 原示例验收要求：字幕来源：缓存的逐词转写；内置双词大写样式；输出：视频 + SRT；片段：0–8.8 秒。主交付必须包含 video/mp4 类型成品（参考文件名 final.mp4），并同时交付 .srt 伴随文件。",
       "source_prompt": "给这段对白加英文字幕，每次显示两个词，按说话时间对齐，并导出字幕文件。",
@@ -287,7 +293,8 @@
       "category": "音量处理",
       "complexity": "example_library",
       "assets": [
-        "quiet.mp4"
+        "quiet.mp4",
+        "speech.json"
       ],
       "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。这段对白音量太小，请统一到 −14 LUFS，并限制峰值，保持视频内容不变。 原示例验收要求：输入：原对白音量 × 0.12 的演示副本；目标响度：−14 LUFS；真峰值：−1 dBTP；片段：0–8.8 秒。主交付必须包含 video/mp4 类型成品（参考文件名 final.mp4）。",
       "source_prompt": "这段对白音量太小，请统一到 −14 LUFS，并限制峰值，保持视频内容不变。",
@@ -327,7 +334,8 @@
       "category": "时间线预览",
       "complexity": "example_library",
       "assets": [
-        "speech.mp4"
+        "speech.mp4",
+        "speech.json"
       ],
       "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。生成 0 到 8.8 秒的时间线，采样 6 帧，并叠加转写中的词和静音区间。 原示例验收要求：范围：0–8.8 秒；画面采样：6 帧；自动读取缓存转写；输出：PNG。主交付必须包含 image/png 类型成品（参考文件名 timeline.png）。",
       "source_prompt": "生成 0 到 8.8 秒的时间线，采样 6 帧，并叠加转写中的词和静音区间。",
@@ -396,7 +404,8 @@
       "category": "多音轨选择",
       "complexity": "example_library",
       "assets": [
-        "multitrack.mp4"
+        "multitrack.mp4",
+        "speech.json"
       ],
       "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。这段视频的第一条音轨是演示背景音，请选择第二条对白音轨转写，并区分两位说话人。 原示例验收要求：音轨 0：生成的背景测试音；音轨 1：原片对白；语言：英语，说话人：2；复用相同对白的转写缓存。主交付必须包含 text/plain 类型成品（参考文件名 transcript.txt）。",
       "source_prompt": "这段视频的第一条音轨是演示背景音，请选择第二条对白音轨转写，并区分两位说话人。",
@@ -667,6 +676,7 @@
       "complexity": "example_library",
       "assets": [
         "speech.mp4",
+        "speech.json",
         "local-test-melody.wav"
       ],
       "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。给完整9秒对白加入所附测试配乐，配乐音量0.3并循环，有人讲话时自动压低，开头淡入0.3秒，结尾淡出0.8秒。先给方案。 原示例验收要求：保留对白＋测试旋律；配乐音量 0.3、循环；讲话时自动压低配乐。主交付必须包含 video/mp4 类型成品（参考文件名 final.mp4）。",
@@ -707,6 +717,7 @@
       "complexity": "example_library",
       "assets": [
         "speech.mp4",
+        "speech.json",
         "local-test-melody.wav"
       ],
       "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。将9秒对白视频的声音替换为所附测试旋律，音乐延迟1秒开始，循环至结束，音量0.5、结尾淡出0.5秒。先给方案。 原示例验收要求：替换原声；音乐延迟 1 秒、循环；结尾淡出 0.5 秒。主交付必须包含 video/mp4 类型成品（参考文件名 final.mp4）。",
@@ -781,7 +792,8 @@
       "category": "文字剪辑与字幕",
       "complexity": "example_library",
       "assets": [
-        "speech.mp4"
+        "speech.mp4",
+        "speech.json"
       ],
       "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。使用已有转写，完整保留“What brings you to the land of the Gatekeepers?”和“I'm searching for someone.”，去掉中间停顿，词边界留80毫秒；每行4词，字幕白色、已说到的词高亮黄色，输出960×540。先给方案。 原示例验收要求：真实逐词缓存，无新转写；按词索引 0–8、9–12 保留两句；四词字幕，逐词黄色填色。主交付必须包含 video/mp4 类型成品（参考文件名 final.mp4）。",
       "source_prompt": "使用已有转写，完整保留“What brings you to the land of the Gatekeepers?”和“I'm searching for someone.”，去掉中间停顿，词边界留80毫秒；每行4词，字幕白色、已说到的词高亮黄色，输出960×540。先给方案。",
@@ -836,7 +848,9 @@
       "hook": null,
       "status": "not_run",
       "attempts": [],
-      "allowed_external_operations": [],
+      "allowed_external_operations": [
+        "image.segment"
+      ],
       "entry_mode": "deployed_browser",
       "executor": "primary_harness",
       "provenance": "distributed-agent-system:image-cutout",
@@ -1462,7 +1476,8 @@
       "category": "字幕精修",
       "complexity": "example_library",
       "assets": [
-        "speech.mp4"
+        "speech.mp4",
+        "speech.json"
       ],
       "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。载入现有字幕，逐句检查文本和时间，再生成新字幕版本。 原示例验收要求：逐句编辑字幕并另存为新 SRT，不覆盖转写。；可载入项目继续编辑。主交付必须包含 video/mp4 类型成品（参考文件名 final.mp4），并同时交付 .srt 伴随文件。",
       "source_prompt": "载入现有字幕，逐句检查文本和时间，再生成新字幕版本。",
@@ -1499,7 +1514,8 @@
       "category": "章节与短片拆条",
       "complexity": "example_library",
       "assets": [
-        "speech.mp4"
+        "speech.mp4",
+        "speech.json"
       ],
       "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。把这个章节拆成一条独立短片，先给我节奏和字幕方案。 原示例验收要求：保存章节范围并作为独立短片进入 Agent。；可载入项目继续编辑。主交付必须包含 video/mp4 类型成品（参考文件名 final.mp4）。",
       "source_prompt": "把这个章节拆成一条独立短片，先给我节奏和字幕方案。",
@@ -1535,7 +1551,8 @@
       "category": "品牌模板与批处理",
       "complexity": "example_library",
       "assets": [
-        "speech.mp4"
+        "speech.mp4",
+        "speech.json"
       ],
       "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。按同一个品牌模板处理这些视频，统一画幅、字幕和响度。 原示例验收要求：统一画幅、字幕样式和响度并批量排队。；可载入项目继续编辑。主交付必须包含 video/mp4 类型成品（参考文件名 final.mp4）。",
       "source_prompt": "按同一个品牌模板处理这些视频，统一画幅、字幕和响度。",
@@ -1572,7 +1589,8 @@
       "category": "镜头批注返工",
       "complexity": "example_library",
       "assets": [
-        "speech.mp4"
+        "speech.mp4",
+        "speech.json"
       ],
       "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。根据时间线批注只修改对应镜头，保留其他成片内容。 原示例验收要求：在具体时间段记录修改要求，交给 Agent 生成返工方案。；可载入项目继续编辑。主交付必须包含 video/mp4 类型成品（参考文件名 final.mp4）。",
       "source_prompt": "根据时间线批注只修改对应镜头，保留其他成片内容。",
@@ -1608,7 +1626,8 @@
       "category": "成片质检",
       "complexity": "example_library",
       "assets": [
-        "speech.mp4"
+        "speech.mp4",
+        "speech.json"
       ],
       "prompt": "已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。检查这条视频的黑帧、静帧、静音、时长和轨道结构，并给出复核位置。 原示例验收要求：黑帧、静帧、静音；时长与音视频轨；输出 JSON 报告。主交付必须包含 application/json 类型成品（参考文件名 quality-review.json）。",
       "source_prompt": "检查这条视频的黑帧、静帧、静音、时长和轨道结构，并给出复核位置。",
