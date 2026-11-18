@@ -2,6 +2,9 @@ from sandbox_harness.catalog import HarnessCatalog
 from datetime import timedelta
 
 from sandbox_harness.domain import Attachment, EventKind, Harness, ItemType, RuntimeEvent, ThreadCreate, TurnCreate, TurnInputCreate, TurnState, now
+from sandbox_harness.artifact_gateway import ArtifactEmission
+from sandbox_harness.job_contracts import (JobExpectedOutput,JobGroupCreate,JobKind,JobRequest,
+    OutputDisposition)
 from sandbox_harness.store import MediaJobRow, Store, ThreadRow, TurnRow, valid_project_file_path
 import pytest
 
@@ -48,6 +51,37 @@ async def test_unchanged_artifact_publication_is_suppressed_across_turns(tmp_pat
         assert created and changed.id!=artifact.id
         visible=[item for item in await store.items_after(thread.id) if item.type==ItemType.ARTIFACT]
         assert len(visible)==2 and [item.turn_id for item in visible]==[first.id,third.id]
+    finally:await store.close()
+
+
+async def test_primary_publication_reuses_authoritative_delivery_job_artifact(tmp_path):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"job-delivery.db"));await store.initialize()
+    try:
+        profile=HarnessCatalog().resolve('claude','claude-4.6-sonnet','standard');owner='a'*64
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CLAUDE,model=profile.model,
+            reasoning_level='standard',title='Job delivery'),profile,owner)
+        turn,_,_=await store.create_turn(thread.id,TurnCreate(message='export',
+            idempotency_key='job-delivery-turn'),profile,owner)
+        claim=await store.claim_turn(turn.id,'turn-worker',30)
+        request=JobRequest(local_job_id='export',kind=JobKind.HARNESS,adapter='child-harness',
+            descriptor_id='delegate.harness',descriptor_version='1',descriptor_digest='d'*64,
+            idempotency_key='job-delivery-request',parameters={'harness':'claude'},
+            expected_outputs=(JobExpectedOutput(artifact_role='final_audio',
+                output_disposition=OutputDisposition.DELIVERY,min_items=1,max_items=1),))
+        _,jobs=await store.create_job_group(owner,JobGroupCreate(thread_id=thread.id,
+            origin_turn_id=turn.id,idempotency_key='job-delivery-group',jobs=(request,)))
+        attempt=await store.claim_job(jobs[0].id,'job-worker','node',30)
+        emitted=await store.bind_job_artifact(ArtifactEmission(job_id=jobs[0].id,
+            generation=attempt.generation,artifact_role='final_audio',item_key='final',position=0,
+            filename='final.wav',output_disposition=OutputDisposition.DELIVERY),
+            sha256='1'*64,size=10,mime='audio/wav',object_ref='sha256:job')
+        await store.finalize_job_artifact_collection(jobs[0].id,attempt.generation,'final_audio')
+        reused,_,created=await store.publish_artifact(thread.id,turn.id,path='final.wav',
+            sha256='2'*64,size=20,mime='audio/wav',object_ref='sha256:primary',partial=False,
+            lease_owner='turn-worker',recovery_generation=claim.recovery_generation)
+        assert not created and reused.id==emitted.artifact_id and reused.sha256=='1'*64
+        visible=[item for item in await store.items_after(thread.id) if item.type==ItemType.ARTIFACT]
+        assert len(visible)==1 and visible[0].payload['artifact_id']==emitted.artifact_id
     finally:await store.close()
 
 

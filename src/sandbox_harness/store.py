@@ -4764,16 +4764,34 @@ class Store:
                 ArtifactRow.turn_id == turn_id,
                 ArtifactRow.path == path,ArtifactRow.sha256 == sha256).order_by(
                 ArtifactRow.created_at,ArtifactRow.id).limit(1).with_for_update())).scalar_one_or_none()
-            project_row, project_created = await self._register_project_file_locked(db, thread_id,
-                path="artifacts/" + path, source_type="artifact", source_turn_id=turn_id,
-                sha256=sha256, size=size, mime=mime, object_ref=object_ref)
-            if artifact_row is None and not project_created and project_row.source_turn_id != turn_id:
-                artifact_row = (await db.execute(select(ArtifactRow).where(
-                    ArtifactRow.turn_id == project_row.source_turn_id,
-                    ArtifactRow.path == path, ArtifactRow.sha256 == sha256,
-                    ArtifactRow.partial == False).order_by(
-                    ArtifactRow.created_at, ArtifactRow.id).limit(1).with_for_update()
-                )).scalar_one_or_none()
+            authoritative = None
+            if artifact_row is None and not partial:
+                query = select(JobArtifactRow).join(JobRow,JobRow.id==JobArtifactRow.job_id).where(
+                    JobRow.thread_id==thread_id,JobArtifactRow.filename==path,
+                    JobArtifactRow.output_disposition==OutputDisposition.DELIVERY.value,
+                    JobArtifactRow.state=='reviewed')
+                if not turn.internal:query=query.where(JobRow.origin_turn_id==turn_id)
+                candidates=list((await db.execute(query.order_by(
+                    JobArtifactRow.created_at,JobArtifactRow.id).limit(2).with_for_update()
+                )).scalars().all())
+                if len(candidates)==1:authoritative=candidates[0]
+            if authoritative is not None:
+                artifact_row=await db.get(ArtifactRow,authoritative.artifact_id,with_for_update=True)
+                project_row,_=await self._register_project_file_locked(db,thread_id,
+                    path='artifacts/'+path,source_type='artifact',source_turn_id=turn_id,
+                    sha256=authoritative.sha256,size=authoritative.size,mime=authoritative.mime,
+                    object_ref=authoritative.object_ref)
+            else:
+                project_row, project_created = await self._register_project_file_locked(db, thread_id,
+                    path="artifacts/" + path, source_type="artifact", source_turn_id=turn_id,
+                    sha256=sha256, size=size, mime=mime, object_ref=object_ref)
+                if artifact_row is None and not project_created and project_row.source_turn_id != turn_id:
+                    artifact_row = (await db.execute(select(ArtifactRow).where(
+                        ArtifactRow.turn_id == project_row.source_turn_id,
+                        ArtifactRow.path == path, ArtifactRow.sha256 == sha256,
+                        ArtifactRow.partial == False).order_by(
+                        ArtifactRow.created_at, ArtifactRow.id).limit(1).with_for_update()
+                    )).scalar_one_or_none()
             created = artifact_row is None
             if created:
                 artifact_row = ArtifactRow(id=identifier(), turn_id=turn_id, path=path,
