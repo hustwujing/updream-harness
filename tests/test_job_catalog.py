@@ -126,6 +126,7 @@ def test_runtime_instructions_route_controlled_operations_through_job_catalog():
     assert 'ordinary Sandbox cannot see the host device' in RUNTIME_INSTRUCTIONS
     assert 'only confirmation channel' in RUNTIME_INSTRUCTIONS
     assert 'A progress sentence is not execution' in RUNTIME_INSTRUCTIONS
+    assert 'must not reopen an objective' in RUNTIME_INSTRUCTIONS
 
 
 def test_public_child_profiles_expose_frozen_harness_job_template():
