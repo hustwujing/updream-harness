@@ -4764,17 +4764,24 @@ class Store:
                 ArtifactRow.turn_id == turn_id,
                 ArtifactRow.path == path,ArtifactRow.sha256 == sha256).order_by(
                 ArtifactRow.created_at,ArtifactRow.id).limit(1).with_for_update())).scalar_one_or_none()
+            project_row, project_created = await self._register_project_file_locked(db, thread_id,
+                path="artifacts/" + path, source_type="artifact", source_turn_id=turn_id,
+                sha256=sha256, size=size, mime=mime, object_ref=object_ref)
+            if artifact_row is None and not project_created and project_row.source_turn_id != turn_id:
+                artifact_row = (await db.execute(select(ArtifactRow).where(
+                    ArtifactRow.turn_id == project_row.source_turn_id,
+                    ArtifactRow.path == path, ArtifactRow.sha256 == sha256,
+                    ArtifactRow.partial == False).order_by(
+                    ArtifactRow.created_at, ArtifactRow.id).limit(1).with_for_update()
+                )).scalar_one_or_none()
             created = artifact_row is None
-            if artifact_row is None:
+            if created:
                 artifact_row = ArtifactRow(id=identifier(), turn_id=turn_id, path=path,
                     sha256=sha256, size=size, mime=mime, object_ref=object_ref,
                     partial=partial, created_at=now())
                 db.add(artifact_row)
             elif partial and not artifact_row.partial:
                 artifact_row.partial = True
-            project_row, _ = await self._register_project_file_locked(db, thread_id,
-                path="artifacts/" + path, source_type="artifact", source_turn_id=turn_id,
-                sha256=sha256, size=size, mime=artifact_row.mime, object_ref=object_ref)
             artifact_items = (await db.execute(select(ItemRow).where(
                 ItemRow.thread_id == thread_id, ItemRow.type == ItemType.ARTIFACT.value
             ).with_for_update())).scalars().all()

@@ -16,7 +16,7 @@ async def test_concurrent_upload_registration_is_database_idempotent(tmp_path):
     finally:await store.close()
 
 
-async def test_unchanged_artifact_publication_keeps_distinct_turn_history(tmp_path):
+async def test_unchanged_artifact_publication_is_suppressed_across_turns(tmp_path):
     store=Store("sqlite+aiosqlite:///"+str(tmp_path/"artifact-replay.db"));await store.initialize()
     try:
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard');owner='a'*64
@@ -35,9 +35,19 @@ async def test_unchanged_artifact_publication_keeps_distinct_turn_history(tmp_pa
         replay,_,created=await store.publish_artifact(thread.id,second.id,path='result.txt',
             sha256='1'*64,size=1,mime='text/plain',object_ref='sha256:one',partial=False,
             lease_owner='worker-2',recovery_generation=claim.recovery_generation)
-        assert created and replay.id!=artifact.id
+        assert not created and replay.id==artifact.id
         visible=[item for item in await store.items_after(thread.id) if item.type==ItemType.ARTIFACT]
-        assert len(visible)==2 and [item.turn_id for item in visible]==[first.id,second.id]
+        assert len(visible)==1 and visible[0].turn_id==first.id
+        await store.set_turn_state(second.id,TurnState.COMPLETED,lease_owner='worker-2',
+            recovery_generation=claim.recovery_generation)
+        third,_,_=await store.create_turn(thread.id,TurnCreate(message='changed',
+            idempotency_key='artifact-third'),profile,owner);claim=await store.claim_turn(third.id,'worker-3',30)
+        changed,_,created=await store.publish_artifact(thread.id,third.id,path='result.txt',
+            sha256='2'*64,size=2,mime='text/plain',object_ref='sha256:two',partial=False,
+            lease_owner='worker-3',recovery_generation=claim.recovery_generation)
+        assert created and changed.id!=artifact.id
+        visible=[item for item in await store.items_after(thread.id) if item.type==ItemType.ARTIFACT]
+        assert len(visible)==2 and [item.turn_id for item in visible]==[first.id,third.id]
     finally:await store.close()
 
 
