@@ -12,6 +12,17 @@ import re
 from PIL import Image
 
 
+THREAD_ENVIRONMENT={
+    'OPENBLAS_NUM_THREADS':'4','OMP_NUM_THREADS':'4','MKL_NUM_THREADS':'4',
+    'NUMEXPR_NUM_THREADS':'4','VECLIB_MAXIMUM_THREADS':'4',
+}
+
+
+def _thread_environment_args()->list[str]:
+    return [value for key,item in THREAD_ENVIRONMENT.items()
+        for value in ('--setenv',key,item)]
+
+
 def _base_args(work:Path,runtime:Path)->list[str]:
     project_root=runtime.parent.parent
     return ['/usr/bin/bwrap','--die-with-parent','--new-session','--unshare-pid','--unshare-net',
@@ -58,7 +69,8 @@ def _segment(work:Path,source:Path,parameters:dict,gpu_ids:tuple[str,...],runtim
     for pattern in ('libnvidia*.so*','libcuda.so*'):
         for path in Path('/usr/lib/x86_64-linux-gnu').glob(pattern):
             if path.is_file():args += ['--ro-bind',str(path.resolve()),str(path)]
-    args += ['--clearenv','--setenv','PATH','/usr/bin:/bin','--setenv','HOME','/work',
+    args += ['--clearenv',*_thread_environment_args(),
+        '--setenv','PATH','/usr/bin:/bin','--setenv','HOME','/work',
         '--setenv','TMPDIR','/tmp','--setenv','CUDA_VISIBLE_DEVICES',gpu_uuid,
         '--setenv','CONTROLLED_MEDIA_RUNTIME_ROOT',str(runtime),'--setenv','HF_HUB_OFFLINE','1',
         '--setenv','TRANSFORMERS_OFFLINE','1','--chdir','/work','/usr/bin/setpriv',
@@ -93,7 +105,8 @@ def _transcribe(work:Path,source:Path,parameters:dict,runtime:Path)->dict:
         'threads':max(1,min(8,int(parameters.get('threads',4)))),
         'beam_size':max(1,min(10,int(parameters.get('beam_size',5))))}
     (work/'request.json').write_text(json.dumps(request));args=_base_args(work,runtime)
-    args += ['--clearenv','--setenv','HOME','/work','--setenv','TMPDIR','/tmp',
+    args += ['--clearenv',*_thread_environment_args(),
+        '--setenv','HOME','/work','--setenv','TMPDIR','/tmp',
         '--setenv','HF_HUB_OFFLINE','1','--setenv','TRANSFORMERS_OFFLINE','1','--chdir','/work',
         '/usr/bin/setpriv','--reuid=0','--regid=0','--clear-groups','--no-new-privs',
         '--bounding-set=-all',str(runtime/'envs/media-foundation/bin/python'),'/work/transcribe_job.py',
