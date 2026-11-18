@@ -55,6 +55,19 @@ async def test_runtime_configuration_retries_transient_proxy_startup_errors():
     assert json.loads(requests[-1].content)["model"] == "claude-opus-5-5"
 
 
+async def test_child_runtime_configuration_uses_logical_protocol_identity():
+    requests=[]
+    def respond(request):requests.append(request);return httpx.Response(200,json={'configured':True})
+    runtime=RuntimeClient(transport=httpx.MockTransport(respond))
+    sandbox=Sandbox(id='sandbox',harness=Harness.CLAUDE,image='image',runtime_url='http://runtime',
+        metadata={},thread_id='child-job-'+'c'*32,turn_id='c'*32)
+    await runtime.inject(sandbox,capability_token='x'*32,gateway_url='http://gateway:28600',
+        proxy_url='http://proxy:28601',harness='claude',model='claude-opus-5-5',
+        child_mode=True,logical_thread_id='a'*32,logical_turn_id='b'*32)
+    payload=json.loads(requests[-1].content)
+    assert payload['thread_id']=='a'*32 and payload['turn_id']=='b'*32
+
+
 async def test_runtime_configuration_installs_code_before_content_bundle(tmp_path):
     requests=[];code=b"code-bundle";content=b"content-bundle"
     code_digest=__import__('hashlib').sha256(code).hexdigest();content_digest=__import__('hashlib').sha256(content).hexdigest()

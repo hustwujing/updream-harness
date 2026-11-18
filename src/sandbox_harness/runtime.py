@@ -129,7 +129,8 @@ class RuntimeClient:
                      defer_skill_install: bool = False, runtime_bundle_digest: str = "",
                      runtime_code_bundle_digest: str = "", runtime_profile_id: str = "",
                      skill_ids: list[str] | None = None, skill_digests: dict[str, str] | None = None,
-                     child_mode: bool = False, delegation_depth: int = 0) -> None:
+                     child_mode: bool = False, delegation_depth: int = 0,
+                     logical_thread_id: str = "", logical_turn_id: str = "") -> None:
         bundle_digest = runtime_bundle_digest or self.default_bundle_digest
         code_digest = runtime_code_bundle_digest or self.default_code_bundle_digest
         payload = {"capability_token": capability_token, "gateway_url": gateway_url,
@@ -141,8 +142,10 @@ class RuntimeClient:
             "runtime_profile_id":runtime_profile_id,"skill_ids":skill_ids or [],
             "skill_digests":skill_digests or {},"child_mode":child_mode,
             "delegation_depth":delegation_depth,
-            "thread_id":sandbox.thread_id or sandbox.metadata.get("sandbox-harness.io/thread", ""),
-            "turn_id":sandbox.turn_id or sandbox.metadata.get("sandbox-harness.io/turn", ""),"sandbox_id":sandbox.id}
+            "thread_id":logical_thread_id or sandbox.thread_id or sandbox.metadata.get(
+                "sandbox-harness.io/thread", ""),
+            "turn_id":logical_turn_id or sandbox.turn_id or sandbox.metadata.get(
+                "sandbox-harness.io/turn", ""),"sandbox_id":sandbox.id}
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()}, timeout=20,
             trust_env=False, transport=self.transport) as client:
             if code_digest:

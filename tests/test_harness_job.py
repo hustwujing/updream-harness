@@ -308,8 +308,8 @@ async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(
         async def acquire(self,**kwargs):self.acquired+=1;return sandbox
         async def release(self,*args,**kwargs):pass
     class Runtime:
-        sizes=[]
-        async def inject(self,*args,**kwargs):pass
+        sizes=[];injected={}
+        async def inject(self,*args,**kwargs):self.injected=kwargs
         async def put_project_file_stream(self,sandbox,path,content,*,size,mime):
             seen=0
             async for value in content:self.sizes.append(len(value));seen+=len(value)
@@ -323,12 +323,15 @@ async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(
     input_value=__import__('sandbox_harness.job_contracts',fromlist=['JobArtifactInput']).JobArtifactInput(
         artifact_id=artifact.id,artifact_role="report")
     frozen=request().model_copy(update={"input_artifacts":(input_value,)})
-    context=JobExecutionContext(job=SimpleNamespace(id="c"*32,thread_id="d"*32),
+    context=JobExecutionContext(job=SimpleNamespace(id="c"*32,thread_id="d"*32,
+        origin_turn_id="e"*32),
         request=frozen,generation=1)
     reservation=SimpleNamespace(harness="codex",image_ref=image,image_digest=digest,
         disk_mb=516,runtime_profile_id="reviewer-readonly")
     execution,_=await backend.start(context,reservation)
     assert execution.startswith("c"*32) and Runtime.sizes==[len(value) for value in chunks]
+    assert backend.runtime.injected['logical_thread_id']=='d'*32
+    assert backend.runtime.injected['logical_turn_id']=='e'*32
 
     backend.pool.acquired=0
     with pytest.raises(ValueError,match="reserved_disk"):
