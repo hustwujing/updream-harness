@@ -25,3 +25,12 @@ def test_distributed_example_assets_and_provenance_are_resolvable():
         assert row['provenance']=='distributed-agent-system:'+row['source_demo_id']
         assert row['prompt'].startswith('已确认本次执行范围') and row['source_prompt']
         assert all((assets/name).is_file() for name in row['assets'])
+
+
+def test_delivery_contract_comes_from_declared_options_not_internal_demo_files():
+    value=json.loads(CATALOG.read_text());by_source={row['source_demo_id']:row for row in value['cases']}
+    subtitles=by_source['subtitles']
+    assert subtitles['expect']['kind']=='video' and subtitles['expect']['extra_extension']=='.srt'
+    assert 'video/mp4' in subtitles['prompt'] and '.srt' in subtitles['prompt']
+    assert 'extra_extension' not in by_source['cuts']['expect']
+    assert 'extra_extension' not in by_source['grade']['expect']

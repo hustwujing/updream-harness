@@ -38,6 +38,14 @@ def media_probe(path:Path)->dict:
     return result
 
 
+def declared_sidecar(entry:dict,result_suffix:str)->str:
+    requirement=' '.join([str(entry.get('prompt','')),*map(str,entry.get('options',[]))]).lower()
+    for suffix,markers in (('.srt',('srt','字幕文件')),('.ora',('ora','可编辑图层')),
+            ('.json',('json','结构化报告'))):
+        if suffix!=result_suffix and any(marker in requirement for marker in markers):return suffix
+    return ''
+
+
 def expectation(entry:dict,demo_root:Path)->dict:
     result=demo_root/entry['id']/entry['result'];mime=entry.get('result_type') or (
         mimetypes.guess_type(result.name)[0] or 'application/octet-stream')
@@ -49,10 +57,8 @@ def expectation(entry:dict,demo_root:Path)->dict:
     elif mime.startswith('audio/'):
         value={'kind':'audio',**media_probe(result)}
     else:value={'kind':'text'}
-    result_suffix=result.suffix.lower();files=[Path(name).suffix.lower() for name in entry.get('files',[])]
-    for suffix in ('.ora','.psd','.srt','.json'):
-        if suffix in files and suffix!=result_suffix:
-            value['extra_extension']=suffix;break
+    sidecar=declared_sidecar(entry,result.suffix.lower())
+    if sidecar:value['extra_extension']=sidecar
     return value
 
 
@@ -64,12 +70,16 @@ def build(source:Path)->dict:
         assets=[str(row['file']) for row in entry.get('sources',[])]
         missing=[name for name in assets if not (asset_root/name).is_file()]
         if missing:raise ValueError('missing_demo_sources:'+','.join(missing))
+        expected=expectation(entry,demo_root);options='；'.join(map(str,entry.get('options',[])))
+        sidecar=('，并同时交付 '+expected['extra_extension']+' 伴随文件'
+            if expected.get('extra_extension') else '')
         prompt=('已确认本次执行范围；请直接执行并完成机器验收，不必先停下来等待方案确认。'+
-            str(entry['prompt']))
+            str(entry['prompt'])+' 原示例验收要求：'+options+'。主交付必须包含 '+
+            str(entry['result_type'])+' 类型成品（参考文件名 '+str(entry['result'])+'）'+sidecar+'。')
         cases.append({'id':f'E{index:02d}','family':'distributed-agent-system-example-library-v1',
             'source_demo_id':entry['id'],'title':entry['title'],'category':entry.get('category',''),
             'complexity':'example_library','assets':assets,'prompt':prompt,
-            'source_prompt':entry['prompt'],'expect':expectation(entry,demo_root),
+            'source_prompt':entry['prompt'],'expect':expected,
             'content_checks':list(entry.get('options',[])),'workflow_min_steps':0,'hook':None,
             'status':'not_run','attempts':[],'allowed_external_operations':list(
                 OPERATIONS.get(entry['id'],())), 'entry_mode':'deployed_browser',
