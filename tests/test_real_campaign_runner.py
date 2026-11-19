@@ -28,8 +28,8 @@ def test_real_case_catalog_includes_every_inherited_d_case_with_provenance():
     for case in catalog['cases']:
         groups[case['id'][0]].append(case)
     assert {key:len(value) for key,value in groups.items()}=={
-        'S':31,'C':30,'R':17,'D':51,'P':23}
-    assert len(catalog['cases'])==152 and catalog['runnable_case_count']==152
+        'S':31,'C':30,'R':17,'D':51,'P':26}
+    assert len(catalog['cases'])==155 and catalog['runnable_case_count']==155
     assert not catalog['superseded_cases']
     assert [case['id'] for case in groups['D']]==[f'D{index:02d}' for index in range(1,52)]
     assert all(case['executor']=='inherited_protocol' for case in groups['D'])
@@ -56,12 +56,12 @@ def test_parallel_protocol_runner_never_fakes_unimplemented_success():
     source=(ROOT/"tests/run_real_parallel_protocol.py").read_text();ast.parse(source)
     assert "protocol_handler_not_implemented" in source
     assert "HANDLERS" in source and "'P02'" in source and "'P12'" in source
-    assert all(f"'P{index:02d}'" in source for index in range(1,25))
+    assert all(f"'P{index:02d}'" in source for index in range(1,28))
     assert "compile_delegation" in source and "metadata_required':False" in source
     assert 'parser.add_argument(\'--timeout\'' in source
     assert 'parser.add_argument(\'--intervention-delay\'' in source
     assert "classification':'program_failure'" in source
-    assert source.count("_,continuations=await wait_continuations(client,thread['id'],maximum=1)")==4
+    assert source.count("_,continuations=await wait_continuations(client,thread['id'],maximum=1)")==5
     assert 'REST versus gRPC, monolith versus microservices, and SQL versus NoSQL' in source
     campaign=(ROOT/"tests/run_real_campaign.py").read_text()
     assert '"--harness",args.harness' in campaign
