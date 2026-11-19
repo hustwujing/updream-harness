@@ -57,7 +57,15 @@ members must not become artifacts or checkpoint entries.
   appended input at its controlled boundary. SDK `assistant/message` events are
   normalized as public text while the Run is active; the SDK
   `final_response` is a fallback snapshot for a Run that emitted no public
-  assistant event.
+  assistant event. Stable Runtime instructions are injected only when creating
+  the native Session, not on every appended input.
+
+Codex, Claude and DeepSeek own their native conversation compaction, image
+history and tool-result reduction. Gateway exposes only each Harness's exact
+generation/compaction/counting endpoints and never translates native
+compaction records. Native state lives below `/workspace/state/codex`,
+`/workspace/state/claude` or `/workspace/state/dsh`; all three roots are part of
+the fenced Thread checkpoint and must survive sandbox replacement.
 
 `adapters.command` constructs commands and per-Harness environment. `normalize`
 maps native output to the shared Runtime event contract. Unknown plain output is

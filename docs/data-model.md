@@ -39,9 +39,15 @@ WAITING_USER, COMPLETED, FAILED, CANCELLED
 `WAITING_USER`, `COMPLETED`, `FAILED` and `CANCELLED` are terminal.
 `AWAITING_USER` retains a live Runtime execution.
 
-There is no separate sandbox-attempt or capability-grant table. Current sandbox,
-lease and capability identity are fields on the Turn; OpenSandbox metadata and
-telemetry provide additional audit evidence.
+There is no separate sandbox-attempt table. Current sandbox, lease and
+capability identity are fields on the Turn; OpenSandbox metadata and telemetry
+provide additional audit evidence.
+
+`capability_ledger` stores the signed capability identity, expiry, revocation,
+request/public-request counters and consumed/reserved model tokens.
+`model_token_reservations` serializes concurrent model and compaction requests
+and records conservative final charges. These tables govern transport budgets;
+they do not contain prompts, model output or business decisions.
 
 ## Turn inputs
 

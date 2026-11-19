@@ -58,6 +58,20 @@ class OutputProbe:
                                    (choice.get('delta') or {}).get('tool_calls')) for choice in value['choices'] if isinstance(choice, dict) and isinstance(choice.get('delta'), dict))
         return output
 
+    def finish(self) -> None:
+        raw=self.buffer.strip()
+        if not raw:return
+        try:value=json.loads(raw)
+        except (ValueError,UnicodeError):return
+        if not isinstance(value,dict):return
+        for candidate in (value,value.get('response'),value.get('message')):
+            usage=candidate.get('usage') if isinstance(candidate,dict) else None
+            if not isinstance(usage,dict):continue
+            for field,alias in (('input_tokens','prompt_tokens'),('output_tokens','completion_tokens')):
+                count=usage.get(field,usage.get(alias))
+                if isinstance(count,int) and not isinstance(count,bool) and 0<=count<2**63:
+                    setattr(self,field,count)
+
 class ModelActivity:
     def __init__(self, store, claims):
         self.store = store
@@ -117,6 +131,7 @@ class ModelActivity:
         if self.finished:
             return
         self.finished = True
+        self.probe.finish()
         failed = bool(error_code or self.probe.failed or status_code is None or status_code >= 400)
         if self.span:
             self.span.set_attributes(obs.sanitize({'duration_ms':round((time.monotonic()-self.started)*1000,3),'header_ms':self.header_ms,'first_output_ms':self.first_output_ms,'outcome':'failed' if failed else 'success'}))

@@ -30,8 +30,30 @@ class DeepSeekHarness:
     assert result.returncode == 0, result.stderr
     rows = [json.loads(line) for line in result.stdout.splitlines()]
     replies = [row["text"] for row in rows if row.get("type") == "assistant_delta"]
-    assert len(replies) == 2 and replies[0].endswith("User request:\nfirst") and replies[1].endswith("User request:\nsecond")
-    assert all("sandbox-media commit" in value for value in replies)
+    assert len(replies) == 2 and replies[0].endswith("User request:\nfirst") and replies[1]=="reply:second"
+    assert "sandbox-media commit" in replies[0] and "sandbox-media commit" not in replies[1]
     assert all(row["snapshot"] is True for row in rows if row.get("type") == "assistant_delta")
     assert [row["input_ids"] for row in rows if row.get("type") == "harness.input.completed"] == [["1"], ["2"]]
     assert len({row["thread_id"] for row in rows if row.get("thread_id")}) == 1
+
+
+def test_deepseek_runner_does_not_reinject_instructions_when_resuming(tmp_path):
+    package=tmp_path/"deepseek_harness";package.mkdir()
+    package.joinpath("__init__.py").write_text("""from types import SimpleNamespace
+class Session:
+    def run(self,text,on_notification=None):return SimpleNamespace(final_response=text,finish_reason='completed')
+class DeepSeekHarness:
+    def __init__(self,**kwargs):pass
+    def start(self):pass
+    def resume_session(self,id):return Session()
+    def start_session(self,id):return Session()
+    def close(self):pass
+""")
+    environment={**os.environ,"PYTHONPATH":str(tmp_path)+os.pathsep+str(Path(__file__).resolve().parents[1]/"src"),
+        "DSH_HOME":str(tmp_path/"dsh"),"DEEPSEEK_BASE_URL":"http://gateway",
+        "DEEPSEEK_API_KEY":"test","DEEPSEEK_REASONING_EFFORT":"high"}
+    result=subprocess.run([sys.executable,"-m","sandbox_runtime.deepseek_runner","--model","model",
+        "--session-id","existing"],input=json.dumps({"type":"input","id":"one","message":"next"})+"\n",
+        text=True,capture_output=True,env=environment,timeout=5)
+    rows=[json.loads(line) for line in result.stdout.splitlines()]
+    assert next(row["text"] for row in rows if row.get("type")=="assistant_delta")=="next"

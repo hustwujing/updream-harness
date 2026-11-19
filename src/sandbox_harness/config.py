@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     capability_request_limit: int = Field(default=200, ge=1, le=10000)
     capability_public_request_limit: int = Field(default=5000, ge=1, le=100000)
     model_token_budget: int = Field(default=2_000_000, ge=1)
+    gateway_request_max_bytes: int = Field(default=16 * 1024 * 1024, ge=1024, le=64 * 1024 * 1024)
+    gateway_body_idle_timeout_seconds: float = Field(default=15, ge=1, le=120)
+    gateway_body_total_timeout_seconds: float = Field(default=120, ge=5, le=600)
     upstream_codex: str = ""
     upstream_claude: str = ""
     upstream_deepseek: str = ""

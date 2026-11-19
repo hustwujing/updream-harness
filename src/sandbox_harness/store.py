@@ -11,10 +11,12 @@ from pathlib import PurePosixPath
 from sqlalchemy import case, or_, Boolean, DateTime, Integer, String, Text, UniqueConstraint, delete, func, inspect, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .observability import observed
-from .domain import AccountView, RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, TurnProjectFileSnapshot, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, TERMINAL, identifier, now, MediaDraftView, MediaJobView, MediaJobOutputView, MediaReferenceUploadView, SiteDeployJobView, SiteDraftView, SiteProjectView, SiteVersionView
+from .domain import AccountView, CapabilityClaims, RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, TurnProjectFileSnapshot, ThreadCreate, ThreadView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, TERMINAL, identifier, now, MediaDraftView, MediaJobView, MediaJobOutputView, MediaReferenceUploadView, SiteDeployJobView, SiteDraftView, SiteProjectView, SiteVersionView
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
 from .media_errors import media_error_guidance
@@ -533,6 +535,35 @@ class AuthSessionRow(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class CapabilityLedgerRow(Base):
+    __tablename__ = "capability_ledger"
+    nonce: Mapped[str] = mapped_column(String(64), primary_key=True)
+    claims_digest: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[int] = mapped_column(Integer)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", index=True)
+    max_requests: Mapped[int] = mapped_column(Integer)
+    max_public_requests: Mapped[int] = mapped_column(Integer)
+    request_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    public_request_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    token_budget: Mapped[int] = mapped_column(Integer)
+    token_reserved: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    token_consumed: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ModelTokenReservationRow(Base):
+    __tablename__ = "model_token_reservations"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    nonce: Mapped[str] = mapped_column(String(64), index=True)
+    requested_output: Mapped[int] = mapped_column(Integer)
+    reserved: Mapped[int] = mapped_column(Integer)
+    charged: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    state: Mapped[str] = mapped_column(String(20), default="reserved", server_default="reserved")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class Store:
     def __init__(self, database_url: str, redis_url: str = "", redis_prefix: str = "sandbox-harness:"):
         self.engine = create_async_engine(database_url)
@@ -667,6 +698,98 @@ class Store:
         if self.events:
             await self.events.close()
         await self.engine.dispose()
+
+    @staticmethod
+    def _claims_digest(claims: CapabilityClaims) -> str:
+        value=json.dumps(claims.model_dump(mode="json"),sort_keys=True,
+            separators=(",",":"),ensure_ascii=True).encode()
+        return hashlib.sha256(value).hexdigest()
+
+    async def _ensure_capability_locked(self, db: AsyncSession,
+                                        claims: CapabilityClaims) -> CapabilityLedgerRow:
+        timestamp=now();digest=self._claims_digest(claims)
+        values=dict(nonce=claims.nonce,claims_digest=digest,expires_at=claims.expires_at,
+            revoked=False,max_requests=claims.max_requests,
+            max_public_requests=claims.max_public_requests,request_count=0,
+            public_request_count=0,token_budget=claims.token_budget,token_reserved=0,
+            token_consumed=0,created_at=timestamp,updated_at=timestamp)
+        statement=(postgresql_insert(CapabilityLedgerRow)
+            if self.engine.dialect.name=="postgresql" else sqlite_insert(CapabilityLedgerRow))
+        await db.execute(statement.values(**values).on_conflict_do_nothing(
+            index_elements=[CapabilityLedgerRow.nonce]))
+        row=(await db.execute(select(CapabilityLedgerRow).where(
+            CapabilityLedgerRow.nonce==claims.nonce).with_for_update())).scalar_one()
+        if row.revoked:raise ValueError("capability_revoked")
+        if row.claims_digest!=digest:raise ValueError("capability_identity_conflict")
+        if int(datetime.now(timezone.utc).timestamp())>=row.expires_at:
+            raise ValueError("capability_expired")
+        row.updated_at=timestamp
+        return row
+
+    async def authorize_capability(self, claims: CapabilityClaims,
+                                   usage: str="request") -> dict:
+        if usage not in {"request","public","check"}:
+            raise ValueError("capability_usage_invalid")
+        async with self.connections.begin() as db:
+            row=await self._ensure_capability_locked(db,claims)
+            if usage=="request":
+                if row.request_count>=row.max_requests:raise ValueError("capability_request_limit")
+                row.request_count+=1
+            elif usage=="public":
+                if row.public_request_count>=row.max_public_requests:
+                    raise ValueError("capability_public_request_limit")
+                row.public_request_count+=1
+            return {"request_count":row.request_count,
+                "public_request_count":row.public_request_count,
+                "token_remaining":max(0,row.token_budget-row.token_reserved-row.token_consumed)}
+
+    async def revoke_capability(self, nonce: str, expires_at: int) -> None:
+        if not nonce or len(nonce)>64:raise ValueError("capability_nonce_invalid")
+        async with self.connections.begin() as db:
+            timestamp=now()
+            values=dict(nonce=nonce,claims_digest="",expires_at=expires_at,revoked=True,
+                max_requests=0,max_public_requests=0,request_count=0,public_request_count=0,
+                token_budget=0,token_reserved=0,token_consumed=0,
+                created_at=timestamp,updated_at=timestamp)
+            statement=(postgresql_insert(CapabilityLedgerRow)
+                if self.engine.dialect.name=="postgresql" else sqlite_insert(CapabilityLedgerRow))
+            await db.execute(statement.values(**values).on_conflict_do_nothing(
+                index_elements=[CapabilityLedgerRow.nonce]))
+            row=await db.get(CapabilityLedgerRow,nonce,with_for_update=True)
+            row.revoked=True;row.expires_at=max(row.expires_at,expires_at);row.updated_at=timestamp
+
+    async def reserve_model_tokens(self, claims: CapabilityClaims, request_id: str,
+                                   requested_output: int) -> dict:
+        if not request_id or requested_output<1:raise ValueError("model_token_reservation_invalid")
+        async with self.connections.begin() as db:
+            existing=await db.get(ModelTokenReservationRow,request_id,with_for_update=True)
+            if existing:
+                if existing.nonce!=claims.nonce or existing.requested_output!=requested_output:
+                    raise ValueError("model_token_reservation_conflict")
+                return {"reserved":existing.reserved,"remaining":0,"reused":True}
+            row=await self._ensure_capability_locked(db,claims)
+            available=row.token_budget-row.token_reserved-row.token_consumed
+            if requested_output>available or available<1:
+                raise ValueError("model_token_budget_exhausted")
+            row.token_reserved+=available;timestamp=now()
+            db.add(ModelTokenReservationRow(id=request_id,nonce=claims.nonce,
+                requested_output=requested_output,reserved=available,charged=0,
+                state="reserved",created_at=timestamp,updated_at=timestamp))
+            return {"reserved":available,"remaining":available-requested_output,"reused":False}
+
+    async def finalize_model_tokens(self, request_id: str,
+                                    usage_tokens: int|None) -> dict:
+        async with self.connections.begin() as db:
+            reservation=await db.get(ModelTokenReservationRow,request_id,with_for_update=True)
+            if not reservation:raise KeyError("model_token_reservation_not_found")
+            if reservation.state=="finalized":
+                return {"charged":reservation.charged,"reused":True}
+            row=await db.get(CapabilityLedgerRow,reservation.nonce,with_for_update=True)
+            charge=(usage_tokens if isinstance(usage_tokens,int) and not isinstance(usage_tokens,bool)
+                and 0<=usage_tokens<=reservation.reserved else reservation.reserved)
+            row.token_reserved-=reservation.reserved;row.token_consumed+=charge;row.updated_at=now()
+            reservation.charged=charge;reservation.state="finalized";reservation.updated_at=now()
+            return {"charged":charge,"reused":False}
 
     @staticmethod
     def thread_view(row: ThreadRow) -> ThreadView:

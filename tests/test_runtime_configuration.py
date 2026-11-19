@@ -349,12 +349,17 @@ def test_checkpoint_excludes_runtime_links_and_restore_ignores_existing_links(tm
     monkeypatch.setattr(runtime_app, "PERSISTENT", ("project", "state"))
     app = runtime_app.create_app(); state = tmp_path / "workspace/state/codex/tmp"
     state.mkdir(parents=True); (state / "target").write_text("kept"); (state / "runtime-link").symlink_to("/opt/codex")
+    for harness,filename in (("claude","transcript.jsonl"),("dsh","compacted-session.jsonl")):
+        target=tmp_path/"workspace/state"/harness/filename;target.parent.mkdir(parents=True,exist_ok=True)
+        target.write_text(harness+"-native-state")
     with TestClient(app) as client:
         exported = client.get("/v1/checkpoint")
         assert exported.status_code == 200
         with tarfile.open(fileobj=io.BytesIO(exported.content), mode="r:") as archive:
             assert "state/codex/tmp/target" in archive.getnames()
             assert "state/codex/tmp/runtime-link" not in archive.getnames()
+            assert "state/claude/transcript.jsonl" in archive.getnames()
+            assert "state/dsh/compacted-session.jsonl" in archive.getnames()
 
         crafted = io.BytesIO()
         with tarfile.open(fileobj=crafted, mode="w") as archive:
