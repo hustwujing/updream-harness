@@ -104,9 +104,48 @@ async def test_execution_graph_connects_job_group_to_internal_continuation_and_s
         assert child['error_code']=='model_rate_limited'
         assert child['error_summary']=='模型服务限流，请稍后重试'
         assert 'secret upstream body' not in json.dumps(graph,ensure_ascii=False)
-        assert {'from':'group:'+group.id,'to':f'turn:{continuation.id}:input','kind':'continued_by'} in graph['edges']
+        assert {'from':'wait_barrier:'+group.id,'to':f'turn:{continuation.id}:input','kind':'continued_by'} in graph['edges']
         continued=next(node for node in graph['nodes'] if node['id']==f'turn:{continuation.id}:input')
         assert continued['title']=='并行任务结果已返回'
+    finally:await store.close()
+
+
+async def test_execution_graph_projects_exact_child_wait_progress_and_join_barrier(tmp_path):
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'wait-progress.db'));await store.initialize()
+    try:
+        profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level='standard',title='Wait progress'),profile,'owner')
+        turn,_,_=await store.create_turn(thread.id,TurnCreate(message='parallel',
+            idempotency_key='wait-progress-origin'),profile,'owner')
+        requests=[JobRequest(local_job_id=f'child-{index}',kind=JobKind.OPERATION,adapter='fake',
+            descriptor_id='fake',descriptor_version='1',descriptor_digest='a'*64,
+            idempotency_key=f'wait-progress-child-{index}') for index in range(3)]
+        group,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id=thread.id,
+            origin_turn_id=turn.id,idempotency_key='wait-progress-group',jobs=requests))
+        await store.transition_job(jobs[0].id,JobState.SUCCEEDED,expected_generation=0,result={})
+        await store.transition_job(jobs[1].id,JobState.FAILED,expected_generation=0,
+            result={'error_code':'operation_failed'})
+        graph=await ExecutionGraphProjector(store).snapshot(thread.id,'owner')
+        group_node=next(node for node in graph['nodes'] if node['id']=='group:'+group.id)
+        barrier=next(node for node in graph['nodes'] if node['id']=='wait_barrier:'+group.id)
+        assert group_node['progress']=={'terminal':2,'total':3,'succeeded':1,'failed':1,
+            'cancelled':0,'blocked':0,'unknown':0}
+        assert barrier['state']=='RUNNING' and barrier['title']=='正在等待全部子任务返回 · 2/3'
+        assert barrier['progress']==group_node['progress'] and barrier['turn_id']==turn.id
+        assert await ExecutionGraphProjector(store).waits(thread.id,'owner')==[barrier]
+        assert {'from':'group:'+group.id,'to':barrier['id'],'kind':'waits_on'} in graph['edges']
+        assert {edge['from'] for edge in graph['edges'] if edge['to']==barrier['id']
+            and edge['kind']=='reported_to'}=={'job:'+job.id for job in jobs}
+
+        await store.transition_job(jobs[2].id,JobState.CANCELLED,expected_generation=0,
+            result={'error_code':'cancelled'})
+        complete=await ExecutionGraphProjector(store).snapshot(thread.id,'owner')
+        barrier=next(node for node in complete['nodes'] if node['id']=='wait_barrier:'+group.id)
+        assert barrier['state']=='COMPLETED' and barrier['title']=='全部子任务已返回 · 3/3'
+        assert barrier['progress']=={'terminal':3,'total':3,'succeeded':1,'failed':1,
+            'cancelled':1,'blocked':0,'unknown':0}
+        assert barrier['ended_at'] is not None and barrier['duration_ms']>=0
     finally:await store.close()
 
 

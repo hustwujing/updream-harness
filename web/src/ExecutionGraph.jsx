@@ -86,6 +86,7 @@ const typeLabels = {
   primary_harness: "主执行",
   job_group_draft: "任务确认",
   job_group: "并行任务组",
+  wait_barrier: "子任务等待",
   job: "执行任务",
   media_batch: "媒体任务组",
   media_draft: "媒体确认",
@@ -96,6 +97,8 @@ const typeLabels = {
 const edgeLabels = {
   submitted_by: "派生",
   contains: "包含",
+  waits_on: "等待",
+  reported_to: "返回",
   continued_by: "续接",
   reviewed_by: "审查",
   review_verdict: "结论",
@@ -490,11 +493,19 @@ export default function ExecutionGraph({ thread, items = [] }) {
           <dd>{stateLabels[selected.state] || selected.state}</dd>
           <dt>执行位置</dt>
           <dd>{selected.location_label}</dd>
-          {selected.progress != null && (
+          {typeof selected.progress === "number" && (
             <>
               <dt>进度</dt>
               <dd>
                 {selected.progress}% · {selected.phase || "处理中"}
+              </dd>
+            </>
+          )}
+          {selected.progress && typeof selected.progress === "object" && (
+            <>
+              <dt>返回进度</dt>
+              <dd>
+                {selected.progress.terminal}/{selected.progress.total}
               </dd>
             </>
           )}

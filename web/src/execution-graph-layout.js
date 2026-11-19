@@ -30,7 +30,7 @@ export function defaultCollapsedGroups(graph,turnId){
 
 function hiddenByCollapsedGroups(graph,component,collapsedGroups){
  const outgoing=new Map();
- for(const edge of graph.edges||[]){if(edge.kind==='continued_by')continue;if(!outgoing.has(edge.from))outgoing.set(edge.from,[]);outgoing.get(edge.from).push(edge.to)}
+ for(const edge of graph.edges||[]){if(['continued_by','reported_to','waits_on'].includes(edge.kind))continue;if(!outgoing.has(edge.from))outgoing.set(edge.from,[]);outgoing.get(edge.from).push(edge.to)}
  const hidden=new Set(),counts=new Map();
  for(const group of collapsedGroups||[]){const queue=[...(outgoing.get(group)||[])];counts.set(group,queue.length);while(queue.length){const id=queue.shift();if(hidden.has(id)||!component.has(id))continue;hidden.add(id);queue.push(...(outgoing.get(id)||[]))}}
  return {hidden,counts};

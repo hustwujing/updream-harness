@@ -35,12 +35,12 @@ describe('execution graph layout',()=>{
  });
 
  it('collapses direct group members without changing the source graph',()=>{
-  const graph={nodes:[node('primary','primary_harness','turn'),node('group','job_group','turn'),...Array.from({length:7},(_,index)=>node(`job-${index}`,'job','turn'))],edges:[edge('primary','group'),...Array.from({length:7},(_,index)=>edge('group',`job-${index}`))]};
+  const graph={nodes:[node('primary','primary_harness','turn'),node('group','job_group','turn'),...Array.from({length:7},(_,index)=>node(`job-${index}`,'job','turn')),node('wait','wait_barrier','turn')],edges:[edge('primary','group'),...Array.from({length:7},(_,index)=>edge('group',`job-${index}`)),edge('group','wait','waits_on'),...Array.from({length:7},(_,index)=>edge(`job-${index}`,'wait','reported_to'))]};
   expect(defaultCollapsedGroups(graph,'turn')).toEqual(new Set(['group']));
   const view=executionGraphView(graph,{turnId:'turn',collapsedGroups:new Set(['group'])});
-  expect(view.nodes.map(value=>value.id).sort()).toEqual(['group','primary']);
+  expect(view.nodes.map(value=>value.id).sort()).toEqual(['group','primary','wait']);
   expect(view.nodes.find(value=>value.id==='group').collapsedCount).toBe(7);
-  expect(graph.nodes).toHaveLength(9);
+  expect(graph.nodes).toHaveLength(10);
  });
  it('keeps a cyclic server projection bounded instead of crashing',()=>{
   const graph={nodes:[node('primary','primary_harness','turn'),node('a','job','turn'),node('b','job','turn')],edges:[edge('primary','a'),edge('a','b'),edge('b','a')]};

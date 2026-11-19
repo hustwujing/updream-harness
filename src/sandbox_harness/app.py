@@ -1119,6 +1119,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Thread not found")
 
+    @app.get("/api/threads/{thread_id}/job-waits")
+    async def thread_job_waits(thread_id: str, request: Request):
+        try:
+            return await execution_graph.waits(thread_id,request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404,"Thread not found")
+
     @app.get("/api/jobs/{job_id}/activities")
     async def job_activities(job_id: str, request: Request, after: int = 0, limit: int = 500):
         job = await store.get_job_for_owner(job_id, request.state.owner_id)

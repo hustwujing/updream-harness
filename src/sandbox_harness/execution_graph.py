@@ -13,6 +13,7 @@ from .store import (InteractionRow,JobActivityRow,JobArtifactRow,JobAttemptRow,J
 
 
 RUNNING_JOB_STATES={'CREATED','QUEUED','RUNNING','WAITING_EXTERNAL','CANCELLING','PAUSING'}
+TERMINAL_JOB_STATES={'SUCCEEDED','FAILED','CANCELLED','BLOCKED','UNKNOWN'}
 MAX_TURNS=50;MAX_DRAFTS=100;MAX_GROUPS=200;MAX_JOBS=300;MAX_INTERACTIONS=100
 MAX_ARTIFACT_SUMMARIES=200;MAX_NODES=900;MAX_EDGES=1400
 MAX_MEDIA_BATCHES=100;MAX_MEDIA_DRAFTS=300;MAX_MEDIA_JOBS=300
@@ -49,8 +50,48 @@ def media_job_state(value:str)->str:
         'unknown':'UNKNOWN'}.get(value,value.upper())
 
 
+def group_progress(groups,state_rows):
+    values={row.id:{'terminal':0,'total':row.member_count,'succeeded':0,
+        'failed':0,'cancelled':0,'blocked':0,'unknown':0} for row in groups}
+    keys={'SUCCEEDED':'succeeded','FAILED':'failed','CANCELLED':'cancelled',
+        'BLOCKED':'blocked','UNKNOWN':'unknown'}
+    for group_id,state,count in state_rows:
+        progress=values.get(group_id)
+        if not progress:continue
+        if state in TERMINAL_JOB_STATES:progress['terminal']+=int(count)
+        if state in keys:progress[keys[state]]+=int(count)
+    return values
+
+
+def wait_barrier(group,progress):
+    complete=progress['terminal']>=progress['total']
+    return {'id':'wait_barrier:'+group.id,'type':'wait_barrier','role':'子任务等待',
+        'title':('全部子任务已返回' if complete else '正在等待全部子任务返回')+
+            f" · {progress['terminal']}/{progress['total']}",
+        'state':'COMPLETED' if complete else 'RUNNING','location':'control_plane',
+        'location_label':'协调器','started_at':iso(group.created_at),
+        'ended_at':iso(group.terminal_at) if complete else None,
+        'duration_ms':duration_ms(group.created_at,group.terminal_at) if complete else 0,
+        'retries':0,'activity_count':0,'turn_id':group.origin_turn_id,
+        'group_id':group.id,'progress':progress}
+
+
 class ExecutionGraphProjector:
     def __init__(self,store):self.store=store
+
+    async def waits(self,thread_id:str,owner_id:str)->list[dict]:
+        async with self.store.connections() as db:
+            exists=(await db.execute(select(ThreadRow.id).where(ThreadRow.id==thread_id,
+                ThreadRow.owner_id==owner_id))).scalar_one_or_none()
+            if not exists:raise KeyError('thread_not_found')
+            groups=list(reversed(list((await db.execute(select(JobGroupRow).where(
+                JobGroupRow.thread_id==thread_id).order_by(JobGroupRow.created_at.desc())
+                .limit(MAX_GROUPS))).scalars().all())))
+            identities={row.id for row in groups}
+            state_rows=(await db.execute(select(JobRow.group_id,JobRow.state,func.count()).where(
+                JobRow.group_id.in_(identities or {''})).group_by(JobRow.group_id,JobRow.state))).all()
+        progress=group_progress(groups,state_rows)
+        return [wait_barrier(group,progress[group.id]) for group in groups]
 
     async def snapshot(self,thread_id:str,owner_id:str,*,cursor:str='',include_history:bool=False,
                        history_before:str='')->dict:
@@ -125,6 +166,8 @@ class ExecutionGraphProjector:
             jobs=list(reversed(list((await db.execute(select(JobRow).where(
                 JobRow.group_id.in_(group_ids or {''})).order_by(JobRow.created_at.desc(),
                     JobRow.local_job_id).limit(MAX_JOBS))).scalars().all())))
+            job_state_rows=(await db.execute(select(JobRow.group_id,JobRow.state,func.count()).where(
+                JobRow.group_id.in_(group_ids or {''})).group_by(JobRow.group_id,JobRow.state))).all()
             job_ids={row.id for row in jobs}
             batch_turn_ids={row.turn_id for row in media_batches}
             media_drafts=list(reversed(list((await db.execute(select(MediaDraftRow).where(
@@ -170,6 +213,7 @@ class ExecutionGraphProjector:
             if row.continuation_turn_id}
         media_continuation_by_origin={row.idempotency_key.removeprefix('media-continuation-'):row.id
             for row in turns if row.idempotency_key.startswith('media-continuation-')}
+        progress_by_group=group_progress(groups,job_state_rows)
         for turn in turns:
             user_id=f'turn:{turn.id}:input';primary_id=f'turn:{turn.id}:primary'
             continuation_title=('并行任务结果已返回' if turn.id in outbox_by_continuation else
@@ -200,16 +244,20 @@ class ExecutionGraphProjector:
             if draft.origin_turn_id in turn_ids:edges.append({'from':f'turn:{draft.origin_turn_id}:primary','to':identity,'kind':'submitted_by'})
         for group in groups:
             identity='group:'+group.id
+            progress=progress_by_group[group.id]
             nodes.append({'id':identity,'type':'job_group','role':'并行任务组','title':f'{group.member_count} 个并行任务',
                 'state':group.state,'location':'control_plane','location_label':'协调器',
                 'started_at':iso(group.created_at),'ended_at':iso(group.terminal_at),
                 'duration_ms':duration_ms(group.created_at,group.terminal_at) if group.terminal_at else 0,'retries':0,
-                'activity_count':0,'turn_id':group.origin_turn_id})
+                'activity_count':0,'turn_id':group.origin_turn_id,'progress':progress})
             parent=('draft:'+group.draft_id if group.draft_id else f'turn:{group.origin_turn_id}:primary')
             edges.append({'from':parent,'to':identity,'kind':'contains' if group.draft_id else 'submitted_by'})
+            barrier_id='wait_barrier:'+group.id
+            nodes.append(wait_barrier(group,progress))
+            edges.append({'from':identity,'to':barrier_id,'kind':'waits_on'})
         for outbox in outboxes:
             if outbox.continuation_turn_id in turn_ids and outbox.group_id in group_ids:
-                edges.append({'from':'group:'+outbox.group_id,
+                edges.append({'from':'wait_barrier:'+outbox.group_id,
                     'to':f'turn:{outbox.continuation_turn_id}:input','kind':'continued_by'})
         for job in jobs:
             reservation=reservation_by_job.get(job.id);resources=json.loads(reservation.gpu_ids_json) if reservation else []
@@ -244,6 +292,7 @@ class ExecutionGraphProjector:
                     'capability_ids':requirements.get('required_capability_ids') or [],
                     'network_origins':request.get('network_origins') or []}})
             edges.append({'from':'group:'+job.group_id,'to':'job:'+job.id,'kind':'contains'})
+            edges.append({'from':'job:'+job.id,'to':'wait_barrier:'+job.group_id,'kind':'reported_to'})
         media_jobs_by_draft={row.draft_id:row for row in media_jobs}
         for batch in media_batches:
             batch_id='media-batch:'+batch.turn_id
@@ -308,7 +357,7 @@ class ExecutionGraphProjector:
         active_states=RUNNING_JOB_STATES|{'COMMITTED','DRAFT','AWAITING_CONFIRMATION','pending','responding','PENDING','REVIEW_BLOCKED','OPTIONAL_WARNING','REQUIRED_UNAVAILABLE'}
         type_priority={'interaction':0,'review_gate':1,'job':2,'job_group':3,
             'media_job':2,'job_group_draft':4,'media_draft':4,'media_batch':3,
-            'primary_harness':5,'user_turn':6,'continuation':6}
+            'wait_barrier':1,'primary_harness':5,'user_turn':6,'continuation':6}
         node_by_id={node['id']:node for node in nodes};parents={}
         for edge in edges:parents.setdefault(edge['to'],[]).append(edge['from'])
         seeds=sorted((node for node in nodes if node.get('state') in active_states),key=lambda node:(

@@ -62,6 +62,7 @@ export async function listItems(id,after=0){const items=[];let cursor=after;whil
 export const listProjectFiles=id=>api(`threads/${id}/project-files`);
 export const listInteractions=id=>api(`threads/${id}/interactions`);
 export const getExecutionGraph=(id,cursor='',history=false,before='')=>api(`threads/${id}/execution-graph?cursor=${encodeURIComponent(cursor)}&include_history=${history}&history_before=${encodeURIComponent(before)}`);
+export const listJobWaits=id=>api(`threads/${id}/job-waits`);
 export const listJobActivities=(id,after=0)=>api(`jobs/${id}/activities?after=${after}&limit=500`);
 export const respondInteraction=(id,value)=>api(`interactions/${id}/respond`,{method:'POST',body:JSON.stringify(value)});
 export const projectFileHistory=(id,path)=>api(`threads/${id}/project-files/history?path=${encodeURIComponent(path)}`);

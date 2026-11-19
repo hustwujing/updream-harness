@@ -472,3 +472,11 @@ body[data-network-access="restricted"] .topbar>div:nth-child(2)>span::after{cont
 .execution-follow-current{height:28px;border:1px solid #b9cbbb!important;background:#edf5ef!important;color:#315c45!important}
 .execution-node-error{margin:0;border-top:1px solid #f0d9d2;background:#fff5f1;color:#984c3d}
 @media(max-width:700px){.execution-graph-modal{width:100vw;height:100dvh}.execution-graph-toolbar{flex-wrap:wrap}}
+.job-wait-steps{display:grid;gap:5px;margin:8px 0 12px 39px;border-left:1px solid #dfe5df;padding-left:13px}
+.job-wait-step{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:start;gap:7px;padding:5px 0;color:#59615b}
+.job-wait-step>svg{margin-top:1px;color:#4f7b5c}
+.job-wait-step b,.job-wait-step small{display:block;min-width:0}
+.job-wait-step b{font-size:10px;font-weight:600}
+.job-wait-step small{margin-top:2px;color:#858b86;font-size:9px;line-height:1.35}
+.job-wait-step.running b{color:#3f5e49}.job-wait-spinner{animation:activity-spin .8s linear infinite}
+@media(max-width:700px){.job-wait-steps{margin-left:0}}
