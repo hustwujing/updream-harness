@@ -86,10 +86,10 @@
 - Produces: real-machine evidence for B04 success/wait, B05 observation timeout, and B06 forced deadline cleanup.
 
 - [x] Create an isolated real OpenSandbox runner using a synthetic Harness fixture and the deployed Runtime bundle.
-- [ ] Verify B04 waits to successful terminal state and captures output.
-- [ ] Verify B05 observation timeout leaves the Job running and a later wait succeeds.
-- [ ] Verify B06 times out a process ignoring `SIGTERM`, reports `timed_out`, and leaves no live process.
-- [ ] Persist revision, image, elapsed time and cleanup evidence under `.data/evidence`.
+- [x] Verify B04 waits to successful terminal state and captures output.
+- [x] Verify B05 observation timeout leaves the Job running and a later wait succeeds.
+- [x] Verify B06 times out a process ignoring `SIGTERM`, reports `timed_out`, and leaves no live process.
+- [x] Persist revision, image, elapsed time and cleanup evidence under `.data/evidence`.
 
 ### Task 5: Release
 
@@ -101,8 +101,8 @@
 - Consumes: all prior tasks.
 - Produces: immutable release, deployed verification and GitHub commit.
 
-- [ ] Run focused suites, then commit the implementation.
-- [ ] Run the complete gate once on the clean commit.
-- [ ] Record and deploy the immutable release; refresh warm Sandboxes for the new Runtime bundle.
-- [ ] Run B04-B06 against the deployed environment and verify cleanup.
+- [x] Run focused suites, then commit the implementation.
+- [x] Run the complete gate once on the clean commit.
+- [x] Record and deploy the immutable release; refresh warm Sandboxes for the new Runtime bundle.
+- [x] Run B04-B06 against the deployed environment and verify cleanup.
 - [ ] Update the report, commit evidence documentation, rerun affected checks, push `sandbox-harness-platform-parallel`, and verify deployed health revision.

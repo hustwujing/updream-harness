@@ -68,6 +68,33 @@ The real R06 allocation test deliberately deleted both Claude warm Sandboxes bef
 
 No case-specific production branch was added. Prompt changes are limited to a short Runtime contract describing Workspace paths, output publication, `sandbox-background`, `sandbox-interact`, casual-chat behavior and the rule against redundant confirmation. Programmatic schema, ownership, fencing and lifecycle checks remain authoritative.
 
+## 2026-11-20 Bounded Background Execution
+
+- Feature commit `8394bf2` separates same-Sandbox background work from the
+  existing host Durable Job and Continuation plane. Work crossing a Turn,
+  Runtime, Sandbox or machine remains a host Job; no second durable queue was
+  introduced.
+- `sandbox-background` now provides absolute deadlines, bounded TERM/KILL
+  escalation, atomic supervisor terminal receipts, one-call terminal waiting,
+  non-destructive observation timeout and structured expected errors.
+- Runtime recovery consumes a terminal supervisor receipt before classifying an
+  active record as interrupted. Supervisor receipt files are excluded from Job
+  record enumeration, and Runtime restart waits for supervisor process-tree
+  cleanup so a separate child session cannot be orphaned.
+- Focused verification passed `82` Runtime/CLI/Coordinator tests. The complete
+  gate passed `938` Python tests, `19` frontend tests, the production build,
+  Systemd verification and every non-live browser script. Gate receipt:
+  `.data/evidence/gate/20261119T162546Z.json`.
+- Real OpenSandbox B04 completed through one wait call in `0.331s`; B05 returned
+  a running observation-timeout snapshot and later completed in `0.477s`; B06
+  killed a TERM-ignoring process, returned `timed_out`/`124`, and verified the
+  process absent in `0.470s`. The isolated Sandbox namespace was deleted.
+- Real-case evidence is
+  `.data/evidence/real-background-control/ec3956f7d474.json`; it used signed
+  Runtime Code Bundle `50d23fe30857dfb7cfdb3c1845a368ea63884ada74f2882964724b2db0518b80`
+  and a synthetic Harness fixture, so no model/Provider result is represented
+  as process-control evidence.
+
 ## Evidence Files
 
 - `.data/final-model-stable.json`
