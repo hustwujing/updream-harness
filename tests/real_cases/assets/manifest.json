@@ -101,6 +101,16 @@
       "sha256": "8210597d6f0a8c012d1c70f25ce37a2d7f46e6fa7f90e999ad5b8f2cc02c387b"
     },
     {
+      "name": "video_edit_reference.mp4",
+      "bytes": 131998,
+      "sha256": "0ca84c2f1ff3ac07285cfce77f28404c3b49b7500c898907672131725c6b8842"
+    },
+    {
+      "name": "voice-0.wav",
+      "bytes": 224078,
+      "sha256": "a6861354730629f7f0243747e4cf169c8c598c8a3b1bd5379aac00575a5a8b3c"
+    },
+    {
       "name": "approved_subject.png",
       "bytes": 500628,
       "sha256": "ee97ce0c2d55bfcc92de3484e0d4ce493d8beb90994f8cf65e4cfc33bfcddcdd"
