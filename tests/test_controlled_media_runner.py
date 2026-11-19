@@ -3,7 +3,8 @@ from pathlib import Path
 import pytest
 
 from sandbox_harness.controlled_media_runner import (
-    THREAD_ENVIRONMENT,_base_args,_gpu_uuid,_thread_environment_args,probe_controlled_gpu,
+    ControlledOperationError,THREAD_ENVIRONMENT,_base_args,_gpu_uuid,_require_audio_stream,
+    _thread_environment_args,probe_controlled_gpu,
 )
 
 
@@ -48,3 +49,17 @@ def test_controlled_gpu_probe_uses_exact_sam3_python_and_returns_health(tmp_path
     assert observed[0][0][:2]==['bwrap','3']
     assert str(runtime/'envs/sam3/bin/python') in observed[0][0]
     assert observed[0][2]==90
+
+
+def test_transcribe_rejects_media_without_audio_before_model_execution(tmp_path,monkeypatch):
+    source=tmp_path/'silent.mp4';source.write_bytes(b'video')
+    result=type('Result',(),{'returncode':0,'stdout':'{"streams": []}','stderr':''})()
+    monkeypatch.setattr('sandbox_harness.controlled_media_runner.subprocess.run',
+        lambda *args,**kwargs:result)
+
+    with pytest.raises(ControlledOperationError) as raised:_require_audio_stream(source)
+
+    assert raised.value.error_code=='audio_stream_missing'
+    assert raised.value.failed_phase=='input_validation'
+    assert not raised.value.infrastructure
+    assert not raised.value.retryable

@@ -99,7 +99,7 @@ PARALLEL_CASES=[
         {"phase_one_jobs":3,"operations":["audio.transcribe","media.render"],
             "provider":"image.generate","skill":"docx","delivery":"multimodal-report.docx",
             "one_group_confirmation":True,"immutable_handoff":True},
-        assets=("portrait_clip.mp4",),
+        assets=("portrait_clip.mp4","speech.wav"),
         features=("operation","provider","complex_skill","two_stage_dag","artifact_handoff",
             "group_confirmation","multimodal"),
         content_checks=("转写、转码和外部生成同组并行","第一阶段只确认一次",

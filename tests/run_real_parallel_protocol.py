@@ -887,9 +887,11 @@ async def case_p25(client,args):
 
 async def case_p26(client,args):
     thread,turn=await origin(client,args,'P26')
-    source=await register_case_asset(thread['id'],turn['id'],
+    video_source=await register_case_asset(thread['id'],turn['id'],
         ROOT/'tests/real_cases/assets/portrait_clip.mp4')
-    phase_one=[transcribe_job(source.id),video_render_job(source.id),provider_job(26,prompt=(
+    audio_source=await register_case_asset(thread['id'],turn['id'],
+        ROOT/'tests/real_cases/assets/speech.wav')
+    phase_one=[transcribe_job(audio_source.id),video_render_job(video_source.id),provider_job(26,prompt=(
         'Editorial cover image for a concise video insight report, clean cyan and coral shapes, '
         'audio waveform motif, no words, no letters, portrait-safe center composition'))]
     prepared=require(await prepare(client,thread,turn,phase_one,'P26-source',

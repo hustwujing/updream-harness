@@ -113,7 +113,7 @@ class ControlledMediaOperationAdapter(BaseJobAdapter):
                         if isinstance(exc,ControlledOperationError):
                             if exc.retry_class=='node_health_change' and self.gpu_health:
                                 self.gpu_health.invalidate(reservation.gpu_ids)
-                            raise PreAcceptFailure(str(exc),infrastructure=True,
+                            raise PreAcceptFailure(str(exc),infrastructure=exc.infrastructure,
                                 error_code=exc.error_code,failed_phase=exc.failed_phase,
                                 retry_class=exc.retry_class,retryable=exc.retryable,
                                 node_health_generation=int(getattr(self.gpu_health,'generation',0)),

@@ -20,9 +20,9 @@ THREAD_ENVIRONMENT={
 
 class ControlledOperationError(RuntimeError):
     def __init__(self,message:str,*,error_code:str,failed_phase:str,
-                 retry_class:str='none',retryable:bool=False):
+                 retry_class:str='none',retryable:bool=False,infrastructure:bool=False):
         super().__init__(message);self.error_code=error_code;self.failed_phase=failed_phase
-        self.retry_class=retry_class;self.retryable=retryable
+        self.retry_class=retry_class;self.retryable=retryable;self.infrastructure=infrastructure
 
 
 def _thread_environment_args()->list[str]:
@@ -110,7 +110,7 @@ def _segment(work:Path,source:Path,parameters:dict,gpu_ids:tuple[str,...],runtim
         if code=='gpu_runtime_unavailable':
             raise ControlledOperationError('Controlled CUDA runtime is unavailable',
                 error_code='gpu_runtime_unavailable',failed_phase='operation_runtime',
-                retry_class='node_health_change',retryable=True) from exc
+                retry_class='node_health_change',retryable=True,infrastructure=True) from exc
         raise
     with Image.open(work/'foreground.png') as foreground:
         size=foreground.size
@@ -127,8 +127,24 @@ def _segment(work:Path,source:Path,parameters:dict,gpu_ids:tuple[str,...],runtim
         {'role':'segmentation_report','path':'segmentation.json','mime':'application/json'}]}
 
 
+def _require_audio_stream(source:Path)->None:
+    result=subprocess.run(['/usr/bin/ffprobe','-v','error','-select_streams','a:0',
+        '-show_entries','stream=index','-of','json',str(source)],capture_output=True,text=True,timeout=30)
+    if result.returncode:
+        raise ControlledOperationError('Source media could not be inspected for audio',
+            error_code='media_probe_failed',failed_phase='input_validation')
+    try:streams=json.loads(result.stdout).get('streams',[])
+    except (AttributeError,json.JSONDecodeError) as exc:
+        raise ControlledOperationError('Source media audio probe returned invalid data',
+            error_code='media_probe_failed',failed_phase='input_validation') from exc
+    if not streams:
+        raise ControlledOperationError('Source media has no audio stream',
+            error_code='audio_stream_missing',failed_phase='input_validation')
+
+
 def _transcribe(work:Path,source:Path,parameters:dict,runtime:Path)->dict:
     if os.geteuid()!=0:raise RuntimeError('controlled_worker_requires_root')
+    _require_audio_stream(source)
     script=work/'transcribe_job.py';shutil.copyfile(Path(__file__).with_name('transcribe_job.py'),script)
     request={**parameters,'source':'/work/'+source.name,
         'model':str(runtime/'models/media-foundation/faster-whisper-small'),

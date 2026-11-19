@@ -7066,7 +7066,8 @@
       "title": "并行多模态内容报告",
       "complexity": "parallel_protocol",
       "assets": [
-        "portrait_clip.mp4"
+        "portrait_clip.mp4",
+        "speech.wav"
       ],
       "prompt": "并行完成视频语音转写、视频规格化和外部异步封面生成；三项完成后，用 docx Skill 汇总为带来源说明的中文内容报告。",
       "expect": {

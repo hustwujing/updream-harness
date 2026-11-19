@@ -149,7 +149,7 @@ async def test_segment_exposes_controlled_cuda_failure_as_node_health_retry(tmp_
     async def runner(*_):
         raise ControlledOperationError('Controlled CUDA runtime is unavailable',
             error_code='gpu_runtime_unavailable',failed_phase='operation_runtime',
-            retry_class='node_health_change',retryable=True)
+            retry_class='node_health_change',retryable=True,infrastructure=True)
     class Health:
         invalidated=()
         def invalidate(self,values):self.invalidated=values
@@ -163,6 +163,25 @@ async def test_segment_exposes_controlled_cuda_failure_as_node_health_retry(tmp_
         assert raised.value.failed_phase=='operation_runtime'
         assert raised.value.retry_class=='node_health_change'
         assert health.invalidated==('gpu-0',)
+        assert not await scheduler.active_reservation(job.id)
+    finally:await store.close()
+
+
+async def test_transcribe_exposes_missing_audio_as_non_infrastructure_input_failure(tmp_path):
+    outputs=(JobExpectedOutput(artifact_role='transcript_text',min_items=1),)
+    store,objects,scheduler,settings,job,attempt,request=await setup(tmp_path,'audio.transcribe',
+        {'language':'zh'},outputs,{'cpu':4,'memory_mb':4096,'disk_mb':2048,'gpu':0})
+    async def runner(*_):
+        raise ControlledOperationError('Source media has no audio stream',
+            error_code='audio_stream_missing',failed_phase='input_validation')
+    adapter=ControlledMediaOperationAdapter(scheduler=scheduler,store=store,objects=objects,
+        settings=settings,runner=runner)
+    context=JobExecutionContext(job=job,request=request,generation=attempt.generation)
+    try:
+        with pytest.raises(PreAcceptFailure) as raised:await adapter.submit(context)
+        assert raised.value.error_code=='audio_stream_missing'
+        assert raised.value.failed_phase=='input_validation'
+        assert not raised.value.infrastructure and not raised.value.retryable
         assert not await scheduler.active_reservation(job.id)
     finally:await store.close()
 
