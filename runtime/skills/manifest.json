@@ -813,6 +813,7 @@
         ],
         "python_modules": [
           "PIL",
+          "imageio",
           "numpy"
         ],
         "node_modules": []
@@ -1051,7 +1052,7 @@
     {
       "id": "slack-gif-creator",
       "version": "2c5958ec",
-      "profile": "instructions",
+      "profile": "media",
       "network": {
         "mode": "none",
         "origins": []
@@ -1074,9 +1075,14 @@
       "dependencies": {
         "commands": [
           "python3",
-          "node"
+          "ffmpeg",
+          "ffprobe"
         ],
-        "python_modules": [],
+        "python_modules": [
+          "PIL",
+          "imageio",
+          "numpy"
+        ],
         "node_modules": []
       },
       "content_sha256": "1c839cfdff180be343f5ec0d625c817506c37876a1a8671c21d9e8020f9bb983",

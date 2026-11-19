@@ -60,7 +60,7 @@
     },
     "media": {
       "commands": ["python3", "ffmpeg", "ffprobe"],
-      "python_modules": ["PIL", "numpy"],
+      "python_modules": ["PIL", "imageio", "numpy"],
       "node_modules": []
     }
   },
@@ -164,7 +164,7 @@
         {"id": "pdf", "version": "2c5958ec", "profile": "office", "network": "none", "test_case": "create, inspect and rasterize a PDF"},
         {"id": "pptx", "version": "2c5958ec", "profile": "office", "network": "none", "test_case": "create, render and validate an object-level editable PPTX"},
         {"id": "skill-creator", "version": "2c5958ec", "profile": "web", "network": "optional for browser review", "test_case": "run skill structure checks"},
-        {"id": "slack-gif-creator", "version": "2c5958ec", "profile": "instructions", "network": "none", "test_case": "import image dependencies"},
+        {"id": "slack-gif-creator", "version": "2c5958ec", "profile": "media", "network": "none", "test_case": "import image dependencies"},
         {"id": "theme-factory", "version": "2c5958ec", "profile": "instructions", "network": "none", "test_case": "validate bundled theme files"},
         {"id": "web-artifacts-builder", "version": "2c5958ec", "profile": "web", "network": "package installation for generated projects", "test_case": "initialize and bundle a minimal artifact"},
         {"id": "webapp-testing", "version": "2c5958ec", "profile": "web", "network": "none for local apps", "test_case": "launch Python Playwright against local HTML"},
