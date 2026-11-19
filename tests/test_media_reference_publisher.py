@@ -145,6 +145,8 @@ async def test_parallel_jobs_with_one_worker_serialize_shared_reference_publicat
     store=Store("sqlite+aiosqlite:///"+str(tmp_path/"publisher-shared-worker.db"));await store.initialize()
     objects=Objects();publisher=MediaReferencePublisher(settings(),store,objects,"w"*64)
     monkeypatch.setattr("sandbox_harness.media_reference_publisher.httpx.AsyncClient",lambda **_:HttpClient())
+    async def progress_only(*args,**kwargs):return True
+    monkeypatch.setattr(store,"update_media_job",progress_only)
     reference={"sha256":DIGEST,"kind":"image","mime":"image/png","size":len(DATA),
         "object_ref":"sha256:"+DIGEST}
     jobs=[{"id":"a"*32,"generation":1,"references":[reference]},
