@@ -598,6 +598,18 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             "sha256":item["artifact"].sha256,"size":item["artifact"].size,
             "mime":item["artifact"].mime} for item in inputs],"media_models":media_catalog.public()}
 
+    @app.get("/v1/operations/artifact.inspect")
+    async def runtime_inspect_artifact(artifact_id:str,request:Request):
+        claims=await authorize_runtime_request(request,"/v1/operations/artifact.inspect")
+        if claims.scope!='job' or 'artifact.inspect' not in claims.operation_ids:
+            raise HTTPException(403,'artifact.inspect is outside Job grant scope')
+        if artifact_id not in claims.artifact_ids:
+            raise HTTPException(403,'Artifact is outside Job grant scope')
+        artifact=await activity_store.get_artifact(artifact_id)
+        if not artifact:raise HTTPException(404,'Artifact not found')
+        return {'artifact_id':artifact.id,'path':artifact.path,'sha256':artifact.sha256,
+            'size':artifact.size,'mime':artifact.mime}
+
     @app.post("/v1/reviews")
     async def runtime_prepare_review(value:ReviewSubmission,request:Request):
         claims=await authorize_runtime_request(request,"/v1/reviews")

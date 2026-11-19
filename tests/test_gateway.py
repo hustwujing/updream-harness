@@ -168,6 +168,53 @@ async def test_gateway_continuously_validates_job_grant_headers_and_parameters(t
     assert error.value.status_code==403 and 'grant scope' in error.value.detail
 
 
+async def test_inline_artifact_inspect_is_fenced_by_job_operation_and_artifact_grants(tmp_path,monkeypatch):
+    import json
+    from types import SimpleNamespace
+    from starlette.requests import Request
+    import sandbox_harness.gateway as gateway
+    from sandbox_harness.capability import CapabilityCodec
+    from sandbox_harness.config import Settings
+    from sandbox_harness.domain import Harness
+    class Redis:
+        async def eval(self,*args):return 1
+    artifact_id='f'*32
+    class Store(CapabilityStoreStub):
+        def __init__(self,*args,**kwargs):pass
+        async def get_artifact(self,identity):
+            return (SimpleNamespace(id=identity,path='inputs/poster.png',sha256='1'*64,
+                size=123,mime='image/png') if identity==artifact_id else None)
+    monkeypatch.setattr(gateway.Redis,'from_url',lambda *args,**kwargs:Redis())
+    monkeypatch.setattr(gateway,'Store',Store)
+    settings=Settings(backend='fake',database_url='sqlite+aiosqlite:///'+str(tmp_path/'inspect.db'))
+    app=gateway.create_gateway(settings);codec=CapabilityCodec(settings.gateway_signing_key)
+    token,_=codec.issue(thread_id='a'*32,turn_id='b'*32,sandbox_id='sandbox-1',
+        harness=Harness.CODEX,model='gpt-5.6',routes=['/v1/operations'],ttl_seconds=60,
+        max_requests=10,max_public_requests=1,token_budget=100,scope='job',group_id='c'*32,
+        job_id='d'*32,generation=1,source_identity='sandbox-1',descriptor_id='delegate.harness',
+        descriptor_version='1',descriptor_digest='e'*64,operations=['check'],
+        artifact_ids=[artifact_id],operation_ids=['artifact.inspect'],parameter_digest='2'*64)
+    headers=[(b'authorization',('Bearer '+token).encode()),
+        (b'x-updream-thread-id',b'a'*32),(b'x-updream-turn-id',b'b'*32),
+        (b'x-updream-group-id',b'c'*32),(b'x-updream-job-id',b'd'*32),
+        (b'x-updream-job-generation',b'1'),(b'x-updream-source-sandbox',b'sandbox-1'),
+        (b'x-updream-descriptor-id',b'delegate.harness'),(b'x-updream-descriptor-version',b'1'),
+        (b'x-updream-descriptor-digest',b'e'*64),(b'x-updream-operation',b'check'),
+        (b'x-updream-operation-id',b'artifact.inspect'),
+        (b'x-updream-artifact-ids',json.dumps([artifact_id]).encode()),
+        (b'x-updream-skill-ids',b'[]')]
+    endpoint=next(route.endpoint for route in app.routes
+        if getattr(route,'path',None)=='/v1/operations/artifact.inspect')
+    request=Request({'type':'http','method':'GET','path':'/v1/operations/artifact.inspect',
+        'query_string':b'','headers':headers})
+    value=await endpoint(artifact_id,request)
+    assert value=={'artifact_id':artifact_id,'path':'inputs/poster.png','sha256':'1'*64,
+        'size':123,'mime':'image/png'}
+    with pytest.raises(HTTPException) as denied:
+        await endpoint('0'*32,request)
+    assert denied.value.status_code==403
+
+
 async def test_gateway_site_prepare_is_capability_scoped_and_turn_bound(tmp_path, monkeypatch):
     import io
     import tarfile

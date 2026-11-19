@@ -57,7 +57,7 @@ class JobGrantFactory:
         output_scopes=tuple(f'{value.artifact_role}:{value.output_disposition.value}'
             for value in request.expected_outputs)
         model_routes=((f'/v1/models/{harness.value}',) if request.kind.value=='harness' else ())
-        tool_routes=(('/v1/execution/catalog','/v1/job-group-drafts','/v1/job-groups','/v1/jobs')
+        tool_routes=(('/v1/execution/catalog','/v1/operations','/v1/job-group-drafts','/v1/job-groups','/v1/jobs')
             if capability_ids or len(operation_ids)>1 else ())
         routes=(*model_routes,'/v1/job-artifacts','/v1/telemetry',
             *tool_routes,

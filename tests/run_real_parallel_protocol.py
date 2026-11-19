@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 import fcntl
 import hashlib
 import json
+import mimetypes
 import os
 from pathlib import Path
 import subprocess
@@ -65,6 +66,29 @@ def provider_job(index:int,*,prompt:str|None=None)->dict:
             'min_items':1,'max_items':1,'mime_patterns':['image/*']}]}
 
 
+CAPABILITY_DIGESTS={'image.generate':'c'*64,'video.generate':'3'*64,'video.edit':'4'*64,
+    'audio.generate':'5'*64,'model3d.generate':'6'*64,'model3d.transform':'7'*64}
+PROVIDER_OUTPUT_ROLES={'image.generate':'generated_images','video.generate':'generated_videos',
+    'video.edit':'generated_videos','audio.generate':'generated_audio',
+    'model3d.generate':'generated_models','model3d.transform':'generated_models'}
+
+
+def semantic_provider_job(local_id:str,capability:str,*,kind:str,model:str,mode:str,
+                          parameters:dict,references:list[dict]|None=None)->dict:
+    references=references or []
+    return {'local_job_id':local_id,'kind':'provider','adapter':capability,
+        'descriptor_id':capability,'descriptor_version':'1',
+        'descriptor_digest':CAPABILITY_DIGESTS[capability],
+        'idempotency_key':'coverage-provider-'+local_id+'-'+uuid.uuid4().hex,
+        'parameters':{'kind':kind,'model':model,'generation_mode':mode,'parameters':parameters,
+            **({'reference_bindings':{row['artifact_id']:{'role':row['role'],'usage':row['usage']}
+                for row in references}} if references else {})},
+        'input_artifacts':[{'artifact_id':row['artifact_id'],'artifact_role':'reference'}
+            for row in references],
+        'expected_outputs':[{'artifact_role':PROVIDER_OUTPUT_ROLES[capability],
+            'output_disposition':'workspace','min_items':1,'max_items':1}]}
+
+
 def harness_job(index:int,args,*,objective:str='Return a concise factual analysis.',
                 outputs:list[dict]|None=None,skills:list[str]|None=None,
                 inputs:list[dict]|None=None,child_profile_id:str='child-general',
@@ -119,6 +143,48 @@ def video_render_job(artifact_id:str)->dict:
         'expected_outputs':[{'artifact_role':'rendered_media','output_disposition':'workspace',
             'min_items':1,'max_items':1,'mime_patterns':['video/mp4'],
             'validators':['video.dimensions_exact','video.fps','video.mp4']}]}
+
+
+def audio_process_job(artifact_id:str)->dict:
+    return {'local_job_id':'process-audio','kind':'operation','adapter':'audio.process',
+        'descriptor_id':'audio.process','descriptor_version':'1','descriptor_digest':'d'*64,
+        'idempotency_key':'protocol-audio-process-'+uuid.uuid4().hex,
+        'parameters':{'recipe':{'operation':'audio.process','input_role':'source','format':'wav',
+            'gain_db':0,'target_lufs':-16,'true_peak_db':-1.5,'fade_in':.1,'fade_out':.1,
+            'highpass_hz':0,'denoise':True,'output_filename':'processed-audio.wav'}},
+        'input_artifacts':[{'artifact_id':artifact_id,'artifact_role':'source'}],
+        'expected_outputs':[{'artifact_role':'processed_audio','output_disposition':'workspace',
+            'min_items':1,'max_items':1,'mime_patterns':['audio/wav']},
+            {'artifact_role':'measurement_report','output_disposition':'workspace',
+                'min_items':1,'max_items':1,'mime_patterns':['application/json']}]}
+
+
+def concat_sequence_job(source_id:str,music_id:str)->dict:
+    return {'local_job_id':'concat-sequence','kind':'operation','adapter':'media.concat_sequence',
+        'descriptor_id':'media.concat_sequence','descriptor_version':'1','descriptor_digest':'e'*64,
+        'idempotency_key':'protocol-concat-'+uuid.uuid4().hex,
+        'parameters':{'recipe':{'operation':'media.concat_sequence','source_role':'source',
+            'music_role':'music','segment_count':3,'segment_seconds':.5,'width':320,'height':180,
+            'fps':24,'output_filename':'coverage-sequence.mp4'}},
+        'input_artifacts':[{'artifact_id':source_id,'artifact_role':'source'},
+            {'artifact_id':music_id,'artifact_role':'music'}],
+        'expected_outputs':[{'artifact_role':'rendered_media','output_disposition':'workspace',
+            'min_items':1,'max_items':1,'mime_patterns':['video/mp4']},
+            {'artifact_role':'compiler_report','output_disposition':'workspace',
+                'min_items':1,'max_items':1,'mime_patterns':['application/json']}]}
+
+
+def decompose_job(artifact_id:str)->dict:
+    return {'local_job_id':'decompose-image','kind':'operation','adapter':'image.decompose',
+        'descriptor_id':'image.decompose','descriptor_version':'1',
+        'descriptor_digest':'d830b2eaf9fd55ad2a7d0445a04c15689103eaa1ea755c02c35a5918acb51640',
+        'idempotency_key':'protocol-decompose-'+uuid.uuid4().hex,
+        'parameters':{'prompt':'separate subject and background into editable semantic layers',
+            'layer_count':3,'resolution':640,'quality':'balanced','seed':777,
+            'reconstruction_guard':True},
+        'input_artifacts':[{'artifact_id':artifact_id,'artifact_role':'source'}],
+        'expected_outputs':[{'artifact_role':'layer_package','output_disposition':'workspace',
+            'min_items':2,'max_items':30}]}
 
 
 async def wait_job(client,job_id,timeout=900):
@@ -226,7 +292,7 @@ async def register_case_asset(thread_id:str,turn_id:str,path:Path):
     try:
         owner=(await store.get_thread(thread_id)).owner_id
         return await store.add_artifact(turn_id,path='inputs/'+path.name,sha256=digest,
-            size=len(data),mime=('video/mp4' if path.suffix=='.mp4' else 'image/png'),
+            size=len(data),mime=mimetypes.guess_type(path.name)[0] or 'application/octet-stream',
             object_ref=object_ref)
     finally:await store.close()
 
@@ -254,6 +320,361 @@ async def attempts_overlap(job_ids:list[str])->bool:
             for index,(left_start,left_end) in enumerate(intervals)
             for right_start,right_end in intervals[index+1:])
     finally:await store.close()
+
+
+async def verify_provider_coverage(thread_id:str,jobs:list[dict],expected:dict[str,dict]):
+    settings=load_platform_settings()
+    from sqlalchemy import select
+    from sandbox_harness.store import JobAttemptRow,Store
+    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    evidence={}
+    try:
+        owner=(await store.get_thread(thread_id)).owner_id
+        for job in jobs:
+            spec=expected[job['local_job_id']]
+            if job['state']!='SUCCEEDED':
+                result=job.get('result') or {};code=str(result.get('error_code') or job['state'])
+                classification=('non_program_failure' if code.startswith(
+                    ('provider_','media_reference_','voice_clone_')) else 'program_failure')
+                return {'classification':classification,'reason':code,'failed_job':job['local_job_id'],
+                    'state':job['state'],'result':result}
+            async with store.connections() as db:
+                attempts=list((await db.execute(select(JobAttemptRow).where(
+                    JobAttemptRow.job_id==job['id']))).scalars().all())
+            external_ids={row.external_execution_id for row in attempts if row.external_execution_id}
+            if len(external_ids)!=1:
+                raise AssertionError('provider external identity count:'+job['local_job_id'])
+            external_id=next(iter(external_ids));media=await store.get_media_job(external_id,owner)
+            if not media:raise AssertionError('provider MediaJob missing:'+job['local_job_id'])
+            actual=(media.adapter,media.model,media.generation_mode)
+            wanted=(spec['adapter'],spec['model'],spec['mode'])
+            if actual!=wanted:
+                raise AssertionError('provider identity mismatch:'+job['local_job_id']+':'+repr(actual))
+            artifacts=await store.list_job_artifacts(job['id'])
+            if not artifacts:raise AssertionError('provider artifact missing:'+job['local_job_id'])
+            request=await store.get_job_request(job['id'])
+            if request.descriptor_id!=spec['capability']:
+                raise AssertionError('provider capability mismatch:'+job['local_job_id'])
+            evidence[job['local_job_id']]={'job_id':job['id'],'media_job_id':external_id,
+                'capability':request.descriptor_id,'adapter':media.adapter,'model':media.model,
+                'mode':media.generation_mode,'artifact_ids':[row.artifact_id for row in artifacts]}
+        return {'classification':'success','evidence':evidence}
+    finally:await store.close()
+
+
+async def wait_provider_coverage(client,jobs,timeout):
+    return await asyncio.gather(*(wait_job(client,row['id'],timeout) for row in jobs))
+
+
+SKILL_COVERAGE={
+    'K01':('algorithmic-art','anatomy','canvas-design','diagram-design','frontend-design',
+        'web-artifacts-builder','webapp-testing'),
+    'K02':('brand-guidelines','theme-factory','drawio-skill','image-to-editable-ppt','codex-ppt'),
+    'K03':('data-quality-audit','programmatic-eda','query-validation','xlsx','docx','pdf'),
+    'K04':('media-processing','manim-video','slack-gif-creator'),
+    'K05':('academy-guide','doc-and-modernize','doc-coauthoring','internal-comms','discernment-nudge'),
+    'K06':('brainstorming','writing-plans','systematic-debugging','verification-before-completion',
+        'skill-creator','mcp-builder','claude-api'),
+}
+
+
+async def case_skill_coverage(client,args,identity:str):
+    thread,turn=await origin(client,args,identity)
+    declared=SKILL_COVERAGE[identity]
+    manifest={row['id']:row for row in json.loads(
+        (ROOT/'runtime/skills/manifest.json').read_text())['skills']}
+    catalog_case=next(row for row in json.loads(
+        (ROOT/'tests/real_cases/cases.json').read_text())['cases'] if row['id']==identity)
+    artifacts=[]
+    for name in catalog_case.get('assets',[]):
+        artifacts.append(await register_case_asset(thread['id'],turn['id'],
+            ROOT/'tests/real_cases/assets'/name))
+    bindings=[{'artifact_id':row.id,'artifact_role':f'input_{index}'}
+        for index,row in enumerate(artifacts,1)]
+    output={'artifact_role':'skill_evidence','output_disposition':'workspace',
+        'min_items':1,'max_items':1,'mime_patterns':['application/json'],
+        'max_item_bytes':2*1024*1024,'max_total_bytes':2*1024*1024}
+    jobs=[]
+    for index,skill_id in enumerate(declared):
+        test_case=str(manifest[skill_id].get('test_case') or 'validate the Skill contract')
+        objective=(f'Read and follow the injected {skill_id} Skill. Actually execute its declared '
+            f'coverage objective: {test_case}. Use frozen inputs when relevant. Perform the real local '
+            'commands and checks in /workspace/project or scratch; do not merely describe them and do '
+            'not call an external Provider. Then write exactly one output file '
+            f'/workspace/outputs/{skill_id}-coverage.json as JSON with skill_id exactly "{skill_id}", '
+            'test_case, commands (a non-empty array of commands actually run), checks (a non-empty '
+            'array of concrete observed results), and produced_files (paths made in project or scratch). '
+            'Delete every other file from /workspace/outputs before finishing.')
+        jobs.append(harness_job(1000+index,args,objective=objective,outputs=[output],
+            skills=[skill_id],inputs=bindings))
+        jobs[-1]['local_job_id']='skill-'+skill_id
+        jobs[-1]['idempotency_key']='coverage-'+identity+'-'+skill_id+'-'+uuid.uuid4().hex
+    prepared=require(await prepare(client,thread,turn,jobs,identity,
+        suppress_continuation=True)).json()
+    if prepared.get('mode')!='committed':raise AssertionError('skill coverage unexpectedly required confirmation')
+    completed=await wait_jobs(client,prepared['jobs'],args.timeout)
+    if len(completed)>1 and not await attempts_overlap([row['id'] for row in completed]):
+        raise AssertionError('skill coverage attempts did not overlap')
+    settings=load_platform_settings()
+    from sandbox_harness.app import object_store
+    from sandbox_harness.store import Store
+    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix);objects=object_store(settings)
+    evidence={}
+    try:
+        for row in completed:
+            request=await store.get_job_request(row['id']);skill_id=row['local_job_id'].removeprefix('skill-')
+            if request.skill_ids!=(skill_id,) or not request.runtime_profile_id:
+                raise AssertionError('skill grant/profile mismatch:'+skill_id)
+            outputs=await store.list_job_artifacts(row['id'],'skill_evidence')
+            if len(outputs)!=1:raise AssertionError('skill evidence artifact count:'+skill_id)
+            value=json.loads(objects.get(outputs[0].object_ref,maximum=2*1024*1024))
+            if (value.get('skill_id')!=skill_id or not value.get('commands') or not value.get('checks')):
+                raise AssertionError('skill evidence content invalid:'+skill_id)
+            activities=await store.list_job_activities(row['id'],0,1000)
+            if not any(item['kind'] in {'tool_started','tool_finished','command','file_change'}
+                for item in activities):raise AssertionError('skill produced no tool activity:'+skill_id)
+            evidence[skill_id]={'job_id':row['id'],'runtime_profile_id':request.runtime_profile_id,
+                'artifact_id':outputs[0].artifact_id,'commands':len(value['commands']),
+                'checks':len(value['checks'])}
+    finally:await store.close()
+    return {'classification':'success','thread_id':thread['id'],'skills':list(declared),
+        'child_harnesses':len(completed),'parallel':True,'evidence':evidence}
+
+
+async def case_k07(client,args):
+    thread,turn=await origin(client,args,'K07')
+    source=await register_case_asset(thread['id'],turn['id'],
+        ROOT/'tests/real_cases/assets/portrait.png')
+    inspect_output={'artifact_role':'inspect_evidence','output_disposition':'workspace',
+        'min_items':1,'max_items':1,'mime_patterns':['application/json']}
+    inspect=harness_job(700,args,objective=(
+        f'Run `sandbox-job inspect --artifact-id {source.id}` exactly once. Verify the returned '
+        'artifact_id, MIME, size and sha256, then write exactly '
+        '/workspace/outputs/artifact-inspect.json containing that returned JSON object. '
+        'Do not inspect the file with another tool and create no other output file.'),
+        inputs=[{'artifact_id':source.id,'artifact_role':'input_1'}],outputs=[inspect_output])
+    inspect['local_job_id']='inspect-artifact';inspect['idempotency_key']='coverage-k07-inspect-'+uuid.uuid4().hex
+    inspect['resource_requirements']={'required_operation_ids':['artifact.inspect']}
+    jobs=[inspect,segment_job(source.id),decompose_job(source.id),operation_job(source.id)]
+    prepared=require(await prepare(client,thread,turn,jobs,'K07',
+        suppress_continuation=True)).json()
+    if prepared.get('mode')!='draft':raise AssertionError('sensitive visual operation group bypassed confirmation')
+    committed=require(await client.post(
+        f"api/job-group-drafts/{prepared['draft']['id']}/confirm")).json()
+    completed=await wait_jobs(client,committed['jobs'],args.timeout)
+    if not await attempts_overlap([row['id'] for row in completed]):
+        raise AssertionError('visual operation attempts did not overlap')
+    settings=load_platform_settings()
+    from sandbox_harness.app import object_store
+    from sandbox_harness.store import Store
+    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix);objects=object_store(settings)
+    try:
+        by_local={row['local_job_id']:row for row in completed}
+        operation_ids={row['descriptor_id'] for row in completed if row['kind']=='operation'}
+        if operation_ids!={'image.segment','image.decompose','media.render'}:
+            raise AssertionError('visual durable Operation coverage mismatch:'+json.dumps(sorted(operation_ids)))
+        inspect_request=await store.get_job_request(by_local['inspect-artifact']['id'])
+        if inspect_request.resource_requirements.get('required_operation_ids')!=['artifact.inspect']:
+            raise AssertionError('artifact.inspect grant missing')
+        evidence=await store.list_job_artifacts(by_local['inspect-artifact']['id'],'inspect_evidence')
+        if len(evidence)!=1:raise AssertionError('artifact.inspect evidence missing')
+        value=json.loads(objects.get(evidence[0].object_ref,maximum=1024*1024))
+        if (value.get('artifact_id')!=source.id or value.get('sha256')!=source.sha256
+                or value.get('size')!=source.size or value.get('mime')!=source.mime):
+            raise AssertionError('artifact.inspect returned incorrect frozen metadata')
+        role_counts={row['local_job_id']:len(await store.list_job_artifacts(row['id']))
+            for row in completed}
+    finally:await store.close()
+    return {'classification':'success','thread_id':thread['id'],'group_id':committed['group']['id'],
+        'operations':['artifact.inspect','image.segment','image.decompose','media.render'],
+        'parallel':True,'one_group_confirmation':True,'artifact_counts':role_counts}
+
+
+async def case_k08(client,args):
+    thread,turn=await origin(client,args,'K08')
+    speech=await register_case_asset(thread['id'],turn['id'],
+        ROOT/'tests/real_cases/assets/speech.wav')
+    noisy=await register_case_asset(thread['id'],turn['id'],
+        ROOT/'tests/real_cases/assets/speech_noisy.wav')
+    video=await register_case_asset(thread['id'],turn['id'],
+        ROOT/'tests/real_cases/assets/clip_a.mp4')
+    music=await register_case_asset(thread['id'],turn['id'],
+        ROOT/'tests/real_cases/assets/music.wav')
+    jobs=[transcribe_job(speech.id),audio_process_job(noisy.id),video_render_job(video.id),
+        concat_sequence_job(video.id,music.id)]
+    prepared=require(await prepare(client,thread,turn,jobs,'K08',
+        suppress_continuation=True)).json()
+    if prepared.get('mode')!='committed':raise AssertionError('free media Operations required confirmation')
+    completed=await wait_jobs(client,prepared['jobs'],args.timeout)
+    if not await attempts_overlap([row['id'] for row in completed]):
+        raise AssertionError('audio/video operation attempts did not overlap')
+    descriptors={row['descriptor_id'] for row in completed}
+    expected={'audio.transcribe','audio.process','media.render','media.concat_sequence'}
+    if descriptors!=expected:raise AssertionError('media Operation coverage mismatch')
+    outputs=await job_artifacts([row['id'] for row in completed])
+    required={'transcribe-source':{'transcript_text'},'process-audio':{
+        'processed_audio','measurement_report'},'normalize-video':{'rendered_media'},
+        'concat-sequence':{'rendered_media','compiler_report'}}
+    by_local={row['local_job_id']:row for row in completed}
+    for local_id,roles in required.items():
+        actual={row.artifact_role for row in outputs[by_local[local_id]['id']]}
+        if actual!=roles:raise AssertionError(local_id+' output roles mismatch:'+json.dumps(sorted(actual)))
+    return {'classification':'success','thread_id':thread['id'],'group_id':prepared['group']['id'],
+        'operations':sorted(descriptors),'parallel':True,
+        'artifact_roles':{key:sorted(value) for key,value in required.items()}}
+
+
+async def case_k09(client,args):
+    thread,turn=await origin(client,args,'K09')
+    poster=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/poster.png')
+    voice=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/reference_tone.wav')
+    clip=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/clip_a.mp4')
+    ref=lambda artifact,role,usage:{'artifact_id':artifact.id,'role':role,'usage':usage}
+    definitions=[
+        ('image-text','image.generate','image','seedream-5.0','text_to_image',
+            {'prompt':'clean blue geometric cup, no text','size':'2560x1440'},[],'ark_image'),
+        ('image-reference','image.generate','image','seedream-5.0','reference_image',
+            {'prompt':'preserve the subject and create a clean studio variation','size':'2560x1440'},
+            [ref(poster,'reference_image','subject')],'ark_image'),
+        ('audio-text','audio.generate','audio','speech-2.8-turbo','text_to_audio',
+            {'text':'并行能力覆盖测试。','voice_id':'male-qn-qingse','speed':1,'audio_format':'mp3'},
+            [],'minimax_t2a'),
+        ('audio-reference','audio.generate','audio','speech-2.8-turbo','reference_voice',
+            {'text':'参考音色覆盖测试。','speed':1,'audio_format':'mp3'},
+            [ref(voice,'reference_audio','audio')],'minimax_t2a'),
+        ('video-text','video.generate','video','sed2','text_to_video',
+            {'prompt':'a blue sphere rotates on a white background','duration':4,
+                'resolution':'480p','aspect_ratio':'16:9','generate_audio':False},[],
+            'ark_video_v2'),
+        ('model-text','model3d.generate','model3d','v3.1-20260211','text_to_model',
+            {'prompt':'simple low-poly blue cup','face_limit':1000,'texture':False},[],
+            'tripo_v3'),
+        ('happyhorse-edit','video.edit','video','happyhorse-video-edit','edit_video',
+            {'prompt':'preserve motion and audio, apply a subtle cool color grade','duration':-1,
+                'resolution':'720p','aspect_ratio':'adaptive'},
+            [ref(clip,'reference_video','edit_source')],'happyhorse_video_edit'),
+        ('wan-edit','video.edit','video','wan-2.7-video-edit','edit_video',
+            {'prompt':'preserve motion and audio, apply a subtle clean line-art style','duration':-1,
+                'resolution':'720p','aspect_ratio':'adaptive'},
+            [ref(clip,'reference_video','edit_source')],'wan27_video_edit'),
+    ]
+    jobs=[];expected={}
+    for local,capability,kind,model,mode,parameters,references,adapter in definitions:
+        jobs.append(semantic_provider_job(local,capability,kind=kind,model=model,mode=mode,
+            parameters=parameters,references=references))
+        expected[local]={'capability':capability,'adapter':adapter,'model':model,'mode':mode}
+    prepared=require(await prepare(client,thread,turn,jobs,'K09',
+        suppress_continuation=True)).json()
+    if prepared.get('mode')!='draft':raise AssertionError('Provider matrix bypassed confirmation')
+    committed=require(await client.post(
+        f"api/job-group-drafts/{prepared['draft']['id']}/confirm")).json()
+    completed=await wait_provider_coverage(client,committed['jobs'],args.timeout)
+    result=await verify_provider_coverage(thread['id'],completed,expected)
+    if result['classification']!='success':return {**result,'thread_id':thread['id']}
+    if not await attempts_overlap([row['id'] for row in completed]):
+        raise AssertionError('Provider matrix attempts did not overlap')
+    return {'classification':'success','thread_id':thread['id'],'group_id':committed['group']['id'],
+        'provider_jobs':len(completed),'adapters':len({row['adapter'] for row in expected.values()}),
+        'one_group_confirmation':True,'parallel':True,'evidence':result['evidence']}
+
+
+async def case_k10(client,args):
+    thread,turn=await origin(client,args,'K10')
+    poster=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/poster.png')
+    rocket=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/rocket.png')
+    clip=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/clip_a.mp4')
+    speech=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/speech.wav')
+    ref=lambda artifact,role,usage:{'artifact_id':artifact.id,'role':role,'usage':usage}
+    definitions=[
+        ('sed-first','video.generate','first_frame',{'prompt':'animate a gentle camera push-in',
+            'duration':4,'resolution':'480p','aspect_ratio':'16:9'},
+            [ref(poster,'first_frame','composition')]),
+        ('sed-first-last','video.generate','first_last_frame',{'prompt':'smoothly travel between the two frames',
+            'duration':4,'resolution':'480p','aspect_ratio':'16:9'},
+            [ref(poster,'first_frame','composition'),ref(rocket,'last_frame','composition')]),
+        ('sed-multimodal','video.generate','multimodal_reference',{
+            'prompt':'combine the visual subject, motion rhythm, and audio timing into a short clip',
+            'duration':4,'resolution':'480p','aspect_ratio':'16:9'},[
+                ref(poster,'reference_image','subject'),ref(clip,'reference_video','action'),
+                ref(speech,'reference_audio','audio')]),
+        ('sed-edit','video.edit','edit_video',{'prompt':'preserve motion and apply a cool clean grade',
+            'duration':-1,'resolution':'720p','aspect_ratio':'adaptive'},
+            [ref(clip,'reference_video','edit_source')]),
+        ('sed-extend','video.edit','extend_video',{'prompt':'continue the existing motion naturally',
+            'duration':-1,'resolution':'720p','aspect_ratio':'adaptive','extend_direction':'forward'},
+            [ref(clip,'reference_video','extend_source')]),
+    ]
+    jobs=[];expected={}
+    for local,capability,mode,parameters,references in definitions:
+        jobs.append(semantic_provider_job(local,capability,kind='video',model='sed2',mode=mode,
+            parameters=parameters,references=references))
+        expected[local]={'capability':capability,'adapter':'ark_video_v2','model':'sed2','mode':mode}
+    prepared=require(await prepare(client,thread,turn,jobs,'K10',
+        suppress_continuation=True)).json()
+    if prepared.get('mode')!='draft':raise AssertionError('video mode matrix bypassed confirmation')
+    committed=require(await client.post(
+        f"api/job-group-drafts/{prepared['draft']['id']}/confirm")).json()
+    completed=await wait_provider_coverage(client,committed['jobs'],args.timeout)
+    result=await verify_provider_coverage(thread['id'],completed,expected)
+    if result['classification']!='success':return {**result,'thread_id':thread['id']}
+    return {'classification':'success','thread_id':thread['id'],'group_id':committed['group']['id'],
+        'provider_jobs':len(completed),'adapter':'ark_video_v2',
+        'one_group_confirmation':True,'parallel':await attempts_overlap([row['id'] for row in completed]),
+        'evidence':result['evidence']}
+
+
+async def case_k11(client,args):
+    thread,turn=await origin(client,args,'K11')
+    poster=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/poster.png')
+    rocket=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/rocket.png')
+    ref=lambda artifact,role:{'artifact_id':artifact.id,'role':role,'usage':'subject'}
+    phase_one_defs=[
+        ('model-image','image_to_model',{'texture':False,'face_limit':1500},
+            [ref(poster,'reference_image')]),
+        ('model-multiview','multiview_to_model',{'texture':False,'face_limit':1500},
+            [ref(poster,'front_view'),ref(rocket,'left_view')]),
+    ]
+    expected={};jobs=[]
+    for local,mode,parameters,references in phase_one_defs:
+        jobs.append(semantic_provider_job(local,'model3d.generate',kind='model3d',
+            model='v3.1-20260211',mode=mode,parameters=parameters,references=references))
+        expected[local]={'capability':'model3d.generate','adapter':'tripo_v3',
+            'model':'v3.1-20260211','mode':mode}
+    prepared=require(await prepare(client,thread,turn,jobs,'K11-generate',
+        suppress_continuation=True)).json()
+    if prepared.get('mode')!='draft':raise AssertionError('3D generation matrix bypassed confirmation')
+    committed=require(await client.post(
+        f"api/job-group-drafts/{prepared['draft']['id']}/confirm")).json()
+    phase_one=await wait_provider_coverage(client,committed['jobs'],args.timeout)
+    first_result=await verify_provider_coverage(thread['id'],phase_one,expected)
+    if first_result['classification']!='success':return {**first_result,'thread_id':thread['id']}
+    source_job_id=first_result['evidence']['model-image']['media_job_id']
+    phase_two_defs=[
+        ('model-texture','texture_model',{'input_job_id':source_job_id,
+            'texture_prompt':'clean blue ceramic material','pbr':False}),
+        ('model-decimate','decimate_model',{'input_job_id':source_job_id,'face_limit':800,
+            'topology_model':'v3.0'}),
+        ('model-convert','convert_model',{'input_job_id':source_job_id,'target_format':'OBJ'}),
+    ]
+    phase_two_jobs=[];second_expected={}
+    for local,mode,parameters in phase_two_defs:
+        phase_two_jobs.append(semantic_provider_job(local,'model3d.transform',kind='model3d',
+            model='v3.1-20260211',mode=mode,parameters=parameters))
+        second_expected[local]={'capability':'model3d.transform','adapter':'tripo_v3',
+            'model':'v3.1-20260211','mode':mode}
+    second=require(await prepare(client,thread,turn,phase_two_jobs,'K11-transform',
+        suppress_continuation=True)).json()
+    if second.get('mode')!='draft':raise AssertionError('3D transform matrix bypassed confirmation')
+    second_committed=require(await client.post(
+        f"api/job-group-drafts/{second['draft']['id']}/confirm")).json()
+    phase_two=await wait_provider_coverage(client,second_committed['jobs'],args.timeout)
+    second_result=await verify_provider_coverage(thread['id'],phase_two,second_expected)
+    if second_result['classification']!='success':return {**second_result,'thread_id':thread['id']}
+    return {'classification':'success','thread_id':thread['id'],
+        'phase_one_group_id':committed['group']['id'],'phase_two_group_id':second_committed['group']['id'],
+        'phase_one_jobs':len(phase_one),'phase_two_jobs':len(phase_two),
+        'one_confirmation_per_phase':True,'immutable_handoff':True,
+        'evidence':{**first_result['evidence'],**second_result['evidence']}}
 
 
 async def case_p01(client,args):
@@ -998,12 +1419,16 @@ HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case
     'P11':case_p11,'P12':case_p12,'P13':case_p13,'P14':case_p14,'P15':case_p15,
     'P16':case_p16,'P17':case_p17,'P18':case_p18,'P19':case_p19,'P20':case_p20,
     'P21':case_p21,'P22':case_p22,'P23':case_p23,'P24':case_p24,
-    'P25':case_p25,'P26':case_p26,'P27':case_p27}
+    'P25':case_p25,'P26':case_p26,'P27':case_p27,
+    'K07':case_k07,'K08':case_k08,'K09':case_k09,'K10':case_k10,'K11':case_k11,
+    **{identity:(lambda client,args,identity=identity:case_skill_coverage(client,args,identity))
+        for identity in SKILL_COVERAGE}}
 
 
 async def main():
     parser=argparse.ArgumentParser();parser.add_argument('--base-url',default='http://127.0.0.1:24766/')
-    parser.add_argument('--case',required=True,choices=[f'P{value:02d}' for value in range(1,28)])
+    parser.add_argument('--case',required=True,choices=[
+        *(f'P{value:02d}' for value in range(1,28)),*(f'K{value:02d}' for value in range(1,12))])
     parser.add_argument('--report',type=Path,required=True);parser.add_argument('--harness',default='codex')
     parser.add_argument('--model',default='gpt-5.6-sol');parser.add_argument('--reasoning',default='deep')
     parser.add_argument('--timeout',type=float,default=1200)

@@ -17,7 +17,7 @@ from .job_catalog import JobCatalog
 from .job_coordinator import JobCoordinator
 from .node_agent import NodeAgent
 from .media_catalog import MediaCatalog
-from .media_job_adapter import MediaProviderJobAdapter
+from .media_job_adapter import CAPABILITY_SCOPES,MediaProviderJobAdapter
 from .media_render_adapter import MediaRenderOperationAdapter
 from .objects import object_store
 from .observability import configure,event
@@ -106,9 +106,7 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
                     idempotency_key=f"policy-review-{context.job.id}-{contract.artifact_role}"),trigger=trigger)
     worker=JobWorker(store,{"child-harness":harness_adapter,
         "reviewer-harness":ReviewerJobAdapter(harness_adapter,store),
-        "image.generate":media_adapter,"video.generate":media_adapter,"video.edit":media_adapter,
-        "audio.generate":media_adapter,"model3d.generate":media_adapter,
-        "model3d.transform":media_adapter,"media.render":render_adapter,
+        **{identity:media_adapter for identity in CAPABILITY_SCOPES},"media.render":render_adapter,
         "audio.process":render_adapter,"media.concat_sequence":render_adapter,
         "image.decompose":decompose_adapter},node_id=settings.job_node_id,
         concurrency=settings.job_worker_concurrency,lease_seconds=settings.job_lease_seconds,

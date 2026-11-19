@@ -87,6 +87,8 @@ def test_example_job_catalog_is_parseable_and_digest_verified():
         'model3d.generate','model3d.transform'}
     assert {row.id for row in value.payload.capabilities}==capability_ids
     capability_by_id={row.id:row for row in value.payload.capabilities}
+    from sandbox_harness.media_job_adapter import CAPABILITY_SCOPES
+    assert set(CAPABILITY_SCOPES)==capability_ids
     assert capability_by_id['image.generate'].parameter_schema['properties']['kind']=={'const':'image'}
     assert capability_by_id['video.generate'].parameter_schema['properties']['generation_mode']['enum']==[
         'text_to_video','first_frame','first_last_frame','multimodal_reference']
@@ -105,6 +107,9 @@ def test_example_job_catalog_is_parseable_and_digest_verified():
         job_catalog=value,profile_resolver=SimpleNamespace(skills={},children={})).public_execution_metadata()
     exposed=next(row for row in public['operations'] if row['id']=='audio.process')
     assert exposed['parameter_schema']==audio.parameter_schema
+    exposed_capabilities={row['id']:row for row in public['capabilities']}
+    assert all(exposed_capabilities[identity]['guidance']==capability_by_id[identity].guidance
+        and exposed_capabilities[identity]['guidance'] for identity in capability_ids)
     concat=value.operation('media.concat_sequence','1','e'*64)
     assert concat.input_roles==('source','music') and concat.output_roles==(
         'rendered_media','compiler_report')

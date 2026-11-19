@@ -124,7 +124,8 @@ class HarnessCatalog:
                 "digest": row.digest, "operations": list(row.operations),
                 "parameter_schema":row.parameter_schema,
                 "input_roles": list(row.input_roles), "output_roles": list(row.output_roles),
-                "resources":row.resources,"billable":row.billable,"side_effects":row.side_effects}
+                "resources":row.resources,"billable":row.billable,"side_effects":row.side_effects,
+                "guidance":row.guidance}
                 for row in self.job_catalog.payload.capabilities],
             "skills": [{"id": row.id, "version": row.version, "digest": row.digest,
                 "summary":row.summary,

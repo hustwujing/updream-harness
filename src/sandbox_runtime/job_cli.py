@@ -175,6 +175,8 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument("--draft-id", required=True)
     group = sub.add_parser("group"); group.add_argument("--group-id", required=True)
     job = sub.add_parser("job"); job.add_argument("--job-id", required=True)
+    inspect = sub.add_parser("inspect",help="Run the frozen artifact.inspect inline Operation")
+    inspect.add_argument("--artifact-id",required=True)
     cancel_job = sub.add_parser("cancel-job"); cancel_job.add_argument("--job-id", required=True)
     cancel_group = sub.add_parser("cancel-group"); cancel_group.add_argument("--group-id", required=True)
     args = parser.parse_args(argv)
@@ -215,6 +217,10 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("--jobs must contain a JSON array or {\"jobs\": [...]} object")
             response = httpx.patch(base + f"/v1/job-group-drafts/{args.draft_id}", headers=headers,
                 json={"expected_digest": args.expected_digest, "jobs": jobs}, timeout=30)
+        elif args.command == "inspect":
+            headers["x-updream-operation-id"]="artifact.inspect"
+            response=httpx.get(base+"/v1/operations/artifact.inspect",headers=headers,
+                params={"artifact_id":args.artifact_id},timeout=20)
         elif args.command == "draft":
             response = httpx.get(base + f"/v1/job-group-drafts/{args.draft_id}", headers=headers, timeout=20)
         elif args.command in {"group", "cancel-group"}:
