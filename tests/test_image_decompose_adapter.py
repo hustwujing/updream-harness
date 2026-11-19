@@ -9,7 +9,7 @@ import pytest
 from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate
 from sandbox_harness.image_decompose_adapter import ImageDecomposeAdapter
-from sandbox_harness.job_adapters import JobExecutionContext
+from sandbox_harness.job_adapters import JobExecutionContext,PreAcceptFailure
 from sandbox_harness.job_contracts import (JobArtifactInput,JobExpectedOutput,JobGroupCreate,JobKind,
     JobRequest,JobState,OutputDisposition)
 from sandbox_harness.objects import ObjectStore
@@ -97,3 +97,19 @@ def test_decompose_rejects_non_loopback_service(tmp_path):
         max_artifact_bytes=1024)
     with pytest.raises(ValueError,match='loopback'):
         ImageDecomposeAdapter(settings,None,None)
+
+
+async def test_decompose_connect_failure_is_safe_bounded_pre_accept_failure(tmp_path):
+    def handler(request:httpx.Request):raise httpx.ConnectError('connection refused',request=request)
+    store,objects,settings,job,attempt,request=await setup(tmp_path)
+    adapter=ImageDecomposeAdapter(settings,store,objects,transport=httpx.MockTransport(handler))
+    context=JobExecutionContext(job=job,request=request,generation=attempt.generation)
+    try:
+        with pytest.raises(PreAcceptFailure) as raised:await adapter.submit(context)
+        assert raised.value.error_code=='provider_service_unavailable'
+        assert raised.value.failed_phase=='submission'
+        assert raised.value.retryable and raised.value.retry_class=='backoff'
+        assert raised.value.retry_after_seconds==5
+        assert not (settings.data_root/'image-decompose/receipts'/f'{job.id}.json').exists()
+    finally:
+        await adapter.client.aclose();await store.close()

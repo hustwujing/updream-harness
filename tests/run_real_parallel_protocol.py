@@ -461,7 +461,15 @@ async def case_k07(client,args):
     if prepared.get('mode')!='draft':raise AssertionError('sensitive visual operation group bypassed confirmation')
     committed=require(await client.post(
         f"api/job-group-drafts/{prepared['draft']['id']}/confirm")).json()
-    completed=await wait_jobs(client,committed['jobs'],args.timeout)
+    completed=await asyncio.gather(*(wait_job(client,row['id'],args.timeout)
+        for row in committed['jobs']))
+    failed=[row for row in completed if row['state']!='SUCCEEDED']
+    if failed:
+        codes=[str((row.get('result') or {}).get('error_code') or row['state']) for row in failed]
+        classification=('non_program_failure' if all(code.startswith(
+            ('provider_','media_reference_')) for code in codes) else 'program_failure')
+        return {'classification':classification,'reason':','.join(codes),'thread_id':thread['id'],
+            'failed_jobs':[row['local_job_id'] for row in failed]}
     if not await attempts_overlap([row['id'] for row in completed]):
         raise AssertionError('visual operation attempts did not overlap')
     settings=load_platform_settings()

@@ -146,7 +146,7 @@
       "side_effects": true,
       "billable": false,
       "creates_artifacts": true,
-      "retry_policy": {"max_pre_accept_attempts": 1, "post_accept": "reconcile_only"},
+      "retry_policy": {"max_pre_accept_attempts": 2, "post_accept": "reconcile_only"},
       "cancellation_policy": {"supported": true},
       "reconciliation_policy": {"supported": true},
       "guidance": "Use the local Qwen Layered service when the user requests semantic editable layers or an ORA package from one authorized flat image. Bind the source Artifact, request one layer_package collection, and preserve the returned ORA, reconstruction image, individual RGBA layers and report. This is an external durable side effect and requires the platform JobGroup confirmation card."

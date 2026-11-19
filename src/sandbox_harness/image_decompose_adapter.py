@@ -84,6 +84,10 @@ class ImageDecomposeAdapter(BaseJobAdapter):
         artifact,data=await self._source(context);parameters=self._parameters(context.request.parameters)
         try:response=await self.client.post('/api/jobs',data=parameters,files={
             'source_image':(Path(artifact.path).name,data,artifact.mime)})
+        except httpx.ConnectError as exc:
+            raise PreAcceptFailure('image_decompose_service_unavailable',
+                error_code='provider_service_unavailable',failed_phase='submission',
+                retry_class='backoff',retryable=True,retry_after_seconds=5) from exc
         except (httpx.TimeoutException,httpx.TransportError) as exc:
             raise SubmissionOutcomeUnknown('image_decompose_submission_outcome_unknown',
                 acceptance_receipt={'request_digest':context.request.request_digest}) from exc
