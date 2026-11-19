@@ -17,6 +17,9 @@ This matrix adapts the risk-first campaign discipline from `distributed-agent-sa
 | B01 | Background | successful job finishes after Harness delegates it | job events, bounded log, artifact and Turn completion |
 | B02 | Background | nonzero job blocks successful Turn | failed job and `background_job_failed` |
 | B03 | Background | user cancellation terminates process group | cancelling/cancelled states and no live child |
+| B04 | Background control | one `wait` call observes a successful real OpenSandbox Job | terminal completion, bounded log and cleanup |
+| B05 | Background control | observation timeout expires before the Job | Job remains running and a later wait completes it |
+| B06 | Background control | deadline expires while the command ignores `SIGTERM` | `timed_out`, `SIGKILL` escalation and no live process |
 | R01 | Recovery | API main process `SIGKILL` during active Turn | same Sandbox, generation advance, no duplicate execution |
 | R02 | Recovery | Runtime execution missing after lease expiry | deterministic safe failure and Sandbox cleanup |
 | R03 | Recovery | Gateway restart during model activity | bounded Harness behavior, scanner remains alive |

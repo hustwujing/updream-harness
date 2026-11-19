@@ -119,6 +119,7 @@ class Configure(BaseModel):
     skill_digests: dict[str, str] = Field(default_factory=dict)
     child_mode: bool = False
     delegation_depth: int = Field(default=0, ge=0, le=4)
+    background_job_max_seconds: float = Field(default=3600, ge=1, le=86400)
 
 
 class MediaRenderOperation(BaseModel):
@@ -212,6 +213,8 @@ class BackgroundJobCreate(BaseModel):
     argv: list[str] = Field(min_length=1, max_length=256)
     cwd: str = Field(default="/workspace/project", min_length=1, max_length=1000)
     replaces: str = Field(default="", pattern=r"^$|^[0-9a-f]{32}$")
+    timeout_seconds: float = Field(default=1200, ge=.1, le=86400)
+    terminate_grace_seconds: float = Field(default=2, ge=.01, le=10)
 
 
 class NativeInteractionCreate(BaseModel):
@@ -239,14 +242,23 @@ class BackgroundJob:
     boot_id: str = ""
     recovery_detail: str = ""
     supervisor_receipt: str = ""
+    timeout_seconds: float = 1200
+    terminate_grace_seconds: float = 2
+    deadline_at: float = 0
+    termination_detail: dict = field(default_factory=dict)
     process: asyncio.subprocess.Process | None = None
     task: asyncio.Task | None = None
+    done_event: asyncio.Event = field(default_factory=asyncio.Event)
 
     def public(self, *, log_tail: str = "") -> dict:
         return {"id": self.id, "name": self.name, "argv": self.argv, "cwd": self.cwd,
             "execution_id": self.execution_id, "status": self.status, "pid": self.pid,
             "returncode": self.returncode, "created_at": self.created_at,
-            "completed_at": self.completed_at, "replaces": self.replaces, "log_tail": log_tail}
+            "completed_at": self.completed_at, "replaces": self.replaces,
+            "timeout_seconds": self.timeout_seconds,
+            "terminate_grace_seconds": self.terminate_grace_seconds,
+            "deadline_at": self.deadline_at,"termination_detail":self.termination_detail,
+            "log_tail": log_tail}
 
 
 def boot_identity() -> str:
@@ -263,9 +275,12 @@ def process_start_identity(pid: int) -> str:
 
 def recorded_process_alive(value: dict) -> bool:
     pid=int(value.get('pid') or 0)
-    return bool(pid>1 and value.get('boot_id') and value.get('boot_id')==boot_identity()
-        and value.get('pid_start_time')
-        and value.get('pid_start_time')==process_start_identity(pid))
+    if not (pid>1 and value.get('boot_id') and value.get('boot_id')==boot_identity()
+            and value.get('pid_start_time')):return False
+    try:
+        raw=Path(f'/proc/{pid}/stat').read_text();parts=raw[raw.rfind(') ')+2:].split()
+        return parts[0]!='Z' and value.get('pid_start_time')==parts[19]
+    except (OSError,IndexError):return False
 
 
 def quiesce_recorded_group(value: dict) -> str:
@@ -274,7 +289,8 @@ def quiesce_recorded_group(value: dict) -> str:
     try:
         if os.getpgid(pid)!=pid:return 'process_group_identity_changed'
     except ProcessLookupError:return 'process_already_exited'
-    for sig,deadline in ((signal.SIGTERM,.8),(signal.SIGKILL,.8)):
+    grace=min(max(float(value.get('terminate_grace_seconds') or 2),.01),10)
+    for sig,deadline in ((signal.SIGTERM,grace+1.2),(signal.SIGKILL,.8)):
         try:os.killpg(pid,sig)
         except ProcessLookupError:return 'process_quiesced'
         end=time.monotonic()+deadline
@@ -425,10 +441,13 @@ def create_app() -> FastAPI:
     app.state.child_mode = False
     app.state.delegation_depth = 0
     app.state.stream_heartbeat_seconds = 15.0
+    app.state.background_job_max_seconds = 3600.0
     jobs_root = WORKSPACE / "state" / "background-jobs"
     jobs_root.mkdir(parents=True, exist_ok=True)
     def load_jobs() -> None:
         for record in jobs_root.glob("*.json"):
+            if record.name.endswith(".supervisor.json"):
+                continue
             try:
                 value = json.loads(record.read_text())
                 receipt=Path(str(value.get('supervisor_receipt') or ''))
@@ -436,16 +455,31 @@ def create_app() -> FastAPI:
                     for _ in range(100):
                         if receipt.is_file():break
                         time.sleep(.01)
-                if not value.get('pid') and receipt.is_file():
-                    try:value.update(json.loads(receipt.read_text()))
+                supervisor={}
+                if receipt.is_file():
+                    try:supervisor=json.loads(receipt.read_text())
                     except (OSError,ValueError,TypeError):pass
-                if value.get("status") in {"starting", "running", "cancelling"}:
+                if not value.get('pid') and supervisor:
+                    for key in ('pid','pid_start_time','boot_id','deadline_at'):
+                        if key in supervisor:value[key]=supervisor[key]
+                supervisor_status=str(supervisor.get('status') or '')
+                if supervisor_status in {"completed","failed","cancelled","timed_out"}:
+                    value['status']=supervisor_status
+                    value['returncode']=supervisor.get('returncode')
+                    value['completed_at']=str(supervisor.get('completed_at') or
+                        datetime.now(timezone.utc).isoformat())
+                    value['termination_detail']={key:supervisor[key] for key in (
+                        'reason','sigterm_sent','sigkill_sent') if key in supervisor}
+                    atomic_json(record,value)
+                elif value.get("status") in {"starting", "running", "cancelling", "timing_out"}:
                     value["recovery_detail"] = quiesce_recorded_group(value)
                     value["status"] = "interrupted"
                     value["completed_at"] = datetime.now(timezone.utc).isoformat()
                     atomic_json(record,value)
                 job = BackgroundJob(**{key: value[key] for key in BackgroundJob.__dataclass_fields__
-                    if key in value and key not in {"process", "task"}})
+                    if key in value and key not in {"process", "task", "done_event"}})
+                if job.status in {"completed","failed","cancelled","interrupted","timed_out"}:
+                    job.done_event.set()
                 app.state.background_jobs[job.id] = job
             except (OSError, ValueError, TypeError, KeyError):
                 continue
@@ -486,12 +520,22 @@ def create_app() -> FastAPI:
                 app.state.process_command = None
                 app.state.pending_inputs = 0
 
+    async def stop_background_supervisor(job: BackgroundJob) -> None:
+        process=job.process
+        if not process or process.returncode is not None:return
+        try:process.send_signal(signal.SIGTERM)
+        except ProcessLookupError:return
+        try:
+            await asyncio.wait_for(asyncio.shield(process.wait()),job.terminate_grace_seconds+2)
+        except asyncio.TimeoutError:
+            await terminate_group(process,grace=.5)
+
     async def cancel_job(job: BackgroundJob) -> None:
         if job.status not in {"running", "cancelling"} or not job.process:
             return
         job.status = "cancelling"
         persist_job(job)
-        await terminate_group(job.process)
+        await stop_background_supervisor(job)
         if job.task:
             await asyncio.shield(job.task)
 
@@ -576,12 +620,23 @@ def create_app() -> FastAPI:
                 if written < 16 * 1024 * 1024:
                     value = chunk[:16 * 1024 * 1024 - written]
                     log.write(value); log.flush(); written += len(value)
-        job.returncode = await job.process.wait()
-        if job.status == "cancelling":
-            job.status = "cancelled"
+        supervisor_returncode = await job.process.wait()
+        receipt={}
+        try:receipt=json.loads(Path(job.supervisor_receipt).read_text())
+        except (OSError,ValueError,TypeError):pass
+        receipt_status=str(receipt.get("status") or "")
+        if receipt_status in {"completed","failed","cancelled","timed_out"}:
+            job.status=receipt_status
+            job.returncode=receipt.get("returncode")
+            job.termination_detail={key:receipt[key] for key in (
+                "reason","sigterm_sent","sigkill_sent") if key in receipt}
+        elif job.status == "cancelling":
+            job.status = "cancelled";job.returncode=supervisor_returncode
         else:
-            job.status = "completed" if job.returncode == 0 else "failed"
-        job.completed_at = datetime.now(timezone.utc).isoformat(); persist_job(job)
+            job.returncode=supervisor_returncode
+            job.status = "completed" if supervisor_returncode == 0 else "failed"
+        job.completed_at = str(receipt.get("completed_at") or datetime.now(timezone.utc).isoformat())
+        persist_job(job);job.done_event.set()
         event("runtime.background.finished",job_id=job.id,execution_id=job.execution_id,state=job.status,exit_code=job.returncode)
         execution = app.state.execution
         if execution and execution.id == job.execution_id:
@@ -997,6 +1052,7 @@ def create_app() -> FastAPI:
         os.environ["npm_config_registry"] = "https://registry.npmmirror.com"
         app.state.model_start_timeout_seconds = value.model_start_timeout_seconds
         app.state.event_idle_timeout_seconds = value.event_idle_timeout_seconds
+        app.state.background_job_max_seconds = value.background_job_max_seconds
         proxy = urlsplit(value.proxy_url)
         authenticated_proxy = f"{proxy.scheme}://{quote(value.capability_token, safe='')}:@{proxy.netloc}"
         os.environ["HTTP_PROXY"] = authenticated_proxy
@@ -1465,33 +1521,50 @@ def create_app() -> FastAPI:
         finally:
             app.state.interaction_waiters.pop(identity, None)
 
+    def background_problem(status:int,code:str,message:str,*,retryable:bool=False,
+                           allowed_actions:list[str]|None=None,**detail):
+        raise HTTPException(status,{"code":code,"message":message,"retryable":retryable,
+            "allowed_actions":allowed_actions or [],**detail})
+
     @app.post("/v1/background-jobs")
     async def start_background_job(value: BackgroundJobCreate):
         project = (WORKSPACE / "project").resolve()
         cwd = Path(value.cwd).resolve()
         if not cwd.is_relative_to(project) or not cwd.is_dir():
-            raise HTTPException(422, "Background job cwd must be inside /workspace/project")
+            background_problem(422,"background_cwd_invalid",
+                "Background job cwd must be an existing directory inside /workspace/project")
         async with app.state.write_lock:
             execution = app.state.execution
             if execution is None or execution.result is not None or not execution.accepting_inputs:
-                raise HTTPException(409, "No active Harness execution")
+                background_problem(409,"background_execution_inactive",
+                    "No active Harness execution can accept a Sandbox-local background job")
             execution_jobs=[job for job in app.state.background_jobs.values()
                 if job.execution_id==execution.id]
             replacement_targets=unresolved_replacement_targets(execution_jobs)
             if replacement_targets and value.replaces not in {job.id for job in replacement_targets}:
-                raise HTTPException(409,{"code":"background_replacement_required",
-                    "replacement_target_ids":[job.id for job in replacement_targets]})
+                background_problem(409,"background_replacement_required",
+                    "Replace the latest unresolved failed background job before starting unrelated work",
+                    allowed_actions=["replace","status"],
+                    replacement_target_ids=[job.id for job in replacement_targets])
             if value.replaces:
                 previous = app.state.background_jobs.get(value.replaces)
                 if not previous or previous.execution_id != execution.id:
-                    raise HTTPException(422, "Replacement job must belong to the active execution")
-                if previous.status not in {"failed", "cancelled", "interrupted"}:
-                    raise HTTPException(422, "Replacement target must be a terminal unsuccessful job")
+                    background_problem(422,"replacement_target_invalid",
+                        "Replacement job must belong to the active execution")
+                if previous.status not in {"failed", "cancelled", "interrupted", "timed_out"}:
+                    background_problem(422,"replacement_target_not_terminal",
+                        "Replacement target must be a terminal unsuccessful job",
+                        allowed_actions=["wait","cancel"],job_status=previous.status)
             identity = uuid.uuid4().hex
+            timeout_seconds=min(value.timeout_seconds,app.state.background_job_max_seconds)
+            deadline_at=time.time()+timeout_seconds
             job = BackgroundJob(id=identity, name=value.name, argv=value.argv, cwd=str(cwd),
                 execution_id=execution.id, replaces=value.replaces, status="starting",
                 log_path=str(jobs_root / (identity + ".log")),
-                supervisor_receipt=str(jobs_root/(identity+'.supervisor.json')))
+                supervisor_receipt=str(jobs_root/(identity+'.supervisor.json')),
+                timeout_seconds=timeout_seconds,
+                terminate_grace_seconds=value.terminate_grace_seconds,
+                deadline_at=deadline_at)
             app.state.background_jobs[job.id] = job
             try:persist_job(job)
             except BaseException:
@@ -1501,7 +1574,8 @@ def create_app() -> FastAPI:
             try:
                 spawn=asyncio.create_task(asyncio.create_subprocess_exec(sys.executable,
                     '-m','sandbox_runtime.background_supervisor','--receipt',
-                    job.supervisor_receipt,'--',*value.argv,
+                    job.supervisor_receipt,'--deadline-at',str(job.deadline_at),
+                    '--terminate-grace',str(job.terminate_grace_seconds),'--',*value.argv,
                     cwd=cwd,env=os.environ.copy(),stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,start_new_session=True,
                     limit=HARNESS_JSONL_LIMIT),name="background-spawn-"+job.id)
@@ -1535,10 +1609,11 @@ def create_app() -> FastAPI:
                     job.status="cancelling"
                     try:persist_job(job)
                     except OSError:pass
-                    await terminate_group(process)
+                    job.process=process
+                    await stop_background_supervisor(job)
                 if job.task:
                     await asyncio.gather(job.task,return_exceptions=True)
-                if job.status not in {"completed","failed","cancelled"}:
+                if job.status not in {"completed","failed","cancelled","timed_out"}:
                     job.status="failed";job.returncode=(process.returncode if process else None)
                     job.completed_at=datetime.now(timezone.utc).isoformat()
                     job.recovery_detail="start_failed:"+type(exc).__name__
@@ -1555,11 +1630,45 @@ def create_app() -> FastAPI:
             "replacement_targets":[job.public(log_tail=job_log_tail(job))
                 for job in unresolved_replacement_targets(jobs)]}
 
+    @app.get("/v1/background-jobs/{job_id}/wait")
+    async def wait_background_job(job_id:str,timeout_seconds:float|None=None,
+                                  heartbeat_seconds:float=10):
+        job=app.state.background_jobs.get(job_id)
+        if not job:
+            background_problem(404,"background_job_not_found","Background job not found")
+        if timeout_seconds is not None and timeout_seconds<=0:
+            background_problem(422,"wait_timeout_invalid","Wait timeout must be greater than zero")
+        heartbeat_seconds=min(max(heartbeat_seconds,.01),30)
+        async def rows():
+            started=time.monotonic()
+            while True:
+                current=job.public(log_tail=job_log_tail(job))
+                if job.status in {"completed","failed","cancelled","interrupted","timed_out"}:
+                    yield json.dumps({"type":"terminal","job":current},ensure_ascii=False)+"\n"
+                    return
+                remaining=(None if timeout_seconds is None else
+                    max(0,timeout_seconds-(time.monotonic()-started)))
+                if remaining is not None and remaining<=0:
+                    yield json.dumps({"type":"wait_timeout","job":current},ensure_ascii=False)+"\n"
+                    return
+                interval=heartbeat_seconds if remaining is None else min(heartbeat_seconds,remaining)
+                try:await asyncio.wait_for(job.done_event.wait(),interval)
+                except asyncio.TimeoutError:
+                    current=job.public(log_tail=job_log_tail(job))
+                    if job.status in {"completed","failed","cancelled","interrupted","timed_out"}:
+                        yield json.dumps({"type":"terminal","job":current},ensure_ascii=False)+"\n"
+                        return
+                    if timeout_seconds is not None and time.monotonic()-started>=timeout_seconds:
+                        yield json.dumps({"type":"wait_timeout","job":current},ensure_ascii=False)+"\n"
+                        return
+                    yield json.dumps({"type":"heartbeat","job":current},ensure_ascii=False)+"\n"
+        return StreamingResponse(rows(),media_type="application/x-ndjson")
+
     @app.post("/v1/background-jobs/{job_id}/cancel")
     async def cancel_background_job(job_id: str):
         job = app.state.background_jobs.get(job_id)
         if not job:
-            raise HTTPException(404, "Background job not found")
+            background_problem(404,"background_job_not_found","Background job not found")
         await cancel_job(job)
         return job.public(log_tail=job_log_tail(job))
 

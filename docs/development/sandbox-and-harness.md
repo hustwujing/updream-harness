@@ -92,8 +92,14 @@ snapshot.
 - EOF is not success for streaming Harnesses; pending inputs require explicit
   completion evidence.
 - Cancellation stops the Harness process group and supervised background jobs.
-- Long-lived work uses `sandbox-background`; user decisions use
-  `sandbox-interact`. Both remain bound to the active execution.
+- Commands run synchronously unless same-Sandbox concurrency has a concrete
+  benefit. `sandbox-background start` always has a deadline and is consumed by
+  one `sandbox-background wait`; an observation timeout does not cancel it.
+- Sandbox-local background work remains bound to the active execution and is
+  terminalized as interrupted on Runtime/Sandbox recovery. Anything crossing a
+  Turn, Runtime, Sandbox or machine uses the host Durable Job and Continuation
+  plane; external Providers use their registered durable workers.
+- User decisions use `sandbox-interact` and remain bound to the active execution.
 - A completed or waiting outcome is not published until checkpoint succeeds.
 
 ## Image rules

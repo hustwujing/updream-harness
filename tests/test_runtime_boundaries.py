@@ -190,6 +190,40 @@ async def test_stop_kills_background_job_ignoring_sigterm(tmp_path, monkeypatch)
         os.kill(saved.pid, 0)
 
 
+async def test_background_wait_observation_timeout_does_not_cancel_job(tmp_path,monkeypatch):
+    app=runtime(tmp_path,monkeypatch,'import sys,time\nsys.stdin.readline()\ntime.sleep(60)\n')
+    await endpoint(app,'/v1/turns')(runtime_app.TurnRequest(message='hello'))
+    value=await endpoint(app,'/v1/background-jobs')(runtime_app.BackgroundJobCreate(
+        name='bounded-wait',argv=[sys.executable,'-c','import time;time.sleep(.2)'],
+        cwd=str(tmp_path/'workspace/project'),timeout_seconds=3,terminate_grace_seconds=.05))
+    wait=endpoint(app,'/v1/background-jobs/{job_id}/wait')
+    response=await wait(value['id'],timeout_seconds=.03,heartbeat_seconds=.01)
+    rows=[json.loads(chunk) async for chunk in response.body_iterator]
+    assert rows[-1]['type']=='wait_timeout' and rows[-1]['job']['status']=='running'
+    assert app.state.background_jobs[value['id']].status=='running'
+    response=await wait(value['id'],timeout_seconds=None,heartbeat_seconds=.01)
+    rows=[json.loads(chunk) async for chunk in response.body_iterator]
+    assert rows[-1]['type']=='terminal' and rows[-1]['job']['status']=='completed'
+    await endpoint(app,'/v1/cancel')();await completed(app)
+
+
+async def test_background_deadline_kills_process_ignoring_sigterm_and_reports_timed_out(tmp_path,monkeypatch):
+    app=runtime(tmp_path,monkeypatch,'import sys,time\nsys.stdin.readline()\ntime.sleep(60)\n')
+    await endpoint(app,'/v1/turns')(runtime_app.TurnRequest(message='hello'))
+    marker=tmp_path/'deadline-ready'
+    value=await endpoint(app,'/v1/background-jobs')(runtime_app.BackgroundJobCreate(
+        name='deadline',argv=[sys.executable,'-c',
+            f'import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);open({str(marker)!r},"w").close();time.sleep(60)'],
+        cwd=str(tmp_path/'workspace/project'),timeout_seconds=.15,terminate_grace_seconds=.05))
+    job=app.state.background_jobs[value['id']]
+    await asyncio.wait_for(job.task,3)
+    assert marker.exists() and job.status=='timed_out' and job.returncode==124
+    receipt=json.loads((tmp_path/'workspace/state/background-jobs'/f'{job.id}.supervisor.json').read_text())
+    assert receipt['status']=='timed_out' and receipt['sigterm_sent'] and receipt['sigkill_sent']
+    with pytest.raises(ProcessLookupError):os.kill(job.pid,0)
+    await endpoint(app,'/v1/cancel')();await completed(app)
+
+
 async def test_background_intent_persistence_failure_never_spawns_process(tmp_path,monkeypatch):
     app=runtime(tmp_path,monkeypatch,'import sys,time\nsys.stdin.readline()\ntime.sleep(60)\n')
     await endpoint(app,'/v1/turns')(runtime_app.TurnRequest(message='hello'))
@@ -266,17 +300,18 @@ async def test_runtime_restart_quiesces_surviving_background_process_group(tmp_p
     marker=tmp_path/'survivor-ready'
     value=await endpoint(app,'/v1/background-jobs')(runtime_app.BackgroundJobCreate(
         name='survivor',argv=[sys.executable,'-c',
-            f'import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);open({str(marker)!r},"w").close();time.sleep(60)'],
+            f'import os,signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);open({str(marker)!r},"w").write(str(os.getpid()));time.sleep(60)'],
         cwd=str(tmp_path/'workspace/project')))
     for _ in range(100):
         if marker.exists():break
         await asyncio.sleep(.01)
-    assert marker.exists();pid=value['pid']
+    assert marker.exists();pid=value['pid'];child_pid=int(marker.read_text())
     restarted=runtime_app.create_app()
     recovered=restarted.state.background_jobs[value['id']]
     assert recovered.status=='interrupted' and recovered.recovery_detail=='process_quiesced'
     assert recovered.pid_start_time and recovered.boot_id
     with pytest.raises(ProcessLookupError):os.kill(pid,0)
+    with pytest.raises(ProcessLookupError):os.kill(child_pid,0)
     await endpoint(app,'/v1/cancel')();await completed(app)
 
 
@@ -303,6 +338,27 @@ async def test_starting_intent_recovers_supervisor_receipt_after_runtime_crash_w
     assert job.status=='interrupted' and job.recovery_detail=='process_quiesced'
     await supervisor.wait()
     with pytest.raises(ProcessLookupError):os.kill(supervisor.pid,0)
+
+
+def test_runtime_recovery_preserves_terminal_supervisor_receipt(tmp_path,monkeypatch):
+    monkeypatch.setattr(runtime_app,'RUN',tmp_path/'run')
+    monkeypatch.setattr(runtime_app,'WORKSPACE',tmp_path/'workspace')
+    monkeypatch.setattr(runtime_app,'OUTPUTS',tmp_path/'workspace/outputs')
+    root=tmp_path/'workspace/state/background-jobs';root.mkdir(parents=True)
+    receipt=root/'terminal.supervisor.json'
+    runtime_app.atomic_json(receipt,{'pid':999999,'pid_start_time':'gone','boot_id':runtime_app.boot_identity(),
+        'status':'timed_out','returncode':124,'completed_at':'2026-11-20T00:00:00Z',
+        'reason':'timed_out','sigterm_sent':True,'sigkill_sent':True})
+    runtime_app.atomic_json(root/'terminal.json',{'id':'terminal','name':'deadline','argv':['false'],
+        'cwd':str(tmp_path),'execution_id':'old','replaces':'','status':'running','pid':999999,
+        'pid_start_time':'gone','boot_id':runtime_app.boot_identity(),'returncode':None,
+        'created_at':'','completed_at':'','log_path':str(root/'terminal.log'),
+        'supervisor_receipt':str(receipt),'timeout_seconds':1,'terminate_grace_seconds':.1,
+        'deadline_at':1})
+    job=runtime_app.create_app().state.background_jobs['terminal']
+    assert job.status=='timed_out' and job.returncode==124
+    assert job.completed_at=='2026-11-20T00:00:00Z'
+    assert job.termination_detail=={'reason':'timed_out','sigterm_sent':True,'sigkill_sent':True}
 
 
 async def test_daemonized_setsid_descendant_keeps_job_running_until_supervisor_cancels_it(tmp_path,monkeypatch):

@@ -24,6 +24,7 @@ revision's report as evidence for current code.
 | Store, idempotency, schema | `test_store.py`, relevant owner/cancel tests |
 | Broker, lease, recovery | `test_broker.py`, `test_event_bus_boundaries.py`, `test_cancel_boundaries.py` |
 | Runtime/adapters | `test_runtime_boundaries.py`, `test_runtime_configuration.py`, adapter/runner tests |
+| Sandbox background control | CLI structured errors, wait observation/terminal behavior, deadline escalation, cancellation mapping and real OpenSandbox B04-B06 |
 | Sandbox/pool | `test_sandbox_namespace.py`, `test_runtime_client.py` |
 | Gateway/capability/network | `test_gateway.py`, `test_capability.py`, `test_public_proxy.py` |
 | Models/catalog | `test_catalog.py`, `test_model_health.py`, `test_model_activity.py` |
