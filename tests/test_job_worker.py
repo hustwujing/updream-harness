@@ -74,6 +74,20 @@ async def test_pre_accept_failure_preserves_stable_domain_error_code(tmp_path):
     finally:await store.close()
 
 
+async def test_semantic_no_target_failure_never_retries_frozen_selector(tmp_path):
+    store,_,job=await setup(tmp_path,request(kind=JobKind.OPERATION,
+        retry_policy={'max_pre_accept_attempts':5,'deterministic':True}))
+    adapter=FakeAdapter([PreAcceptFailure('selector matched nothing',
+        error_code='no_target_found',failed_phase='execution',retryable=False)])
+    worker=JobWorker(store,{'fake':adapter},node_id='node',worker_id='worker')
+    try:
+        await worker.run_once();failed=await store.get_job(job.id)
+        assert failed.state==JobState.FAILED and adapter.submit_calls==1
+        assert failed.result['error_code']=='no_target_found'
+        assert failed.result['retryable'] is False
+    finally:await store.close()
+
+
 async def test_nonretryable_infrastructure_failure_is_structured_and_terminal(tmp_path):
     store,_,job=await setup(tmp_path,request(kind=JobKind.OPERATION,
         retry_policy={'max_pre_accept_attempts':5,'deterministic':True}))

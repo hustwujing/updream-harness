@@ -125,7 +125,8 @@ def test_example_job_catalog_is_parseable_and_digest_verified():
     assert segment.creates_artifacts
     assert segment.retry_policy['max_pre_accept_attempts']==2
     assert all(value in segment.guidance for value in (
-        'SAM3','model-native category','no_target_found','box','points','never repeat'))
+        'SAM3','model-native category','no_target_found','box','points','never repeat',
+        'wordmark','media-processing'))
     transcribe=value.operation('audio.transcribe','1','2'*64)
     assert transcribe.input_roles==('source',) and set(transcribe.output_roles)=={
         'transcript_json','transcript_text','transcript_srt'}

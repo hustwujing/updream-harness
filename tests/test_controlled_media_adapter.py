@@ -138,6 +138,8 @@ async def test_segment_exposes_no_selection_as_stable_domain_failure(tmp_path):
     try:
         with pytest.raises(PreAcceptFailure) as raised:await adapter.submit(context)
         assert raised.value.error_code=='no_target_found'
+        assert raised.value.failed_phase=='execution'
+        assert raised.value.retryable is False
         assert not await scheduler.active_reservation(job.id)
     finally:await store.close()
 

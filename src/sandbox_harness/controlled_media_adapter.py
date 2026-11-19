@@ -108,7 +108,8 @@ class ControlledMediaOperationAdapter(BaseJobAdapter):
                     except RuntimeError as exc:
                         if str(exc)=='no_selection':
                             raise PreAcceptFailure('No target matched the frozen selector',
-                                error_code='no_target_found') from exc
+                                error_code='no_target_found',failed_phase='execution',
+                                retryable=False) from exc
                         from .controlled_media_runner import ControlledOperationError
                         if isinstance(exc,ControlledOperationError):
                             if exc.retry_class=='node_health_change' and self.gpu_health:

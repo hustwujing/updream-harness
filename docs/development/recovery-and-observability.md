@@ -128,6 +128,12 @@ are committed together for new events; historical Jobs are projected lazily and
 idempotently before display. Never delete raw rows or infer activity identity
 from natural-language text to improve the UI.
 
+The browser adds a presentation-only phase grouping over display activities.
+This grouping cannot mutate the durable raw ledger or projection, and it uses
+only native tool type plus structured command-action types. Raw diagnostics stay
+available through the owner-scoped API; the ordinary timeline never becomes a
+JSON/log viewer.
+
 ## Runtime child durability
 
 Native Interaction delivery is tri-state. A successful stdin drain is

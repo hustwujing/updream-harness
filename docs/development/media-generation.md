@@ -285,6 +285,17 @@ successor Agent can inspect it with `sandbox-media fetch` and retain it only by
 calling `sandbox-media promote --output-role workspace|delivery`; promotion is
 thread-scoped and idempotent.
 
+## Controlled segmentation selection
+
+`image.segment` uses SAM3 and treats `no_target_found` as a semantic terminal
+result for one frozen selector. It must not retry the same selector. A successor
+may create a replacement Job using a broader model-native category or inspected
+box/points. Compound marks and text wordmarks are not reliable prompt-only
+targets. Use inspected geometry when semantic matting is required; use a scoped
+Child Harness with `media-processing` for geometric crop or uniform-background
+removal, then validate alpha bounds and excluded content. Never silently replace
+an explicitly requested named segmentation method with another algorithm.
+
 ## Provider integration checklist
 
 1. Add a typed adapter, route, credential environment reference and capability

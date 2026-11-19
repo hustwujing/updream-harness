@@ -12,7 +12,8 @@ import {
 } from "lucide-react";
 import { apiUrl, getExecutionGraph, listJobActivities } from "./api";
 import { formatDuration } from "./activity-time";
-import {activityCursor,mergeExecutionActivities} from "./execution-activities";
+import {activityCursor,groupExecutionActivities,mergeExecutionActivities} from "./execution-activities";
+import "./execution-activities.css";
 import {
   defaultCollapsedGroups,
   executionGraphView,
@@ -156,22 +157,9 @@ function readPositions(key) {
     return {};
   }
 }
-function displayValue(value) {
-  if (value == null) return "";
-  if (
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  )
-    return String(value);
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return "结构化详情不可显示";
-  }
-}
 function displayActivityTitle(value){const name=String(value.summary||value.payload?.name||value.kind||'执行步骤'),labels={commandexecution:'执行命令',bash:'执行命令',read:'读取文件',write:'写入文件',edit:'修改文件',filechange:'修改文件',imageview:'查看图片',mcptoolcall:'调用外部工具',dynamictoolcall:'调用工具',plan:'更新执行计划'};return labels[name.toLowerCase()]||name}
-function displayActivityDetail(value){const detail=value.payload?.detail||{},command=detail.command||detail.cmd,description=detail.description,path=detail.file_path||detail.filePath||detail.path,query=detail.query;if(command)return Array.isArray(command)?command.join(' '):String(command).split('\n').find(Boolean);if(description)return description;if(path)return path;if(query)return query;if(value.payload?.output_tail)return value.payload.output_tail.split('\n').filter(Boolean).at(-1);if(value.status==='completed')return '已完成';if(value.status==='failed')return '执行失败';return '执行中'}
+function fileName(value){const parts=String(value||'').split(/[\\/]/).filter(Boolean);return parts.at(-1)||''}
+function displayActivityDetail(value){const detail=value.payload?.detail||{},description=detail.description,path=detail.file_path||detail.filePath||detail.path,query=detail.query,actions=detail.commandActions;if(description)return description;if(Array.isArray(actions)&&actions.length){const names=actions.map(action=>fileName(action?.path||action?.name)).filter(Boolean);return names.length?names.slice(0,3).join('、'):`${actions.length} 项文件操作`}if(path)return fileName(path);if(query)return '已提交结构化查询';if(value.status==='completed')return '已完成';if(value.status==='failed')return '执行失败';return '执行中'}
 class DetailBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -433,7 +421,7 @@ export default function ExecutionGraph({ thread, items = [] }) {
             item.turn_id === selected.turn_id && activityTypes.has(item.type),
         )
       : [],
-    details = selected?.job_id ? (technical?rawActivities:activities) : primaryActivities;
+    details = selected?.job_id ? (technical?rawActivities:groupExecutionActivities(activities)) : primaryActivities;
   const saveManual = (value) => {
     setManual(value);
     try {
@@ -588,10 +576,21 @@ export default function ExecutionGraph({ thread, items = [] }) {
         )}
         {selected.job_id&&<div className="execution-activity-mode"><button type="button"
           aria-pressed={technical} onClick={()=>setTechnical(value=>!value)}>
-          {technical?'返回执行步骤':'查看技术详情'}</button>{!technical&&activities.length>0&&<small>
-          {activities.reduce((total,row)=>total+(row.raw_count||1),0)} 条原始事件已归并为 {activities.length} 个步骤</small>}</div>}
+          {technical?'返回执行阶段':'查看诊断事件'}</button>{!technical&&activities.length>0&&<small>
+          {activities.reduce((total,row)=>total+(row.raw_count||1),0)} 条原始事件已归并为 {details.length} 个阶段</small>}</div>}
         {details.length ? (
-          details.slice(-30).map((value) => (
+          details.slice(-30).map((value) => value.kind==='activity_group' ? (
+            <details className="execution-activity-group" key={value.id}>
+              <summary>
+                <span className={value.status==='in_progress'&&!terminal.has(selected.state)?'activity-pulse':''}/>
+                <div><b>{value.summary}</b><small>{value.operation_count} 项操作 · {value.status==='in_progress'?'正在执行':'已完成'}</small></div>
+                <time>{value.raw_count} 条事件</time>
+              </summary>
+              <div className="execution-activity-children">{value.activities.map(activity=><div key={activity.id||activity.sequence}>
+                <b>{displayActivityTitle(activity)}</b><small>{displayActivityDetail(activity)}</small>
+              </div>)}</div>
+            </details>
+          ) : (
             <article key={value.id || value.sequence}>
               <span
                 className={
@@ -604,7 +603,7 @@ export default function ExecutionGraph({ thread, items = [] }) {
               <div>
                 <b>{displayActivityTitle(value)}</b>
                 <small>
-                  {technical?displayValue(value.payload?.detail||value.payload?.text||value.status):displayActivityDetail(value)}
+                  {displayActivityDetail(value)}
                 </small>
               </div>
               <time>{value.raw_count>1?`${value.raw_count} 条事件`:value.sequence?`#${value.sequence}`:""}</time>

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Preserve complete Child Harness streams while presenting stable, semantic execution activities.
+**Goal:** Preserve complete Child Harness streams while presenting stable, phase-level execution activities and terminal semantic segmentation errors.
 
 **Architecture:** Keep `job_activities` as the raw ledger and transactionally maintain a separate display projection keyed by native operation identity. The API serves display activities by default and an explicit raw diagnostic view; the frontend merges display updates by stable ID.
 
@@ -25,6 +25,9 @@
 - Missing native tool IDs do not merge unrelated operations.
 - Warning/error events cannot be hidden by compaction.
 - Recovery replay does not duplicate display rows or regress cursor order.
+- Large groups of native tool calls remain a few structured, expandable phases.
+- Technical mode never renders native payload JSON as timeline copy.
+- `no_target_found` never repeats the same frozen selector.
 
 ---
 
@@ -98,3 +101,28 @@
 - [ ] Update development rules for raw versus display activity ownership.
 - [ ] Commit, record release, `SIGKILL` affected services, and verify recovery.
 - [ ] Run the final full gate once and publish the verified revision.
+
+### Task 5: Phase-level presentation and semantic segmentation failures
+
+**Files:**
+- Modify: `web/src/execution-activities.js`
+- Modify: `web/src/ExecutionGraph.jsx`
+- Modify: `web/src/styles.css`
+- Modify: `src/sandbox_harness/controlled_media_adapter.py`
+- Modify: `src/sandbox_runtime/instructions.py`
+- Modify: `deploy/job-catalog.example.json`
+- Test: `web/src/execution-activities.test.js`
+- Test: `tests/browser_execution_graph.cjs`
+- Test: `tests/test_controlled_media_adapter.py`
+- Test: `tests/test_job_worker.py`
+- Test: `tests/test_job_catalog.py`
+
+**Interfaces:**
+- Consumes: projected display activities and structured native tool metadata.
+- Produces: `groupExecutionActivities(rows)` and terminal `no_target_found` failures.
+
+- [ ] Write failing unit/browser tests for phase grouping, localized raw summaries and non-retryable selectors.
+- [ ] Run the focused tests and verify the new assertions fail.
+- [ ] Implement structured phase grouping and remove direct JSON rendering from the timeline.
+- [ ] Mark `no_target_found` non-retryable and clarify inspected geometry/media-processing routing.
+- [ ] Run affected frontend/backend tests, deploy, verify the real thread, then run the full gate once.

@@ -1,0 +1,62 @@
+.execution-activity-group {
+  border-bottom: 1px solid #ecece8;
+}
+
+.execution-activity-group > summary {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 9px 0;
+  list-style: none;
+  cursor: pointer;
+}
+
+.execution-activity-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.execution-activity-group > summary b,
+.execution-activity-group > summary small {
+  display: block;
+}
+
+.execution-activity-group > summary b {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.execution-activity-group > summary small,
+.execution-activity-group > summary time {
+  font-size: 9px;
+  color: #898983;
+}
+
+.execution-activity-children {
+  margin: 0 0 8px 20px;
+  border-left: 1px solid #deded8;
+  padding-left: 10px;
+}
+
+.execution-activity-children > div {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.35fr) minmax(0, 1fr);
+  gap: 8px;
+  padding: 5px 0;
+}
+
+.execution-activity-children b,
+.execution-activity-children small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9px;
+}
+
+.execution-activity-children b {
+  font-weight: 550;
+}
+
+.execution-activity-children small {
+  color: #868680;
+}

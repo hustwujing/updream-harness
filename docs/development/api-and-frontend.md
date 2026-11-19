@@ -51,8 +51,12 @@ Turn has no remaining rows. Do not make reconnect correctness depend on Redis.
 - Child Job activity APIs return the semantic display projection by default.
   `view=raw` is an explicit diagnostic surface. Display updates merge by stable
   activity `id`; polling advances with `cursor_sequence`, not the first raw
-  sequence. The default UI shows compact operations and offers a separate
-  technical-details toggle for transport events.
+  sequence. The default UI groups projected tools into expandable phases using
+  structured native tool metadata, never command-text or model-text matching.
+  Failed tools, warnings, errors and user waits remain independent rows. The
+  diagnostic toggle may preserve raw order, but timeline copy remains localized
+  and bounded: never render native JSON, internal absolute paths or transport
+  field names directly into the product UI.
 - A terminal Turn with pending media Drafts is displayed as `等待确认 N 项媒体生成`,
   not as completed. Drafts sharing the same origin Turn use one batch decision;
   pending confirmation does not animate the execution graph as active work.
