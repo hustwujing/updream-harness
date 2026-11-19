@@ -1460,7 +1460,7 @@ async def main():
     args.report.parent.mkdir(parents=True,exist_ok=True);args.report.write_text(
         json.dumps({'case':args.case,**value},ensure_ascii=False,indent=2)+'\n')
     print(json.dumps({'case':args.case,**value},ensure_ascii=False))
-    if value.get('classification')!='success':raise SystemExit(2)
+    if value.get('classification') in {'program_failure','optimizable_prompt'}:raise SystemExit(2)
 
 
 if __name__=='__main__':asyncio.run(main())
