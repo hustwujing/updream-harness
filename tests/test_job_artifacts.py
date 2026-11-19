@@ -1,4 +1,5 @@
 import hashlib
+import zipfile
 
 import pytest
 
@@ -161,6 +162,39 @@ def test_mime_registry_sniffs_aliases_and_unknowns(tmp_path):
     invalid=tmp_path/'invalid.svg';invalid.write_text('<svg>')
     with pytest.raises(ValueError,match='does not match'):
         MimeRegistry.detect(invalid,'image/svg+xml')
+
+
+@pytest.mark.parametrize(('mime','member'),[
+    ('model/obj+zip','model/model.obj'),('model/gltf+zip','scene/model.gltf'),
+    ('model/vnd.usdz+zip','scene/model.usdc'),('model/3mf','3D/model.model')])
+def test_mime_registry_validates_declared_3d_archives(tmp_path,mime,member):
+    path=tmp_path/'model.zip'
+    with zipfile.ZipFile(path,'w') as archive:
+        if mime=='model/3mf':archive.writestr('[Content_Types].xml','<Types/>')
+        archive.writestr(member,'model data')
+    assert MimeRegistry.detect(path,mime)==mime
+
+
+def test_mime_registry_rejects_spoofed_or_unsafe_3d_archives(tmp_path):
+    plain=tmp_path/'plain.zip'
+    with zipfile.ZipFile(plain,'w') as archive:archive.writestr('readme.txt','not a model')
+    with pytest.raises(ValueError,match='does not match'):
+        MimeRegistry.detect(plain,'model/obj+zip')
+    unsafe=tmp_path/'unsafe.zip'
+    with zipfile.ZipFile(unsafe,'w') as archive:archive.writestr('../model.obj','v 0 0 0')
+    with pytest.raises(ValueError,match='does not match'):
+        MimeRegistry.detect(unsafe,'model/obj+zip')
+
+
+def test_mime_registry_detects_native_3d_payloads(tmp_path):
+    values=[('model.glb',b'glTF'+b'\0'*20,'model/gltf-binary'),
+        ('model.fbx',b'Kaydara FBX Binary  \x00'+b'\0'*20,'application/vnd.autodesk.fbx'),
+        ('model.obj',b'v 0 0 0\nf 1 1 1\n','model/obj'),
+        ('model.gltf',b'{"asset":{"version":"2.0"}}','model/gltf+json'),
+        ('model.stl',b'solid cube\nendsolid cube\n','model/stl')]
+    for name,data,mime in values:
+        path=tmp_path/name;path.write_bytes(data)
+        assert MimeRegistry.detect(path,mime)==mime
 
 
 async def test_collection_rejects_cardinality_order_and_aggregate_limits(tmp_path):

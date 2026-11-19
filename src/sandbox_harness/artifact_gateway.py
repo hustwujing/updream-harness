@@ -6,7 +6,7 @@ import os
 import re
 import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path,PurePosixPath
 from tempfile import NamedTemporaryFile
 from typing import AsyncIterable
 
@@ -32,6 +32,7 @@ class MimeRegistry:
 
     @classmethod
     def detect(cls, path: Path, declared: str = "") -> str:
+        normalized = cls.normalize(declared)
         with path.open("rb") as stream:
             head = stream.read(4096)
         if head.startswith(b"\x89PNG\r\n\x1a\n"): detected = "image/png"
@@ -43,17 +44,27 @@ class MimeRegistry:
         elif head.startswith(b"ID3") or len(head)>=2 and head[0]==0xff and head[1]&0xe0==0xe0:
             detected = "audio/mpeg"
         elif len(head) >= 12 and head[4:8] == b"ftyp":
-            detected = "audio/mp4" if cls.normalize(declared)=="audio/mp4" else "video/mp4"
+            detected = "audio/mp4" if normalized=="audio/mp4" else "video/mp4"
+        elif head.startswith(b"glTF"):detected="model/gltf-binary"
+        elif head.startswith(b"Kaydara FBX Binary"):detected="application/vnd.autodesk.fbx"
         elif head.startswith(b"PK\x03\x04"):
             try:
                 with zipfile.ZipFile(path) as archive:
-                    names = set(archive.namelist())
+                    names=set(archive.namelist())
+                safe=all(not PurePosixPath(name).is_absolute() and ".." not in PurePosixPath(name).parts
+                    for name in names)
+                model_archive=(normalized=="model/obj+zip" and any(name.lower().endswith(".obj") for name in names)
+                    or normalized=="model/gltf+zip" and any(name.lower().endswith((".gltf",".glb")) for name in names)
+                    or normalized=="model/vnd.usdz+zip" and any(name.lower().endswith((".usd",".usda",".usdc")) for name in names)
+                    or normalized=="model/3mf" and "[Content_Types].xml" in names
+                        and any(name.lower().endswith(".model") for name in names))
                 detected = ("application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                     if "word/document.xml" in names else
                     "application/vnd.openxmlformats-officedocument.presentationml.presentation"
                     if "ppt/presentation.xml" in names else
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    if "xl/workbook.xml" in names else "application/zip")
+                    if "xl/workbook.xml" in names else normalized if safe and model_archive
+                    else "application/zip")
             except (OSError, zipfile.BadZipFile):
                 detected = "application/octet-stream"
         else:
@@ -64,12 +75,16 @@ class MimeRegistry:
                     except (json.JSONDecodeError,ValueError):is_json=False
                     try:root=ElementTree.fromstring(text)
                     except (ElementTree.ParseError,ValueError):root=None
-                    detected=("application/json" if is_json else "image/svg+xml" if root is not None and
+                    detected=("model/obj" if normalized=="model/obj" and re.search(
+                        r"(?m)^\s*(?:v|f)\s+",text) else
+                        "model/gltf+json" if normalized=="model/gltf+json" and is_json
+                            and isinstance(json.loads(text),dict) and isinstance(json.loads(text).get("asset"),dict) else
+                        "model/stl" if normalized=="model/stl" and text.lstrip().startswith("solid ") else
+                        "application/json" if is_json else "image/svg+xml" if root is not None and
                         root.tag in {"svg","{http://www.w3.org/2000/svg}svg"} else "text/plain")
                 else:detected="application/octet-stream"
             except (OSError, UnicodeDecodeError):
                 detected = "application/octet-stream"
-        normalized = cls.normalize(declared)
         if normalized not in {"", "application/octet-stream"} and detected != "application/octet-stream":
             if normalized != detected and not (normalized == "text/markdown" and detected == "text/plain"):
                 raise ValueError("Declared MIME does not match content")
