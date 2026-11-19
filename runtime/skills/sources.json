@@ -29,17 +29,18 @@
       "node_modules": []
     },
     "drawio": {
-      "commands": ["python3", "drawio", "dot"],
+      "commands": ["python3", "drawio", "dot", "git", "tred"],
       "python_modules": ["PIL", "pptx", "yaml"],
       "node_modules": []
     },
     "presentation": {
-      "commands": ["python3"],
+      "commands": ["python3", "sandbox-job"],
       "python_modules": ["PIL", "filelock", "fitz", "numpy", "openai", "pptx", "requests", "yaml"],
       "node_modules": []
     },
     "office": {
-      "commands": ["libreoffice", "pandoc", "pdftoppm", "pdftotext", "qpdf", "tesseract"],
+      "commands": ["gcc", "git", "libreoffice", "node", "pandoc", "pdftoppm", "pdftotext", "python3", "qpdf", "soffice", "tesseract", "timeout"],
+      "optional_commands": ["gtimeout"],
       "python_modules": ["PIL", "defusedxml", "lxml", "markitdown", "openpyxl", "pandas", "pdf2image", "pdfplumber", "pypdf", "pytesseract"],
       "node_modules": ["docx", "pptxgenjs", "react", "react-dom", "react-icons", "sharp"]
     },
@@ -51,6 +52,12 @@
     "web": {
       "commands": ["python3", "node", "pnpm", "chromium"],
       "python_modules": ["playwright"],
+      "node_modules": ["react", "react-dom", "typescript"]
+    },
+    "skill-authoring": {
+      "commands": ["python3", "node", "pnpm", "chromium"],
+      "optional_commands": ["claude", "lsof"],
+      "python_modules": ["playwright", "yaml"],
       "node_modules": ["react", "react-dom", "typescript"]
     },
     "manim": {
@@ -163,7 +170,7 @@
         {"id": "mcp-builder", "version": "2c5958ec", "profile": "mcp", "network": "task-dependent SDK documentation", "test_case": "import Python MCP dependencies"},
         {"id": "pdf", "version": "2c5958ec", "profile": "office", "network": "none", "test_case": "create, inspect and rasterize a PDF"},
         {"id": "pptx", "version": "2c5958ec", "profile": "office", "network": "none", "test_case": "create, render and validate an object-level editable PPTX"},
-        {"id": "skill-creator", "version": "2c5958ec", "profile": "web", "network": "optional for browser review", "test_case": "run skill structure checks"},
+        {"id": "skill-creator", "version": "2c5958ec", "profile": "skill-authoring", "network": "optional for browser review", "test_case": "run skill structure checks"},
         {"id": "slack-gif-creator", "version": "2c5958ec", "profile": "media", "network": "none", "test_case": "import image dependencies"},
         {"id": "theme-factory", "version": "2c5958ec", "profile": "instructions", "network": "none", "test_case": "validate bundled theme files"},
         {"id": "web-artifacts-builder", "version": "2c5958ec", "profile": "web", "network": "package installation for generated projects", "test_case": "initialize and bundle a minimal artifact"},

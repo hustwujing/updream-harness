@@ -111,3 +111,15 @@ def test_example_profile_catalog_is_digest_verified_and_covers_initial_profiles(
     assert media.runtime_profile.id=='media-cpu'
     with pytest.raises(ValueError,match='profile catalog digest'):
         ProfileResolver.from_json(raw,expected_digest='0'*64,skill_manifest=manifest)
+
+
+def test_every_skill_resolves_for_every_declared_harness():
+    raw=(ROOT/'deploy/profile-catalog.example.json').read_text()
+    manifest=json.loads((ROOT/'runtime/skills/manifest.json').read_text())
+    value=ProfileResolver.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest(),
+        skill_manifest=manifest)
+    for skill in manifest['skills']:
+        for harness in skill['supported_harnesses']:
+            resolved=value.resolve(harness,'child-general',(skill['id'],),ProfileRequirements(),
+                allow_fallback=True)
+            assert skill['id'] in resolved.skill_ids

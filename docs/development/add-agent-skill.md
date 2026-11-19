@@ -64,6 +64,14 @@ The `metadata.json` row is a strict, versioned contract:
 `sources.json` remains the provenance and dependency source. Skill selection is
 owned by the Primary Harness and `SKILL.md` descriptions, not host-side routing metadata.
 
+`runtime/skill_dependency_audit.py` parses bundled Python and Node source plus
+direct subprocess command construction. Every discovered hard dependency must
+be present in the selected dependency profile. A command used only by an
+explicit, caught degradation path belongs in `optional_commands`; optional
+entries document reduced functionality and do not make the Resolver or image
+advertise that command as available. Do not use `optional_commands` to silence
+an import or command required by the Skill's normal workflow.
+
 ## Change workflows
 
 For a new Skill, pin provenance and dependencies first, add its canonical
@@ -131,8 +139,10 @@ warm sandbox.
 
 ## Completion
 
-Test manifest validation and installation for every declared Harness. Run
-dependency imports/commands as UID 10001 in every final image. In real
+Test manifest validation and installation for every declared Harness. Run the
+dependency audit and prove that every declared Harness resolves to a Profile.
+Run dependency imports/commands as UID 10001 in every `Profile x Harness` final
+image. In real
 OpenSandbox cases, prove native discovery, representative artifact execution,
 checkpoint, resume in a different sandbox, version upgrade and cleanup. Record
 the bundle version and image digest. A response that merely follows the Skill

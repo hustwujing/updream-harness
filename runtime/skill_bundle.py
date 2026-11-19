@@ -129,6 +129,8 @@ def verify() -> None:
     actual = expanded()
     if actual != expected:
         raise SystemExit("Runtime Skill bundle manifest is stale; run runtime/skill_bundle.py freeze")
+    from skill_dependency_audit import verify as verify_dependencies
+    verify_dependencies(SOURCES, ROOT)
     print(f"runtime skill bundle ok: {len(actual['skills'])} skills, version {actual['bundle_version']}")
 
 

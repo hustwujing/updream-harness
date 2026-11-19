@@ -44,7 +44,7 @@
       "id": "office",
       "supported_harnesses": ["codex", "claude", "deepseek"],
       "image_digests": {"codex": "4444444444444444444444444444444444444444444444444444444444444444", "claude": "5555555555555555555555555555555555555555555555555555555555555555", "deepseek": "6666666666666666666666666666666666666666666666666666666666666666"},
-      "commands": ["libreoffice", "pandoc", "pdftoppm", "pdftotext", "python3", "qpdf", "tesseract"],
+      "commands": ["gcc", "git", "libreoffice", "node", "pandoc", "pdftoppm", "pdftotext", "python3", "qpdf", "soffice", "tesseract", "timeout"],
       "python_modules": ["PIL", "defusedxml", "lxml", "markitdown", "openpyxl", "pandas", "pdf2image", "pdfplumber", "pypdf", "pytesseract"],
       "node_modules": ["docx", "pptxgenjs", "react", "react-dom", "react-icons", "sharp"],
       "dependency_capabilities": [], "network_origins": [], "gpu": false, "priority": 20
@@ -76,7 +76,7 @@
       "id": "primary-full-cpu",
       "supported_harnesses": ["codex", "claude", "deepseek"],
       "image_digests": {"codex": "7777777777777777777777777777777777777777777777777777777777777777", "claude": "8888888888888888888888888888888888888888888888888888888888888888", "deepseek": "9999999999999999999999999999999999999999999999999999999999999999"},
-      "commands": ["bash", "chromium", "dot", "drawio", "dvisvgm", "ffmpeg", "ffprobe", "latex", "libreoffice", "manim", "node", "npm", "pandoc", "pdftoppm", "pdftotext", "pnpm", "python3", "qpdf", "tesseract"],
+      "commands": ["bash", "chromium", "dot", "drawio", "dvisvgm", "ffmpeg", "ffprobe", "gcc", "git", "latex", "libreoffice", "manim", "node", "npm", "pandoc", "pdftoppm", "pdftotext", "pnpm", "python3", "qpdf", "sandbox-job", "soffice", "tesseract", "timeout", "tred"],
       "python_modules": ["PIL", "anthropic", "defusedxml", "filelock", "fitz", "imageio", "lxml", "manim", "markitdown", "mcp", "numpy", "openai", "openpyxl", "pandas", "pdf2image", "pdfplumber", "playwright", "pptx", "pypdf", "pytesseract", "requests", "sqlglot", "yaml"],
       "node_modules": ["docx", "esbuild", "pptxgenjs", "react", "react-dom", "react-icons", "sharp", "typescript"],
       "dependency_capabilities": ["image.generate", "video.generate", "video.edit", "audio.generate", "model3d.generate", "model3d.transform"], "network_origins": ["image-provider", "video-provider", "audio-provider", "model3d-provider"], "gpu": false, "priority": 100

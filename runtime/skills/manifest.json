@@ -296,7 +296,8 @@
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
-          "python3"
+          "python3",
+          "sandbox-job"
         ],
         "python_modules": [
           "PIL",
@@ -513,12 +514,21 @@
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
+          "gcc",
+          "git",
           "libreoffice",
+          "node",
           "pandoc",
           "pdftoppm",
           "pdftotext",
+          "python3",
           "qpdf",
-          "tesseract"
+          "soffice",
+          "tesseract",
+          "timeout"
+        ],
+        "optional_commands": [
+          "gtimeout"
         ],
         "python_modules": [
           "PIL",
@@ -571,7 +581,9 @@
         "commands": [
           "python3",
           "drawio",
-          "dot"
+          "dot",
+          "git",
+          "tred"
         ],
         "python_modules": [
           "PIL",
@@ -654,7 +666,8 @@
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
-          "python3"
+          "python3",
+          "sandbox-job"
         ],
         "python_modules": [
           "PIL",
@@ -846,12 +859,21 @@
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
+          "gcc",
+          "git",
           "libreoffice",
+          "node",
           "pandoc",
           "pdftoppm",
           "pdftotext",
+          "python3",
           "qpdf",
-          "tesseract"
+          "soffice",
+          "tesseract",
+          "timeout"
+        ],
+        "optional_commands": [
+          "gtimeout"
         ],
         "python_modules": [
           "PIL",
@@ -902,12 +924,21 @@
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
+          "gcc",
+          "git",
           "libreoffice",
+          "node",
           "pandoc",
           "pdftoppm",
           "pdftotext",
+          "python3",
           "qpdf",
-          "tesseract"
+          "soffice",
+          "tesseract",
+          "timeout"
+        ],
+        "optional_commands": [
+          "gtimeout"
         ],
         "python_modules": [
           "PIL",
@@ -1010,7 +1041,7 @@
     {
       "id": "skill-creator",
       "version": "2c5958ec",
-      "profile": "web",
+      "profile": "skill-authoring",
       "network": {
         "mode": "optional",
         "origins": []
@@ -1037,8 +1068,13 @@
           "pnpm",
           "chromium"
         ],
+        "optional_commands": [
+          "claude",
+          "lsof"
+        ],
         "python_modules": [
-          "playwright"
+          "playwright",
+          "yaml"
         ],
         "node_modules": [
           "react",
@@ -1335,12 +1371,21 @@
       "entry": "SKILL.md",
       "dependencies": {
         "commands": [
+          "gcc",
+          "git",
           "libreoffice",
+          "node",
           "pandoc",
           "pdftoppm",
           "pdftotext",
+          "python3",
           "qpdf",
-          "tesseract"
+          "soffice",
+          "tesseract",
+          "timeout"
+        ],
+        "optional_commands": [
+          "gtimeout"
         ],
         "python_modules": [
           "PIL",

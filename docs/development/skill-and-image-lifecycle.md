@@ -55,7 +55,11 @@ Content Bundle materialization does not prove that a command or import exists.
    `runtime/skill_smoke.py`.
 6. Run `python3 runtime/skill_bundle.py freeze` and then `verify`. Review the
    resulting content digest and file count in `manifest.json`.
-7. Verify materialization for Codex, Claude and DeepSeek, including checkpoint
+7. Run `python3 runtime/skill_dependency_audit.py`. Bundle verification invokes
+   the same audit and fails on undeclared imports or direct subprocess commands.
+8. Verify that every declared Harness resolves the Skill through an immutable
+   Runtime Profile, including an explicitly authorized fallback when needed.
+9. Verify materialization for Codex, Claude and DeepSeek, including checkpoint
    restore. Managed Skill links are read-only and must not be written through.
 
 One Skill ID has one canonical source. Do not fork prompts or assets per
@@ -97,16 +101,21 @@ headers or temporary build packages that are only needed to compile a wheel.
 Run checks in this order:
 
 1. `python3 runtime/skill_bundle.py verify`.
-2. Focused unit tests for the Skill, Runtime code and affected boundaries.
-3. Image build from the changed Foundation/Base/Harness Dockerfiles.
-4. `toolchain_probe.py --verify` and `media_probe.py` inside the image.
-5. Native discovery and representative Skill artifact smoke as UID 10001.
-6. For heavy/native renderers, a bounded low-quality render and output
+2. `runtime/skill_dependency_audit.py` must find no undeclared Python module,
+   Node module or direct subprocess command. A caught optional degradation
+   command belongs in `optional_commands`, outside Resolver authority.
+3. Resolve every Skill through every Harness named by its metadata.
+4. Focused unit tests for the Skill, Runtime code and affected boundaries.
+5. Image build from the changed Foundation/Base/Harness Dockerfiles.
+6. `toolchain_probe.py --verify` and `media_probe.py` inside the image.
+7. Native discovery and representative Skill artifact smoke as UID 10001 in
+   every declared final `Profile x Harness` image.
+8. For heavy/native renderers, a bounded low-quality render and output
    validation: codec, dimensions, duration or file structure as applicable.
-7. A real OpenSandbox case covering execution, output registration, checkpoint,
+9. A real OpenSandbox case covering execution, output registration, checkpoint,
    restore in another sandbox and cleanup when the change affects runtime
    state or artifacts.
-8. The full Python and frontend suites required by the release checklist.
+10. The full Python and frontend suites required by the release checklist.
 
 The smoke must fail clearly when a declared command/import is absent. A model
 following the instructions, a `command -v` result alone, or a successful image

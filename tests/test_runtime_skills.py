@@ -38,6 +38,28 @@ def test_skill_bundle_manifest_is_frozen_complete_and_licensed():
         assert 'delegation' not in row
 
 
+def test_skill_source_code_dependencies_are_declared():
+    spec=importlib.util.spec_from_file_location('runtime_skill_dependency_audit',
+        ROOT/'runtime/skill_dependency_audit.py')
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    assert module.audit()=={}
+
+
+def test_skill_dependency_audit_detects_missing_python_module(tmp_path):
+    spec=importlib.util.spec_from_file_location('runtime_skill_dependency_audit_missing',
+        ROOT/'runtime/skill_dependency_audit.py')
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    skill_root=tmp_path/'skills';skill=(skill_root/'sample');skill.mkdir(parents=True)
+    (skill/'helper.py').write_text('import yaml\n')
+    sources=tmp_path/'sources.json';sources.write_text(json.dumps({
+        'dependency_profiles':{'minimal':{'commands':['python3'],
+            'python_modules':[],'node_modules':[]}},
+        'sources':[{'skills':[{'id':'sample','profile':'minimal'}]}],
+    }))
+    assert module.audit(sources,skill_root)=={'sample':{
+        'commands':[],'python_modules':['yaml'],'node_modules':[]}}
+
+
 def test_skill_metadata_registry_rejects_missing_and_extra_rows_or_fields(tmp_path):
     spec=importlib.util.spec_from_file_location('runtime_skill_bundle_metadata',ROOT/'runtime/skill_bundle.py')
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
@@ -66,6 +88,8 @@ def test_skill_smoke_matrix_covers_every_bundled_skill():
     matrix=ast.literal_eval(assignment.value)
     manifest=json.loads((ROOT/'runtime/skills/manifest.json').read_text())
     assert set(matrix)=={row['id'] for row in manifest['skills']}
+    assert 'len(results["skills"]) == len(REQUIRED_FILES)' in (
+        ROOT/'runtime/skill_smoke.py').read_text()
 
 
 def test_presentation_skill_descriptions_are_mutually_exclusive():
