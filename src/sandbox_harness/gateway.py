@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections import defaultdict, OrderedDict
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -9,7 +10,9 @@ import time
 import json
 import hashlib
 import logging
+import math
 import re
+import struct
 from tempfile import NamedTemporaryFile
 from pathlib import Path
 from pydantic import ValidationError
@@ -106,6 +109,20 @@ def upstream_suffix(route: str, prefix: str) -> str:
     return suffix
 
 
+MODEL_ENDPOINTS={
+    Harness.CODEX:{"/responses":"generation","/responses/compact":"compaction"},
+    Harness.CLAUDE:{"/messages":"generation","/messages/count_tokens":"token_count"},
+    Harness.DEEPSEEK:{"/chat/completions":"generation"},
+}
+
+
+def model_endpoint_kind(harness:Harness|str,suffix:str)->str|None:
+    try:value=harness if isinstance(harness,Harness) else Harness(str(harness))
+    except ValueError:return None
+    normalized=suffix.rstrip("/") or "/"
+    return MODEL_ENDPOINTS[value].get(normalized)
+
+
 ADAPTIVE_ONLY_CLAUDE_MODELS={
     "claude-fable-5","claude-fable-5-1","claude-haiku-5-5","claude-opus-4-7",
     "claude-opus-4-8","claude-opus-5","claude-opus-5-5","claude-sonnet-5-5",
@@ -131,6 +148,79 @@ def normalize_model_request(payload:dict,*,harness:Harness|str,model:str,suffix:
     return value
 
 
+def _image_dimensions(data:bytes,mime:str)->tuple[int,int] | None:
+    if mime=='image/png' and len(data)>=24 and data.startswith(b'\x89PNG\r\n\x1a\n'):
+        return struct.unpack('>II',data[16:24])
+    if mime=='image/gif' and len(data)>=10 and data[:6] in {b'GIF87a',b'GIF89a'}:
+        return struct.unpack('<HH',data[6:10])
+    if mime=='image/webp' and len(data)>=30 and data[:4]==b'RIFF' and data[8:12]==b'WEBP':
+        if data[12:16]==b'VP8X':
+            return (1+int.from_bytes(data[24:27],'little'),
+                1+int.from_bytes(data[27:30],'little'))
+    if mime in {'image/jpeg','image/jpg'} and data.startswith(b'\xff\xd8'):
+        offset=2
+        while offset+9<=len(data):
+            if data[offset]!=0xff:offset+=1;continue
+            marker=data[offset+1];offset+=2
+            if marker in {0xd8,0xd9} or 0xd0<=marker<=0xd7:continue
+            if offset+2>len(data):break
+            length=int.from_bytes(data[offset:offset+2],'big')
+            if length<2 or offset+length>len(data):break
+            if marker in {0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf} and length>=7:
+                return (int.from_bytes(data[offset+5:offset+7],'big'),
+                    int.from_bytes(data[offset+3:offset+5],'big'))
+            offset+=length
+    return None
+
+
+def _visual_token_estimate(data:bytes,mime:str)->int:
+    dimensions=_image_dimensions(data,mime)
+    if not dimensions:return 16_384
+    width,height=dimensions
+    if width<1 or height<1 or width>100_000 or height>100_000:return 16_384
+    tiles=math.ceil(min(width,8192)/512)*math.ceil(min(height,8192)/512)
+    return min(65_536,max(2_048,tiles*1_024))
+
+
+def estimate_model_input_tokens(payload:dict,raw_size:int)->int:
+    """Conservative transport-independent estimate for model input preflight."""
+    visited=0
+    def text_tokens(value:str)->int:return max(1,math.ceil(len(value.encode())/3))
+    def walk(value,key:str='',depth:int=0)->int:
+        nonlocal visited
+        visited+=1
+        if depth>64 or visited>100_000:raise ValueError('model_input_structure_too_complex')
+        if value is None:return 1
+        if isinstance(value,bool):return 1
+        if isinstance(value,(int,float)):return text_tokens(str(value))
+        if isinstance(value,str):
+            if value.startswith('data:'):
+                header,separator,encoded=value.partition(',')
+                if not separator or ';base64' not in header:raise ValueError('model_data_uri_invalid')
+                mime=header[5:].split(';',1)[0].lower()
+                try:data=base64.b64decode(encoded,validate=True)
+                except Exception as exc:raise ValueError('model_data_uri_invalid') from exc
+                return (_visual_token_estimate(data,mime) if mime.startswith('image/')
+                    else max(1,math.ceil(len(data)/3)))
+            if key in {'image_url','url'} and value.startswith(('http://','https://','file://')):
+                return 8_192
+            return text_tokens(value)
+        if isinstance(value,list):return 2+sum(walk(item,depth=depth+1) for item in value)
+        if isinstance(value,dict):
+            media_type=str(value.get('media_type') or '').lower()
+            if (value.get('type')=='base64' and media_type.startswith('image/')
+                    and isinstance(value.get('data'),str)):
+                try:data=base64.b64decode(value['data'],validate=True)
+                except Exception as exc:raise ValueError('model_data_uri_invalid') from exc
+                return _visual_token_estimate(data,media_type)+8
+            return 2+sum(text_tokens(str(name))+walk(item,str(name),depth+1)
+                for name,item in value.items())
+        raise ValueError('model_input_value_invalid')
+    try:estimate=walk(payload)+512
+    except (ValueError,TypeError,OverflowError):return max(1,raw_size)
+    return max(1,min(max(1,raw_size),estimate))
+
+
 def enforce_model_output_budget(payload: dict, suffix: str, remaining: int,
                                 input_token_ceiling: int = 0) -> int:
     field = "max_output_tokens" if suffix.rstrip("/") == "/responses" else "max_tokens"
@@ -145,6 +235,18 @@ def enforce_model_output_budget(payload: dict, suffix: str, remaining: int,
     if value > available:
         raise HTTPException(429,"model_token_budget_exhausted")
     return value
+
+
+def model_token_reservation(payload:dict,suffix:str,kind:str,remaining:int,
+                            input_token_ceiling:int)->int:
+    if kind=="token_count":return 0
+    if kind=="generation":
+        return enforce_model_output_budget(payload,suffix,remaining,input_token_ceiling)
+    available=remaining-max(0,input_token_ceiling)
+    if available<1:raise HTTPException(429,"model_token_budget_exhausted")
+    # Standalone compaction does not accept a generation output limit. The
+    # ledger still serializes the request and settles Provider-reported usage.
+    return min(8192,available)
 
 
 async def send_with_start_timeout(client, request, timeout_seconds: float):
@@ -753,10 +855,11 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         body = await bounded_request_body(request,settings.gateway_request_max_bytes,
             settings.gateway_body_idle_timeout_seconds,
             settings.gateway_body_total_timeout_seconds)
-        observe_model = prefix.startswith("/v1/models/") and suffix.rstrip("/") in {
-            "/responses", "/messages", "/chat/completions"}
-        if prefix.startswith("/v1/models/") and not observe_model:
+        endpoint_kind=(model_endpoint_kind(harness,suffix)
+            if prefix.startswith("/v1/models/") else None)
+        if prefix.startswith("/v1/models/") and endpoint_kind is None:
             raise HTTPException(404,"model_route_not_supported")
+        observe_model=endpoint_kind in {"generation","compaction"}
         activity = ModelActivity(activity_store, claims) if observe_model else None
         reservation_id = ""
         if prefix.startswith("/v1/models/"):
@@ -768,8 +871,9 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(422, "Model request must be an object")
             payload["model"] = claims.model
             payload=normalize_model_request(payload,harness=harness,model=claims.model,suffix=suffix)
-            requested_output = enforce_model_output_budget(payload,suffix,
-                int(request.state.capability_security["token_remaining"]),len(body))
+            requested_output = model_token_reservation(payload,suffix,endpoint_kind,
+                int(request.state.capability_security["token_remaining"]),
+                estimate_model_input_tokens(payload,len(body)))
             if activity:
                 reservation_id=activity.request_id
                 try:

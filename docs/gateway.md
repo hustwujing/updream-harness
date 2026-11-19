@@ -29,13 +29,23 @@ established, authorization fails closed with
 Model calls use a durable reservation ledger. Codex Responses uses
 `max_output_tokens`; Claude Messages and DeepSeek/OpenAI-compatible Chat use
 `max_tokens`. A request above the remaining signed budget is rejected before
-submission. The JSON byte length is used as a conservative preflight ceiling
-for input tokens; provider-reported total usage remains authoritative at
-settlement. An accepted request reserves the remaining grant budget so
+submission. Preflight walks the bounded native request structure: ordinary
+text uses a conservative UTF-8 estimate, while inline images use decoded image
+dimensions instead of Base64 transport size. Malformed or unknown binary
+structures fall back to the raw request byte ceiling. Provider-reported total
+usage remains authoritative at settlement. An accepted request reserves the remaining grant budget so
 concurrent calls cannot spend it twice. Provider-reported input plus output
 usage settles the reservation idempotently; missing, malformed, or
 out-of-range usage conservatively consumes the full reservation. Job grants
 carry their parent nonce and share the parent's aggregate token ceiling.
+
+Native Harnesses own conversation compaction. The strict model route surface is
+Codex `/responses` and `/responses/compact`, Claude `/messages` and
+`/messages/count_tokens`, and DeepSeek `/chat/completions`. Claude token counting
+is authenticated and request-counted but creates no generation reservation or
+user-visible model activity. Codex standalone compaction is reserved and settled
+like generation without injecting a generation-only output limit. The Gateway
+does not summarize, prune, reinterpret or discard native compaction records.
 
 All non-streaming Gateway request bodies are bounded by Content-Length and
 chunk accounting, with independent idle and total deadlines. Artifact emit is

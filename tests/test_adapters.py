@@ -5,6 +5,8 @@ from sandbox_runtime.adapters import control_user_message, normalize, normalize_
 
 def test_runtime_error_codes_normalize_structured_rate_limits_and_unknown_values():
     assert normalize_error_code({"responseTooManyFailedAttempts": {"httpStatusCode": 429}}) == "model_rate_limited"
+    assert normalize_error_code({"message":'API Error: 429 {"detail":"model_token_budget_exhausted"}',
+        "httpStatusCode":429}) == "model_token_budget_exhausted"
     assert normalize_error_code("provider_service_unavailable") == "provider_service_unavailable"
     assert normalize_error_code({"unexpected": {"detail": "private upstream body"}}) == "harness_failed"
 

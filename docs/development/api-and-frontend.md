@@ -70,6 +70,11 @@ never leave a rejected Promise in an event handler. Attachment and Workspace
 batch uploads track each file independently, retain committed successes, and
 offer retry/removal for failures. Open detail panels store an identity and
 derive current data from refreshed props rather than freezing an old object.
+An interaction response locks synchronously before the request starts and shows
+the submitted action/answers as a read-only receipt. Only a definite POST
+failure restores the editable controls. A successful POST followed by a refresh
+failure remains locked until durable interaction state is observed, preventing
+an ambiguous duplicate decision.
 
 ## Required checks
 

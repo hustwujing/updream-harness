@@ -310,6 +310,10 @@ body[data-network-access="restricted"] .topbar>div:nth-child(2)>span::after{cont
 .interaction-actions button { height: 30px; border: 1px solid #d2d2cd; border-radius: 5px; background: #fff; padding: 0 11px; font-size: 10px; }
 .interaction-actions button.primary { border-color: #292a27; background: #292a27; color: #fff; }
 .interaction-actions button:disabled { opacity: .45; }
+.interaction-receipt { display: flex; align-items: center; gap: 8px; min-height: 34px; border: 1px solid #dfe1dc; border-radius: 5px; background: #fff; padding: 6px 8px; color: #4e5550; }
+.interaction-receipt span { display: grid; gap: 1px; min-width: 0; }
+.interaction-receipt b { font-size: 10px; }
+.interaction-receipt small { overflow: hidden; color: #777b77; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .interaction-error { margin-top: 8px; color: #a1443d; font-size: 9px; }
 .interaction-card.resolved { opacity: .72; }
 

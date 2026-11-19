@@ -1,5 +1,7 @@
 import asyncio
+import base64
 import json
+import struct
 
 import pytest
 from starlette.requests import Request
@@ -7,7 +9,8 @@ from starlette.requests import Request
 from sandbox_harness.capability import CapabilityCodec
 from sandbox_harness.config import Settings
 from sandbox_harness.domain import Harness
-from sandbox_harness.gateway import bounded_request_body, enforce_model_output_budget
+from sandbox_harness.gateway import (bounded_request_body,enforce_model_output_budget,
+    estimate_model_input_tokens,model_endpoint_kind)
 from sandbox_harness.store import Store
 
 
@@ -32,6 +35,120 @@ def test_native_model_protocols_enforce_output_budget(suffix,field):
     assert captured.value.status_code==429
     payload={};assert enforce_model_output_budget(payload,suffix,7)==7
     assert payload[field]==7
+
+
+def test_model_input_estimate_counts_inline_images_by_dimensions_not_base64_bytes():
+    png=(b'\x89PNG\r\n\x1a\n'+b'\x00\x00\x00\rIHDR'+struct.pack('>II',972,896)+
+        b'\x08\x06\x00\x00\x00'+b'x'*(1450*1024))
+    uri='data:image/png;base64,'+base64.b64encode(png).decode()
+    payload={'input':[{'role':'user','content':[{'type':'input_text','text':'检查这张图'},
+        {'type':'input_image','image_url':uri}]}]}
+    raw=json.dumps(payload,separators=(',',':')).encode()
+    estimate=estimate_model_input_tokens(payload,len(raw))
+    assert len(raw)>1_900_000
+    assert 4_000<estimate<20_000
+    assert enforce_model_output_budget(payload,'/responses',100_000,estimate)==8192
+
+
+def test_model_input_estimate_is_conservative_for_text_and_malformed_binary():
+    text={'input':'中'*3000+'x'*3000};raw=json.dumps(text,ensure_ascii=False).encode()
+    estimate=estimate_model_input_tokens(text,len(raw))
+    assert 3000<=estimate<=len(raw)
+    malformed={'input':[{'type':'input_image','image_url':'data:image/png;base64,***'}]}
+    malformed_size=len(json.dumps(malformed).encode())
+    assert estimate_model_input_tokens(malformed,malformed_size)==malformed_size
+
+
+@pytest.mark.parametrize(("harness","suffix","kind"),[
+    (Harness.CODEX,"/responses","generation"),
+    (Harness.CODEX,"/responses/compact","compaction"),
+    (Harness.CLAUDE,"/messages","generation"),
+    (Harness.CLAUDE,"/messages/count_tokens","token_count"),
+    (Harness.DEEPSEEK,"/chat/completions","generation"),
+])
+def test_native_model_endpoint_policy_is_explicit_per_harness(harness,suffix,kind):
+    assert model_endpoint_kind(harness,suffix)==kind
+
+
+@pytest.mark.parametrize(("harness","suffix"),[
+    (Harness.CODEX,"/messages"),
+    (Harness.CLAUDE,"/responses/compact"),
+    (Harness.DEEPSEEK,"/responses"),
+    (Harness.CLAUDE,"/messages/batches"),
+])
+def test_native_model_endpoint_policy_rejects_cross_protocol_and_unneeded_routes(harness,suffix):
+    assert model_endpoint_kind(harness,suffix) is None
+
+
+async def test_native_auxiliary_model_routes_preserve_payload_and_budget_semantics(tmp_path,monkeypatch):
+    import httpx
+    import sandbox_harness.gateway as gateway
+    from sandbox_harness.model_activity import OutputProbe
+    class Redis:pass
+    class SecurityStore:
+        def __init__(self,*args,**kwargs):self.reservations=[];self.finalized=[]
+        async def authorize_capability(self,claims,usage="request"):
+            return {"request_count":1,"public_request_count":0,"token_remaining":100_000}
+        async def reserve_model_tokens(self,claims,request_id,requested_output):
+            self.reservations.append((request_id,requested_output))
+            return {"reserved":100_000,"remaining":100_000-requested_output}
+        async def finalize_model_tokens(self,request_id,usage):
+            self.finalized.append((request_id,usage));return {"charged":usage or 100_000}
+    store=SecurityStore();requests=[];activities=[]
+    monkeypatch.setattr(gateway.Redis,"from_url",lambda *args,**kwargs:Redis())
+    monkeypatch.setattr(gateway,"Store",lambda *args,**kwargs:store)
+    class Activity:
+        def __init__(self,*args):
+            self.request_id="request-"+str(len(activities));self.probe=OutputProbe();self.finished=False
+            self.header_ms=None;self.span=None;activities.append(self)
+        async def start(self):pass
+        async def observe(self,data):self.probe.feed(data)
+        async def finish(self,*args,**kwargs):self.probe.finish();self.finished=True
+    monkeypatch.setattr(gateway,"ModelActivity",Activity)
+    async def respond(_client,request,*args):
+        requests.append(request)
+        body=(b'{"input_tokens":321}' if request.url.path.endswith("count_tokens") else
+            b'{"output":[],"usage":{"input_tokens":12,"output_tokens":3}}')
+        return httpx.Response(200,headers={"content-type":"application/json"},content=body)
+    monkeypatch.setattr(gateway,"send_with_start_timeout",respond)
+    settings=Settings(backend="fake",data_root=tmp_path,
+        database_url="sqlite+aiosqlite:///"+str(tmp_path/"native-routes.db"),
+        upstream_codex="http://codex",upstream_claude="http://claude")
+    app=gateway.create_gateway(settings)
+    endpoint=next(route.endpoint for route in app.routes if getattr(route,"path",None)=="/{path:path}")
+
+    async def invoke(harness,suffix,payload,query=b""):
+        token,_=CapabilityCodec(settings.gateway_signing_key).issue(thread_id="thread",turn_id="turn",
+            sandbox_id="sandbox",harness=harness,model="selected-model",
+            routes=["/v1/models/"+harness.value],ttl_seconds=60,max_requests=10,
+            max_public_requests=1,token_budget=100_000)
+        body=json.dumps(payload).encode();sent=False
+        async def receive():
+            nonlocal sent
+            if sent:return {"type":"http.request","body":b"","more_body":False}
+            sent=True;return {"type":"http.request","body":body,"more_body":False}
+        path=f"/v1/models/{harness.value}{suffix}"
+        request=Request({"type":"http","method":"POST","path":path,"query_string":query,
+            "headers":[(b"authorization",("Bearer "+token).encode())]},receive)
+        response=await endpoint(path.removeprefix("/"),request)
+        received=b"".join([chunk async for chunk in response.body_iterator])
+        return json.loads(received)
+
+    counted=await invoke(Harness.CLAUDE,"/messages/count_tokens",
+        {"model":"ignored","messages":[{"role":"user","content":"hello"}]},b"beta=true")
+    assert counted=={"input_tokens":321}
+    assert requests[0].url.path=="/messages/count_tokens" and requests[0].url.query==b"beta=true"
+    assert json.loads(requests[0].content)["model"]=="selected-model"
+    assert store.reservations==[] and activities==[]
+
+    compacted=await invoke(Harness.CODEX,"/responses/compact",
+        {"model":"ignored","input":[{"role":"user","content":"keep this"}]})
+    assert compacted["usage"]=={"input_tokens":12,"output_tokens":3}
+    compact_body=json.loads(requests[1].content)
+    assert compact_body["model"]=="selected-model" and compact_body["input"][0]["content"]=="keep this"
+    assert "max_output_tokens" not in compact_body
+    assert len(store.reservations)==1 and len(activities)==1
+    assert store.finalized==[("request-0",15)]
 
 
 async def test_durable_capability_counts_revocation_and_token_reservations_survive_restart(tmp_path):

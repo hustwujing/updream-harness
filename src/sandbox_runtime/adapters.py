@@ -15,6 +15,11 @@ STABLE_ERROR_CODE=re.compile(r"^[a-z][a-z0-9_.-]{0,159}$")
 
 def normalize_error_code(value) -> str:
     """Reduce arbitrary native error payloads to one bounded public-safe code."""
+    def local_budget(item)->bool:
+        if isinstance(item,dict):return any(local_budget(key) or local_budget(child)
+            for key,child in item.items())
+        if isinstance(item,(list,tuple)):return any(local_budget(child) for child in item)
+        return 'model_token_budget_exhausted' in str(item or '').lower()
     def rate_limited(item) -> bool:
         if isinstance(item,dict):
             return any((str(key).lower() in {"httpstatuscode","status","status_code","code"}
@@ -23,6 +28,7 @@ def normalize_error_code(value) -> str:
         if isinstance(item,(list,tuple)):return any(rate_limited(child) for child in item)
         text=str(item or "").lower()
         return text=="429" or "rate_limit" in text or "rate limit" in text or "too many" in text
+    if local_budget(value):return "model_token_budget_exhausted"
     if rate_limited(value):return "model_rate_limited"
     if isinstance(value,str) and STABLE_ERROR_CODE.fullmatch(value):return value
     return "harness_failed"

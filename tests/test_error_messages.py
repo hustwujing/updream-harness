@@ -13,3 +13,10 @@ def test_sandbox_capacity_limit_is_not_reported_as_model_rate_limit():
         "Client error '429 Too Many Requests' for url '/v1/sandboxes'")
     assert code=='infrastructure_capacity_wait'
     assert '沙箱容量' in message and '不是模型限流' in message
+
+
+def test_local_model_budget_exhaustion_is_not_reported_as_provider_rate_limit():
+    code,message=public_failure('model_token_budget_exhausted',
+        'API Error: 429 {"detail":"model_token_budget_exhausted"}')
+    assert code=='model_token_budget_exhausted'
+    assert '上下文' in message and '模型服务限流' not in message

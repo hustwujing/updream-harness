@@ -52,6 +52,7 @@ def main() -> None:
         else:
             session = harness.start_session(session_id)
         emit({"type": "thread.started", "thread_id": session_id})
+        inject_instructions = not args.session_id
         for line in sys.stdin:
             try:
                 command = json.loads(line)
@@ -59,7 +60,10 @@ def main() -> None:
                 continue
             if not isinstance(command, dict) or command.get("type") != "input":
                 continue
-            message = runtime_instructions() + "\nUser request:\n" + command.get("message", "")
+            message = command.get("message", "")
+            if inject_instructions:
+                message = runtime_instructions() + "\nUser request:\n" + message
+                inject_instructions = False
             result = session.run(message,
                 on_notification=lambda value: emit({"type": "deepseek.notification", "event": public_notification(value)}))
             emit({"type": "assistant_delta", "text": result.final_response, "snapshot": True})

@@ -59,6 +59,20 @@ members must not become artifacts or checkpoint entries.
   `final_response` is a fallback snapshot for a Run that emitted no public
   assistant event.
 
+Context history belongs to the selected native Harness and remains below
+`/workspace/state` in the checkpoint. Codex app-server owns automatic and
+standalone Responses compaction. Claude Code owns micro-compaction, automatic
+compaction and transcript resume; its token-count request is a native auxiliary
+call. DeepSeek Harness owns `compaction-basic`, image offload, tool-result
+pruning and JSONL Session state. Platform developer instructions are added only
+to the first prompt of a new DeepSeek Session; resumed Sessions and later user
+inputs receive only their current message.
+
+Runtime Skill directories and uploaded files are filesystem capabilities, not
+text repeated by the host in every prompt. Each Harness decides when to read a
+Skill or image. The Gateway supplies authenticated protocol access and durable
+token accounting, but never summarizes or reconstructs native history.
+
 `adapters.command` constructs commands and per-Harness environment. `normalize`
 maps native output to the shared Runtime event contract. Unknown plain output is
 public text/tool output; protocol changes must be tested with representative
