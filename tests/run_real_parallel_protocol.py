@@ -688,8 +688,7 @@ async def case_p23(client,args):
             for index,(left_start,left_end) in enumerate(intervals)
             for right_start,right_end in intervals[index+1:])
         if not overlap:raise AssertionError('Child Harness Attempts did not overlap')
-        turns=require(await client.get(f"api/threads/{thread['id']}/turns")).json()
-        continuations=[value for value in turns if value.get('internal')]
+        _,continuations=await wait_continuations(client,thread['id'],maximum=1)
         if len(continuations)!=1:raise AssertionError('parallel group did not produce one continuation')
         return {'classification':'success','thread_id':thread['id'],'primary_delegated':True,
             'child_harnesses':len(jobs),'same_group':True,'attempts_overlapped':True,
