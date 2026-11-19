@@ -369,7 +369,7 @@ async def wait_provider_coverage(client,jobs,timeout):
 SKILL_COVERAGE={
     'K01':('algorithmic-art','anatomy','canvas-design','diagram-design','frontend-design',
         'web-artifacts-builder','webapp-testing'),
-    'K02':('brand-guidelines','theme-factory','drawio-skill','image-to-editable-ppt','codex-ppt'),
+    'K02':('brand-guidelines','theme-factory','drawio-skill','image-to-editable-ppt','pptx','codex-ppt'),
     'K03':('data-quality-audit','programmatic-eda','query-validation','xlsx','docx','pdf'),
     'K04':('media-processing','manim-video','slack-gif-creator'),
     'K05':('academy-guide','doc-and-modernize','doc-coauthoring','internal-comms','discernment-nudge'),
@@ -470,7 +470,9 @@ async def case_k07(client,args):
     store=Store(settings.database_url,settings.redis_url,settings.redis_prefix);objects=object_store(settings)
     try:
         by_local={row['local_job_id']:row for row in completed}
-        operation_ids={row['descriptor_id'] for row in completed if row['kind']=='operation'}
+        requests={row['local_job_id']:await store.get_job_request(row['id']) for row in completed}
+        operation_ids={request.descriptor_id for request in requests.values()
+            if request.kind.value=='operation'}
         if operation_ids!={'image.segment','image.decompose','media.render'}:
             raise AssertionError('visual durable Operation coverage mismatch:'+json.dumps(sorted(operation_ids)))
         inspect_request=await store.get_job_request(by_local['inspect-artifact']['id'])
@@ -508,7 +510,12 @@ async def case_k08(client,args):
     completed=await wait_jobs(client,prepared['jobs'],args.timeout)
     if not await attempts_overlap([row['id'] for row in completed]):
         raise AssertionError('audio/video operation attempts did not overlap')
-    descriptors={row['descriptor_id'] for row in completed}
+    settings=load_platform_settings()
+    from sandbox_harness.store import Store
+    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    try:descriptors={
+        (await store.get_job_request(row['id'])).descriptor_id for row in completed}
+    finally:await store.close()
     expected={'audio.transcribe','audio.process','media.render','media.concat_sequence'}
     if descriptors!=expected:raise AssertionError('media Operation coverage mismatch')
     outputs=await job_artifacts([row['id'] for row in completed])

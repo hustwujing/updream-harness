@@ -51,7 +51,8 @@ The suite adds eleven complex parallel cases:
 1. `S01` Web and visual: `algorithmic-art`, `anatomy`, `canvas-design`,
    `diagram-design`, `frontend-design`, `web-artifacts-builder`, `webapp-testing`.
 2. `S02` Brand and presentation: `brand-guidelines`, `theme-factory`,
-   `drawio-skill`, `image-to-editable-ppt`, `codex-ppt`.
+   `drawio-skill`, `image-to-editable-ppt`, editable `pptx`, and image-based
+   `codex-ppt`.
 3. `S03` Data and office: `data-quality-audit`, `programmatic-eda`,
    `query-validation`, `xlsx`, `docx`, `pdf`.
 4. `S04` Media and animation: `media-processing`, `manim-video`,

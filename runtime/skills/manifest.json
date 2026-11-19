@@ -1,9 +1,7 @@
 {
   "schema_version": 1,
-  "bundle_version": "2026.11.18.2",
-  "retired_skills": [
-    "pptx"
-  ],
+  "bundle_version": "2026.11.19.1",
+  "retired_skills": [],
   "skills": [
     {
       "id": "academy-guide",
@@ -877,6 +875,62 @@
       },
       "content_sha256": "589ad497e067e34ce7f58beac282d7199b95b6291f1cd2cc3fac4b14878e996f",
       "file_count": 12
+    },
+    {
+      "id": "pptx",
+      "version": "2c5958ec",
+      "profile": "office",
+      "network": {
+        "mode": "none",
+        "origins": []
+      },
+      "test_case": "create, render and validate an object-level editable PPTX",
+      "network_notes": "none",
+      "source": "anthropics-skills",
+      "source_url": "https://github.com/anthropics/skills",
+      "source_commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
+      "license": "per-skill LICENSE.txt",
+      "summary": "Create and edit object-level editable PowerPoint decks with precise layout, OOXML validation, and rendered visual QA.",
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "required_capabilities": [],
+      "requires_gpu": false,
+      "entry": "SKILL.md",
+      "dependencies": {
+        "commands": [
+          "libreoffice",
+          "pandoc",
+          "pdftoppm",
+          "pdftotext",
+          "qpdf",
+          "tesseract"
+        ],
+        "python_modules": [
+          "PIL",
+          "defusedxml",
+          "lxml",
+          "markitdown",
+          "openpyxl",
+          "pandas",
+          "pdf2image",
+          "pdfplumber",
+          "pypdf",
+          "pytesseract"
+        ],
+        "node_modules": [
+          "docx",
+          "pptxgenjs",
+          "react",
+          "react-dom",
+          "react-icons",
+          "sharp"
+        ]
+      },
+      "content_sha256": "6988a90caa843e5c01a5d070761e65268fd7b2ea18fda3b927634164dddd94ab",
+      "file_count": 56
     },
     {
       "id": "programmatic-eda",

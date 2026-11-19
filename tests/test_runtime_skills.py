@@ -20,9 +20,9 @@ def test_skill_bundle_manifest_is_frozen_complete_and_licensed():
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     expected=json.loads((ROOT/'runtime/skills/manifest.json').read_text())
     assert module.expanded()==expected
-    assert len(expected['skills'])==33
-    assert expected['retired_skills']==['pptx']
-    assert 'pptx' not in {row['id'] for row in expected['skills']}
+    assert len(expected['skills'])==34
+    assert expected['retired_skills']==[]
+    assert {'pptx','codex-ppt'}<={row['id'] for row in expected['skills']}
     assert {row['id'] for row in expected['skills']}=={
         path.parent.name for path in (ROOT/'runtime/skills').glob('*/SKILL.md')}
     for row in expected['skills']:
@@ -70,11 +70,15 @@ def test_skill_smoke_matrix_covers_every_bundled_skill():
 
 def test_presentation_skill_descriptions_are_mutually_exclusive():
     default=(ROOT/'runtime/skills/codex-ppt/SKILL.md').read_text()
+    native=(ROOT/'runtime/skills/pptx/SKILL.md').read_text()
     editable=(ROOT/'runtime/skills/image-to-editable-ppt/SKILL.md').read_text()
     assert 'default presentation-creation workflow' in default
     assert 'did not explicitly require object-level editable' in default
     assert 'only when the user explicitly requests editable reconstruction' in editable
     assert 'do not use for a generic PDF-to-PPT' in editable
+    assert 'object-level editability' in native and 'exact Chinese typography' in native
+    assert 'full-slide image pages' in native and 'codex-ppt' in native
+    assert 'separately editable' in native and 'OOXML validation' in native
 
 
 def test_skills_materialize_for_each_native_harness_and_upgrade_managed_entries(tmp_path, monkeypatch):
@@ -88,11 +92,11 @@ def test_skills_materialize_for_each_native_harness_and_upgrade_managed_entries(
         (root/'.image-bundle.json').write_text(json.dumps({'bundle_version':'old','skills':['anatomy','removed-skill']}))
         (root/'removed-skill').mkdir()
         result=materialize_skills(harness,workspace,all_ids)
-        assert result['bundle_version']=='2026.11.18.2' and result['skill_count']==33
+        assert result['bundle_version']=='2026.11.19.1' and result['skill_count']==34
         assert (root/'anatomy').is_symlink() and (root/'anatomy/SKILL.md').is_file()
         assert not (root/'removed-skill').exists()
         assert (root/'custom-skill').is_dir()
-        assert len(list(root.glob('*/SKILL.md')))==33
+        assert len(list(root.glob('*/SKILL.md')))==34
 
 
 def test_deferred_skill_install_replaces_checkpoint_copy_after_restore(tmp_path, monkeypatch):

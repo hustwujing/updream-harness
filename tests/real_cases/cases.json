@@ -7199,7 +7199,7 @@
       ],
       "prompt": "并行形成品牌规范、主题、可编辑draw.io图、图片转可编辑PPT页和完整演示稿，再汇总成品牌演示交付包。",
       "expect": {
-        "child_harnesses": 5,
+        "child_harnesses": 6,
         "parallel": true,
         "delivery_roles": [
           "presentation_bundle",
@@ -7225,6 +7225,7 @@
           "theme-factory",
           "drawio-skill",
           "image-to-editable-ppt",
+          "pptx",
           "codex-ppt"
         ],
         "operations": [],

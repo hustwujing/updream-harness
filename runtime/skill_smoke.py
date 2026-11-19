@@ -41,6 +41,7 @@ REQUIRED_FILES = {
     "manim-video": ["README.md", "references/scene-planning.md", "scripts/setup.sh", "LICENSE"],
     "media-processing": ["LICENSE.txt"],
     "pdf": ["forms.md", "scripts/convert_pdf_to_images.py"],
+    "pptx": ["scripts/office/validate.py", "scripts/office/soffice.py", "scripts/thumbnail.py"],
     "programmatic-eda": ["LICENSE", "scripts/data_overview.py", "scripts/null_profiler.py"],
     "query-validation": ["LICENSE", "scripts/sql_lint.py", "references/sql_anti_patterns.md"],
     "skill-creator": ["scripts/quick_validate.py", "references/schemas.md"],
@@ -91,7 +92,7 @@ def main() -> None:
     for harness in ("codex", "claude", "deepseek"):
         installed = materialize_skills(harness, Path("/workspace"))
         root = Path(installed["root"])
-        assert len(list(root.glob("*/SKILL.md"))) == 33
+        assert len(list(root.glob("*/SKILL.md"))) == 34
         results["harnesses"][harness] = installed["skill_count"]
 
     run("node", "--check", str(ROOT / "algorithmic-art/templates/generator_template.js"))
@@ -181,6 +182,24 @@ Packer.toBuffer(d).then(b=>fs.writeFileSync(process.argv[2],b));\n""")
     assert (WORK/"SmokeDeck.pdf").is_file()
     results["artifacts"]["pptx"] = pptx.stat().st_size
     evidence("codex-ppt", "assembled_pptx", "libreoffice_pdf")
+
+    editable_script=WORK/'editable-pptx.cjs';editable_pptx=WORK/'EditableSmoke.pptx'
+    editable_script.write_text("""const pptxgen=require('pptxgenjs');
+const pptx=new pptxgen();pptx.layout='LAYOUT_WIDE';
+const slide=pptx.addSlide();slide.addText('可编辑演示文稿',{x:0.8,y:0.7,w:5.2,h:0.6,fontFace:'Arial',fontSize:28,bold:true,margin:0});
+slide.addShape(pptx.ShapeType.roundRect,{x:0.8,y:1.7,w:3.2,h:1.2,rectRadius:0.08,fill:{color:'DDEBF7'},line:{color:'4472C4'}});
+slide.addText('原生文字与形状',{x:1.1,y:2.05,w:2.6,h:0.35,fontFace:'Arial',fontSize:18,align:'center',margin:0});
+pptx.writeFile({fileName:process.argv[2]});
+""")
+    run('node',str(editable_script),str(editable_pptx))
+    run('python3',str(ROOT/'pptx/scripts/office/validate.py'),str(editable_pptx))
+    run('python3',str(ROOT/'pptx/scripts/office/soffice.py'),'--headless','--convert-to','pdf',
+        '--outdir',str(WORK),str(editable_pptx))
+    with ZipFile(editable_pptx) as archive:
+        slide_xml=archive.read('ppt/slides/slide1.xml').decode()
+        assert '可编辑演示文稿' in slide_xml and '原生文字与形状' in slide_xml
+    results['artifacts']['editable_pptx']=editable_pptx.stat().st_size
+    evidence('pptx','native_text_and_shape','ooxml_validated','libreoffice_pdf')
 
     workbook=Workbook();sheet=workbook.active;sheet["A1"]=2;sheet["A2"]=3;sheet["A3"]="=SUM(A1:A2)"
     xlsx=WORK/"formula.xlsx";workbook.save(xlsx)
