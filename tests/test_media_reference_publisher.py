@@ -1,13 +1,15 @@
+import asyncio
 import hashlib
 from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import select
 
 from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.domain import Harness, MediaDraftCreate, ThreadCreate, TurnCreate, now
 from sandbox_harness.media_reference_publisher import MediaReferencePreparationError, MediaReferencePublisher
-from sandbox_harness.store import Store
+from sandbox_harness.store import MediaReferenceAssetRow,Store
 
 
 DATA=b"reference-media-bytes"
@@ -118,6 +120,23 @@ async def test_reference_asset_claim_prevents_duplicate_creators(tmp_path):
         _,first=await store.claim_media_reference_asset(DIGEST,"worker-a")
         current,second=await store.claim_media_reference_asset(DIGEST,"worker-b")
         assert first is True and second is False and current["lease_owner"]=="worker-a"
+    finally:await store.close()
+
+
+@pytest.mark.asyncio
+async def test_reference_asset_creation_is_atomic_for_parallel_provider_jobs(tmp_path):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"publisher-create-race.db"));await store.initialize()
+    reference={"sha256":DIGEST,"kind":"image","mime":"image/png","size":len(DATA),
+        "object_ref":"sha256:"+DIGEST}
+    try:
+        values=await asyncio.gather(*(store.ensure_media_reference_asset(reference,
+            object_key="aniforge/image/ref.png",
+            public_url="https://boss-shjd.biliapi.net/updream/aniforge/image/ref.png")
+            for _ in range(8)))
+        assert {value["sha256"] for value in values}=={DIGEST}
+        async with store.connections() as db:
+            rows=(await db.execute(select(MediaReferenceAssetRow))).scalars().all()
+        assert len(rows)==1
     finally:await store.close()
 
 

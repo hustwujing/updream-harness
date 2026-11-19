@@ -5518,19 +5518,26 @@ class Store:
     async def ensure_media_reference_asset(self, reference: dict, *, object_key: str,
                                            public_url: str, boss_status: str = "pending") -> dict:
         async with self.connections.begin() as db:
-            row = await db.get(MediaReferenceAssetRow, reference["sha256"], with_for_update=True)
-            if row:
-                expected = (reference["kind"], reference["mime"], reference["size"],
-                    reference["object_ref"], object_key, public_url)
-                actual = (row.kind, row.mime, row.size, row.object_ref, row.object_key, row.public_url)
-                if actual != expected:
-                    raise RuntimeError("media_reference_asset_identity_conflict")
-            else:
-                row = MediaReferenceAssetRow(sha256=reference["sha256"], kind=reference["kind"],
-                    mime=reference["mime"], size=reference["size"], object_ref=reference["object_ref"],
-                    object_key=object_key, public_url=public_url, boss_status=boss_status,
-                    ark_status="pending", created_at=now(), updated_at=now())
-                db.add(row)
+            values={"sha256":reference["sha256"],"kind":reference["kind"],
+                "mime":reference["mime"],"size":reference["size"],
+                "object_ref":reference["object_ref"],"object_key":object_key,
+                "public_url":public_url,"boss_status":boss_status,"ark_status":"pending",
+                "created_at":now(),"updated_at":now()}
+            dialect=db.bind.dialect.name
+            if dialect=="postgresql":
+                statement=postgresql_insert(MediaReferenceAssetRow).values(**values).on_conflict_do_nothing(
+                    index_elements=[MediaReferenceAssetRow.sha256])
+            elif dialect=="sqlite":
+                statement=sqlite_insert(MediaReferenceAssetRow).values(**values).on_conflict_do_nothing(
+                    index_elements=[MediaReferenceAssetRow.sha256])
+            else:raise RuntimeError("media_reference_asset_idempotency_requires_supported_database")
+            await db.execute(statement)
+            row=await db.get(MediaReferenceAssetRow,reference["sha256"],with_for_update=True)
+            if not row:raise RuntimeError("media_reference_asset_insert_missing")
+            expected=(reference["kind"],reference["mime"],reference["size"],
+                reference["object_ref"],object_key,public_url)
+            actual=(row.kind,row.mime,row.size,row.object_ref,row.object_key,row.public_url)
+            if actual!=expected:raise RuntimeError("media_reference_asset_identity_conflict")
         return self._media_reference_asset(row)
 
     async def get_media_reference_asset(self, digest: str) -> dict | None:
