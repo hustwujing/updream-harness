@@ -141,6 +141,25 @@ async def test_reference_asset_creation_is_atomic_for_parallel_provider_jobs(tmp
 
 
 @pytest.mark.asyncio
+async def test_parallel_jobs_with_one_worker_serialize_shared_reference_publication(tmp_path,monkeypatch):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"publisher-shared-worker.db"));await store.initialize()
+    objects=Objects();publisher=MediaReferencePublisher(settings(),store,objects,"media-worker")
+    monkeypatch.setattr("sandbox_harness.media_reference_publisher.httpx.AsyncClient",lambda **_:HttpClient())
+    reference={"sha256":DIGEST,"kind":"image","mime":"image/png","size":len(DATA),
+        "object_ref":"sha256:"+DIGEST}
+    jobs=[{"id":"a"*32,"generation":1,"references":[reference]},
+        {"id":"b"*32,"generation":1,"references":[reference]}]
+    try:
+        results=await asyncio.gather(*(publisher.prepare(value,require_ark=False) for value in jobs))
+        assert all(result[0]["public_url"].startswith(
+            "https://boss-shjd.biliapi.net/updream/aniforge/image/") for result in results)
+        assert objects.uploads==1
+        record=await store.get_media_reference_asset(DIGEST)
+        assert record["boss_status"]=="active" and record["lease_owner"]==""
+    finally:await store.close()
+
+
+@pytest.mark.asyncio
 async def test_reference_publisher_recovers_lost_create_receipt_by_asset_name(tmp_path,monkeypatch):
     store=Store("sqlite+aiosqlite:///"+str(tmp_path/"publisher-recover.db"));await store.initialize()
     try:

@@ -23,7 +23,7 @@ class MediaReferencePublisher:
         self.poll_seconds = getattr(settings, "ark_asset_poll_seconds", 2)
         self.max_wait_seconds = getattr(settings, "ark_asset_max_wait_seconds", 900)
 
-    async def _publish_boss(self, record: dict, prepared: dict) -> dict:
+    async def _publish_boss(self, record: dict, prepared: dict, claim_owner: str) -> dict:
         try:
             size=await asyncio.to_thread(self.objects.size,record["object_ref"],maximum=record["size"])
             if size != record["size"]:
@@ -47,10 +47,10 @@ class MediaReferencePublisher:
             raise
         except Exception as exc:
             raise MediaReferencePreparationError("boss_reference_upload_failed:" + type(exc).__name__) from exc
-        return await self.store.update_media_reference_asset(record["sha256"], self.worker_owner,
+        return await self.store.update_media_reference_asset(record["sha256"], claim_owner,
             boss_status="active")
 
-    async def _activate_ark(self, record: dict, job: dict) -> dict:
+    async def _activate_ark(self, record: dict, job: dict, claim_owner: str) -> dict:
         if not self.ark.configured:
             raise MediaReferencePreparationError("ark_asset_credentials_unavailable")
         asset_id = record.get("ark_asset_id") or ""
@@ -62,21 +62,21 @@ class MediaReferencePublisher:
             else:
                 asset_id = await self.ark.create(record)
                 status = "Processing"
-            record = await self.store.update_media_reference_asset(record["sha256"], self.worker_owner,
+            record = await self.store.update_media_reference_asset(record["sha256"], claim_owner,
                 ark_asset_id=asset_id, ark_status=status.lower())
         for _ in range(max(1, int(self.max_wait_seconds / self.poll_seconds))):
             value = await self.ark.get(asset_id)
             status = str(value.get("Status") or "").lower()
             error = value.get("Error") if isinstance(value.get("Error"), dict) else {}
             if status == "active":
-                return await self.store.update_media_reference_asset(record["sha256"], self.worker_owner,
+                return await self.store.update_media_reference_asset(record["sha256"], claim_owner,
                     ark_status="active", ark_error="")
             if status == "failed":
                 code = str(error.get("Code") or "ark_asset_processing_failed")
-                await self.store.update_media_reference_asset(record["sha256"], self.worker_owner,
+                await self.store.update_media_reference_asset(record["sha256"], claim_owner,
                     ark_status="failed", ark_error=code, release=True)
                 raise MediaReferencePreparationError("ark_asset_processing_failed:" + code[:80])
-            await self.store.update_media_reference_asset(record["sha256"], self.worker_owner,
+            await self.store.update_media_reference_asset(record["sha256"], claim_owner,
                 ark_status="processing")
             await self.store.update_media_job(job["id"], self.worker_owner, job["generation"], status="running",
                 phase="registering_assets")
@@ -85,6 +85,7 @@ class MediaReferencePublisher:
 
     async def prepare(self, job: dict, *, require_ark: bool) -> list[dict]:
         output: list[dict] = []
+        claim_owner=f"{self.worker_owner}:{job['id']}:{job['generation']}"
         for reference in job.get("references") or []:
             prepared = await asyncio.to_thread(self.objects.prepare_media_upload,
                 kind=reference["kind"], digest=reference["sha256"], mime=reference["mime"],
@@ -96,7 +97,8 @@ class MediaReferencePublisher:
                     break
                 if require_ark and record["ark_status"] == "failed":
                     raise MediaReferencePreparationError("ark_asset_processing_failed:" + record["ark_error"][:80])
-                record, claimed = await self.store.claim_media_reference_asset(reference["sha256"], self.worker_owner)
+                record, claimed = await self.store.claim_media_reference_asset(
+                    reference["sha256"],claim_owner)
                 if not claimed:
                     await self.store.update_media_job(job["id"], self.worker_owner, job["generation"], status="running",
                         phase="waiting_reference_asset")
@@ -105,14 +107,14 @@ class MediaReferencePublisher:
                     continue
                 try:
                     if record["boss_status"] != "active":
-                        record = await self._publish_boss(record, prepared)
+                        record = await self._publish_boss(record,prepared,claim_owner)
                     if require_ark and record["ark_status"] != "active":
-                        record = await self._activate_ark(record, job)
-                    record = await self.store.update_media_reference_asset(reference["sha256"], self.worker_owner,
+                        record = await self._activate_ark(record,job,claim_owner)
+                    record = await self.store.update_media_reference_asset(reference["sha256"],claim_owner,
                         release=True)
                 except (ArkAssetError, MediaReferencePreparationError) as exc:
                     try:
-                        await self.store.update_media_reference_asset(reference["sha256"], self.worker_owner,
+                        await self.store.update_media_reference_asset(reference["sha256"],claim_owner,
                             ark_error=str(exc), release=True)
                     except RuntimeError:
                         pass

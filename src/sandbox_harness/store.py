@@ -5548,16 +5548,20 @@ class Store:
     async def claim_media_reference_asset(self, digest: str, owner: str,
                                           lease_seconds: int = 60) -> tuple[dict, bool]:
         async with self.connections.begin() as db:
-            row = await db.get(MediaReferenceAssetRow, digest, with_for_update=True)
-            if not row:
-                raise KeyError("media_reference_asset_not_found")
             timestamp = now()
-            if (row.lease_owner and row.lease_owner != owner and row.lease_expires_at
-                    and utc_datetime(row.lease_expires_at) > timestamp):
-                return self._media_reference_asset(row), False
-            row.lease_owner = owner; row.lease_expires_at = timestamp + timedelta(seconds=lease_seconds)
-            row.updated_at = timestamp
-        return self._media_reference_asset(row), True
+            row=(await db.execute(update(MediaReferenceAssetRow).where(
+                MediaReferenceAssetRow.sha256==digest,
+                or_(MediaReferenceAssetRow.lease_owner=="",
+                    MediaReferenceAssetRow.lease_expires_at.is_(None),
+                    MediaReferenceAssetRow.lease_expires_at<timestamp,
+                    MediaReferenceAssetRow.lease_owner==owner),
+            ).values(lease_owner=owner,
+                lease_expires_at=timestamp+timedelta(seconds=lease_seconds),updated_at=timestamp)
+            .returning(MediaReferenceAssetRow))).scalar_one_or_none()
+            if row:return self._media_reference_asset(row),True
+            row=await db.get(MediaReferenceAssetRow,digest)
+            if not row:raise KeyError("media_reference_asset_not_found")
+            return self._media_reference_asset(row),False
 
     async def update_media_reference_asset(self, digest: str, owner: str, *,
                                            boss_status: str | None = None,
