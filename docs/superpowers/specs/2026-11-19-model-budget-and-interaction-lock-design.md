@@ -43,9 +43,9 @@ must preserve unknown request fields, response items and headers:
   supports `/messages` plus the read-only `/messages/count_tokens` auxiliary
   endpoint. Claude's full response content remains native session state.
 - DeepSeek Harness `sdk` owns `compaction-basic`, image offload, tool-result
-  pruning and JSONL session checkpointing. Its compaction calls continue through
-  `/chat/completions`; DeepSeek's stateless upstream cache is not treated as a
-  substitute for Harness compaction.
+  pruning and JSONL session checkpointing. Its `deepseek-official` provider uses
+  the native `/messages` and `/messages/count_tokens` endpoints; DeepSeek's
+  upstream cache is not treated as a substitute for Harness compaction.
 
 Generation endpoints use the durable reservation ledger. Token-counting is an
 authenticated, request-counted auxiliary call but does not reserve generation

@@ -112,7 +112,7 @@ def upstream_suffix(route: str, prefix: str) -> str:
 MODEL_ENDPOINTS={
     Harness.CODEX:{"/responses":"generation","/responses/compact":"compaction"},
     Harness.CLAUDE:{"/messages":"generation","/messages/count_tokens":"token_count"},
-    Harness.DEEPSEEK:{"/chat/completions":"generation"},
+    Harness.DEEPSEEK:{"/messages":"generation","/messages/count_tokens":"token_count"},
 }
 
 

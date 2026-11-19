@@ -27,7 +27,7 @@ established, authorization fails closed with
 `capability_authority_unavailable`.
 
 Model calls use a durable reservation ledger. Codex Responses uses
-`max_output_tokens`; Claude Messages and DeepSeek/OpenAI-compatible Chat use
+`max_output_tokens`; Claude and DeepSeek Harness Messages use
 `max_tokens`. A request above the remaining signed budget is rejected before
 submission. Preflight walks the bounded native request structure: ordinary
 text uses a conservative UTF-8 estimate, while inline images use decoded image
@@ -40,10 +40,10 @@ out-of-range usage conservatively consumes the full reservation. Job grants
 carry their parent nonce and share the parent's aggregate token ceiling.
 
 Native Harnesses own conversation compaction. The strict model route surface is
-Codex `/responses` and `/responses/compact`, Claude `/messages` and
-`/messages/count_tokens`, and DeepSeek `/chat/completions`. Claude token counting
-is authenticated and request-counted but creates no generation reservation or
-user-visible model activity. Codex standalone compaction is reserved and settled
+Codex `/responses` and `/responses/compact`, while Claude and DeepSeek each use
+`/messages` and `/messages/count_tokens`. Token counting is authenticated and
+request-counted but creates no generation reservation or user-visible model
+activity. Codex standalone compaction is reserved and settled
 like generation without injecting a generation-only output limit. The Gateway
 does not summarize, prune, reinterpret or discard native compaction records.
 

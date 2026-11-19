@@ -64,7 +64,8 @@ def test_model_input_estimate_is_conservative_for_text_and_malformed_binary():
     (Harness.CODEX,"/responses/compact","compaction"),
     (Harness.CLAUDE,"/messages","generation"),
     (Harness.CLAUDE,"/messages/count_tokens","token_count"),
-    (Harness.DEEPSEEK,"/chat/completions","generation"),
+    (Harness.DEEPSEEK,"/messages","generation"),
+    (Harness.DEEPSEEK,"/messages/count_tokens","token_count"),
 ])
 def test_native_model_endpoint_policy_is_explicit_per_harness(harness,suffix,kind):
     assert model_endpoint_kind(harness,suffix)==kind
@@ -74,6 +75,7 @@ def test_native_model_endpoint_policy_is_explicit_per_harness(harness,suffix,kin
     (Harness.CODEX,"/messages"),
     (Harness.CLAUDE,"/responses/compact"),
     (Harness.DEEPSEEK,"/responses"),
+    (Harness.DEEPSEEK,"/chat/completions"),
     (Harness.CLAUDE,"/messages/batches"),
 ])
 def test_native_model_endpoint_policy_rejects_cross_protocol_and_unneeded_routes(harness,suffix):
@@ -337,7 +339,7 @@ async def test_gateway_request_body_limits_declared_chunked_and_stalled_inputs()
 @pytest.mark.parametrize(("name","harness","suffix","field"),[
     ("codex",Harness.CODEX,"responses","max_output_tokens"),
     ("claude",Harness.CLAUDE,"messages","max_tokens"),
-    ("deepseek",Harness.DEEPSEEK,"chat/completions","max_tokens"),
+    ("deepseek",Harness.DEEPSEEK,"messages","max_tokens"),
 ])
 async def test_excessive_native_model_request_never_reaches_upstream(
         tmp_path,monkeypatch,name,harness,suffix,field):
