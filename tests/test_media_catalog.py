@@ -65,6 +65,30 @@ def test_shared_video_edit_fixture_satisfies_every_enabled_edit_provider():
             generation_mode='edit_video',references=[reference])
 
 
+def test_seedance_matrix_fixtures_satisfy_all_reference_modes():
+    def inspected(name,role,usage):
+        path=ROOT/'tests/real_cases/assets'/name
+        value=inspect_reference(path.read_bytes(),role,path.name)
+        return {**value,'role':role,'usage':usage,'size':path.stat().st_size}
+    poster=inspected('poster.png','first_frame','composition')
+    rocket=inspected('rocket.png','last_frame','composition')
+    video=inspected('video_edit_reference.mp4','reference_video','action')
+    audio=inspected('voice-0.wav','reference_audio','audio')
+    catalog=MediaCatalog();generation={'prompt':'animate','duration':4,
+        'resolution':'480p','aspect_ratio':'16:9'}
+    catalog.validate_parameters('video','sed2',generation,generation_mode='first_frame',
+        references=[poster])
+    catalog.validate_parameters('video','sed2',generation,generation_mode='first_last_frame',
+        references=[poster,{**rocket,'role':'last_frame'}])
+    catalog.validate_parameters('video','sed2',generation,generation_mode='multimodal_reference',
+        references=[{**poster,'role':'reference_image','usage':'subject'},video,audio])
+    edit={'prompt':'edit','duration':-1,'resolution':'720p','aspect_ratio':'adaptive'}
+    catalog.validate_parameters('video','sed2',edit,generation_mode='edit_video',
+        references=[{**video,'usage':'edit_source'}])
+    catalog.validate_parameters('video','sed2',{**edit,'extend_direction':'forward'},
+        generation_mode='extend_video',references=[{**video,'usage':'extend_source'}])
+
+
 def test_video_catalog_exposes_model_selection_guidance_and_real_mode_boundaries():
     catalog = MediaCatalog(ark_assets_configured=False)
     videos = {item["model"]: item for item in catalog.public("video")}

@@ -7487,7 +7487,7 @@
       "assets": [
         "poster.png",
         "reference_tone.wav",
-        "clip_a.mp4"
+        "video_edit_reference.mp4"
       ],
       "prompt": "以一次整组确认并行运行所有启用Provider Adapter的代表模式，验证同步、异步、引用素材、授权、对账和成果收集。",
       "expect": {
@@ -7574,8 +7574,8 @@
       "assets": [
         "poster.png",
         "rocket.png",
-        "clip_a.mp4",
-        "speech.wav"
+        "video_edit_reference.mp4",
+        "voice-0.wav"
       ],
       "prompt": "并行运行Seedance首帧、首尾帧、多模态、编辑和扩展模式，验证每种模式的冻结引用与成果。",
       "expect": {

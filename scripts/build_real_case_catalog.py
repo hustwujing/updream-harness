@@ -175,7 +175,7 @@ COVERAGE_CASES=[
     protocol("K09","全Provider必跑矩阵",
         "以一次整组确认并行运行所有启用Provider Adapter的代表模式，验证同步、异步、引用素材、授权、对账和成果收集。",
         {"provider_jobs":8,"adapters":6,"one_group_confirmation":True,"parallel":True},
-        assets=("poster.png","reference_tone.wav","clip_a.mp4"),
+        assets=("poster.png","reference_tone.wav","video_edit_reference.mp4"),
         features=("provider_coverage","parallel","group_confirmation","budget"),
         coverage={"tier":"required","skills":[],"operations":[],"providers":[
             {"adapter":"ark_image","model":"seedream-5.0","capability":"image.generate",
@@ -193,7 +193,7 @@ COVERAGE_CASES=[
     protocol("K10","视频Provider全模式矩阵",
         "并行运行Seedance首帧、首尾帧、多模态、编辑和扩展模式，验证每种模式的冻结引用与成果。",
         {"provider_jobs":5,"adapter":"ark_video_v2","one_group_confirmation":True,"parallel":True},
-        assets=("poster.png","rocket.png","clip_a.mp4","speech.wav"),
+        assets=("poster.png","rocket.png","video_edit_reference.mp4","voice-0.wav"),
         features=("provider_coverage","parallel","group_confirmation","expensive"),
         coverage={"tier":"expensive","skills":[],"operations":[],"providers":[
             {"adapter":"ark_video_v2","model":"sed2","capability":"video.generate",

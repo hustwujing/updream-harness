@@ -598,8 +598,9 @@ async def case_k10(client,args):
     thread,turn=await origin(client,args,'K10')
     poster=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/poster.png')
     rocket=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/rocket.png')
-    clip=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/clip_a.mp4')
-    speech=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/speech.wav')
+    clip=await register_case_asset(thread['id'],turn['id'],
+        ROOT/'tests/real_cases/assets/video_edit_reference.mp4')
+    speech=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/voice-0.wav')
     ref=lambda artifact,role,usage:{'artifact_id':artifact.id,'role':role,'usage':usage}
     definitions=[
         ('sed-first','video.generate','first_frame',{'prompt':'animate a gentle camera push-in',
