@@ -69,13 +69,13 @@ def postgres():
 
 
 @contextmanager
-def browser_server():
-    if not port_free(24766):raise RuntimeError("gate_browser_port_in_use")
+def browser_server(port:int):
+    if not port_free(port):raise RuntimeError("gate_browser_port_in_use")
     root=DATA/"gate-browser"/uuid.uuid4().hex;root.mkdir(parents=True)
     environment={**os.environ,"SANDBOX_HARNESS_BACKEND":"fake","SANDBOX_HARNESS_DATA_ROOT":str(root),
         "SANDBOX_HARNESS_DATABASE_URL":"sqlite+aiosqlite:///"+str(root/"platform.db"),
         "SANDBOX_HARNESS_REDIS_URL":"","SANDBOX_HARNESS_OBJECT_BACKEND":"local",
-        "SANDBOX_HARNESS_MODEL_CATALOG_DISCOVERY":"false","SANDBOX_HARNESS_API_BIND_PORT":"24766"}
+        "SANDBOX_HARNESS_MODEL_CATALOG_DISCOVERY":"false","SANDBOX_HARNESS_API_BIND_PORT":str(port)}
     log=(root/"api.log").open("wb")
     process=subprocess.Popen([str(ROOT/".venv/bin/sandbox-harness-parallel-api")],cwd=ROOT,env=environment,
         stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
@@ -83,7 +83,7 @@ def browser_server():
         for _ in range(200):
             if process.poll() is not None:raise RuntimeError("gate_browser_server_exited")
             try:
-                with urllib.request.urlopen("http://127.0.0.1:24766/api/health",timeout=.2) as response:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health",timeout=.2) as response:
                     if response.status==200:break
             except Exception:time.sleep(.05)
         else:raise TimeoutError("gate_browser_server_not_ready")
@@ -118,6 +118,8 @@ def main():
     if not browser_cache.is_dir():raise FileNotFoundError("PLAYWRIGHT_BROWSERS_PATH under /data2 is unavailable")
     environment={**os.environ,"UV_CACHE_DIR":str(DATA/"uv-cache"),"npm_config_cache":str(DATA/"npm-cache"),
         "PLAYWRIGHT_BROWSERS_PATH":str(browser_cache)}
+    browser_port=int(os.environ.get("GATE_BROWSER_PORT","24767"))
+    if not 1024<=browser_port<=65535:raise ValueError("invalid_gate_browser_port")
     try:
         if not args.browser_only:
             run_stage("python_compile",[sys.executable,"-m","compileall","-q","src","runtime","deploy","scripts","tests"],receipt,env=environment)
@@ -133,9 +135,9 @@ def main():
             run_stage("systemd_verify",["systemd-analyze","verify",*[str(path) for path in sorted(
                 (ROOT/"deploy/systemd").glob("sandbox-harness-parallel-*.service"))]],receipt,env=environment)
         if not args.skip_browser:
-            with browser_server() as browser_env:
+            with browser_server(browser_port) as browser_env:
                 browser_env={**browser_env,**environment,"NODE_PATH":str(ROOT/"web/node_modules"),
-                    "TEST_BASE_URL":"http://127.0.0.1:24766/"}
+                    "TEST_BASE_URL":f"http://127.0.0.1:{browser_port}/"}
                 scripts=[script for script in BROWSER_SCRIPTS
                     if args.include_live_browser or script.name not in LIVE_BROWSER]
                 if args.browser_script:
