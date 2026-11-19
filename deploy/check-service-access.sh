@@ -29,3 +29,16 @@ runuser -u "$service_user" -- env HOME="$project_root/.data/tmp" \
   XDG_RUNTIME_DIR="$project_root/.data/tmp/preview-runtime" XDG_CONFIG_HOME="$project_root/.data/tmp/preview-config" \
   /usr/bin/libreoffice --headless --version >/dev/null
 echo 'Service user can execute LibreOffice Impress and API private /tmp permits IPC pipes'
+
+opensandbox_unit=$(systemctl cat sandbox-agent-opensandbox.service)
+opensandbox_owner=/data2/wujing03/opensandbox-stack/data/server
+grep -F "$opensandbox_owner" <<<"$opensandbox_unit" >/dev/null
+for forbidden_owner in \
+  /data2/wujing03/distributed-agent-sandbox-backend/.sandbox-cluster \
+  /data2/wujing03/sandbox-harness-platform-plus/.data; do
+  if grep -F "$forbidden_owner" <<<"$opensandbox_unit" >/dev/null; then
+    echo "OpenSandbox mutable state is owned by a product runtime: $forbidden_owner" >&2
+    exit 1
+  fi
+done
+echo 'Shared OpenSandbox mutable state is independently owned'

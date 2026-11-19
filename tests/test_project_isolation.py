@@ -102,3 +102,11 @@ def test_service_persistent_storage_stays_under_data2_project_root():
     for forbidden in ("/root/", "/var/lib/sandbox-harness", "/opt/sandbox-harness"):
         assert forbidden not in deployment
     assert "root-partition storage is forbidden" in deployment
+
+
+def test_service_access_check_rejects_shared_opensandbox_state_owned_by_products():
+    source = (ROOT / "deploy/check-service-access.sh").read_text()
+    assert "sandbox-agent-opensandbox.service" in source
+    assert "/data2/wujing03/opensandbox-stack/data/server" in source
+    assert "distributed-agent-sandbox-backend/.sandbox-cluster" in source
+    assert "sandbox-harness-platform-plus/.data" in source

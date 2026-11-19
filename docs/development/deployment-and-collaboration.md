@@ -16,6 +16,13 @@ the ignored `.data/config/platform.env` only.
 Do not restart or reconfigure shared Redis, Docker, registry, OpenSandbox or
 object storage as part of this product's release.
 
+The shared OpenSandbox lifecycle service owns all mutable server state under
+`/data2/wujing03/opensandbox-stack/data/server`. Its unit and config must never
+reference a product checkout or that product's runtime-data directory. Before
+deleting any predecessor runtime tree, inspect `systemctl cat
+sandbox-agent-opensandbox.service` and reject the cleanup if a path escapes the
+OpenSandbox-owned tree.
+
 ## Release sequence
 
 1. Inspect `git status`; preserve concurrent edits.
