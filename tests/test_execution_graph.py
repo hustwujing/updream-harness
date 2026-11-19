@@ -5,7 +5,7 @@ from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.domain import EventKind,Harness,ItemType,ThreadCreate,TurnCreate,TurnState,now
 from sandbox_harness.execution_graph import ExecutionGraphProjector
 from sandbox_harness.job_contracts import JobGroupCreate,JobGroupDraftCreate,JobKind,JobRequest,JobState
-from sandbox_harness.store import (JobActivityRow,JobArtifactRow,JobOutboxRow,MediaBatchRow,
+from sandbox_harness.store import (JobActivityRow,JobArtifactRow,JobOutboxRow,JobRow,MediaBatchRow,
     MediaDraftRow,MediaJobRow,ReviewGateRow,Store,TurnRow)
 from sqlalchemy import select,update
 
@@ -130,7 +130,7 @@ async def test_execution_graph_projects_exact_child_wait_progress_and_join_barri
         group_node=next(node for node in graph['nodes'] if node['id']=='group:'+group.id)
         barrier=next(node for node in graph['nodes'] if node['id']=='wait_barrier:'+group.id)
         assert group_node['progress']=={'terminal':2,'total':3,'succeeded':1,'failed':1,
-            'cancelled':0,'blocked':0,'unknown':0}
+            'cancelled':0,'blocked':0,'unknown':0,'paused':0}
         assert barrier['state']=='RUNNING' and barrier['title']=='正在等待全部子任务返回 · 2/3'
         assert barrier['progress']==group_node['progress'] and barrier['turn_id']==turn.id
         assert await ExecutionGraphProjector(store).waits(thread.id,'owner')==[barrier]
@@ -144,8 +144,29 @@ async def test_execution_graph_projects_exact_child_wait_progress_and_join_barri
         barrier=next(node for node in complete['nodes'] if node['id']=='wait_barrier:'+group.id)
         assert barrier['state']=='COMPLETED' and barrier['title']=='全部子任务已返回 · 3/3'
         assert barrier['progress']=={'terminal':3,'total':3,'succeeded':1,'failed':1,
-            'cancelled':1,'blocked':0,'unknown':0}
+            'cancelled':1,'blocked':0,'unknown':0,'paused':0}
         assert barrier['ended_at'] is not None and barrier['duration_ms']>=0
+    finally:await store.close()
+
+
+async def test_execution_graph_wait_barrier_does_not_spin_for_fully_paused_group(tmp_path):
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'paused-wait.db'));await store.initialize()
+    try:
+        profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level='standard',title='Paused wait'),profile,'owner')
+        turn,_,_=await store.create_turn(thread.id,TurnCreate(message='pause children',
+            idempotency_key='paused-wait-origin'),profile,'owner')
+        requests=[JobRequest(local_job_id=f'child-{index}',kind=JobKind.OPERATION,adapter='fake',
+            descriptor_id='fake',descriptor_version='1',descriptor_digest='a'*64,
+            idempotency_key=f'paused-wait-child-{index}') for index in range(2)]
+        group,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id=thread.id,
+            origin_turn_id=turn.id,idempotency_key='paused-wait-group',jobs=requests))
+        async with store.connections.begin() as db:
+            await db.execute(update(JobRow).where(JobRow.group_id==group.id).values(state='PAUSED'))
+        barrier=(await ExecutionGraphProjector(store).waits(thread.id,'owner'))[0]
+        assert barrier['state']=='PAUSED' and barrier['title']=='子任务已暂停 · 0/2'
+        assert barrier['progress']['paused']==2 and barrier['progress']['terminal']==0
     finally:await store.close()
 
 

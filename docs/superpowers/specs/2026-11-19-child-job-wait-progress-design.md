@@ -52,13 +52,16 @@ Every `job_group` graph node includes:
     "failed": 1,
     "cancelled": 0,
     "blocked": 0,
-    "unknown": 0
+    "unknown": 0,
+    "paused": 0
   }
 }
 ```
 
 The projector also emits a deterministic `wait_barrier:<group_id>` node. It is
 `RUNNING` while `terminal < total` and `COMPLETED` once `terminal == total`.
+If every nonterminal member is paused, the barrier is `PAUSED` and does not
+animate or poll until work resumes.
 The barrier is connected after the group's member Jobs and before the
 continuation input. It runs on the control plane and never claims that the
 Primary Harness itself is executing.

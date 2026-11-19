@@ -52,7 +52,7 @@ def media_job_state(value:str)->str:
 
 def group_progress(groups,state_rows):
     values={row.id:{'terminal':0,'total':row.member_count,'succeeded':0,
-        'failed':0,'cancelled':0,'blocked':0,'unknown':0} for row in groups}
+        'failed':0,'cancelled':0,'blocked':0,'unknown':0,'paused':0} for row in groups}
     keys={'SUCCEEDED':'succeeded','FAILED':'failed','CANCELLED':'cancelled',
         'BLOCKED':'blocked','UNKNOWN':'unknown'}
     for group_id,state,count in state_rows:
@@ -60,15 +60,17 @@ def group_progress(groups,state_rows):
         if not progress:continue
         if state in TERMINAL_JOB_STATES:progress['terminal']+=int(count)
         if state in keys:progress[keys[state]]+=int(count)
+        if state=='PAUSED':progress['paused']+=int(count)
     return values
 
 
 def wait_barrier(group,progress):
     complete=progress['terminal']>=progress['total']
+    paused=not complete and progress['paused']>=progress['total']-progress['terminal']
     return {'id':'wait_barrier:'+group.id,'type':'wait_barrier','role':'子任务等待',
-        'title':('全部子任务已返回' if complete else '正在等待全部子任务返回')+
+        'title':('全部子任务已返回' if complete else '子任务已暂停' if paused else '正在等待全部子任务返回')+
             f" · {progress['terminal']}/{progress['total']}",
-        'state':'COMPLETED' if complete else 'RUNNING','location':'control_plane',
+        'state':'COMPLETED' if complete else 'PAUSED' if paused else 'RUNNING','location':'control_plane',
         'location_label':'协调器','started_at':iso(group.created_at),
         'ended_at':iso(group.terminal_at) if complete else None,
         'duration_ms':duration_ms(group.created_at,group.terminal_at) if complete else 0,
