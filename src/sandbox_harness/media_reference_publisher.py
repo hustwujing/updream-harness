@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 
 import httpx
 
@@ -22,6 +23,10 @@ class MediaReferencePublisher:
         self.ark = ArkAssets(settings)
         self.poll_seconds = getattr(settings, "ark_asset_poll_seconds", 2)
         self.max_wait_seconds = getattr(settings, "ark_asset_max_wait_seconds", 900)
+
+    def _claim_owner(self, job: dict) -> str:
+        identity=f"{self.worker_owner}\0{job['id']}\0{job['generation']}".encode()
+        return "media-ref-"+hashlib.sha256(identity).hexdigest()[:54]
 
     async def _publish_boss(self, record: dict, prepared: dict, claim_owner: str) -> dict:
         try:
@@ -85,7 +90,7 @@ class MediaReferencePublisher:
 
     async def prepare(self, job: dict, *, require_ark: bool) -> list[dict]:
         output: list[dict] = []
-        claim_owner=f"{self.worker_owner}:{job['id']}:{job['generation']}"
+        claim_owner=self._claim_owner(job)
         for reference in job.get("references") or []:
             prepared = await asyncio.to_thread(self.objects.prepare_media_upload,
                 kind=reference["kind"], digest=reference["sha256"], mime=reference["mime"],

@@ -143,13 +143,15 @@ async def test_reference_asset_creation_is_atomic_for_parallel_provider_jobs(tmp
 @pytest.mark.asyncio
 async def test_parallel_jobs_with_one_worker_serialize_shared_reference_publication(tmp_path,monkeypatch):
     store=Store("sqlite+aiosqlite:///"+str(tmp_path/"publisher-shared-worker.db"));await store.initialize()
-    objects=Objects();publisher=MediaReferencePublisher(settings(),store,objects,"media-worker")
+    objects=Objects();publisher=MediaReferencePublisher(settings(),store,objects,"w"*64)
     monkeypatch.setattr("sandbox_harness.media_reference_publisher.httpx.AsyncClient",lambda **_:HttpClient())
     reference={"sha256":DIGEST,"kind":"image","mime":"image/png","size":len(DATA),
         "object_ref":"sha256:"+DIGEST}
     jobs=[{"id":"a"*32,"generation":1,"references":[reference]},
         {"id":"b"*32,"generation":1,"references":[reference]}]
     try:
+        owners={publisher._claim_owner(value) for value in jobs}
+        assert len(owners)==2 and all(len(owner)==64 for owner in owners)
         results=await asyncio.gather(*(publisher.prepare(value,require_ark=False) for value in jobs))
         assert all(result[0]["public_url"].startswith(
             "https://boss-shjd.biliapi.net/updream/aniforge/image/") for result in results)
