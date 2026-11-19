@@ -543,7 +543,8 @@ async def case_k09(client,args):
     thread,turn=await origin(client,args,'K09')
     poster=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/poster.png')
     voice=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/reference_tone.wav')
-    clip=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/motion_reference.mp4')
+    clip=await register_case_asset(thread['id'],turn['id'],
+        ROOT/'tests/real_cases/assets/video_edit_reference.mp4')
     ref=lambda artifact,role,usage:{'artifact_id':artifact.id,'role':role,'usage':usage}
     definitions=[
         ('image-text','image.generate','image','seedream-5.0','text_to_image',

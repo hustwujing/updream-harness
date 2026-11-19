@@ -1,8 +1,13 @@
 import json
+from pathlib import Path
 
 import pytest
 
 from sandbox_harness.media_catalog import MediaCatalog, estimate_audio_duration_seconds
+from sandbox_harness.media_references import inspect_reference
+
+
+ROOT=Path(__file__).resolve().parents[1]
 
 
 def test_default_catalog_contains_only_real_probe_models():
@@ -46,6 +51,18 @@ def test_default_catalog_contains_only_real_probe_models():
     assert "target_format" not in text_mode["allowed_parameters"]
     assert text_mode["effects"]["quad=true"] == "output is FBX"
     assert schemas["model3d"]["limits"]["face_limit"]["smart_low_poly_triangle"] == 20_000
+
+
+def test_shared_video_edit_fixture_satisfies_every_enabled_edit_provider():
+    path=ROOT/'tests/real_cases/assets/video_edit_reference.mp4'
+    reference=inspect_reference(path.read_bytes(),'reference_video',path.name)
+    reference.update({'role':'reference_video','usage':'edit_source','size':path.stat().st_size})
+    parameters={'prompt':'subtle color grade','duration':-1,'resolution':'720p',
+        'aspect_ratio':'adaptive'}
+    catalog=MediaCatalog()
+    for model in ('happyhorse-video-edit','wan-2.7-video-edit'):
+        catalog.validate_parameters('video',model,parameters,
+            generation_mode='edit_video',references=[reference])
 
 
 def test_video_catalog_exposes_model_selection_guidance_and_real_mode_boundaries():
