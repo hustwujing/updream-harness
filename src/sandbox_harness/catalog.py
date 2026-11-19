@@ -137,13 +137,14 @@ class HarnessCatalog:
                 "supported_harnesses": list(row.supported_harnesses),
                 "allowed_skill_ids":list(row.allowed_skill_ids),
                 "max_delegation_depth": row.max_delegation_depth,
+                "runtime_policy":"inherit_origin_turn",
                 "job_template":{"kind":"harness","adapter":adapter,
                     "descriptor_id":descriptor_id,"descriptor_version":descriptor_version,
                     "descriptor_digest":descriptor_digest,"child_profile_id":row.id},
-                "parameter_schema":{"type":"object","required":["harness","model","objective"],
-                    "properties":{"harness":{"enum":list(row.supported_harnesses)},
-                        "model":{"type":"string","minLength":1},
-                        "objective":{"type":"string","minLength":1}},"additionalProperties":True}}
+                "parameter_schema":{"type":"object","required":["objective"],
+                    "properties":{"objective":{"type":"string","minLength":1}},
+                    "description":"Harness, model, and reasoning effort inherit from the origin Turn.",
+                    "additionalProperties":True}}
                 for row in self.profile_resolver.children.values()],
         }
 

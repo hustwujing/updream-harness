@@ -25,6 +25,15 @@ describe('execution graph layout',()=>{
   expect(view.turns.map(value=>value.id)).toEqual(['turn-1','turn-2']);
  });
 
+ it('keeps connected predecessor work visible from a continuation turn',()=>{
+  const graph={nodes:[node('p1','primary_harness','turn-1'),node('group','job_group','turn-1'),node('input2','continuation','turn-2'),node('p2','primary_harness','turn-2')],edges:[edge('p1','group','submitted_by'),edge('group','input2','continued_by'),edge('input2','p2','submitted_by')]};
+  const view=executionGraphView(graph,{turnId:'turn-2'});
+  expect(view.nodes.map(value=>value.id).sort()).toEqual(['group','input2','p1','p2']);
+  expect(view.edges).toHaveLength(3);
+  const collapsed=executionGraphView(graph,{turnId:'turn-2',collapsedGroups:new Set(['group'])});
+  expect(collapsed.nodes.map(value=>value.id)).toEqual(expect.arrayContaining(['input2','p2']));
+ });
+
  it('collapses direct group members without changing the source graph',()=>{
   const graph={nodes:[node('primary','primary_harness','turn'),node('group','job_group','turn'),...Array.from({length:7},(_,index)=>node(`job-${index}`,'job','turn'))],edges:[edge('primary','group'),...Array.from({length:7},(_,index)=>edge('group',`job-${index}`))]};
   expect(defaultCollapsedGroups(graph,'turn')).toEqual(new Set(['group']));

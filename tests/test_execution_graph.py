@@ -5,8 +5,9 @@ from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.domain import EventKind,Harness,ItemType,ThreadCreate,TurnCreate,TurnState,now
 from sandbox_harness.execution_graph import ExecutionGraphProjector
 from sandbox_harness.job_contracts import JobGroupCreate,JobGroupDraftCreate,JobKind,JobRequest,JobState
-from sandbox_harness.store import JobActivityRow,JobArtifactRow,ReviewGateRow,Store,TurnRow
-from sqlalchemy import update
+from sandbox_harness.store import (JobActivityRow,JobArtifactRow,JobOutboxRow,MediaBatchRow,
+    MediaDraftRow,MediaJobRow,ReviewGateRow,Store,TurnRow)
+from sqlalchemy import select,update
 
 
 async def test_execution_graph_contains_only_factual_boundaries_and_truthful_locations(tmp_path):
@@ -70,6 +71,77 @@ async def test_execution_graph_default_window_and_historical_expansion(tmp_path)
         assert len([node for node in recent['nodes'] if node['type']=='primary_harness'])==5
         assert recent['historical_available'] is True
         assert len([node for node in complete['nodes'] if node['type']=='primary_harness'])==7
+    finally:await store.close()
+
+
+async def test_execution_graph_connects_job_group_to_internal_continuation_and_sanitizes_errors(tmp_path):
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'continuation-graph.db'));await store.initialize()
+    try:
+        profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level='standard',title='Continuation'),profile,'owner')
+        origin,_,_=await store.create_turn(thread.id,TurnCreate(message='delegate',
+            idempotency_key='continuation-origin'),profile,'owner')
+        request=JobRequest(local_job_id='child',kind=JobKind.HARNESS,adapter='child-harness',
+            descriptor_id='delegate.harness',descriptor_version='1',descriptor_digest='d'*64,
+            idempotency_key='continuation-child',parameters={'harness':'codex','model':'gpt-5.6'},
+            child_profile_id='child-general',runtime_profile_id='general-cpu',
+            resource_requirements={'harness':'codex','image_digest':'c'*64})
+        group,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id=thread.id,
+            origin_turn_id=origin.id,idempotency_key='continuation-group',jobs=[request]))
+        await store.transition_job(jobs[0].id,JobState.FAILED,expected_generation=0,
+            result={'error_code':'model_rate_limited','error_detail':'secret upstream body'})
+        await store.set_turn_state(origin.id,TurnState.COMPLETED)
+        continuation,_,_=await store.create_turn(thread.id,TurnCreate(message='continue',
+            idempotency_key='job-continuation'),profile,'owner')
+        async with store.connections.begin() as db:
+            await db.execute(update(TurnRow).where(TurnRow.id==continuation.id).values(internal=True))
+            existing=(await db.execute(select(JobOutboxRow).where(
+                JobOutboxRow.group_id==group.id))).scalar_one()
+            existing.state='delivered';existing.continuation_turn_id=continuation.id
+        graph=await ExecutionGraphProjector(store).snapshot(thread.id,'owner')
+        child=next(node for node in graph['nodes'] if node.get('job_id')==jobs[0].id)
+        assert child['error_code']=='model_rate_limited'
+        assert child['error_summary']=='模型服务限流，请稍后重试'
+        assert 'secret upstream body' not in json.dumps(graph,ensure_ascii=False)
+        assert {'from':'group:'+group.id,'to':f'turn:{continuation.id}:input','kind':'continued_by'} in graph['edges']
+        continued=next(node for node in graph['nodes'] if node['id']==f'turn:{continuation.id}:input')
+        assert continued['title']=='并行任务结果已返回'
+    finally:await store.close()
+
+
+async def test_execution_graph_projects_media_jobs_and_connects_media_continuation(tmp_path):
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'media-graph.db'));await store.initialize()
+    try:
+        profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level='standard',title='Media'),profile,'owner')
+        origin,_,_=await store.create_turn(thread.id,TurnCreate(message='generate images',
+            idempotency_key='media-origin'),profile,'owner')
+        await store.set_turn_state(origin.id,TurnState.COMPLETED)
+        continuation,_,_=await store.create_turn(thread.id,TurnCreate(message='media results',
+            idempotency_key='media-continuation-'+origin.id),profile,'owner')
+        timestamp=now();draft_id='1'*32;job_id='2'*32
+        async with store.connections.begin() as db:
+            await db.execute(update(TurnRow).where(TurnRow.id==continuation.id).values(internal=True))
+            db.add(MediaBatchRow(turn_id=origin.id,thread_id=thread.id,owner_id='owner',status='continued',
+                created_at=timestamp,sealed_at=timestamp,continued_at=timestamp,updated_at=timestamp))
+            db.add(MediaDraftRow(id=draft_id,owner_id='owner',thread_id=thread.id,turn_id=origin.id,
+                kind='image',model='seedream-5.0',generation_mode='text_to_image',
+                parameters_json='{}',references_json='[]',idempotency_key='media-draft-test',
+                status='confirmed',expires_at=timestamp+timedelta(minutes=5),job_id=job_id,
+                output_role='candidate',created_at=timestamp,updated_at=timestamp))
+            db.add(MediaJobRow(id=job_id,owner_id='owner',thread_id=thread.id,turn_id=origin.id,
+                draft_id=draft_id,kind='image',model='seedream-5.0',generation_mode='text_to_image',
+                provider='ark',adapter='ark_image',execution_mode='sync',cancellation_mode='unsupported',
+                status='running',phase='provider_running',progress=35,parameters_json='{}',references_json='[]',
+                idempotency_key='media-job-test',created_at=timestamp,updated_at=timestamp))
+        graph=await ExecutionGraphProjector(store).snapshot(thread.id,'owner')
+        media=next(node for node in graph['nodes'] if node.get('media_job_id')==job_id)
+        assert media['type']=='media_job' and media['state']=='RUNNING'
+        assert media['progress']==35 and media['location']=='external_provider'
+        assert {'from':f'media-batch:{origin.id}','to':f'turn:{continuation.id}:input',
+            'kind':'continued_by'} in graph['edges']
     finally:await store.close()
 
 

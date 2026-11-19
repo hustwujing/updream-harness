@@ -3,7 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from sandbox_harness.domain import identifier, now
+from sandbox_harness.catalog import HarnessCatalog
+from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate,identifier,now
 from sandbox_harness.job_catalog import JobCatalog, JobCatalogPayload
 from sandbox_harness.job_contracts import (JobExpectedOutput,JobGroupCreate,JobKind,JobRequest,
     JobState,OutputDisposition)
@@ -49,6 +50,15 @@ def job(local_id: str, descriptor: str = "free.compute") -> JobRequest:
 async def setup(tmp_path):
     store=Store("sqlite+aiosqlite:///"+str(tmp_path/'coordinator.db'));await store.initialize()
     return store,JobCoordinator(store,catalog(),draft_ttl_seconds=300)
+
+
+async def harness_origin(store):
+    profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
+    thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+        reasoning_level=profile.reasoning_level,title='Delegation'),profile,'owner')
+    turn,_,_=await store.create_turn(thread.id,TurnCreate(message='delegate',
+        idempotency_key='delegation-origin-'+identifier()),profile,'owner')
+    return thread,turn
 
 
 async def test_free_durable_group_auto_commits_but_inline_operation_is_rejected(tmp_path):
@@ -234,14 +244,16 @@ async def test_harness_infrastructure_fields_are_resolved_by_host_not_manager(tm
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'harness-coordinator.db'));await store.initialize()
     coordinator=JobCoordinator(store,catalog(),profile_resolver=resolver)
     try:
+        thread,turn=await harness_origin(store)
         child=JobRequest(local_job_id='child',kind=JobKind.HARNESS,adapter='child-harness',
             descriptor_id='delegate.harness',descriptor_version='1',descriptor_digest='d'*64,
-            idempotency_key='child-coordinator-key',parameters={'harness':'codex','objective':'write plan'},
+            idempotency_key='child-coordinator-key',parameters={'harness':'claude',
+                'model':'claude-sonnet-4-5','reasoning_effort':'low','objective':'write plan'},
             child_profile_id='child-general',runtime_profile_id='manager-invented',
-            skill_ids=('writing-plans',),resource_requirements={'harness':'codex','cpu':1,
+            skill_ids=('writing-plans',),resource_requirements={'harness':'claude','cpu':1,
                 'node_id':'manager-node','gpu_ids':['gpu-9'],'image_digest':'e'*64})
-        prepared=await coordinator.prepare_group('owner',JobGroupCreate(thread_id='a'*32,
-            origin_turn_id='b'*32,idempotency_key='child-coordinator-group',jobs=[child]))
+        prepared=await coordinator.prepare_group('owner',JobGroupCreate(thread_id=thread.id,
+            origin_turn_id=turn.id,idempotency_key='child-coordinator-group',jobs=[child]))
         frozen=await store.get_job_request(prepared.jobs[0].id)
         assert frozen.runtime_profile_id=='general-cpu'
         assert frozen.resource_requirements['image_digest']=='1'*64
@@ -249,6 +261,8 @@ async def test_harness_infrastructure_fields_are_resolved_by_host_not_manager(tm
         assert frozen.network_origins==()
         assert 'node_id' not in frozen.resource_requirements and 'gpu_ids' not in frozen.resource_requirements
         assert frozen.resource_requirements['delegation_depth']==1
+        assert frozen.parameters['harness']=='codex' and frozen.parameters['model']=='gpt-5.6'
+        assert frozen.parameters['reasoning_effort']=='medium'
     finally:await store.close()
 
 
@@ -263,12 +277,13 @@ async def test_harness_skill_metadata_freezes_required_capability_and_network(tm
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'skill-capabilities.db'));await store.initialize()
     coordinator=JobCoordinator(store,catalog(),profile_resolver=resolver)
     try:
+        thread,turn=await harness_origin(store)
         child=JobRequest(local_job_id='slides',kind=JobKind.HARNESS,adapter='child-harness',
             descriptor_id='delegate.harness',descriptor_version='1',descriptor_digest='d'*64,
             idempotency_key='slides-capability-key',parameters={'harness':'codex','objective':'make slides'},
             child_profile_id='child-general',skill_ids=('codex-ppt',))
-        prepared=await coordinator.prepare_group('owner',JobGroupCreate(thread_id='a'*32,
-            origin_turn_id='b'*32,idempotency_key='slides-capability-group',jobs=[child]))
+        prepared=await coordinator.prepare_group('owner',JobGroupCreate(thread_id=thread.id,
+            origin_turn_id=turn.id,idempotency_key='slides-capability-group',jobs=[child]))
         frozen=await store.get_job_request(prepared.jobs[0].id)
         assert frozen.runtime_profile_id=='primary-full-cpu'
         assert frozen.resource_requirements['required_capability_ids']==['image.generate']
@@ -287,13 +302,14 @@ async def test_harness_missing_adapter_resolves_to_registered_child_adapter(tmp_
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'harness-adapter.db'));await store.initialize()
     coordinator=JobCoordinator(store,catalog(),profile_resolver=resolver)
     try:
+        thread,turn=await harness_origin(store)
         child=JobRequest.model_validate({'local_job_id':'child','kind':'harness',
             'descriptor_id':'delegate.harness','descriptor_version':'1','descriptor_digest':'d'*64,
             'idempotency_key':'child-adapter-key','parameters':{'harness':'codex','objective':'write plan'},
             'child_profile_id':'child-general'})
         assert child.adapter=='child-harness'
-        prepared=await coordinator.prepare_group('owner',JobGroupCreate(thread_id='a'*32,
-            origin_turn_id='b'*32,idempotency_key='child-adapter-group',jobs=[child]))
+        prepared=await coordinator.prepare_group('owner',JobGroupCreate(thread_id=thread.id,
+            origin_turn_id=turn.id,idempotency_key='child-adapter-group',jobs=[child]))
         frozen=await store.get_job_request(prepared.jobs[0].id)
         assert frozen.adapter=='child-harness'
     finally:await store.close()
@@ -310,11 +326,12 @@ async def test_harness_descriptor_identity_is_frozen(tmp_path):
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'harness-descriptor.db'));await store.initialize()
     coordinator=JobCoordinator(store,catalog(),profile_resolver=resolver)
     try:
+        thread,turn=await harness_origin(store)
         child=JobRequest(local_job_id='child',kind=JobKind.HARNESS,adapter='child-harness',
             descriptor_id='invented.harness',descriptor_version='1',descriptor_digest='d'*64,
             idempotency_key='child-descriptor-key',parameters={'harness':'codex','objective':'write plan'},
             child_profile_id='child-general')
         with pytest.raises(ValueError,match='Harness Job must use the frozen delegation Descriptor'):
-            await coordinator.prepare_group('owner',JobGroupCreate(thread_id='a'*32,
-                origin_turn_id='b'*32,idempotency_key='child-descriptor-group',jobs=[child]))
+            await coordinator.prepare_group('owner',JobGroupCreate(thread_id=thread.id,
+                origin_turn_id=turn.id,idempotency_key='child-descriptor-group',jobs=[child]))
     finally:await store.close()

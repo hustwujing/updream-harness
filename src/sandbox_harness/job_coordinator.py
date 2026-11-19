@@ -43,6 +43,22 @@ class JobCoordinator:
         self.profile_resolver = profile_resolver
         self.draft_ttl_seconds = draft_ttl_seconds
 
+    async def _inherit_delegated_runtime(self,owner_id:str,value:JobGroupCreate)->JobGroupCreate:
+        delegated=[request for request in value.jobs if request.adapter=='child-harness'
+            and request.descriptor_id=='delegate.harness']
+        if not delegated:return value
+        origin=await self.store.get_turn_for_owner(value.origin_turn_id,owner_id)
+        if not origin or origin.thread_id!=value.thread_id:
+            raise ValueError('Harness delegation origin Turn is unavailable')
+        jobs=[]
+        for request in value.jobs:
+            if request not in delegated:
+                jobs.append(request);continue
+            parameters={**request.parameters,'harness':origin.harness.value,'model':origin.model,
+                'reasoning_effort':origin.reasoning_effort}
+            jobs.append(request.model_copy(update={'parameters':parameters}))
+        return value.model_copy(update={'jobs':tuple(jobs)})
+
     @staticmethod
     def scope_child_group(value:JobGroupCreate,claims)->JobGroupCreate:
         if not getattr(claims,'job_id',''):return value
@@ -235,6 +251,7 @@ class JobCoordinator:
         return inherited
 
     async def prepare_group(self, owner_id: str, value: JobGroupCreate) -> PreparedGroup:
+        value=await self._inherit_delegated_runtime(owner_id,value)
         value=self._normalize(value)
         await self.store.validate_job_input_artifacts(owner_id,value.thread_id,value.jobs)
         value.validate_member_limit()
@@ -259,12 +276,13 @@ class JobCoordinator:
         current = await self.store.get_job_group_draft_request(draft_id, owner_id)
         if not current:
             raise KeyError("job_group_draft_not_found")
-        normalized_group=self._normalize(JobGroupCreate.model_validate({
+        normalized_group=await self._inherit_delegated_runtime(owner_id,JobGroupCreate.model_validate({
             "thread_id":current.thread_id,"origin_turn_id":current.origin_turn_id,
             "idempotency_key":current.idempotency_key,"jobs":[job.model_dump() for job in value.jobs],
             "authorization_snapshot":(value.authorization_snapshot
                 if value.authorization_snapshot is not None else current.authorization_snapshot),
             "suppress_continuation":current.suppress_continuation}))
+        normalized_group=self._normalize(normalized_group)
         normalized_group=self._with_authorization_scopes(normalized_group)
         sensitive = self._validate(normalized_group.jobs)
         await self.store.validate_job_input_artifacts(owner_id,current.thread_id,normalized_group.jobs)
@@ -282,8 +300,9 @@ class JobCoordinator:
         current = await self.store.get_job_group_draft_request(draft_id, owner_id)
         if not current:
             raise KeyError("job_group_draft_not_found")
-        current=self._normalize(JobGroupCreate.model_validate(current.model_dump(exclude={
-            "expires_at","requires_confirmation","authorization_gaps"})))
+        current=await self._inherit_delegated_runtime(owner_id,JobGroupCreate.model_validate(
+            current.model_dump(exclude={"expires_at","requires_confirmation","authorization_gaps"})))
+        current=self._normalize(current)
         self._validate(current.jobs)
         await self.store.validate_job_input_artifacts(owner_id,current.thread_id,current.jobs)
         group, jobs = await self.store.confirm_job_group_draft(draft_id, owner_id)

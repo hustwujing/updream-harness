@@ -139,6 +139,8 @@ def test_runtime_instructions_route_controlled_operations_through_job_catalog():
     assert 'remove every undeclared file or directory from `/workspace/outputs`' in RUNTIME_INSTRUCTIONS
     assert 'must select the `media-processing` Skill' in RUNTIME_INSTRUCTIONS
     assert 'artifact boundary is an execution-planning responsibility' in RUNTIME_INSTRUCTIONS
+    assert "inherit the origin Turn's Harness, model, and reasoning effort" in RUNTIME_INSTRUCTIONS
+    assert 'never choose, invent, or retry with another child model' in RUNTIME_INSTRUCTIONS
 
 
 def test_public_child_profiles_expose_frozen_harness_job_template():
@@ -153,4 +155,6 @@ def test_public_child_profiles_expose_frozen_harness_job_template():
         'descriptor_id':'delegate.harness','descriptor_version':'1','descriptor_digest':'d'*64,
         'child_profile_id':'child-general'}
     assert profile['allowed_skill_ids']==['writing-plans']
-    assert profile['parameter_schema']['properties']['harness']['enum']==['codex','claude']
+    assert profile['runtime_policy']=='inherit_origin_turn'
+    assert profile['parameter_schema']['required']==['objective']
+    assert set(profile['parameter_schema']['properties'])=={'objective'}
