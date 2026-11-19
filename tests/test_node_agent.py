@@ -18,6 +18,19 @@ def test_gpu_inventory_comes_from_nvidia_smi_identity_not_configured_count(monke
         ('gpu-1','NVIDIA A100-SXM4-40GB',40960,12000,72,'mig')]
 
 
+def test_gpu_inventory_skips_invalid_and_duplicate_samples(monkeypatch):
+    class Result:
+        returncode=0;stderr='';stdout=(
+            '0, NVIDIA A100, 40960, 32000, 8, Default, Disabled\n'
+            '0, duplicate sample, 40960, 12000, 72, Default, Disabled\n'
+            '1, invalid utilization, 40960, 12000, 101, Default, Disabled\n'
+            '2, unavailable sample, [N/A], [N/A], [N/A], Default, Disabled\n')
+    monkeypatch.setattr('sandbox_harness.node_agent.shutil.which',lambda name:'/usr/bin/nvidia-smi')
+    monkeypatch.setattr('sandbox_harness.node_agent.subprocess.run',lambda *args,**kwargs:Result())
+    values=discover_gpus()
+    assert [(value.id,value.type) for value in values]==[('gpu-0','NVIDIA A100')]
+
+
 def test_controlled_inventory_advertises_only_exactly_probed_gpus(tmp_path,monkeypatch):
     values=(GPUInventory(id='gpu-0',type='RTX 4090',memory_mb=49140),
         GPUInventory(id='gpu-1',type='RTX 4090',memory_mb=49140))
@@ -40,3 +53,15 @@ async def test_node_agent_registers_dynamic_inventory_under_data2(tmp_path,monke
         cpu_total=8,memory_mb_total=16000)
     value=await agent.run_once()
     assert value.node_id=='node' and value.disk_mb_total>0 and calls==[value]
+
+
+async def test_node_agent_keeps_cpu_inventory_when_gpu_probe_is_transiently_invalid(tmp_path):
+    calls=[]
+    class Scheduler:
+        async def register_node(self,value):calls.append(value)
+    def failed_probe():raise ValueError('transient invalid GPU telemetry')
+    agent=NodeAgent(Scheduler(),node_id='node',generation=1,profiles=({'runtime_profile_id':'general-cpu',
+        'harness':'codex','image_digest':'a'*64,'warm_slots':1},),data_root=tmp_path,
+        cpu_total=8,memory_mb_total=16000,gpu_provider=failed_probe)
+    value=await agent.run_once()
+    assert value.gpus==() and calls==[value]

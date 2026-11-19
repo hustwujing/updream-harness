@@ -12,23 +12,28 @@ from .scheduler import GPUInventory, NodeInventory, NodeProfile
 def discover_gpus() -> tuple[GPUInventory, ...]:
     executable=shutil.which('nvidia-smi')
     if not executable:return ()
-    result=subprocess.run([executable,
-        '--query-gpu=index,name,memory.total,memory.free,utilization.gpu,compute_mode,mig.mode.current',
-        '--format=csv,noheader,nounits'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
-        timeout=10,check=False)
+    try:
+        result=subprocess.run([executable,
+            '--query-gpu=index,name,memory.total,memory.free,utilization.gpu,compute_mode,mig.mode.current',
+            '--format=csv,noheader,nounits'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
+            timeout=10,check=False)
+    except (OSError,subprocess.SubprocessError):
+        return ()
     if result.returncode:return ()
-    values=[]
+    values={}
     for line in result.stdout.splitlines():
         parts=[item.strip() for item in line.split(',')]
         if len(parts)!=7:continue
         index,name,memory,memory_free,utilization,compute_mode,mig_mode=parts
-        try:memory_mb=int(memory);memory_free_mb=int(memory_free);utilization_percent=int(utilization)
+        try:
+            memory_mb=int(memory);memory_free_mb=int(memory_free);utilization_percent=int(utilization)
+            mode=('mig' if mig_mode.lower() in {'enabled','enable'} else
+                'exclusive' if 'exclusive' in compute_mode.lower() else 'shared')
+            value=GPUInventory(id='gpu-'+index,type=name,memory_mb=memory_mb,
+                memory_free_mb=memory_free_mb,utilization_percent=utilization_percent,mode=mode)
         except ValueError:continue
-        mode=('mig' if mig_mode.lower() in {'enabled','enable'} else
-            'exclusive' if 'exclusive' in compute_mode.lower() else 'shared')
-        values.append(GPUInventory(id='gpu-'+index,type=name,memory_mb=memory_mb,
-            memory_free_mb=memory_free_mb,utilization_percent=utilization_percent,mode=mode))
-    return tuple(values)
+        values.setdefault(value.id,value)
+    return tuple(values.values())
 
 
 def disk_capacity_mb(path: Path) -> int:
@@ -49,9 +54,11 @@ class NodeAgent:
     def inventory(self)->NodeInventory:
         try:load=__import__('os').getloadavg()[0]/max(1,self.cpu_total)
         except OSError:load=0
+        try:gpus=self.gpu_provider()
+        except (OSError,subprocess.SubprocessError,ValueError):gpus=()
         return NodeInventory(node_id=self.node_id,generation=self.generation,cpu_total=self.cpu_total,
             memory_mb_total=self.memory_mb_total,disk_mb_total=disk_capacity_mb(self.data_root),
-            load=max(0,load),profiles=self.profiles,gpus=self.gpu_provider(),
+            load=max(0,load),profiles=self.profiles,gpus=gpus,
             cached_bundle_digests=self.cached_bundle_digests)
 
     async def run_once(self)->NodeInventory:
