@@ -97,3 +97,4 @@
 - [ ] Make R10's thumbnail fit decision explicit and rerun R09/R10 on the deployed fix.
 - [ ] Make R11's rejected region and bounded repair explicit, then rerun R11 before continuing the campaign.
 - [ ] Make P23 wait for the one durable continuation instead of racing outbox delivery.
+- [ ] Make P06's delegated comparison objective self-contained so D24/D25 test input ordering, not missing parent input.

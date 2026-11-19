@@ -243,7 +243,8 @@ async def case_p05(client,args):
 async def case_p06(client,args):
     thread,turn=await origin(client,args,'P06')
     response=await prepare(client,thread,turn,[harness_job(0,args,
-        objective='Analyze three independent tradeoffs and return a concise comparison.')],'P06')
+        objective=('Analyze these three independent tradeoffs and return a concise comparison: '
+            'REST versus gRPC, monolith versus microservices, and SQL versus NoSQL.'))],'P06')
     require(response);value=response.json()
     queued=require(await client.post(f"api/threads/{thread['id']}/turns",json={
         'message':'最终还需要一份中文摘要。','attachments':[],

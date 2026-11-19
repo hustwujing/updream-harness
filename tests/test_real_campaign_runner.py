@@ -62,6 +62,7 @@ def test_parallel_protocol_runner_never_fakes_unimplemented_success():
     assert 'parser.add_argument(\'--intervention-delay\'' in source
     assert "classification':'program_failure'" in source
     assert source.count("_,continuations=await wait_continuations(client,thread['id'],maximum=1)")==4
+    assert 'REST versus gRPC, monolith versus microservices, and SQL versus NoSQL' in source
     campaign=(ROOT/"tests/run_real_campaign.py").read_text()
     assert '"--harness",args.harness' in campaign
     assert '"--model",args.model' in campaign
