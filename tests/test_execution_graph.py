@@ -314,7 +314,9 @@ async def test_graph_uses_aggregate_counts_and_bounded_artifact_summaries(tmp_pa
         timestamp=now()
         async with store.connections.begin() as db:
             db.add_all([JobActivityRow(id=f'{index:032x}',job_id=jobs[0].id,sequence=index+1,
-                kind='tool',status='completed',summary='tool',payload_json='{}',created_at=timestamp,updated_at=timestamp)
+                kind='tool_started',status='in_progress',summary='tool',
+                payload_json=json.dumps({'name':'tool','tool_use_id':f'tool-{index}'}),
+                created_at=timestamp,updated_at=timestamp)
                 for index in range(1200)])
             db.add_all([JobArtifactRow(id=f'{index+2000:032x}',job_id=jobs[0].id,
                 artifact_id=f'{index+4000:032x}',artifact_role='parts',item_key=f'item-{index}',

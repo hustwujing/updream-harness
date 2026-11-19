@@ -65,7 +65,7 @@ export const listProjectFiles=id=>api(`threads/${id}/project-files`);
 export const listInteractions=id=>api(`threads/${id}/interactions`);
 export const getExecutionGraph=(id,cursor='',history=false,before='')=>api(`threads/${id}/execution-graph?cursor=${encodeURIComponent(cursor)}&include_history=${history}&history_before=${encodeURIComponent(before)}`);
 export const listJobWaits=id=>api(`threads/${id}/job-waits`);
-export const listJobActivities=(id,after=0)=>api(`jobs/${id}/activities?after=${after}&limit=500`);
+export const listJobActivities=(id,after=0,view='display')=>api(`jobs/${id}/activities?after=${after}&limit=500&view=${encodeURIComponent(view)}`);
 export const respondInteraction=(id,value)=>api(`interactions/${id}/respond`,{method:'POST',body:JSON.stringify(value)});
 export const projectFileHistory=(id,path)=>api(`threads/${id}/project-files/history?path=${encodeURIComponent(path)}`);
 export const restoreProjectFile=id=>api(`project-files/${id}/restore`,{method:'POST'});

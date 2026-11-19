@@ -48,6 +48,11 @@ Turn has no remaining rows. Do not make reconnect correctness depend on Redis.
   terminal even though the Job remains manually recoverable.
 - Activity rows summarize model waits and tools; agent public output belongs in
   the transcript.
+- Child Job activity APIs return the semantic display projection by default.
+  `view=raw` is an explicit diagnostic surface. Display updates merge by stable
+  activity `id`; polling advances with `cursor_sequence`, not the first raw
+  sequence. The default UI shows compact operations and offers a separate
+  technical-details toggle for transport events.
 - A terminal Turn with pending media Drafts is displayed as `等待确认 N 项媒体生成`,
   not as completed. Drafts sharing the same origin Turn use one batch decision;
   pending confirmation does not animate the execution graph as active work.

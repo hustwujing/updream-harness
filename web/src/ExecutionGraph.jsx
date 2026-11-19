@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { apiUrl, getExecutionGraph, listJobActivities } from "./api";
 import { formatDuration } from "./activity-time";
+import {activityCursor,mergeExecutionActivities} from "./execution-activities";
 import {
   defaultCollapsedGroups,
   executionGraphView,
@@ -169,6 +170,8 @@ function displayValue(value) {
     return "结构化详情不可显示";
   }
 }
+function displayActivityTitle(value){const name=String(value.summary||value.payload?.name||value.kind||'执行步骤'),labels={commandexecution:'执行命令',bash:'执行命令',read:'读取文件',write:'写入文件',edit:'修改文件',filechange:'修改文件',imageview:'查看图片',mcptoolcall:'调用外部工具',dynamictoolcall:'调用工具',plan:'更新执行计划'};return labels[name.toLowerCase()]||name}
+function displayActivityDetail(value){const detail=value.payload?.detail||{},command=detail.command||detail.cmd,description=detail.description,path=detail.file_path||detail.filePath||detail.path,query=detail.query;if(command)return Array.isArray(command)?command.join(' '):String(command).split('\n').find(Boolean);if(description)return description;if(path)return path;if(query)return query;if(value.payload?.output_tail)return value.payload.output_tail.split('\n').filter(Boolean).at(-1);if(value.status==='completed')return '已完成';if(value.status==='failed')return '执行失败';return '执行中'}
 class DetailBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -199,6 +202,8 @@ export default function ExecutionGraph({ thread, items = [] }) {
   });
   const [selectedId, setSelectedId] = useState(""),
     [activities, setActivities] = useState([]),
+    [rawActivities,setRawActivities]=useState([]),
+    [technical,setTechnical]=useState(false),
     [history, setHistory] = useState(false);
   const [olderBefore, setOlderBefore] = useState(""),
     [loadingOlder, setLoadingOlder] = useState(false),
@@ -241,6 +246,8 @@ export default function ExecutionGraph({ thread, items = [] }) {
     setGraph({ nodes: [], edges: [], cursor: "", metadata: {} });
     setSelectedId("");
     setActivities([]);
+    setRawActivities([]);
+    setTechnical(false);
     setHistory(false);
     setOlderBefore("");
     setOpen(false);
@@ -371,6 +378,8 @@ export default function ExecutionGraph({ thread, items = [] }) {
   }, [open]);
   useEffect(() => {
     setActivities([]);
+    setRawActivities([]);
+    setTechnical(false);
     setActivityError("");
   }, [selected?.job_id, selected?.retries]);
   useEffect(() => {
@@ -383,15 +392,8 @@ export default function ExecutionGraph({ thread, items = [] }) {
         const rows = await listJobActivities(selected.job_id, cursor);
         if (!stopped) setActivityError("");
         if (rows.length) {
-          cursor = rows.at(-1).sequence;
-          if (!stopped)
-            setActivities((current) => {
-              const values = new Map(current.map((row) => [row.sequence, row]));
-              for (const row of rows) values.set(row.sequence, row);
-              return [...values.values()].sort(
-                (a, b) => a.sequence - b.sequence,
-              );
-            });
+          cursor=activityCursor(rows,cursor);
+          if(!stopped)setActivities(current=>mergeExecutionActivities(current,rows));
         }
       } catch (value) {
         if (!stopped)
@@ -407,6 +409,19 @@ export default function ExecutionGraph({ thread, items = [] }) {
       clearTimeout(timer);
     };
   }, [selected?.job_id, selected?.state, selected?.retries]);
+  useEffect(()=>{
+    if(!technical||!selected?.job_id)return;
+    let stopped=false,timer,cursor=0;
+    const load=async()=>{
+      try{
+        const rows=await listJobActivities(selected.job_id,cursor,'raw');
+        if(rows.length){cursor=Math.max(cursor,...rows.map(row=>Number(row.sequence||0)));
+          if(!stopped)setRawActivities(current=>mergeExecutionActivities(current,rows))}
+      }catch(value){if(!stopped)setActivityError(value.message||'技术详情加载失败')}
+      finally{if(!stopped&&!terminal.has(selected.state))timer=setTimeout(load,1200)}
+    };
+    setRawActivities([]);load();return()=>{stopped=true;clearTimeout(timer)};
+  },[technical,selected?.job_id,selected?.state,selected?.retries]);
   if (!thread) return null;
 
   const activeCount = graph.nodes.filter(
@@ -418,7 +433,7 @@ export default function ExecutionGraph({ thread, items = [] }) {
             item.turn_id === selected.turn_id && activityTypes.has(item.type),
         )
       : [],
-    details = selected?.job_id ? activities : primaryActivities;
+    details = selected?.job_id ? (technical?rawActivities:activities) : primaryActivities;
   const saveManual = (value) => {
     setManual(value);
     try {
@@ -571,6 +586,10 @@ export default function ExecutionGraph({ thread, items = [] }) {
             {activityError}
           </p>
         )}
+        {selected.job_id&&<div className="execution-activity-mode"><button type="button"
+          aria-pressed={technical} onClick={()=>setTechnical(value=>!value)}>
+          {technical?'返回执行步骤':'查看技术详情'}</button>{!technical&&activities.length>0&&<small>
+          {activities.reduce((total,row)=>total+(row.raw_count||1),0)} 条原始事件已归并为 {activities.length} 个步骤</small>}</div>}
         {details.length ? (
           details.slice(-30).map((value) => (
             <article key={value.id || value.sequence}>
@@ -583,16 +602,12 @@ export default function ExecutionGraph({ thread, items = [] }) {
                 }
               />
               <div>
-                <b>{value.summary || value.kind || value.type}</b>
+                <b>{displayActivityTitle(value)}</b>
                 <small>
-                  {displayValue(
-                    value.payload?.detail ||
-                      value.payload?.name ||
-                      value.status,
-                  )}
+                  {technical?displayValue(value.payload?.detail||value.payload?.text||value.status):displayActivityDetail(value)}
                 </small>
               </div>
-              <time>{value.sequence ? `#${value.sequence}` : ""}</time>
+              <time>{value.raw_count>1?`${value.raw_count} 条事件`:value.sequence?`#${value.sequence}`:""}</time>
             </article>
           ))
         ) : (

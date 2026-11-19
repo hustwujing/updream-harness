@@ -118,6 +118,16 @@ without duplicate nodes. When node ceilings apply, pending interactions,
 required/warning Review Gates, active Jobs and their ancestors are retained
 before terminal history; truncation is visible in the UI.
 
+Child Harness activity has two durable grains. `job_activities` is the raw
+Runtime event ledger used for reconnect, child summaries and diagnostics;
+`job_display_activities` is a rebuildable semantic projection used by the
+Execution Graph. Text deltas never become display steps. Native tool IDs pair
+start/output/finish into one stable row, late output cannot regress a terminal
+status, and warnings/errors remain visible. Raw replay and display projection
+are committed together for new events; historical Jobs are projected lazily and
+idempotently before display. Never delete raw rows or infer activity identity
+from natural-language text to improve the UI.
+
 ## Runtime child durability
 
 Native Interaction delivery is tri-state. A successful stdin drain is

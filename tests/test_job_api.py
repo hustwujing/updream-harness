@@ -50,6 +50,18 @@ def test_job_group_api_edits_confirms_once_and_enforces_owner(tmp_path):
         assert confirmed.status_code==200
         value=confirmed.json();assert value['group']['member_count']==1
         assert [job['local_job_id'] for job in value['jobs']]==['generate']
+        job_id=value['jobs'][0]['id']
+        client.portal.call(app.state.store.append_job_activity,job_id,1,'text_delta',{'text':'stream chunk'})
+        client.portal.call(app.state.store.append_job_activity,job_id,2,'tool_started',
+            {'name':'Read','tool_use_id':'read-1','detail':{'path':'source.txt'}})
+        client.portal.call(app.state.store.append_job_activity,job_id,3,'tool_finished',
+            {'name':'Read','tool_use_id':'read-1','result':{'bytes':12}})
+        display=client.get(f'/api/jobs/{job_id}/activities').json()
+        raw=client.get(f'/api/jobs/{job_id}/activities?view=raw').json()
+        assert len(display)==1 and display[0]['raw_count']==2
+        assert display[0]['status']=='completed' and display[0]['cursor_sequence']==3
+        assert len(raw)==3 and raw[0]['kind']=='text_delta'
+        assert client.get(f'/api/jobs/{job_id}/activities?view=other').status_code==422
         repeated=client.post(f"/api/job-group-drafts/{draft['id']}/confirm")
         assert repeated.status_code==200 and repeated.json()['group']['id']==value['group']['id']
         detail=client.get(f"/api/job-groups/{value['group']['id']}")

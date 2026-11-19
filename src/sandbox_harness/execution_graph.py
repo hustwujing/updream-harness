@@ -8,7 +8,7 @@ from sqlalchemy import case,func,or_,select
 
 from .domain import TERMINAL, TurnState
 from .job_errors import JOB_ERROR_CONTRACTS
-from .store import (InteractionRow,JobActivityRow,JobArtifactRow,JobAttemptRow,JobGroupDraftRow,
+from .store import (InteractionRow,JobDisplayActivityRow,JobArtifactRow,JobAttemptRow,JobGroupDraftRow,
     JobGroupRow,JobOutboxRow,JobRow,MediaBatchRow,MediaDraftRow,MediaJobRow,
     ResourceReservationRow,ReviewGateRow,ThreadRow,TurnOrderRow,TurnRow,now,utc_datetime)
 
@@ -101,6 +101,14 @@ class ExecutionGraphProjector:
     async def snapshot(self,thread_id:str,owner_id:str,*,cursor:str='',include_history:bool=False,
                        history_before:str='')->dict:
         async with self.store.connections() as db:
+            exists=(await db.execute(select(ThreadRow.id).where(ThreadRow.id==thread_id,
+                ThreadRow.owner_id==owner_id))).scalar_one_or_none()
+            projection_job_ids=set((await db.execute(select(JobRow.id).where(
+                JobRow.thread_id==thread_id).order_by(JobRow.created_at.desc()).limit(
+                MAX_JOBS))).scalars().all()) if exists else set()
+        if not exists:raise KeyError('thread_not_found')
+        await self.store.ensure_job_display_activities(projection_job_ids)
+        async with self.store.connections() as db:
             thread=(await db.execute(select(ThreadRow).where(ThreadRow.id==thread_id,
                 ThreadRow.owner_id==owner_id))).scalar_one_or_none()
             if not thread:raise KeyError('thread_not_found')
@@ -192,8 +200,9 @@ class ExecutionGraphProjector:
             interactions=list(reversed(interactions))
             reservations=list((await db.execute(select(ResourceReservationRow).where(
                 ResourceReservationRow.job_id.in_(job_ids or {''})))).scalars().all())
-            activity_rows=(await db.execute(select(JobActivityRow.job_id,func.count()).where(
-                JobActivityRow.job_id.in_(job_ids or {''})).group_by(JobActivityRow.job_id))).all()
+            activity_rows=(await db.execute(select(JobDisplayActivityRow.job_id,func.count()).where(
+                JobDisplayActivityRow.job_id.in_(job_ids or {''})).group_by(
+                JobDisplayActivityRow.job_id))).all()
             retry_rows=(await db.execute(select(JobAttemptRow.job_id,func.sum(case(
                 (JobAttemptRow.outcome=='PRE_ACCEPT_RETRY',1),
                 (JobAttemptRow.retry_kind.in_(['recovery','reconcile']),1),else_=0))).where(

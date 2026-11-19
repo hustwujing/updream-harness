@@ -1153,11 +1153,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404,"Thread not found")
 
     @app.get("/api/jobs/{job_id}/activities")
-    async def job_activities(job_id: str, request: Request, after: int = 0, limit: int = 500):
+    async def job_activities(job_id: str, request: Request, after: int = 0, limit: int = 500,
+                             view: str = "display"):
         job = await store.get_job_for_owner(job_id, request.state.owner_id)
         if not job:
             raise HTTPException(404, "Job not found")
-        return await store.list_job_activities(job_id, after, limit)
+        if view=="raw":return await store.list_job_activities(job_id,after,limit)
+        if view!="display":raise HTTPException(422,"Invalid activity view")
+        return await store.list_job_display_activities(job_id,after,limit)
 
     @app.get("/api/threads/{thread_id}/project-files")
     async def list_project_files(thread_id: str, request: Request):

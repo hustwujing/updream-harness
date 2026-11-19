@@ -21,6 +21,7 @@ from .catalog import ResolvedProfile
 from .events import RedisEventBus
 from .media_errors import media_error_guidance
 from .job_errors import job_error_payload,normalize_job_error
+from .activity_projection import merge_projection_payload,projection_instruction
 from .job_contracts import (
     JobAttemptReceipt, JobGroupCreate, JobGroupDraftCreate, JobGroupDraftState,
     JobGroupDraftView, JobGroupState, JobGroupView, JobKind, JobOutboxView,
@@ -955,6 +956,23 @@ class JobActivityRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class JobDisplayActivityRow(Base):
+    __tablename__ = "job_display_activities"
+    __table_args__ = (UniqueConstraint("job_id", "projection_key"),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(32), index=True)
+    projection_key: Mapped[str] = mapped_column(String(200))
+    sequence: Mapped[int] = mapped_column(Integer)
+    cursor_sequence: Mapped[int] = mapped_column(Integer, index=True)
+    kind: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(24))
+    summary: Mapped[str] = mapped_column(Text, default="", server_default="")
+    payload_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    raw_count: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 OWNER_MIGRATION_ROWS = (
     ThreadRow, ThreadControlRow, PauseParticipantRow, UploadRow,
     MediaDraftRow, MediaReferenceUploadRow, MediaVoiceCloneRow, MediaBatchRow, MediaJobRow,
@@ -1753,6 +1771,37 @@ class Store:
             'status':row.status,'summary':row.summary,'payload':json.loads(row.payload_json),
             'created_at':utc_datetime(row.created_at),'updated_at':utc_datetime(row.updated_at)}
 
+    @staticmethod
+    def job_display_activity_view(row:JobDisplayActivityRow)->dict:
+        return {'id':row.id,'job_id':row.job_id,'sequence':row.sequence,
+            'cursor_sequence':row.cursor_sequence,'kind':row.kind,'status':row.status,
+            'summary':row.summary,'payload':json.loads(row.payload_json),'raw_count':row.raw_count,
+            'created_at':utc_datetime(row.created_at),'updated_at':utc_datetime(row.updated_at)}
+
+    async def _project_job_activity(self,db,job_id:str,sequence:int,kind:str,payload:dict,
+                                    status:str,timestamp:datetime)->None:
+        instruction=projection_instruction(kind,payload,status,sequence)
+        if not instruction:return
+        row=(await db.execute(select(JobDisplayActivityRow).where(
+            JobDisplayActivityRow.job_id==job_id,
+            JobDisplayActivityRow.projection_key==instruction.key).with_for_update())).scalar_one_or_none()
+        if row:
+            row.cursor_sequence=max(row.cursor_sequence,sequence);row.raw_count+=1
+            row.kind=instruction.kind
+            if not (row.status in {'completed','failed','interrupted'}
+                    and instruction.status=='in_progress'):
+                row.status=instruction.status
+            if instruction.summary not in {'tool','tool_output','执行阶段'} or not row.summary:
+                row.summary=instruction.summary[:1000]
+            row.payload_json=canonical_json(merge_projection_payload(
+                json.loads(row.payload_json),instruction));row.updated_at=timestamp
+        else:
+            row=JobDisplayActivityRow(id=identifier(),job_id=job_id,
+                projection_key=instruction.key,sequence=sequence,cursor_sequence=sequence,
+                kind=instruction.kind,status=instruction.status,summary=instruction.summary[:1000],
+                payload_json=canonical_json(merge_projection_payload({},instruction)),raw_count=1,
+                created_at=timestamp,updated_at=timestamp);db.add(row)
+
     async def append_job_activity(self, job_id: str, sequence: int, kind: str,
                                   payload: dict, *, status: str = "in_progress") -> dict:
         async with self.connections.begin() as db:
@@ -1767,7 +1816,9 @@ class Store:
                 return self.job_activity_view(row)
             row=JobActivityRow(id=identifier(),job_id=job_id,sequence=sequence,kind=kind,
                 status=status,summary=summary,payload_json=canonical_json(payload),
-                created_at=timestamp,updated_at=timestamp);db.add(row);await db.flush()
+                created_at=timestamp,updated_at=timestamp);db.add(row)
+            await self._project_job_activity(db,job_id,sequence,kind,payload,status,timestamp)
+            await db.flush()
             return self.job_activity_view(row)
 
     async def list_job_activities(self,job_id:str,after:int=0,limit:int=500)->list[dict]:
@@ -1776,6 +1827,29 @@ class Store:
                 JobActivityRow.sequence>after).order_by(JobActivityRow.sequence).limit(
                 min(max(limit,1),1000)))).scalars().all()
             return [self.job_activity_view(row) for row in rows]
+
+    async def ensure_job_display_activities(self,job_ids:set[str]|tuple[str,...]|list[str])->None:
+        identities=set(job_ids)
+        if not identities:return
+        async with self.connections.begin() as db:
+            projected=set((await db.execute(select(JobDisplayActivityRow.job_id).where(
+                JobDisplayActivityRow.job_id.in_(identities)).distinct())).scalars().all())
+            for job_id in sorted(identities-projected):
+                rows=list((await db.execute(select(JobActivityRow).where(
+                    JobActivityRow.job_id==job_id).order_by(JobActivityRow.sequence))).scalars().all())
+                for row in rows:
+                    await self._project_job_activity(db,row.job_id,row.sequence,row.kind,
+                        json.loads(row.payload_json),row.status,utc_datetime(row.updated_at))
+
+    async def list_job_display_activities(self,job_id:str,after:int=0,
+                                          limit:int=500)->list[dict]:
+        await self.ensure_job_display_activities({job_id})
+        async with self.connections() as db:
+            rows=(await db.execute(select(JobDisplayActivityRow).where(
+                JobDisplayActivityRow.job_id==job_id,
+                JobDisplayActivityRow.cursor_sequence>after).order_by(
+                JobDisplayActivityRow.sequence).limit(min(max(limit,1),1000)))).scalars().all()
+            return [self.job_display_activity_view(row) for row in rows]
 
     async def create_job_group_draft(self, owner_id: str,
                                      value: JobGroupDraftCreate) -> tuple[JobGroupDraftView, bool]:
@@ -3757,6 +3831,8 @@ class Store:
                     ReviewGateRow.reviewer_job_id.in_(job_ids),
                     ReviewGateRow.source_job_id.in_(job_ids))))
                 await db.execute(delete(JobActivityRow).where(JobActivityRow.job_id.in_(job_ids)))
+                await db.execute(delete(JobDisplayActivityRow).where(
+                    JobDisplayActivityRow.job_id.in_(job_ids)))
                 await db.execute(delete(JobArtifactRow).where(JobArtifactRow.job_id.in_(job_ids)))
                 await db.execute(delete(JobCleanupRow).where(JobCleanupRow.job_id.in_(job_ids)))
                 await db.execute(delete(JobLeaseRow).where(JobLeaseRow.job_id.in_(job_ids)))
