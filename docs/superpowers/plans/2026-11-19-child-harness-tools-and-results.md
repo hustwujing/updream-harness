@@ -95,3 +95,4 @@
 - [ ] Reproduce rejection of a valid `.sh` Child artifact declared as `text/x-sh`.
 - [ ] Normalize shell-script MIME to sniffed text and preserve strict cross-family rejection.
 - [ ] Make R10's thumbnail fit decision explicit and rerun R09/R10 on the deployed fix.
+- [ ] Make R11's rejected region and bounded repair explicit, then rerun R11 before continuing the campaign.

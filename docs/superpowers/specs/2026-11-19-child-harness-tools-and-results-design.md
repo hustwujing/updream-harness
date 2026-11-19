@@ -57,3 +57,6 @@ content: Runtime's `text/x-sh` declaration normalizes to the sniffed
 interventions must also include decisions that materially affect output; R10's
 thumbnail request fixes centered cover-crop semantics so the case exercises
 successor reuse rather than an unrelated clarification interaction.
+R11 likewise identifies the exact portrait-side rejection region and repair
+method; a quality-feedback case must not depend on the Harness guessing which
+dark source pixels the test author intended to call a border.

@@ -37,7 +37,8 @@ INTERVENTIONS={
     "intervention_caption":"新增字幕：0–2秒显示“PORTRAIT”，2–4秒显示“ROCKET”；白字黑描边、底部居中。",
     "intervention_portrait":"最终改为360×640竖版、时长8秒。",
     "intervention_thumbnail":"在已完成交付之外追加320×180 JPEG缩略图，保持比例居中裁切。",
-    "intervention_feedback":"当前候选的边缘有黑边，请只修复边缘后重新审查，不接受当前候选。",
+    "intervention_feedback":("不接受当前候选。只修复 portrait 半边右下角的黑色头盔和台座区域，"
+        "用与相邻背景连续的颜色填充该区域后重新审查；rocket 半边保持不变，不需要再询问。"),
     "intervention_new_goal":"保留已有成果，再追加一张128×128方形联系图。",
     "intervention_pause_replan":"停止旧版输出方向，改为无间隙竖向拼接。",
     "intervention_cancel_race":"取消当前导出；保留可复用中间成果并导出WebP新版。",

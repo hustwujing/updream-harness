@@ -84,6 +84,12 @@ def test_thumbnail_intervention_fixes_the_fit_decision():
     assert '追加320×180 JPEG缩略图，保持比例居中裁切' in source
 
 
+def test_feedback_intervention_identifies_the_local_repair():
+    source=(ROOT/'tests/run_real_campaign.py').read_text()
+    assert '只修复 portrait 半边右下角的黑色头盔和台座区域' in source
+    assert 'rocket 半边保持不变，不需要再询问' in source
+
+
 def test_portrait_intervention_grades_the_post_intervention_contract():
     catalog=__import__('json').loads((ROOT/'tests/real_cases/cases.json').read_text())
     case=next(row for row in catalog['cases'] if row['id']=='R09')
