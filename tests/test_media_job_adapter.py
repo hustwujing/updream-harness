@@ -1,10 +1,13 @@
+import io
 from types import SimpleNamespace
+
+from PIL import Image
 
 from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.config import Settings
 from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate
 from sandbox_harness.job_adapters import JobExecutionContext,PreAcceptFailure
-from sandbox_harness.job_contracts import (JobExpectedOutput,JobGroupCreate,JobKind,JobRequest,
+from sandbox_harness.job_contracts import (JobArtifactInput,JobExpectedOutput,JobGroupCreate,JobKind,JobRequest,
     JobState,OutputDisposition)
 from sandbox_harness.media_job_adapter import MediaProviderJobAdapter
 from sandbox_harness.objects import ObjectStore
@@ -80,6 +83,31 @@ async def test_media_provider_adapter_maps_unknown_and_cancellation_without_resu
         assert status.terminal and status.state==JobState.UNKNOWN
         cancelled=await adapter.cancel(context,accepted.external_execution_id)
         assert cancelled.state==JobState.UNKNOWN
+    finally:await store.close()
+
+
+async def test_media_provider_adapter_preserves_artifact_reference_lineage(tmp_path):
+    store,thread,job,attempt,request=await setup(tmp_path);objects=ObjectStore(tmp_path/'objects')
+    adapter=MediaProviderJobAdapter(Settings(backend='fake',data_root=tmp_path),store,objects,Catalog())
+    image=io.BytesIO();Image.new('RGB',(64,64),(40,90,180)).save(image,format='PNG')
+    data=image.getvalue();object_ref,digest=objects.put(data)
+    artifact=await store.add_artifact(job.origin_turn_id,path='input/reference.png',sha256=digest,
+        size=len(data),mime='image/png',object_ref=object_ref)
+    referenced=request.model_copy(update={
+        'parameters':{'kind':'image','model':'test-image','generation_mode':'reference_image',
+            'parameters':{'prompt':'preserve the subject'},
+            'reference_bindings':{artifact.id:{'role':'reference_image','usage':'subject'}}},
+        'input_artifacts':(JobArtifactInput(artifact_id=artifact.id,artifact_role='reference'),),
+    })
+    context=JobExecutionContext(job=job,request=referenced,generation=attempt.generation)
+    try:
+        accepted=await adapter.submit(context)
+        assert accepted.external_execution_id
+        drafts=await store.list_media_drafts(thread.id,'owner')
+        assert len(drafts)==1
+        assert drafts[0].references[0].artifact_id==artifact.id
+        assert drafts[0].references[0].project_file_id==''
+        assert drafts[0].references[0].path=='input/reference.png'
     finally:await store.close()
 
 

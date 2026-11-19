@@ -503,7 +503,8 @@ class MediaReferenceInput(BaseModel):
 
 
 class MediaReferenceView(BaseModel):
-    project_file_id: str
+    project_file_id: str = Field(default="", pattern=r"^$|^[0-9a-f]{32}$")
+    artifact_id: str = Field(default="", pattern=r"^$|^[0-9a-f]{32}$")
     path: str
     version: int = Field(ge=1)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -513,6 +514,12 @@ class MediaReferenceView(BaseModel):
         "front_view", "left_view", "back_view", "right_view"]
     usage: Literal["subject", "style", "composition", "action", "camera", "audio",
         "edit_source", "extend_source"]
+
+    @model_validator(mode="after")
+    def exactly_one_lineage(self):
+        if bool(self.project_file_id) == bool(self.artifact_id):
+            raise ValueError("Media reference requires exactly one artifact or project file lineage")
+        return self
     width: int | None = None
     height: int | None = None
     duration_seconds: float | None = None
