@@ -24,12 +24,12 @@ def test_campaign_runner_has_bounded_parallel_stop_and_resume_protocol():
 
 def test_real_case_catalog_includes_every_inherited_d_case_with_provenance():
     catalog=__import__('json').loads((ROOT/'tests/real_cases/cases.json').read_text())
-    groups={prefix:[] for prefix in 'SCRDP'}
+    groups={prefix:[] for prefix in 'SCRDPK'}
     for case in catalog['cases']:
         groups[case['id'][0]].append(case)
     assert {key:len(value) for key,value in groups.items()}=={
-        'S':31,'C':30,'R':17,'D':51,'P':26}
-    assert len(catalog['cases'])==155 and catalog['runnable_case_count']==155
+        'S':31,'C':30,'R':17,'D':51,'P':26,'K':11}
+    assert len(catalog['cases'])==166 and catalog['runnable_case_count']==166
     assert not catalog['superseded_cases']
     assert [case['id'] for case in groups['D']]==[f'D{index:02d}' for index in range(1,52)]
     assert all(case['executor']=='inherited_protocol' for case in groups['D'])

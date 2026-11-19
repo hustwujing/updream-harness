@@ -15,11 +15,12 @@ BUSINESS_EXTERNAL_OPERATION_GRANTS={
 }
 
 
-def protocol(identity,title,prompt,expect,*,assets=(),features=(),hook=None,content_checks=()):
+def protocol(identity,title,prompt,expect,*,assets=(),features=(),hook=None,content_checks=(),coverage=None):
     return {"id":identity,"title":title,"complexity":"parallel_protocol","assets":list(assets),
         "prompt":prompt,"expect":expect,"content_checks":list(content_checks),"hook":hook,"status":"not_run",
         "attempts":[],"entry_mode":"deployed_browser_or_api","executor":"parallel_protocol",
-        "required_features":list(features),"provenance":"parallel-design"}
+        "required_features":list(features),"provenance":"parallel-design",
+        **({"coverage":coverage} if coverage else {})}
 
 
 PARALLEL_CASES=[
@@ -117,6 +118,102 @@ PARALLEL_CASES=[
 ]
 
 
+COVERAGE_CASES=[
+    protocol("K01","Web与视觉Skill并行覆盖",
+        "并行完成生成艺术、交互组件、Canvas设计、技术图、前端页面、Web制品构建和浏览器验收，并汇总为可检查的Web作品包。",
+        {"child_harnesses":7,"parallel":True,"delivery_roles":["web_bundle","evidence"]},
+        assets=("poster.png",),features=("skill_coverage","parallel","web"),
+        coverage={"tier":"required","skills":["algorithmic-art","anatomy","canvas-design",
+            "diagram-design","frontend-design","web-artifacts-builder","webapp-testing"],
+            "operations":[],"providers":[]}),
+    protocol("K02","品牌与演示Skill并行覆盖",
+        "并行形成品牌规范、主题、可编辑draw.io图、图片转可编辑PPT页和完整演示稿，再汇总成品牌演示交付包。",
+        {"child_harnesses":5,"parallel":True,"delivery_roles":["presentation_bundle","evidence"]},
+        assets=("poster.png","logo_rgba.png"),features=("skill_coverage","parallel","presentation"),
+        coverage={"tier":"required","skills":["brand-guidelines","theme-factory","drawio-skill",
+            "image-to-editable-ppt","codex-ppt"],"operations":[],"providers":[]}),
+    protocol("K03","数据与Office Skill并行覆盖",
+        "并行完成数据质量审计、EDA、SQL检查、Excel、Word和PDF，再汇总为一致的分析交付包。",
+        {"child_harnesses":6,"parallel":True,"delivery_roles":["office_bundle","evidence"]},
+        features=("skill_coverage","parallel","office","data"),
+        coverage={"tier":"required","skills":["data-quality-audit","programmatic-eda",
+            "query-validation","xlsx","docx","pdf"],"operations":[],"providers":[]}),
+    protocol("K04","媒体与动画Skill并行覆盖",
+        "并行完成媒体检查转码、Manim技术动画和聊天GIF，再汇总为媒体交付包。",
+        {"child_harnesses":3,"parallel":True,"delivery_roles":["media_bundle","evidence"]},
+        assets=("clip_a.mp4","music.wav"),features=("skill_coverage","parallel","media"),
+        coverage={"tier":"required","skills":["media-processing","manim-video",
+            "slack-gif-creator"],"operations":[],"providers":[]}),
+    protocol("K05","文档与沟通Skill并行覆盖",
+        "并行形成教程、现代化说明、协作文档、内部沟通稿和决策提醒，再汇总为沟通包。",
+        {"child_harnesses":5,"parallel":True,"delivery_roles":["communication_bundle","evidence"]},
+        features=("skill_coverage","parallel","documentation"),
+        coverage={"tier":"required","skills":["academy-guide","doc-and-modernize",
+            "doc-coauthoring","internal-comms","discernment-nudge"],"operations":[],"providers":[]}),
+    protocol("K06","Agent工程Skill并行覆盖",
+        "并行完成需求澄清、实施计划、系统调试、完成前验证、Skill脚手架、MCP服务和Claude API本地示例，再汇总证据。",
+        {"child_harnesses":7,"parallel":True,"delivery_roles":["engineering_bundle","evidence"]},
+        features=("skill_coverage","parallel","agent_engineering"),
+        coverage={"tier":"required","skills":["brainstorming","writing-plans",
+            "systematic-debugging","verification-before-completion","skill-creator",
+            "mcp-builder","claude-api"],"operations":[],"providers":[]}),
+    protocol("K07","视觉Operation并行流水线",
+        "检查输入图，真实抠图、语义分层并生成规格化预览；并行阶段完成后汇总不可变成果。",
+        {"operations":["artifact.inspect","image.segment","image.decompose","media.render"],
+            "parallel":True,"immutable_handoff":True},assets=("portrait.png",),
+        features=("operation_coverage","parallel","two_stage_dag"),
+        coverage={"tier":"required","skills":[],"operations":["artifact.inspect","image.segment",
+            "image.decompose","media.render"],"providers":[]}),
+    protocol("K08","音视频Operation并行流水线",
+        "并行转写、音频处理、视频规格化和序列合成，随后汇总检查时长、响度、字幕与编译报告。",
+        {"operations":["audio.transcribe","audio.process","media.concat_sequence","media.render"],
+            "parallel":True,"immutable_handoff":True},
+        assets=("clip_a.mp4","speech.wav","music.wav"),
+        features=("operation_coverage","parallel","two_stage_dag","media"),
+        coverage={"tier":"required","skills":[],"operations":["audio.transcribe","audio.process",
+            "media.concat_sequence","media.render"],"providers":[]}),
+    protocol("K09","全Provider必跑矩阵",
+        "以一次整组确认并行运行所有启用Provider Adapter的代表模式，验证同步、异步、引用素材、授权、对账和成果收集。",
+        {"provider_jobs":8,"adapters":6,"one_group_confirmation":True,"parallel":True},
+        assets=("poster.png","reference_tone.wav","clip_a.mp4"),
+        features=("provider_coverage","parallel","group_confirmation","budget"),
+        coverage={"tier":"required","skills":[],"operations":[],"providers":[
+            {"adapter":"ark_image","model":"seedream-5.0","capability":"image.generate",
+                "modes":["text_to_image","reference_image"]},
+            {"adapter":"minimax_t2a","model":"speech-2.8-turbo","capability":"audio.generate",
+                "modes":["text_to_audio","reference_voice"]},
+            {"adapter":"ark_video_v2","model":"sed2","capability":"video.generate",
+                "modes":["text_to_video"]},
+            {"adapter":"tripo_v3","model":"v3.1-20260211","capability":"model3d.generate",
+                "modes":["text_to_model"]},
+            {"adapter":"happyhorse_video_edit","model":"happyhorse-video-edit",
+                "capability":"video.edit","modes":["edit_video"]},
+            {"adapter":"wan27_video_edit","model":"wan-2.7-video-edit",
+                "capability":"video.edit","modes":["edit_video"]}]}),
+    protocol("K10","视频Provider全模式矩阵",
+        "并行运行Seedance首帧、首尾帧、多模态、编辑和扩展模式，验证每种模式的冻结引用与成果。",
+        {"provider_jobs":5,"adapter":"ark_video_v2","one_group_confirmation":True,"parallel":True},
+        assets=("poster.png","rocket.png","clip_a.mp4","speech.wav"),
+        features=("provider_coverage","parallel","group_confirmation","expensive"),
+        coverage={"tier":"expensive","skills":[],"operations":[],"providers":[
+            {"adapter":"ark_video_v2","model":"sed2","capability":"video.generate",
+                "modes":["first_frame","first_last_frame","multimodal_reference"]},
+            {"adapter":"ark_video_v2","model":"sed2","capability":"video.edit",
+                "modes":["edit_video","extend_video"]}]}),
+    protocol("K11","3D Provider全模式矩阵",
+        "先并行完成图片和多视图建模，再基于成功Job分别贴图、减面和格式转换，验证两阶段依赖与成果。",
+        {"phase_one_jobs":2,"phase_two_jobs":3,"adapter":"tripo_v3",
+            "one_confirmation_per_phase":True,"immutable_handoff":True},
+        assets=("poster.png","rocket.png","color_grid.png"),
+        features=("provider_coverage","parallel","two_stage_dag","group_confirmation","expensive"),
+        coverage={"tier":"expensive","skills":[],"operations":[],"providers":[
+            {"adapter":"tripo_v3","model":"v3.1-20260211","capability":"model3d.generate",
+                "modes":["image_to_model","multiview_to_model"]},
+            {"adapter":"tripo_v3","model":"v3.1-20260211","capability":"model3d.transform",
+                "modes":["texture_model","decimate_model","convert_model"]}]}),
+]
+
+
 def inherited_adaptation(value):
     hook=value.get("dynamic_hook") or "artifact_contract"
     return ("Preserve the original "+value["id"]+" risk and assertions through the Parallel "
@@ -159,9 +256,10 @@ def main():
         "rules":{"stop_on_program_or_prompt_defect":True,"rerun_failed_then_affected_only":True,
             "success_requires_user_surface_and_internal_audit":True,"evidence_root":".data/evidence/real-campaign",
             "forbid_case_specific_product_fixes":True},
-        "runnable_case_count":len(business)+len(inherited)+len(PARALLEL_CASES),
+        "runnable_case_count":len(business)+len(inherited)+len(PARALLEL_CASES)+len(COVERAGE_CASES),
         "business_case_count":len(business),"inherited_protocol_case_count":len(inherited),
-        "parallel_case_count":len(PARALLEL_CASES),"cases":[*business,*inherited,*PARALLEL_CASES],
+        "parallel_case_count":len(PARALLEL_CASES)+len(COVERAGE_CASES),
+        "cases":[*business,*inherited,*PARALLEL_CASES,*COVERAGE_CASES],
         "superseded_cases":superseded}
     OUTPUT.write_text(json.dumps(result,ensure_ascii=False,indent=2)+"\n")
     print(json.dumps({"output":str(OUTPUT),"runnable":len(result["cases"]),
