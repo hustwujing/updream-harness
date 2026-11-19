@@ -1,0 +1,11 @@
+.execution-graph-canvas .execution-node{grid-template-columns:24px minmax(0,1fr)}
+.execution-role-icon{position:relative;width:22px;height:22px;border-radius:6px;background:#edf2ee}
+.execution-role-icon>svg{animation:none!important}
+.execution-status-icon{position:absolute;right:-3px;bottom:-3px;display:grid;place-items:center;width:11px;height:11px;border:1px solid #fff;border-radius:50%;background:#fff;color:#5b7664}
+.execution-node.active .execution-status-icon svg{animation:spin 1s linear infinite!important}
+.role-family-user{color:#56728b;background:#eef4f8}
+.role-family-harness{color:#3f7659;background:#e9f4ed}
+.role-family-coordination{color:#705f8c;background:#f1edf7}
+.role-family-execution{color:#796b45;background:#f6f2e7}
+.role-family-external{color:#3f7184;background:#eaf3f6}
+.role-family-review{color:#8a5d49;background:#f7eee9}

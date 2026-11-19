@@ -134,6 +134,12 @@ only native tool type plus structured command-action types. Raw diagnostics stay
 available through the owner-scoped API; the ordinary timeline never becomes a
 JSON/log viewer.
 
+Primary and Child Harness details are a user projection, not a diagnostic
+surface. A running Harness with no active projected tool remains visibly in
+`等待模型响应`; text deltas never become rows. The operator raw API remains
+available for replay and incident analysis even though the browser does not
+request it.
+
 ## Runtime child durability
 
 Native Interaction delivery is tri-state. A successful stdin drain is

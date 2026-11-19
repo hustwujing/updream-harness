@@ -25,7 +25,8 @@ async def test_execution_graph_contains_only_factual_boundaries_and_truthful_loc
             idempotency_key='graph-provider',parameters={})
         child=JobRequest(local_job_id='edit',kind=JobKind.HARNESS,adapter='child-harness',
             descriptor_id='delegate.harness',descriptor_version='1',descriptor_digest='b'*64,
-            idempotency_key='graph-child',parameters={'harness':'codex'},child_profile_id='child-general',
+            idempotency_key='graph-child',parameters={'harness':'codex','model':'gpt-5.6',
+                'objective':'Analyze the source and produce the requested edit'},child_profile_id='child-general',
             runtime_profile_id='general-cpu',resource_requirements={'harness':'codex','image_digest':'c'*64})
         draft,_=await store.create_job_group_draft('owner',JobGroupDraftCreate(thread_id=thread.id,
             origin_turn_id=turn.id,idempotency_key='graph-draft',jobs=[provider,child],
@@ -50,6 +51,15 @@ async def test_execution_graph_contains_only_factual_boundaries_and_truthful_loc
         assert child_node['resources']['runtime_profile_id']=='general-cpu'
         assert child_node['resources']['child_profile_id']=='child-general'
         assert child_node['resources']['harness']=='codex'
+        assert child_node['harness_view'] is True
+        assert child_node['objective']=='Analyze the source and produce the requested edit'
+        assert child_node['harness']=='codex' and child_node['model']=='gpt-5.6'
+        primary_node=next(node for node in graph['nodes'] if node['type']=='primary_harness')
+        assert primary_node['harness_view'] is True and primary_node['objective']=='parallel work'
+        assert primary_node['harness']=='codex' and primary_node['model']=='gpt-5.6'
+        assert {node['visual_role'] for node in graph['nodes']} >= {
+            'user','primary_harness','job_confirmation','job_group','wait_barrier',
+            'external_capability','child_harness','user_decision'}
         assert {'submitted_by','contains','requested_interaction'}<={edge['kind'] for edge in graph['edges']}
         unchanged=await ExecutionGraphProjector(store).snapshot(thread.id,'owner',cursor=graph['cursor'])
         assert unchanged=={'cursor':graph['cursor'],'reset':False,'nodes':[],'edges':[]}

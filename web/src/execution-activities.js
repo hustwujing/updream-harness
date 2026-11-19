@@ -11,9 +11,10 @@ export function mergeExecutionActivities(current,incoming){
 const categories={
  read:{label:'读取资料'},change:{label:'修改文件'},command:{label:'执行处理命令'},
  image:{label:'检查图片'},external:{label:'调用外部工具'},plan:{label:'更新执行计划'},
+ tool:{label:'调用工具'},
 };
 
-function toolCategory(row){
+export function executionActivityCategory(row){
  const name=String(row.summary||row.payload?.name||'').toLowerCase();
  if(name==='imageview')return 'image';
  if(name==='mcptoolcall'||name==='dynamictoolcall')return 'external';
@@ -29,14 +30,16 @@ function toolCategory(row){
   }
   return 'command';
  }
- return `tool:${name||'other'}`;
+ return 'tool';
 }
+
+export function executionActivityCategoryLabel(category){return categories[category]?.label||'执行操作'}
 
 export function groupExecutionActivities(rows){
  const groups=new Map(),visible=[];
  for(const row of rows){
   if(row.kind!=='tool'||row.status==='failed'){visible.push(row);continue}
-  const category=toolCategory(row),existing=groups.get(category);
+  const category=executionActivityCategory(row),existing=groups.get(category);
   if(existing){
    existing.activities.push(row);
    existing.operation_count+=1;
@@ -46,7 +49,7 @@ export function groupExecutionActivities(rows){
    existing.updated_at=row.updated_at||existing.updated_at;
    continue;
   }
-  const label=categories[category]?.label||String(row.summary||'执行工具');
+  const label=executionActivityCategoryLabel(category);
   const group={...row,id:`activity-group:${category}`,kind:'activity_group',summary:label,
    operation_count:1,raw_count:Number(row.raw_count||1),activities:[row]};
   groups.set(category,group);visible.push(group);

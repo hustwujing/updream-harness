@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="conductor-tile" x1="7" y1="5" x2="58" y2="61" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#24463A"/>
+      <stop offset="1" stop-color="#10251E"/>
+    </linearGradient>
+    <linearGradient id="conductor-flow" x1="15" y1="16" x2="48" y2="47" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#DFFFF0"/>
+      <stop offset="1" stop-color="#72D6A0"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="15" fill="url(#conductor-tile)"/>
+  <rect x=".5" y=".5" width="63" height="63" rx="14.5" stroke="#FFFFFF" stroke-opacity=".1"/>
+  <path d="M17 19L31 31M17 45L31 33M47 32H33" stroke="url(#conductor-flow)" stroke-width="3.4" stroke-linecap="round"/>
+  <circle cx="16" cy="18" r="4" fill="#DFFFF0"/>
+  <circle cx="16" cy="46" r="4" fill="#72D6A0"/>
+  <circle cx="48" cy="32" r="4" fill="#B7F1D0"/>
+  <circle cx="32" cy="32" r="6" fill="#F5C96B"/>
+  <path d="M20 49L45 18" stroke="#FFF7DC" stroke-width="3.2" stroke-linecap="round"/>
+  <circle cx="46.5" cy="16.5" r="2.5" fill="#F5C96B"/>
+</svg>

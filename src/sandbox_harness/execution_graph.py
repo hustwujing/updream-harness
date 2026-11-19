@@ -70,7 +70,7 @@ def group_progress(groups,state_rows):
 def wait_barrier(group,progress):
     complete=progress['terminal']>=progress['total']
     paused=not complete and progress['paused']>=progress['total']-progress['terminal']
-    return {'id':'wait_barrier:'+group.id,'type':'wait_barrier','role':'子任务等待',
+    return {'id':'wait_barrier:'+group.id,'type':'wait_barrier','role':'子任务等待','visual_role':'wait_barrier',
         'title':('全部子任务已返回' if complete else '子任务已暂停' if paused else '正在等待全部子任务返回')+
             f" · {progress['terminal']}/{progress['total']}",
         'state':'COMPLETED' if complete else 'PAUSED' if paused else 'RUNNING','location':'control_plane',
@@ -235,11 +235,14 @@ class ExecutionGraphProjector:
                 else '后台结果已返回')
             nodes.append({'id':user_id,'type':'continuation' if turn.internal else 'user_turn',
                 'role':'任务续接' if turn.internal else '用户输入','title':continuation_title if turn.internal else turn.public_message[:120],
+                'visual_role':'continuation' if turn.internal else 'user',
                 'state':'COMPLETED','location':'control_plane','location_label':'控制面',
                 'started_at':iso(turn.created_at),'ended_at':iso(turn.created_at),'duration_ms':0,
                 'retries':0,'activity_count':0,'turn_id':turn.id})
             nodes.append({'id':primary_id,'type':'primary_harness','role':'主任务执行员',
-                'title':f'{turn.harness} · {turn.model}','state':turn.state,
+                'title':f'{turn.harness} · {turn.model}','state':turn.state,'visual_role':'primary_harness',
+                'harness_view':True,'objective':turn.public_message or turn.message,
+                'harness':turn.harness,'model':turn.model,
                 'location':'opensandbox' if turn.sandbox_id else 'scheduler',
                 'location_label':'OpenSandbox' if turn.sandbox_id else '等待调度',
                 'started_at':iso(turn.created_at),'ended_at':iso(turn.updated_at) if TurnState(turn.state) in TERMINAL else None,
@@ -251,7 +254,8 @@ class ExecutionGraphProjector:
             draft_state=('EXPIRED' if draft.state in {'DRAFT','AWAITING_CONFIRMATION'}
                 and utc_datetime(draft.expires_at)<=now() else draft.state)
             nodes.append({'id':identity,'type':'job_group_draft','role':'任务确认',
-                'title':'并行任务等待确认','state':draft_state,'location':'control_plane','location_label':'控制面',
+                'title':'并行任务等待确认','state':draft_state,'visual_role':'job_confirmation',
+                'location':'control_plane','location_label':'控制面',
                 'started_at':iso(draft.created_at),'ended_at':iso(draft.updated_at) if draft_state in {'REJECTED','EXPIRED','CONFIRMED'} else None,
                 'duration_ms':duration_ms(draft.created_at,draft.updated_at) if draft_state in {'REJECTED','EXPIRED','CONFIRMED'} else 0,
                 'retries':0,'activity_count':0,'turn_id':draft.origin_turn_id})
@@ -260,7 +264,7 @@ class ExecutionGraphProjector:
             identity='group:'+group.id
             progress=progress_by_group[group.id]
             nodes.append({'id':identity,'type':'job_group','role':'并行任务组','title':f'{group.member_count} 个并行任务',
-                'state':group.state,'location':'control_plane','location_label':'协调器',
+                'state':group.state,'visual_role':'job_group','location':'control_plane','location_label':'协调器',
                 'started_at':iso(group.created_at),'ended_at':iso(group.terminal_at),
                 'duration_ms':duration_ms(group.created_at,group.terminal_at) if group.terminal_at else 0,'retries':0,
                 'activity_count':0,'turn_id':group.origin_turn_id,'progress':progress})
@@ -276,9 +280,12 @@ class ExecutionGraphProjector:
         for job in jobs:
             reservation=reservation_by_job.get(job.id);resources=json.loads(reservation.gpu_ids_json) if reservation else []
             request=json.loads(job.request_json);requirements=request.get('resource_requirements') or {}
+            parameters=request.get('parameters') or {}
             runtime_profile=request.get('runtime_profile_id') or ''
             role=('质量审查员' if job.descriptor_id=='review.submit' else '子 Harness'
                 if job.kind=='harness' else '外部能力任务' if job.kind=='provider' else '任务执行员')
+            visual_role=('reviewer' if job.descriptor_id=='review.submit' else 'child_harness'
+                if job.kind=='harness' else 'external_capability' if job.kind=='provider' else 'worker')
             location=('opensandbox' if job.kind=='harness' else 'external_provider' if job.kind=='provider'
                 else 'gpu_worker' if resources else 'host_worker')
             labels={'opensandbox':'OpenSandbox','external_provider':'外部服务','gpu_worker':'GPU Worker','host_worker':'宿主 Worker'}
@@ -290,6 +297,11 @@ class ExecutionGraphProjector:
             contract=JOB_ERROR_CONTRACTS.get(error_code)
             nodes.append({'id':'job:'+job.id,'type':'job','role':role,
                 'title':f'{job.local_job_id} · {job.descriptor_id}','state':job.state,
+                'visual_role':visual_role,
+                'harness_view':job.kind=='harness',
+                'objective':str(parameters.get('objective') or job.local_job_id),
+                'harness':str(requirements.get('harness') or parameters.get('harness') or ''),
+                'model':str(parameters.get('model') or ''),
                 'location':location,'location_label':location_label,
                 'started_at':iso(job.created_at),'ended_at':iso(job.terminal_at),
                 'duration_ms':duration_ms(job.created_at,job.terminal_at) if job.terminal_at else 0,
@@ -309,8 +321,8 @@ class ExecutionGraphProjector:
                 'resources':{'cpu':reservation.cpu if reservation else None,
                     'memory_mb':reservation.memory_mb if reservation else None,'gpu_ids':resources,
                     'runtime_profile_id':runtime_profile,'child_profile_id':request.get('child_profile_id') or '',
-                    'harness':requirements.get('harness') or request.get('parameters',{}).get('harness') or '',
-                    'model':request.get('parameters',{}).get('model') or '',
+                    'harness':requirements.get('harness') or parameters.get('harness') or '',
+                    'model':parameters.get('model') or '',
                     'skill_ids':request.get('skill_ids') or [],
                     'capability_ids':requirements.get('required_capability_ids') or [],
                     'network_origins':request.get('network_origins') or []}})
@@ -322,7 +334,7 @@ class ExecutionGraphProjector:
             batch_state={'open':'RUNNING','sealed':'WAITING_EXTERNAL','delivering':'WAITING_EXTERNAL',
                 'continued':'CONTINUED','blocked':'BLOCKED'}.get(batch.status,batch.status.upper())
             nodes.append({'id':batch_id,'type':'media_batch','role':'媒体任务组','title':'媒体生成批次',
-                'state':batch_state,'location':'control_plane','location_label':'协调器',
+                'state':batch_state,'visual_role':'media_group','location':'control_plane','location_label':'协调器',
                 'started_at':iso(batch.created_at),'ended_at':iso(batch.continued_at),
                 'duration_ms':duration_ms(batch.created_at,batch.continued_at) if batch.continued_at else 0,
                 'retries':max(0,batch.attempt_count-1),'activity_count':0,'turn_id':batch.turn_id})
@@ -335,7 +347,7 @@ class ExecutionGraphProjector:
             expired=state=='AWAITING_CONFIRMATION' and utc_datetime(draft.expires_at)<=now()
             state='EXPIRED' if expired else state
             nodes.append({'id':draft_id,'type':'media_draft','role':'媒体任务确认',
-                'title':f'{draft.kind} · {draft.model}','state':state,
+                'title':f'{draft.kind} · {draft.model}','state':state,'visual_role':'media_confirmation',
                 'location':'control_plane','location_label':'控制面','started_at':iso(draft.created_at),
                 'ended_at':iso(draft.updated_at) if state in {'CONFIRMED','REJECTED','EXPIRED','CANCELLED'} else None,
                 'duration_ms':duration_ms(draft.created_at,draft.updated_at)
@@ -347,7 +359,7 @@ class ExecutionGraphProjector:
             state=media_job_state(media.status);error_code=media.error_code if state in {'FAILED','UNKNOWN'} else ''
             contract=JOB_ERROR_CONTRACTS.get(error_code)
             nodes.append({'id':'media-job:'+media.id,'type':'media_job','role':'媒体生成任务',
-                'title':f'{media.kind} · {media.model}','state':state,'location':'external_provider',
+                'title':f'{media.kind} · {media.model}','state':state,'visual_role':'media_generation','location':'external_provider',
                 'location_label':'外部服务','started_at':iso(media.created_at),'ended_at':iso(media.finished_at),
                 'duration_ms':duration_ms(media.created_at,media.finished_at) if media.finished_at else 0,
                 'retries':max(0,media.generation),'activity_count':0,'turn_id':media.turn_id,
@@ -362,7 +374,7 @@ class ExecutionGraphProjector:
         for gate in gates:
             identity='review-gate:'+gate.reviewer_job_id
             nodes.append({'id':identity,'type':'review_gate','role':'审查发布门',
-                'title':gate.artifact_role,'state':gate.state.upper(),
+                'title':gate.artifact_role,'state':gate.state.upper(),'visual_role':'review_gate',
                 'location':'control_plane','location_label':'控制面',
                 'started_at':iso(gate.created_at),'ended_at':iso(gate.updated_at)
                     if gate.state!='pending' else None,
@@ -377,7 +389,7 @@ class ExecutionGraphProjector:
         for interaction in interactions:
             identity='interaction:'+interaction.id
             nodes.append({'id':identity,'type':'interaction','role':'用户决策','title':interaction.kind,
-                'state':interaction.status,'location':'control_plane','location_label':'控制面',
+                'state':interaction.status,'visual_role':'user_decision','location':'control_plane','location_label':'控制面',
                 'started_at':iso(interaction.created_at),'ended_at':iso(interaction.updated_at) if interaction.status in {'responded','expired'} else None,
                 'duration_ms':duration_ms(interaction.created_at,interaction.updated_at) if interaction.status in {'responded','expired'} else 0,
                 'retries':0,'activity_count':0,'turn_id':interaction.turn_id})

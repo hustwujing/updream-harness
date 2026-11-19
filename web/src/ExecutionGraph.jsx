@@ -1,12 +1,26 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  BadgeCheck,
+  Bot,
   ChevronDown,
   CircleAlert,
   CircleCheck,
+  CircleHelp,
+  Clapperboard,
+  ClipboardCheck,
+  CloudCog,
   Clock3,
+  GitBranch,
+  Hourglass,
+  Layers3,
+  ListChecks,
   LoaderCircle,
   MapPin,
   RotateCcw,
+  ShieldCheck,
+  UserRound,
+  WandSparkles,
+  Wrench,
   Workflow,
   X,
 } from "lucide-react";
@@ -14,6 +28,8 @@ import { apiUrl, getExecutionGraph, listJobActivities } from "./api";
 import { formatDuration } from "./activity-time";
 import {activityCursor,groupExecutionActivities,mergeExecutionActivities} from "./execution-activities";
 import "./execution-activities.css";
+import HarnessRunDetails from "./HarnessRunDetails";
+import "./role-icons.css";
 import {
   defaultCollapsedGroups,
   executionGraphView,
@@ -128,6 +144,15 @@ const sideEffectLabels = {
   completed: "外部执行已完成",
   unknown: "外部副作用待确认",
 };
+const roleIcons={user:UserRound,continuation:RotateCcw,primary_harness:WandSparkles,
+ job_confirmation:ClipboardCheck,job_group:GitBranch,wait_barrier:Hourglass,
+ reviewer:ListChecks,child_harness:Bot,external_capability:CloudCog,worker:Wrench,
+ media_group:Layers3,media_confirmation:BadgeCheck,media_generation:Clapperboard,
+ review_gate:ShieldCheck,user_decision:CircleHelp};
+const roleFamilies={user:'user',continuation:'user',primary_harness:'harness',child_harness:'harness',
+ job_confirmation:'coordination',job_group:'coordination',wait_barrier:'coordination',
+ reviewer:'review',review_gate:'review',external_capability:'external',media_generation:'external',
+ worker:'execution',media_group:'execution',media_confirmation:'execution',user_decision:'user'};
 
 function elapsed(node, now) {
   if (node.ended_at) return node.duration_ms || 0;
@@ -190,8 +215,6 @@ export default function ExecutionGraph({ thread, items = [] }) {
   });
   const [selectedId, setSelectedId] = useState(""),
     [activities, setActivities] = useState([]),
-    [rawActivities,setRawActivities]=useState([]),
-    [technical,setTechnical]=useState(false),
     [history, setHistory] = useState(false);
   const [olderBefore, setOlderBefore] = useState(""),
     [loadingOlder, setLoadingOlder] = useState(false),
@@ -234,8 +257,6 @@ export default function ExecutionGraph({ thread, items = [] }) {
     setGraph({ nodes: [], edges: [], cursor: "", metadata: {} });
     setSelectedId("");
     setActivities([]);
-    setRawActivities([]);
-    setTechnical(false);
     setHistory(false);
     setOlderBefore("");
     setOpen(false);
@@ -366,8 +387,6 @@ export default function ExecutionGraph({ thread, items = [] }) {
   }, [open]);
   useEffect(() => {
     setActivities([]);
-    setRawActivities([]);
-    setTechnical(false);
     setActivityError("");
   }, [selected?.job_id, selected?.retries]);
   useEffect(() => {
@@ -397,19 +416,6 @@ export default function ExecutionGraph({ thread, items = [] }) {
       clearTimeout(timer);
     };
   }, [selected?.job_id, selected?.state, selected?.retries]);
-  useEffect(()=>{
-    if(!technical||!selected?.job_id)return;
-    let stopped=false,timer,cursor=0;
-    const load=async()=>{
-      try{
-        const rows=await listJobActivities(selected.job_id,cursor,'raw');
-        if(rows.length){cursor=Math.max(cursor,...rows.map(row=>Number(row.sequence||0)));
-          if(!stopped)setRawActivities(current=>mergeExecutionActivities(current,rows))}
-      }catch(value){if(!stopped)setActivityError(value.message||'技术详情加载失败')}
-      finally{if(!stopped&&!terminal.has(selected.state))timer=setTimeout(load,1200)}
-    };
-    setRawActivities([]);load();return()=>{stopped=true;clearTimeout(timer)};
-  },[technical,selected?.job_id,selected?.state,selected?.retries]);
   if (!thread) return null;
 
   const activeCount = graph.nodes.filter(
@@ -421,7 +427,10 @@ export default function ExecutionGraph({ thread, items = [] }) {
             item.turn_id === selected.turn_id && activityTypes.has(item.type),
         )
       : [],
-    details = selected?.job_id ? (technical?rawActivities:groupExecutionActivities(activities)) : primaryActivities;
+    details = selected?.job_id ? groupExecutionActivities(activities) : primaryActivities;
+  const harnessActivities=selected?.job_id?activities:primaryActivities;
+  const harnessProgress=[...graph.nodes].reverse().find(node=>node.type==='wait_barrier'
+    &&node.turn_id===selected?.turn_id)?.progress||null;
   const saveManual = (value) => {
     setManual(value);
     try {
@@ -510,7 +519,8 @@ export default function ExecutionGraph({ thread, items = [] }) {
           <X size={14} />
         </button>
       </header>
-      <div>
+      {selected.harness_view?<HarnessRunDetails node={selected} activities={harnessActivities}
+        progress={harnessProgress} now={now} activityError={activityError}/>:<div>
         <dl className="execution-node-facts">
           <dt>类型</dt>
           <dd>{typeLabels[selected.type] || selected.type}</dd>
@@ -574,10 +584,6 @@ export default function ExecutionGraph({ thread, items = [] }) {
             {activityError}
           </p>
         )}
-        {selected.job_id&&<div className="execution-activity-mode"><button type="button"
-          aria-pressed={technical} onClick={()=>setTechnical(value=>!value)}>
-          {technical?'返回执行阶段':'查看诊断事件'}</button>{!technical&&activities.length>0&&<small>
-          {activities.reduce((total,row)=>total+(row.raw_count||1),0)} 条原始事件已归并为 {details.length} 个阶段</small>}</div>}
         {details.length ? (
           details.slice(-30).map((value) => value.kind==='activity_group' ? (
             <details className="execution-activity-group" key={value.id}>
@@ -629,7 +635,7 @@ export default function ExecutionGraph({ thread, items = [] }) {
             ))}
           </section>
         )}
-      </div>
+      </div>}
     </>
   ) : (
     <div className="execution-details-empty">未选择节点</div>
@@ -828,6 +834,7 @@ export default function ExecutionGraph({ thread, items = [] }) {
                         key={node.id}
                         data-node-id={node.id}
                         data-band={node.band}
+                        data-visual-role={node.visual_role || "worker"}
                         className={`execution-node ${node.type} ${!terminal.has(node.state) ? "active" : ""} ${warningStates.has(node.state) ? "warning" : ""} ${selectedId === node.id ? "selected" : ""}`}
                         style={{
                           left: node.x,
@@ -856,14 +863,15 @@ export default function ExecutionGraph({ thread, items = [] }) {
                           <MapPin size={10} />
                           {node.location_label}
                         </span>
-                        <span className="execution-state">
-                          {!terminal.has(node.state) ? (
-                            <LoaderCircle size={13} />
+                        <span className={`execution-state execution-role-icon role-family-${roleFamilies[node.visual_role]||'execution'}`}>
+                          {React.createElement(roleIcons[node.visual_role]||Workflow,{size:15})}
+                          <i className="execution-status-icon">{!terminal.has(node.state) ? (
+                            <LoaderCircle size={8} />
                           ) : warningStates.has(node.state) ? (
-                            <CircleAlert size={13} />
+                            <CircleAlert size={8} />
                           ) : (
-                            <CircleCheck size={13} />
-                          )}
+                            <CircleCheck size={8} />
+                          )}</i>
                         </span>
                         <strong>{node.role}</strong>
                         <em>{node.title}</em>

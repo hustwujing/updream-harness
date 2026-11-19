@@ -54,9 +54,13 @@ Turn has no remaining rows. Do not make reconnect correctness depend on Redis.
   sequence. The default UI groups projected tools into expandable phases using
   structured native tool metadata, never command-text or model-text matching.
   Failed tools, warnings, errors and user waits remain independent rows. The
-  diagnostic toggle may preserve raw order, but timeline copy remains localized
-  and bounded: never render native JSON, internal absolute paths or transport
-  field names directly into the product UI.
+  browser never requests or exposes the raw view. Clicking a Primary or Child
+  Harness shows objective, current stage, elapsed time, child progress, semantic
+  timeline and outputs in one continuous panel. Never render native JSON,
+  internal absolute paths or transport field names directly into the product UI.
+- Execution Graph nodes carry a stable `visual_role`; role icons are distinct
+  from their status badge. Frontend code must not infer a role icon from a
+  translated display label.
 - A terminal Turn with pending media Drafts is displayed as `等待确认 N 项媒体生成`,
   not as completed. Drafts sharing the same origin Turn use one batch decision;
   pending confirmation does not animate the execution graph as active work.
