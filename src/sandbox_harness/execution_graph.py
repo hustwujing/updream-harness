@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy import case,func,or_,select
 
 from .domain import TERMINAL, TurnState
+from .job_errors import JOB_ERROR_CONTRACTS
 from .store import (InteractionRow,JobActivityRow,JobArtifactRow,JobAttemptRow,JobGroupDraftRow,
     JobGroupRow,JobOutboxRow,JobRow,MediaBatchRow,MediaDraftRow,MediaJobRow,
     ResourceReservationRow,ReviewGateRow,ThreadRow,TurnOrderRow,TurnRow,now,utc_datetime)
@@ -29,6 +30,8 @@ def duration_ms(start,end):
 
 
 def public_error_summary(code:str)->str:
+    contract=JOB_ERROR_CONTRACTS.get(code)
+    if contract:return contract.message
     if code in {'model_rate_limited','rate_limited','provider_rate_limited'}:
         return '模型服务限流，请稍后重试'
     if code in {'model_not_supported','model_route_missing','model_not_found'}:
@@ -273,7 +276,9 @@ class ExecutionGraphProjector:
             location_label=labels[location]+((' · '+runtime_profile) if location=='opensandbox' and runtime_profile else '')
             try:result=json.loads(job.result_json or '{}')
             except (TypeError,ValueError):result={}
-            error_code=str(result.get('error_code') or '') if job.state=='FAILED' else ''
+            error_code=(str(result.get('error_code') or '')
+                if job.state in {'FAILED','BLOCKED','UNKNOWN'} else '')
+            contract=JOB_ERROR_CONTRACTS.get(error_code)
             nodes.append({'id':'job:'+job.id,'type':'job','role':role,
                 'title':f'{job.local_job_id} · {job.descriptor_id}','state':job.state,
                 'location':location,'location_label':location_label,
@@ -281,7 +286,14 @@ class ExecutionGraphProjector:
                 'duration_ms':duration_ms(job.created_at,job.terminal_at) if job.terminal_at else 0,
                 'retries':retry_count.get(job.id,0),
                 'activity_count':activity_count.get(job.id,0),'job_id':job.id,'turn_id':job.origin_turn_id,
-                'error_code':error_code,'error_summary':public_error_summary(error_code),
+                'error_code':error_code,
+                'error_summary':str(result.get('error_message') or public_error_summary(error_code)),
+                'error_guidance':str(result.get('error_guidance') or (
+                    contract.guidance if contract else '')),
+                'failed_phase':str(result.get('failed_phase') or ''),
+                'retryable':bool(result.get('retryable',False)),
+                'retry_class':str(result.get('retry_class') or ''),
+                'side_effect_state':str(result.get('side_effect_state') or ''),
                 'artifacts':artifacts_by_job.get(job.id,[]),
                 'artifact_count':artifact_counts.get(job.id,0),
                 'artifacts_truncated':artifact_counts.get(job.id,0)>len(artifacts_by_job.get(job.id,[])),
@@ -324,13 +336,19 @@ class ExecutionGraphProjector:
             media=media_jobs_by_draft.get(draft.id)
             if not media:continue
             state=media_job_state(media.status);error_code=media.error_code if state in {'FAILED','UNKNOWN'} else ''
+            contract=JOB_ERROR_CONTRACTS.get(error_code)
             nodes.append({'id':'media-job:'+media.id,'type':'media_job','role':'媒体生成任务',
                 'title':f'{media.kind} · {media.model}','state':state,'location':'external_provider',
                 'location_label':'外部服务','started_at':iso(media.created_at),'ended_at':iso(media.finished_at),
                 'duration_ms':duration_ms(media.created_at,media.finished_at) if media.finished_at else 0,
                 'retries':max(0,media.generation),'activity_count':0,'turn_id':media.turn_id,
                 'media_job_id':media.id,'progress':media.progress,'phase':media.phase,
-                'error_code':error_code,'error_summary':public_error_summary(error_code)})
+                'error_code':error_code,'error_summary':public_error_summary(error_code),
+                'error_guidance':contract.guidance if contract else '',
+                'failed_phase':contract.phase if contract else '',
+                'retryable':contract.retryable if contract else False,
+                'retry_class':contract.retry_class if contract else '',
+                'side_effect_state':contract.side_effect_state if contract else ''})
             edges.append({'from':draft_id,'to':'media-job:'+media.id,'kind':'contains'})
         for gate in gates:
             identity='review-gate:'+gate.reviewer_job_id

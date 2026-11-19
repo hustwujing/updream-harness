@@ -148,7 +148,7 @@ async def test_segment_exposes_controlled_cuda_failure_as_node_health_retry(tmp_
         {'prompt':'dolphin'},outputs,{'cpu':2,'memory_mb':32768,'disk_mb':4096,'gpu':1})
     async def runner(*_):
         raise ControlledOperationError('Controlled CUDA runtime is unavailable',
-            error_code='gpu_runtime_unavailable',failed_phase='operation_runtime',
+            error_code='gpu_runtime_unavailable',failed_phase='execution',
             retry_class='node_health_change',retryable=True,infrastructure=True)
     class Health:
         invalidated=()
@@ -160,7 +160,7 @@ async def test_segment_exposes_controlled_cuda_failure_as_node_health_retry(tmp_
         with pytest.raises(PreAcceptFailure) as raised:await adapter.submit(context)
         assert raised.value.infrastructure and raised.value.retryable
         assert raised.value.error_code=='gpu_runtime_unavailable'
-        assert raised.value.failed_phase=='operation_runtime'
+        assert raised.value.failed_phase=='execution'
         assert raised.value.retry_class=='node_health_change'
         assert health.invalidated==('gpu-0',)
         assert not await scheduler.active_reservation(job.id)

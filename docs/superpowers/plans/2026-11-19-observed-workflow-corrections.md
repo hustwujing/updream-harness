@@ -71,3 +71,11 @@
 - [ ] Add a multimodal report case covering transcription, media normalization, asynchronous image generation and `docx` aggregation.
 - [ ] Add a mixed in-flight recovery case that restarts the Job Worker and verifies no duplicate Provider submission and one Primary continuation.
 - [ ] Regenerate the catalog, run its unit tests, deploy, and execute the three cases against the isolated environment.
+
+### Task 8: External Execution Error Contract
+
+- [ ] Register stable Operation, Provider, Child Harness and Worker error contracts.
+- [ ] Normalize pre-accept, accepted, collection, timeout and reconciliation failures at Durable Worker boundaries.
+- [ ] Return safe reason, guidance, phase, retry class and side-effect state to the execution graph and media views.
+- [ ] Add contract, Worker, Adapter, projection and browser regressions.
+- [ ] Refresh the development standard for every future external Adapter.

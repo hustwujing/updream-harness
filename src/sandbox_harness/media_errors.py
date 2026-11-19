@@ -1,25 +1,15 @@
 from __future__ import annotations
 
+from .job_errors import JOB_ERROR_CONTRACTS
 
-MEDIA_ERROR_GUIDANCE = {
-    "provider_input_invalid": "Correct the declared parameters or media constraints before creating a new draft.",
-    "provider_content_policy_rejected": "Do not retry unchanged. Use different authorized content or a local non-generative method.",
-    "provider_authentication_failed": "Provider credentials or account access require operator action; do not retry from the Agent.",
-    "provider_permission_denied": "The Provider account lacks this capability; request operator action or choose another enabled capability.",
-    "provider_rate_limited": "The platform will retry with backoff. Do not create a duplicate Job.",
-    "provider_service_unavailable": "The Provider is temporarily unavailable. Keep the existing Job; do not duplicate the request.",
-    "provider_submission_outcome_unknown": "Submission may have succeeded. Never resubmit without deterministic reconciliation.",
-    "provider_processing_failed": "The Provider accepted the Job but processing failed. Change the input or method before retrying.",
-    "provider_job_expired": "The Provider Job expired before producing a result. Create a new draft only after reviewing scope and limits.",
-    "provider_result_unresolved": "The Provider ID is retained but no terminal result was confirmed. Use the existing Job refresh path.",
-    "provider_output_unavailable": "The Provider result exists but download is temporarily unavailable. The platform will retry it.",
-    "provider_result_invalid": "The returned file or manifest failed deterministic validation; do not present it as a deliverable.",
-    "media_reference_unavailable": "The frozen reference could not be published or registered. Keep the same ProjectFile and inspect platform status.",
-    "media_reference_policy_rejected": "Ark rejected the reference content. Do not retry the same bytes; use another authorized asset or local editing.",
-    "voice_clone_input_invalid": "Use one clear 10-300 second MP3, M4A or WAV reference no larger than 20 MB.",
-    "voice_clone_permission_denied": "The Provider account cannot clone voices; operator action is required.",
-    "voice_clone_failed": "Voice extraction failed. Review reference quality and authorization before creating a new draft.",
-}
+MEDIA_ERROR_CODES=("provider_input_invalid","provider_content_policy_rejected",
+    "provider_authentication_failed","provider_permission_denied","provider_rate_limited",
+    "provider_service_unavailable","provider_submission_outcome_unknown",
+    "provider_processing_failed","provider_job_expired","provider_result_unresolved",
+    "provider_output_unavailable","provider_result_invalid","media_reference_unavailable",
+    "media_reference_policy_rejected","voice_clone_input_invalid",
+    "voice_clone_permission_denied","voice_clone_failed")
+MEDIA_ERROR_GUIDANCE={code:JOB_ERROR_CONTRACTS[code].guidance for code in MEDIA_ERROR_CODES}
 
 
 def media_error_guidance(error_code: str) -> str:

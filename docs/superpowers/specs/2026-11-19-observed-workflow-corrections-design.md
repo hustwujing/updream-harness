@@ -46,3 +46,6 @@ Correct the general contract and user-experience failures observed in Thread
   Artifacts, then a complex Skill consumes those Artifacts in a Child Harness.
   A recovery variant restarts the Job Worker while mixed members are in flight
   and proves that accepted Provider work is not submitted twice.
+- Operation, Provider and Child Harness failures share one public error contract
+  with a canonical phase, retry class, external side-effect state, safe message
+  and actionable guidance. Adapter diagnostics remain internal.

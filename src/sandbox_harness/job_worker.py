@@ -6,10 +6,11 @@ from dataclasses import replace
 from datetime import datetime,timezone
 
 from .job_adapters import (
-    AdapterStatus, JobAdapter, JobExecutionContext, PreAcceptFailure,
+    AdapterStatus, ExternalJobFailure, JobAdapter, JobExecutionContext, PreAcceptFailure,
     SubmissionOutcomeUnknown,
 )
 from .job_contracts import JobKind, JobState, TERMINAL_JOB_STATES
+from .job_errors import normalize_job_error
 from .observability import event,sanitize
 
 
@@ -32,7 +33,15 @@ class JobWorker:
         self.review_dispatcher = review_dispatcher
 
     async def _collect_result(self,adapter,context,external_id,status):
-        result=await adapter.collect(context,external_id,status)
+        try:result=await adapter.collect(context,external_id,status)
+        except ExternalJobFailure:raise
+        except Exception as exc:
+            event('job.adapter.collection_failed',level=40,job_id=context.job.id,
+                generation=context.generation,exception_type=type(exc).__name__,exc=exc)
+            raise ExternalJobFailure('成果收集阶段发生内部错误',
+                error_code='artifact_collection_failed',failed_phase='collection',
+                retryable=True,retry_class='collect_same_execution',
+                side_effect_state='completed') from exc
         if (self.review_dispatcher and status.state==JobState.SUCCEEDED
                 and context.request.adapter!="reviewer-harness"):
             try:await self.review_dispatcher(context,result)
@@ -82,10 +91,14 @@ class JobWorker:
                 generation=attempt.generation,exception_type=type(exc).__name__,exc=exc)
             job=await self.store.get_job(attempt.job_id)
             if not job or job.state in TERMINAL_JOB_STATES:return
-            state=JobState.UNKNOWN if job.kind==JobKind.PROVIDER else JobState.FAILED
+            state=getattr(exc,'terminal_state',
+                JobState.UNKNOWN if job.kind==JobKind.PROVIDER else JobState.FAILED)
             try:
                 result=getattr(exc,'result',None) or {'error_code':'worker_internal_error',
                     'exception_type':type(exc).__name__,'error_detail':str(exc)[:2000]}
+                if state in {JobState.FAILED,JobState.BLOCKED,JobState.UNKNOWN}:
+                    result=normalize_job_error(result,side_effect_state=(
+                        'unknown' if state==JobState.UNKNOWN else None))
                 await self.store.transition_job(job.id,state,expected_generation=attempt.generation,
                     result=result)
             except RuntimeError as stale:
@@ -122,6 +135,20 @@ class JobWorker:
         except TimeoutError as exc:
             if deadline<=datetime.now(timezone.utc):raise JobDeadlineExceeded("job_timeout") from exc
             raise
+
+    async def _external_status(self,adapter,context,external_id,deadline,*,reconcile=False):
+        try:
+            operation=(adapter.reconcile(context,external_id) if reconcile
+                else adapter.status(context,external_id))
+            return await self._before_deadline(operation,deadline)
+        except (ExternalJobFailure,JobDeadlineExceeded):raise
+        except Exception as exc:
+            event('job.adapter.status_failed',level=40,job_id=context.job.id,
+                generation=context.generation,exception_type=type(exc).__name__,exc=exc)
+            raise ExternalJobFailure('外部任务状态查询失败',
+                error_code='external_status_unavailable',failed_phase='status',
+                terminal_state=JobState.UNKNOWN,retryable=True,retry_class='reconcile_only',
+                side_effect_state='unknown') from exc
 
     async def _process_claimed(self, attempt, *, continuous: bool = False) -> None:
         job = await self.store.get_job(attempt.job_id)
@@ -179,7 +206,7 @@ class JobWorker:
                         attempt.generation,retry=False,error_code="reconciliation_not_supported",
                         error_detail="Descriptor does not support reconciliation")
                     return
-                status = await self._before_deadline(adapter.reconcile(context, external_id),deadline)
+                status=await self._external_status(adapter,context,external_id,deadline,reconcile=True)
                 receipt = {"reconciles_job_id": request.reconciles_job_id,
                     "external_execution_id": external_id}
                 await self.store.record_job_acceptance(job.id, self.worker_id, attempt.generation,
@@ -191,8 +218,9 @@ class JobWorker:
                     recovery=await self._before_deadline(adapter.recover_submission(context),deadline)
                     if recovery.submission is None and not recovery.safe_to_retry:
                         await self.store.transition_job(job.id,JobState.UNKNOWN,
-                            expected_generation=attempt.generation,result={
-                                "error_code":"submission_outcome_unknown_after_worker_loss"})
+                            expected_generation=attempt.generation,result=normalize_job_error({
+                                "error_code":"submission_outcome_unknown_after_worker_loss"},
+                                side_effect_state='unknown'))
                         return
                     submission=recovery.submission
                 else:submission=None
@@ -236,15 +264,15 @@ class JobWorker:
                     if exc.external_execution_id:
                         context=replace(context,previous_external_execution_id=exc.external_execution_id,
                             previous_acceptance_receipt=exc.acceptance_receipt)
-                        status=await self._before_deadline(
-                            adapter.status(context,exc.external_execution_id),deadline)
+                        status=await self._external_status(
+                            adapter,context,exc.external_execution_id,deadline)
                         await self._finish_or_defer(adapter,context,exc.external_execution_id,
                             status,continuous,deadline)
                     else:
                         await self.store.transition_job(job.id, JobState.UNKNOWN,
                             expected_generation=attempt.generation,
-                            result={"error_code": "submission_outcome_unknown",
-                                "error_detail": str(exc)[:2000]})
+                            result=normalize_job_error({"error_code":"submission_outcome_unknown",
+                                "error_detail":str(exc)[:2000]},side_effect_state='unknown'))
                     return
                 except JobDeadlineExceeded:
                     raise
@@ -263,7 +291,8 @@ class JobWorker:
                             receipt={"outcome": "unknown", "exception_type": type(exc).__name__})
                         await self.store.transition_job(job.id, JobState.UNKNOWN,
                             expected_generation=attempt.generation,
-                            result={"error_code": "submission_outcome_unknown"})
+                            result=normalize_job_error({"error_code":"submission_outcome_unknown"},
+                                side_effect_state='unknown'))
                     return
                 external_id = submission.external_execution_id
                 await self.store.record_job_acceptance(job.id, self.worker_id, attempt.generation,
@@ -276,10 +305,14 @@ class JobWorker:
                     await self.store.transition_job(job.id, JobState.SUCCEEDED,
                         expected_generation=attempt.generation, result=result)
                     return
-            status = await self._before_deadline(adapter.status(context, external_id),deadline)
+            status=await self._external_status(adapter,context,external_id,deadline)
             await self._finish_or_defer(adapter,context,external_id,status,continuous,deadline)
         except JobDeadlineExceeded:
             await self._timeout(adapter,context,external_id,submission_started)
+        except ExternalJobFailure as exc:
+            await self.store.transition_job(job.id,exc.terminal_state,
+                expected_generation=attempt.generation,result=normalize_job_error(exc.result,
+                    side_effect_state=('unknown' if exc.terminal_state==JobState.UNKNOWN else None)))
         except RuntimeError as exc:
             if str(exc) == "stale_job_generation":
                 event("job.worker.stale_generation", level=30, job_id=job.id,
@@ -312,10 +345,10 @@ class JobWorker:
             if participant and participant.state.value == "REQUESTED":
                 await self._pause(adapter,context,external_id,participant.generation)
                 return
-            operation=(adapter.cancel(context,external_id) if current and current.cancel_requested
-                and context.request.cancellation_policy.get("supported") is not False
-                else adapter.status(context,external_id))
-            status=await self._before_deadline(operation,deadline)
+            cancelling=bool(current and current.cancel_requested
+                and context.request.cancellation_policy.get("supported") is not False)
+            status=(await self._before_deadline(adapter.cancel(context,external_id),deadline)
+                if cancelling else await self._external_status(adapter,context,external_id,deadline))
         await self._finish(adapter,context,external_id,status,deadline)
 
     async def _finish(self, adapter: JobAdapter, context: JobExecutionContext,
@@ -325,6 +358,9 @@ class JobWorker:
         if current and current.cancel_requested and context.request.cancellation_policy.get("supported") is False:
             result={**result,"soft_cancel_requested":True}
         state = status.state if status.state in TERMINAL_JOB_STATES else JobState.FAILED
+        if state in {JobState.FAILED,JobState.BLOCKED,JobState.UNKNOWN}:
+            result=normalize_job_error(result,side_effect_state=(
+                'unknown' if state==JobState.UNKNOWN else ('accepted' if external_id else 'none')))
         await self.store.transition_job(context.job.id, state,
             expected_generation=context.generation, result=result)
         participant=await self.store.get_pause_participant(context.job.thread_id,
@@ -354,11 +390,12 @@ class JobWorker:
 
     async def _timeout(self,adapter,context,external_id,submission_started=False):
         if not external_id:
+            code=("job_timeout_submission_outcome_unknown" if submission_started
+                else "job_timeout_before_submission")
             await self.store.transition_job(context.job.id,
                 JobState.UNKNOWN if submission_started else JobState.FAILED,
-                expected_generation=context.generation,result={"error_code":(
-                    "job_timeout_submission_outcome_unknown" if submission_started
-                    else "job_timeout_before_submission")})
+                expected_generation=context.generation,result=normalize_job_error({
+                    "error_code":code},side_effect_state='unknown' if submission_started else 'none'))
             return
         if context.request.cancellation_policy.get("supported") is not False:
             try:
@@ -369,8 +406,10 @@ class JobWorker:
                         expected_generation=context.generation,result=result);return
             except Exception:pass
         await self.store.transition_job(context.job.id,JobState.UNKNOWN,
-            expected_generation=context.generation,result={"error_code":"job_timeout_outcome_unknown",
-                "soft_cancel":context.request.cancellation_policy.get("supported") is False})
+            expected_generation=context.generation,result=normalize_job_error({
+                "error_code":"job_timeout_outcome_unknown",
+                "soft_cancel":context.request.cancellation_policy.get("supported") is False},
+                side_effect_state='unknown'))
 
     async def run_cleanup_once(self,*,limit:int=10)->int:
         rows=await self.store.claim_job_cleanups(self.worker_id,self.lease_seconds,limit=limit)

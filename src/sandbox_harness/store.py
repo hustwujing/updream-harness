@@ -20,6 +20,7 @@ from .domain import AccountView, CapabilityClaims, RuntimeEvent, Artifact, Event
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
 from .media_errors import media_error_guidance
+from .job_errors import job_error_payload,normalize_job_error
 from .job_contracts import (
     JobAttemptReceipt, JobGroupCreate, JobGroupDraftCreate, JobGroupDraftState,
     JobGroupDraftView, JobGroupState, JobGroupView, JobKind, JobOutboxView,
@@ -2276,7 +2277,8 @@ class Store:
         metadata={key:value for key,value in (error_metadata or {}).items()
             if key in {'failed_phase','retry_class','retryable','node_health_generation'}}
         return await self.transition_job(job_id, JobState.FAILED, expected_generation=generation,
-            result={"error_code": error_code, "error_detail": error_detail,**metadata})
+            result=normalize_job_error({"error_code":error_code,"error_detail":error_detail,
+                **metadata},side_effect_state='none'))
 
     async def mark_infrastructure_wait(self,job_id:str,worker_id:str,generation:int,*,
                                        error_detail:str)->None:
@@ -5710,12 +5712,17 @@ class Store:
             credits = float(row.credits_consumed) if row.credits_consumed else None
         except ValueError:
             credits = None
+        error=(job_error_payload(row.error_code,detail=row.error_detail)
+            if row.error_code else {})
         return MediaJobView(id=row.id, thread_id=row.thread_id, turn_id=row.turn_id or "", kind=row.kind,
             model=row.model, generation_mode=row.generation_mode or "", references=json.loads(row.references_json or "[]"),
             provider=row.provider, adapter=row.adapter, execution_mode=row.execution_mode,
             cancellation_mode=row.cancellation_mode, status=row.status, phase=row.phase or "",
             progress=row.progress, error_code=row.error_code or "", error_detail=row.error_detail or "",
-            error_guidance=media_error_guidance(row.error_code) if row.error_code else "",
+            error_message=error.get('error_message',''),
+            error_guidance=error.get('error_guidance',''),failed_phase=error.get('failed_phase',''),
+            retryable=bool(error.get('retryable',False)),retry_class=error.get('retry_class',''),
+            side_effect_state=error.get('side_effect_state',''),
             cancelable=row.execution_mode == "async" and row.cancellation_mode == "supported",
             cancel_reason=reason, artifact_ids=artifact_ids or [], outputs=outputs or [],
             credits_consumed=credits, output_role=row.output_role,

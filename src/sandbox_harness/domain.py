@@ -606,7 +606,12 @@ class MediaJobView(BaseModel):
     progress: int | None = None
     error_code: str = ""
     error_detail: str = ""
+    error_message: str = ""
     error_guidance: str = ""
+    failed_phase: str = ""
+    retryable: bool = False
+    retry_class: str = ""
+    side_effect_state: str = ""
     cancelable: bool = False
     cancel_reason: str = ""
     artifact_ids: list[str] = Field(default_factory=list)

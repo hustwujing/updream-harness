@@ -6,7 +6,8 @@ from pathlib import Path
 
 from .artifact_gateway import ArtifactEmission,ArtifactGateway
 from .domain import MediaDraftCreate,now
-from .job_adapters import AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExecutionContext
+from .job_adapters import (AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExecutionContext,
+    PreAcceptFailure)
 from .job_contracts import JobState
 from .media_references import inspect_reference
 
@@ -43,10 +44,17 @@ class MediaProviderJobAdapter(BaseJobAdapter):
         generation_mode=str(parameters.get('generation_mode','')) or None
         provider_parameters=parameters.get('parameters',{})
         if not kind or not model or not isinstance(provider_parameters,dict):
-            raise ValueError('media_provider_job_parameters_invalid')
-        spec=self.catalog.resolve(kind,model);references=await self._references(context)
-        self.catalog.validate_parameters(kind,model,provider_parameters,
-            generation_mode=generation_mode,references=references)
+            raise PreAcceptFailure('Media Provider parameters are invalid',
+                error_code='provider_input_invalid',failed_phase='input_validation',retryable=False)
+        try:
+            spec=self.catalog.resolve(kind,model);references=await self._references(context)
+            self.catalog.validate_parameters(kind,model,provider_parameters,
+                generation_mode=generation_mode,references=references)
+        except PreAcceptFailure:raise
+        except (KeyError,ValueError) as exc:
+            raise PreAcceptFailure('Media Provider input validation failed',
+                error_code='provider_input_invalid',failed_phase='input_validation',
+                retryable=False) from exc
         owner_id=await self.store.owner_id_for_thread(context.job.thread_id)
         if not owner_id:raise KeyError('media_provider_thread_not_found')
         value=MediaDraftCreate(kind=kind,model=model,generation_mode=generation_mode,

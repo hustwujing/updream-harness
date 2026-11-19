@@ -489,7 +489,8 @@ body[data-network-access="restricted"] .topbar>div:nth-child(2)>span::after{cont
 .execution-edge.continued_by path{stroke:#4d8063;stroke-width:2;stroke-dasharray:6 3}
 .execution-graph-canvas .execution-node.media_batch,.execution-graph-canvas .execution-node.media_draft,.execution-graph-canvas .execution-node.media_job{border-left-color:#a87645;background:#fcf8f3}
 .execution-follow-current{height:28px;border:1px solid #b9cbbb!important;background:#edf5ef!important;color:#315c45!important}
-.execution-node-error{margin:0;border-top:1px solid #f0d9d2;background:#fff5f1;color:#984c3d}
+.execution-node-error{display:grid;gap:3px;margin:0;border-top:1px solid #f0d9d2;background:#fff5f1;color:#984c3d}
+.execution-node-error b{font-size:9px}.execution-node-error small{color:#765b54;font-size:8px;line-height:1.45}
 @media(max-width:700px){.execution-graph-modal{width:100vw;height:100dvh}.execution-graph-toolbar{flex-wrap:wrap}}
 .job-wait-steps{display:grid;gap:5px;margin:8px 0 12px 39px;border-left:1px solid #dfe5df;padding-left:13px}
 .job-wait-step{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:start;gap:7px;padding:5px 0;color:#59615b}

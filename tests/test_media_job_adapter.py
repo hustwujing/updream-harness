@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.config import Settings
 from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate
-from sandbox_harness.job_adapters import JobExecutionContext
+from sandbox_harness.job_adapters import JobExecutionContext,PreAcceptFailure
 from sandbox_harness.job_contracts import (JobExpectedOutput,JobGroupCreate,JobKind,JobRequest,
     JobState,OutputDisposition)
 from sandbox_harness.media_job_adapter import MediaProviderJobAdapter
@@ -80,4 +80,17 @@ async def test_media_provider_adapter_maps_unknown_and_cancellation_without_resu
         assert status.terminal and status.state==JobState.UNKNOWN
         cancelled=await adapter.cancel(context,accepted.external_execution_id)
         assert cancelled.state==JobState.UNKNOWN
+    finally:await store.close()
+
+
+async def test_media_provider_adapter_rejects_invalid_input_before_external_acceptance(tmp_path):
+    store,thread,job,attempt,request=await setup(tmp_path);objects=ObjectStore(tmp_path/'objects')
+    adapter=MediaProviderJobAdapter(Settings(backend='fake',data_root=tmp_path),store,objects,Catalog())
+    invalid=request.model_copy(update={'parameters':{'kind':'','model':'','parameters':[]}})
+    context=JobExecutionContext(job=job,request=invalid,generation=attempt.generation)
+    try:
+        with __import__('pytest').raises(PreAcceptFailure) as raised:await adapter.submit(context)
+        assert raised.value.error_code=='provider_input_invalid'
+        assert raised.value.failed_phase=='input_validation'
+        assert raised.value.retryable is False
     finally:await store.close()

@@ -109,7 +109,7 @@ def _segment(work:Path,source:Path,parameters:dict,gpu_ids:tuple[str,...],runtim
         if code=='no_selection':raise RuntimeError('no_selection') from exc
         if code=='gpu_runtime_unavailable':
             raise ControlledOperationError('Controlled CUDA runtime is unavailable',
-                error_code='gpu_runtime_unavailable',failed_phase='operation_runtime',
+                error_code='gpu_runtime_unavailable',failed_phase='execution',
                 retry_class='node_health_change',retryable=True,infrastructure=True) from exc
         raise
     with Image.open(work/'foreground.png') as foreground:

@@ -1,5 +1,9 @@
 # State and Data Contracts
 
+External execution failures use the canonical phase, retry and side-effect
+fields defined by [External execution error contract](external-error-contracts.md).
+Do not encode retry safety in free-form `error_detail`.
+
 ## Applies to
 
 Read this before changing `domain.py`, `store.py`, Broker state transitions, API

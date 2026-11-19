@@ -104,6 +104,28 @@ const edgeLabels = {
   review_verdict: "结论",
   requested_interaction: "决策",
 };
+const errorPhaseLabels = {
+  input_validation: "输入校验",
+  authorization: "授权",
+  capacity: "资源调度",
+  submission: "任务提交",
+  status: "状态查询",
+  execution: "执行",
+  collection: "成果收集",
+  validation: "成果校验",
+  review: "质量审查",
+  cancellation: "取消",
+  reconciliation: "结果对账",
+  cleanup: "资源清理",
+  internal: "平台内部",
+};
+const sideEffectLabels = {
+  none: "未发生外部副作用",
+  possible: "可能发生外部副作用",
+  accepted: "外部任务已接受",
+  completed: "外部执行已完成",
+  unknown: "外部副作用待确认",
+};
 
 function elapsed(node, now) {
   if (node.ended_at) return node.duration_ms || 0;
@@ -529,12 +551,19 @@ export default function ExecutionGraph({ thread, items = [] }) {
             <>
               <dt>错误代码</dt>
               <dd>{selected.error_code}</dd>
+              <dt>失败阶段</dt>
+              <dd>{errorPhaseLabels[selected.failed_phase] || selected.failed_phase || "—"}</dd>
+              <dt>重试策略</dt>
+              <dd>{selected.retryable ? "可按系统策略恢复" : "不可直接重试"}</dd>
+              <dt>外部副作用</dt>
+              <dd>{sideEffectLabels[selected.side_effect_state] || selected.side_effect_state || "—"}</dd>
             </>
           )}
         </dl>
         {selected.error_summary && (
           <p className="execution-node-error" role="alert">
-            {selected.error_summary}
+            <b>{selected.error_summary}</b>
+            {selected.error_guidance && <small>{selected.error_guidance}</small>}
           </p>
         )}
         {activityError && (

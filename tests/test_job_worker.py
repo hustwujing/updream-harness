@@ -19,7 +19,9 @@ class FakeAdapter(BaseJobAdapter):
         return value
     async def status(self,context,external_execution_id):
         self.status_calls+=1
-        return self.statuses.pop(0) if self.statuses else AdapterStatus(False)
+        value=self.statuses.pop(0) if self.statuses else AdapterStatus(False)
+        if isinstance(value,Exception):raise value
+        return value
     async def reconcile(self,context,external_execution_id):
         self.reconcile_calls+=1
         return self.statuses.pop(0)
@@ -77,15 +79,18 @@ async def test_nonretryable_infrastructure_failure_is_structured_and_terminal(tm
         retry_policy={'max_pre_accept_attempts':5,'deterministic':True}))
     adapter=FakeAdapter([PreAcceptFailure('Controlled CUDA runtime is unavailable',
         infrastructure=True,error_code='gpu_runtime_unavailable',
-        failed_phase='operation_runtime',retry_class='node_health_change',retryable=False)])
+        failed_phase='execution',retry_class='node_health_change',retryable=False)])
     worker=JobWorker(store,{'fake':adapter},node_id='node',worker_id='worker')
     try:
         await worker.run_once();failed=await store.get_job(job.id)
         assert failed.state==JobState.FAILED and adapter.submit_calls==1
-        assert failed.result=={'error_code':'gpu_runtime_unavailable',
-            'error_detail':'Controlled CUDA runtime is unavailable',
-            'failed_phase':'operation_runtime','retry_class':'node_health_change',
-            'retryable':False,'node_health_generation':0}
+        assert failed.result['error_code']=='gpu_runtime_unavailable'
+        assert failed.result['error_detail']=='Controlled CUDA runtime is unavailable'
+        assert failed.result['failed_phase']=='execution'
+        assert failed.result['retry_class']=='node_health_change'
+        assert failed.result['retryable'] is False and failed.result['node_health_generation']==0
+        assert failed.result['side_effect_state']=='none'
+        assert failed.result['error_message'] and failed.result['error_guidance']
     finally:await store.close()
 
 
@@ -93,7 +98,7 @@ async def test_node_health_failure_retries_same_immutable_job_as_new_attempt(tmp
     store,_,job=await setup(tmp_path,request(kind=JobKind.OPERATION,
         retry_policy={'max_pre_accept_attempts':2,'deterministic':True}))
     adapter=FakeAdapter([PreAcceptFailure('GPU health changed',infrastructure=True,
-        error_code='gpu_runtime_unavailable',failed_phase='operation_runtime',
+        error_code='gpu_runtime_unavailable',failed_phase='execution',
         retry_class='node_health_change',retryable=True),
         AdapterSubmission('native-1',{'accepted':True},completed=True,result={'ok':True})])
     worker=JobWorker(store,{'fake':adapter},node_id='node',worker_id='worker')
@@ -236,14 +241,33 @@ async def test_one_job_exception_does_not_crash_service_worker(tmp_path):
     try:
         task=__import__('asyncio').create_task(worker.run())
         for _ in range(200):
-            if (await store.get_job(job.id)).state==JobState.FAILED:break
+            if (await store.get_job(job.id)).state==JobState.UNKNOWN:break
             await __import__('asyncio').sleep(.01)
         else:raise AssertionError('isolated failure was not recorded')
         assert not task.done()
         worker.stop_event.set();await task
         result=(await store.get_job(job.id)).result
-        assert result['error_code']=='worker_internal_error'
-        assert result['exception_type']=='AttributeError' and 'terminal' in result['error_detail']
+        assert result['error_code']=='external_status_unavailable'
+        assert result['failed_phase']=='status' and result['side_effect_state']=='unknown'
+        assert result['retryable'] and result['retry_class']=='reconcile_only'
+    finally:await store.close()
+
+
+async def test_collection_exception_is_failed_without_repeating_accepted_execution(tmp_path):
+    class BrokenCollector(FakeAdapter):
+        async def collect(self,*_):raise RuntimeError('secret provider download body')
+    store,_,job=await setup(tmp_path,request(kind=JobKind.PROVIDER))
+    adapter=BrokenCollector([AdapterSubmission('external-1',{'accepted':True},
+        completed=True,result={'done':True})])
+    worker=JobWorker(store,{'fake':adapter},node_id='node',worker_id='worker')
+    try:
+        await worker.run_once();failed=await store.get_job(job.id)
+        assert failed.state==JobState.FAILED and adapter.submit_calls==1
+        assert failed.result['error_code']=='artifact_collection_failed'
+        assert failed.result['failed_phase']=='collection'
+        assert failed.result['side_effect_state']=='completed'
+        assert failed.result['retry_class']=='collect_same_execution'
+        assert 'secret provider' not in str(failed.result)
     finally:await store.close()
 
 

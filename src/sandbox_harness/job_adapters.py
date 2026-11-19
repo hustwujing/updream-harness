@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from .job_contracts import JobRequest, JobState, JobView
+from .job_errors import job_error_payload
 
 
 @dataclass(frozen=True)
@@ -42,7 +43,7 @@ class AdapterStatus:
 
 class PreAcceptFailure(RuntimeError):
     def __init__(self,message:str,*,infrastructure:bool=False,retry_after_seconds:float=0,
-                 error_code:str='pre_accept_failure',failed_phase:str='pre_accept',
+                 error_code:str='pre_accept_failure',failed_phase:str='',
                  retry_class:str='none',retryable:bool|None=None,node_health_generation:int=0):
         super().__init__(message);self.infrastructure=infrastructure
         self.retry_after_seconds=max(0,float(retry_after_seconds))
@@ -59,6 +60,15 @@ class SubmissionOutcomeUnknown(RuntimeError):
         super().__init__(message)
         self.external_execution_id = external_execution_id
         self.acceptance_receipt = acceptance_receipt or {"outcome": "unknown"}
+
+
+class ExternalJobFailure(RuntimeError):
+    def __init__(self,message:str,*,error_code:str,failed_phase:str,
+                 terminal_state:JobState=JobState.FAILED,retryable:bool|None=None,
+                 retry_class:str|None=None,side_effect_state:str|None=None):
+        super().__init__(message);self.terminal_state=terminal_state
+        self.result=job_error_payload(error_code,detail=message,phase=failed_phase,
+            retryable=retryable,retry_class=retry_class,side_effect_state=side_effect_state)
 
 
 class JobAdapter(Protocol):
