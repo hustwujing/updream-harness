@@ -92,6 +92,7 @@ class CapabilityDescriptor(BaseModel):
     cancellation_policy: dict[str, Any]
     reconciliation_policy: dict[str, Any]
     review_policy: Literal["disabled", "optional", "required"] = "disabled"
+    guidance: str = Field(default="",max_length=2000)
 
     @model_validator(mode="after")
     def no_infrastructure_parameters(self):

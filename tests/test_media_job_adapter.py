@@ -94,3 +94,23 @@ async def test_media_provider_adapter_rejects_invalid_input_before_external_acce
         assert raised.value.failed_phase=='input_validation'
         assert raised.value.retryable is False
     finally:await store.close()
+
+
+async def test_media_provider_adapter_rejects_kind_or_mode_outside_frozen_capability(tmp_path):
+    store,thread,job,attempt,request=await setup(tmp_path);objects=ObjectStore(tmp_path/'objects')
+    adapter=MediaProviderJobAdapter(Settings(backend='fake',data_root=tmp_path),store,objects,Catalog())
+    cases=(
+        request.model_copy(update={'parameters':{**request.parameters,'kind':'video',
+            'generation_mode':'text_to_video'}}),
+        request.model_copy(update={'adapter':'video.generate','descriptor_id':'video.generate',
+            'descriptor_digest':'3'*64,'parameters':{**request.parameters,'kind':'video',
+                'generation_mode':'edit_video'}}),
+    )
+    try:
+        for invalid in cases:
+            context=JobExecutionContext(job=job,request=invalid,generation=attempt.generation)
+            with __import__('pytest').raises(PreAcceptFailure) as raised:await adapter.submit(context)
+            assert raised.value.error_code=='provider_input_invalid'
+            assert raised.value.failed_phase=='authorization' and raised.value.retryable is False
+        assert await store.list_media_drafts(thread.id,'owner')==[]
+    finally:await store.close()

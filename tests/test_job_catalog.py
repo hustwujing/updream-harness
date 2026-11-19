@@ -83,7 +83,19 @@ def test_example_job_catalog_is_parseable_and_digest_verified():
     assert {row.id for row in value.payload.operations}=={
         'artifact.inspect','media.render','audio.process','media.concat_sequence',
         'image.segment','audio.transcribe','image.decompose'}
-    assert {row.id for row in value.payload.capabilities}=={'image.generate'}
+    capability_ids={'image.generate','video.generate','video.edit','audio.generate',
+        'model3d.generate','model3d.transform'}
+    assert {row.id for row in value.payload.capabilities}==capability_ids
+    capability_by_id={row.id:row for row in value.payload.capabilities}
+    assert capability_by_id['image.generate'].parameter_schema['properties']['kind']=={'const':'image'}
+    assert capability_by_id['video.generate'].parameter_schema['properties']['generation_mode']['enum']==[
+        'text_to_video','first_frame','first_last_frame','multimodal_reference']
+    assert capability_by_id['video.edit'].parameter_schema['properties']['generation_mode']['enum']==[
+        'edit_video','extend_video']
+    assert capability_by_id['audio.generate'].output_roles==('generated_audio',)
+    assert capability_by_id['model3d.generate'].output_roles==('generated_models',)
+    assert capability_by_id['model3d.transform'].parameter_schema['properties']['generation_mode']['enum']==[
+        'texture_model','decimate_model','convert_model']
     audio=value.operation('audio.process','1','d'*64)
     recipe=audio.parameter_schema['properties']['recipe']
     assert audio.runtime_profile_id=='media-cpu' and set(audio.output_roles)=={

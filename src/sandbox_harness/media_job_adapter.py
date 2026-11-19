@@ -12,6 +12,19 @@ from .job_contracts import JobState
 from .media_references import inspect_reference
 
 
+CAPABILITY_SCOPES={
+    'image.generate':('image',frozenset({'text_to_image','reference_image'})),
+    'video.generate':('video',frozenset({
+        'text_to_video','first_frame','first_last_frame','multimodal_reference'})),
+    'video.edit':('video',frozenset({'edit_video','extend_video'})),
+    'audio.generate':('audio',frozenset({'text_to_audio','reference_voice'})),
+    'model3d.generate':('model3d',frozenset({
+        'text_to_model','image_to_model','multiview_to_model'})),
+    'model3d.transform':('model3d',frozenset({
+        'texture_model','decimate_model','convert_model'})),
+}
+
+
 class MediaProviderJobAdapter(BaseJobAdapter):
     def __init__(self,settings,store,objects,catalog):
         self.settings=settings;self.store=store;self.objects=objects;self.catalog=catalog
@@ -46,6 +59,11 @@ class MediaProviderJobAdapter(BaseJobAdapter):
         if not kind or not model or not isinstance(provider_parameters,dict):
             raise PreAcceptFailure('Media Provider parameters are invalid',
                 error_code='provider_input_invalid',failed_phase='input_validation',retryable=False)
+        scope=CAPABILITY_SCOPES.get(request.descriptor_id)
+        if (not scope or kind!=scope[0] or generation_mode not in scope[1]
+                or request.adapter!=request.descriptor_id):
+            raise PreAcceptFailure('Provider request is outside the frozen Capability',
+                error_code='provider_input_invalid',failed_phase='authorization',retryable=False)
         try:
             spec=self.catalog.resolve(kind,model);references=await self._references(context)
             self.catalog.validate_parameters(kind,model,provider_parameters,

@@ -106,7 +106,9 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
                     idempotency_key=f"policy-review-{context.job.id}-{contract.artifact_role}"),trigger=trigger)
     worker=JobWorker(store,{"child-harness":harness_adapter,
         "reviewer-harness":ReviewerJobAdapter(harness_adapter,store),
-        "image.generate":media_adapter,"media.render":render_adapter,
+        "image.generate":media_adapter,"video.generate":media_adapter,"video.edit":media_adapter,
+        "audio.generate":media_adapter,"model3d.generate":media_adapter,
+        "model3d.transform":media_adapter,"media.render":render_adapter,
         "audio.process":render_adapter,"media.concat_sequence":render_adapter,
         "image.decompose":decompose_adapter},node_id=settings.job_node_id,
         concurrency=settings.job_worker_concurrency,lease_seconds=settings.job_lease_seconds,

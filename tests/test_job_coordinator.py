@@ -12,6 +12,9 @@ from sandbox_harness.job_coordinator import JobCoordinator, JobGroupDraftUpdate
 from sandbox_harness.store import Store
 
 
+ROOT=__import__('pathlib').Path(__file__).resolve().parents[1]
+
+
 def catalog() -> JobCatalog:
     payload=JobCatalogPayload.model_validate({"schema_version":1,"operations":[{
         "id":"free.compute","version":"1","digest":"a"*64,"execution_mode":"durable",
@@ -177,6 +180,36 @@ async def test_descriptor_rejects_undeclared_output_validator_before_job_creatio
             origin_turn_id="b"*32,idempotency_key="valid-validator-group",jobs=(valid,)))
         assert prepared.mode=="committed"
     finally:await store.close()
+
+
+def test_provider_descriptor_semantics_reject_wrong_kind_and_mode_before_draft():
+    raw=(ROOT/'deploy/job-catalog.example.json').read_text()
+    frozen=JobCatalog.from_json(raw,expected_digest=__import__('hashlib').sha256(raw.encode()).hexdigest())
+    coordinator=JobCoordinator(SimpleNamespace(),frozen)
+    digests={row.id:row.digest for row in frozen.payload.capabilities}
+    outputs={'image.generate':'generated_images','video.generate':'generated_videos',
+        'video.edit':'generated_videos','audio.generate':'generated_audio',
+        'model3d.generate':'generated_models','model3d.transform':'generated_models'}
+    def request(descriptor,kind,mode):
+        return JobRequest(local_job_id='semantic-provider',kind=JobKind.PROVIDER,adapter=descriptor,
+            descriptor_id=descriptor,descriptor_version='1',descriptor_digest=digests[descriptor],
+            idempotency_key='semantic-provider-request',parameters={'kind':kind,'model':'model',
+                'generation_mode':mode,'parameters':{}},expected_outputs=(JobExpectedOutput(
+                    artifact_role=outputs[descriptor]),))
+    def group(job_request):
+        return JobGroupCreate(thread_id='a'*32,origin_turn_id='b'*32,
+            idempotency_key='semantic-provider-group',jobs=(job_request,))
+
+    for invalid in (request('image.generate','video','text_to_video'),
+            request('video.generate','video','edit_video'),
+            request('model3d.transform','model3d','text_to_model')):
+        with pytest.raises(ValueError,match='parameter schema'):
+            coordinator._normalize(group(invalid))
+
+    normalized=coordinator._normalize(group(
+        request('video.generate','video','first_frame'))).jobs[0]
+    assert normalized.resource_requirements['required_capability_ids']==['video.generate']
+    assert normalized.network_origins==('video-provider',)
 
 
 async def test_descriptor_review_policy_cannot_be_weakened_by_request(tmp_path):

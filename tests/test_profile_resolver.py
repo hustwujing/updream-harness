@@ -101,6 +101,12 @@ def test_example_profile_catalog_is_digest_verified_and_covers_initial_profiles(
     value=ProfileResolver.from_json(raw,expected_digest=digest,skill_manifest=manifest)
     assert {'primary-full-cpu','general-cpu','media-cpu','office','web-browser','data-analysis'} <= set(value.runtimes)
     assert set(value.skills)=={row['id'] for row in manifest['skills']}
+    capabilities={'image.generate','video.generate','video.edit','audio.generate',
+        'model3d.generate','model3d.transform'}
+    assert set(value.children['child-general'].allowed_capability_ids)==capabilities
+    assert set(value.runtimes['primary-full-cpu'].dependency_capabilities)==capabilities
+    assert set(value.children['child-general'].allowed_network_origins)=={
+        'image-provider','video-provider','audio-provider','model3d-provider'}
     media=value.resolve('claude','child-general',('media-processing',),ProfileRequirements())
     assert media.runtime_profile.id=='media-cpu'
     with pytest.raises(ValueError,match='profile catalog digest'):

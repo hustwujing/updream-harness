@@ -25,9 +25,9 @@
       "id": "child-general",
       "supported_harnesses": ["codex", "claude", "deepseek"],
       "allowed_skill_ids": ["academy-guide", "algorithmic-art", "anatomy", "brainstorming", "brand-guidelines", "canvas-design", "claude-api", "codex-ppt", "data-quality-audit", "diagram-design", "discernment-nudge", "doc-and-modernize", "doc-coauthoring", "docx", "drawio-skill", "frontend-design", "image-to-editable-ppt", "internal-comms", "manim-video", "mcp-builder", "media-processing", "pdf", "programmatic-eda", "query-validation", "skill-creator", "slack-gif-creator", "systematic-debugging", "theme-factory", "verification-before-completion", "web-artifacts-builder", "webapp-testing", "writing-plans", "xlsx"],
-      "allowed_capability_ids": ["image.generate"],
+      "allowed_capability_ids": ["image.generate", "video.generate", "video.edit", "audio.generate", "model3d.generate", "model3d.transform"],
       "allowed_operation_ids": ["artifact.inspect", "media.render", "image.segment"],
-      "allowed_network_origins": ["image-provider"],
+      "allowed_network_origins": ["image-provider", "video-provider", "audio-provider", "model3d-provider"],
       "max_delegation_depth": 1,
       "fallback_profile_ids": ["primary-full-cpu"]
     }
@@ -79,7 +79,7 @@
       "commands": ["bash", "chromium", "dot", "drawio", "dvisvgm", "ffmpeg", "ffprobe", "latex", "libreoffice", "manim", "node", "npm", "pandoc", "pdftoppm", "pdftotext", "pnpm", "python3", "qpdf", "tesseract"],
       "python_modules": ["PIL", "anthropic", "defusedxml", "filelock", "fitz", "lxml", "manim", "markitdown", "mcp", "numpy", "openai", "openpyxl", "pandas", "pdf2image", "pdfplumber", "playwright", "pptx", "pypdf", "pytesseract", "requests", "sqlglot", "yaml"],
       "node_modules": ["docx", "esbuild", "pptxgenjs", "react", "react-dom", "react-icons", "sharp", "typescript"],
-      "dependency_capabilities": ["image.generate"], "network_origins": ["image-provider"], "gpu": false, "priority": 100
+      "dependency_capabilities": ["image.generate", "video.generate", "video.edit", "audio.generate", "model3d.generate", "model3d.transform"], "network_origins": ["image-provider", "video-provider", "audio-provider", "model3d-provider"], "gpu": false, "priority": 100
     }
   ]
 }
