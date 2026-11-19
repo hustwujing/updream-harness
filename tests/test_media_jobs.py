@@ -301,6 +301,9 @@ async def test_tripo_multi_output_commit_is_atomic_and_recoverable(tmp_path):
         completed = await store.get_media_job(job.id, owner)
         assert completed and completed.status == "succeeded" and completed.credits_consumed == 10
         assert len(completed.outputs) == len(completed.artifact_ids) == 2
+        primary=await store.media_job_output_for_thread(job.id,thread.id)
+        assert primary=={"object_ref":"sha256:"+"1"*64,"mime":"model/gltf-binary",
+            "size":400,"filename":"model.glb"}
         assert await store.resolve_tripo_input_job(job.id, job.id) == "provider-task"
         files = await store.current_project_files(thread.id, owner)
         assert {item.path for item in files} == {

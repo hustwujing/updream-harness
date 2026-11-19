@@ -5993,6 +5993,12 @@ class Store:
                 MediaJobRow.thread_id == thread_id))).scalar_one_or_none()
             if not row or row.status != "succeeded" or not row.output_object_ref:
                 return None
+            primary=(await db.execute(select(MediaJobOutputRow).where(
+                MediaJobOutputRow.job_id==row.id,MediaJobOutputRow.role=="primary")
+                .order_by(MediaJobOutputRow.created_at,MediaJobOutputRow.id).limit(1))).scalar_one_or_none()
+            if primary:
+                return {"object_ref":primary.object_ref,"mime":primary.mime,
+                    "size":primary.size,"filename":primary.filename}
             return {"object_ref": row.output_object_ref, "mime": row.output_mime,
                 "size": row.output_size, "filename": self._media_project_path(row.id, row.output_mime).rsplit("/", 1)[-1]}
 
