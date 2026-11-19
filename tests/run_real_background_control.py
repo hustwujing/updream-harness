@@ -41,7 +41,7 @@ async def main()->None:
     for key,value in dotenv_values(env_file).items():
         if value is not None:os.environ[key]=value
     settings=Settings();identity=uuid.uuid4().hex
-    namespace="sandbox-harness-background-control-"+identity
+    namespace="sh-bg-control-"+identity
     backend=OpenSandboxBackend(settings.opensandbox_url,settings.opensandbox_api_key,300,namespace,
         settings.gateway_url,settings.gateway_proxy_port)
     runtime=RuntimeClient(bundle_dir=settings.runtime_bundle_dir,
