@@ -16,7 +16,7 @@ from pydantic import ValidationError
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from redis.asyncio import Redis
 import uvicorn
 
@@ -567,6 +567,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         observe_model=endpoint_kind in {"generation","compaction"}
         activity=ModelActivity(activity_store,claims) if observe_model else None
         reservation_id=""
+        input_estimate=0
         if prefix.startswith("/v1/models/"):
             try:
                 payload = json.loads(body)
@@ -576,9 +577,10 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(422, "Model request must be an object")
             payload["model"] = claims.model
             payload=normalize_model_request(payload,harness=harness,model=claims.model,suffix=suffix)
+            input_estimate=estimate_model_input_tokens(payload,len(body))
             requested_output=model_token_reservation(payload,suffix,endpoint_kind,
                 int(request.state.capability_security["token_remaining"]),
-                estimate_model_input_tokens(payload,len(body)))
+                input_estimate)
             if activity:
                 reservation_id=activity.request_id
                 try:await activity_store.reserve_model_tokens(claims,reservation_id,requested_output)
@@ -601,6 +603,10 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             raise
         if activity:
             activity.header_ms = round((time.monotonic() - started) * 1000)
+        if endpoint_kind=="token_count" and response.status_code in {404,405,501}:
+            await response.aclose()
+            return JSONResponse({"input_tokens":input_estimate},headers={
+                "X-Updream-Token-Count-Source":"conservative-local-estimate"})
         event("upstream.response.headers",level=logging.WARNING if response.status_code>=400 else logging.INFO,
             turn_id=claims.turn_id,model=claims.model,header_ms=round((time.monotonic()-started)*1000,3),
             **{"http.response.status_code":response.status_code},request_bytes=len(body),
@@ -619,13 +625,13 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         active[claims.nonce].add(response)
 
         token_finalized=False
-        async def finalize_tokens():
+        async def finalize_tokens(fallback_usage=None):
             nonlocal token_finalized
             if token_finalized or not reservation_id:return
             token_finalized=True
             usage=(activity.probe.input_tokens+activity.probe.output_tokens
                 if activity and activity.probe.input_tokens is not None
-                and activity.probe.output_tokens is not None else None)
+                and activity.probe.output_tokens is not None else fallback_usage)
             await activity_store.finalize_model_tokens(reservation_id,usage)
 
         async def content():
@@ -656,7 +662,8 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
                             active.pop(claims.nonce, None)
                         if activity:
                             await activity.finish(response.status_code, stream_error)
-                        await finalize_tokens()
+                        await finalize_tokens(input_estimate if endpoint_kind=="compaction"
+                            and response.status_code>=400 else None)
                 # ASGI disconnect cancellation must not cancel the durable receipt.
                 finalizer = asyncio.create_task(finalize())
                 timing_finalizers.add(finalizer)

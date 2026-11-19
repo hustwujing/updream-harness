@@ -140,3 +140,80 @@ async def test_native_compaction_and_count_routes_keep_native_payload_semantics(
     body=json.loads(requests[1].content)
     assert body["model"]=="selected-model" and "max_output_tokens" not in body
     assert store.finalized==[("request-0",15)]
+
+
+async def test_missing_native_count_endpoint_returns_conservative_local_estimate(tmp_path,monkeypatch):
+    import httpx
+    import sandbox_harness.gateway as gateway
+    class Redis:pass
+    class SecurityStore:
+        def __init__(self,*args,**kwargs):pass
+        async def authorize_capability(self,*args,**kwargs):return {"token_remaining":100_000}
+    monkeypatch.setattr(gateway.Redis,"from_url",lambda *args,**kwargs:Redis())
+    monkeypatch.setattr(gateway,"Store",SecurityStore)
+    async def missing(*args,**kwargs):return httpx.Response(404,content=b'not found')
+    monkeypatch.setattr(gateway,"send_with_start_timeout",missing)
+    settings=Settings(backend="fake",data_root=tmp_path,
+        database_url="sqlite+aiosqlite:///"+str(tmp_path/"count.db"),upstream_claude="http://claude")
+    endpoint=next(route.endpoint for route in gateway.create_gateway(settings).routes
+        if getattr(route,"path",None)=="/{path:path}")
+    token,_=CapabilityCodec(settings.gateway_signing_key).issue(thread_id="thread",turn_id="turn",
+        sandbox_id="sandbox",harness=Harness.CLAUDE,model="claude-4.6-sonnet",
+        routes=["/v1/models/claude"],ttl_seconds=60,max_requests=2,
+        max_public_requests=1,token_budget=100_000)
+    payload={"model":"ignored","messages":[{"role":"user","content":"hello"}]}
+    body=json.dumps(payload).encode();sent=False
+    async def receive():
+        nonlocal sent
+        if sent:return {"type":"http.request","body":b"","more_body":False}
+        sent=True;return {"type":"http.request","body":body,"more_body":False}
+    response=await endpoint("v1/models/claude/messages/count_tokens",Request({"type":"http",
+        "method":"POST","path":"/v1/models/claude/messages/count_tokens","query_string":b"",
+        "headers":[(b"authorization",("Bearer "+token).encode())]},receive))
+    assert response.status_code==200
+    assert response.headers["x-updream-token-count-source"]=="conservative-local-estimate"
+    assert json.loads(response.body)["input_tokens"]>0
+
+
+async def test_failed_compaction_charges_input_estimate_and_preserves_fallback_budget(tmp_path,monkeypatch):
+    import httpx
+    import sandbox_harness.gateway as gateway
+    from sandbox_harness.model_activity import OutputProbe
+    class Redis:pass
+    class SecurityStore:
+        def __init__(self,*args,**kwargs):self.finalized=[]
+        async def authorize_capability(self,*args,**kwargs):return {"token_remaining":100_000}
+        async def reserve_model_tokens(self,*args,**kwargs):return {"reserved":100_000}
+        async def finalize_model_tokens(self,request_id,usage):self.finalized.append(usage);return {"charged":usage}
+    store=SecurityStore();monkeypatch.setattr(gateway.Redis,"from_url",lambda *args,**kwargs:Redis())
+    monkeypatch.setattr(gateway,"Store",lambda *args,**kwargs:store)
+    class Activity:
+        def __init__(self,*args):self.request_id="compact";self.probe=OutputProbe();self.header_ms=None;self.span=None;self.finished=False
+        async def start(self):pass
+        async def observe(self,data):self.probe.feed(data)
+        async def finish(self,*args,**kwargs):self.probe.finish();self.finished=True
+    monkeypatch.setattr(gateway,"ModelActivity",Activity)
+    async def failed(*args,**kwargs):
+        return httpx.Response(502,headers={"content-type":"application/json"},
+            content=b'{"error":{"type":"upstream_error"}}')
+    monkeypatch.setattr(gateway,"send_with_start_timeout",failed)
+    settings=Settings(backend="fake",data_root=tmp_path,
+        database_url="sqlite+aiosqlite:///"+str(tmp_path/"compact.db"),upstream_codex="http://codex")
+    endpoint=next(route.endpoint for route in gateway.create_gateway(settings).routes
+        if getattr(route,"path",None)=="/{path:path}")
+    token,_=CapabilityCodec(settings.gateway_signing_key).issue(thread_id="thread",turn_id="turn",
+        sandbox_id="sandbox",harness=Harness.CODEX,model="gpt-5.6",
+        routes=["/v1/models/codex"],ttl_seconds=60,max_requests=2,
+        max_public_requests=1,token_budget=100_000)
+    payload={"model":"ignored","input":[{"role":"user","content":"compact this"}]}
+    body=json.dumps(payload).encode();sent=False
+    async def receive():
+        nonlocal sent
+        if sent:return {"type":"http.request","body":b"","more_body":False}
+        sent=True;return {"type":"http.request","body":body,"more_body":False}
+    response=await endpoint("v1/models/codex/responses/compact",Request({"type":"http",
+        "method":"POST","path":"/v1/models/codex/responses/compact","query_string":b"",
+        "headers":[(b"authorization",("Bearer "+token).encode())]},receive))
+    assert response.status_code==502
+    assert json.loads(b"".join([chunk async for chunk in response.body_iterator]))["error"]["type"]=="upstream_error"
+    assert len(store.finalized)==1 and 0<store.finalized[0]<100_000
