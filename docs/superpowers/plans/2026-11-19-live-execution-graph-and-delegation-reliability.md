@@ -62,14 +62,14 @@
 - [ ] Preserve stable rate-limit versus model-unavailable public errors.
 - [ ] Run focused Job and model tests.
 
-### Task 4: Bounded Continuation And Quality Guidance
+### Task 4: Bounded Continuation And Semantic Quality Guidance
 
 **Files:**
 - Modify: continuation prompt/runtime skill guidance selected by inspection.
 - Test: continuation and runtime skill tests.
 
 - [ ] Assert continuation payloads omit raw activities and Provider bodies.
-- [ ] Add general document-editability and semantic-validation guidance.
+- [ ] Preserve truthful presentation representation guidance and add semantic segmentation validation.
 - [ ] Run focused continuation/runtime tests.
 
 ### Task 5: Integrated Verification

@@ -18,8 +18,8 @@ Failures must identify the failed execution boundary and remain actionable.
 - Reject unavailable delegated Harness/model selections before scheduling and
   keep retry decisions within the discovered healthy catalog.
 - Keep continuation payloads bounded and structured.
-- Prefer editable document construction and semantic output validation over
-  image-only or shape-only success signals.
+- Keep presentation output semantics explicit and require semantic output
+  validation in addition to structural file checks.
 
 ## Non-goals
 
@@ -62,10 +62,10 @@ policy. Rate limits remain real terminal Job facts unless the descriptor has
 an explicit bounded retry policy; retries never invent another model.
 
 Continuation results remain bounded Job facts and object identifiers. Raw
-activities and Provider payloads are fetched on demand. Document tasks should
-use editable document skills for text/layout and reserve image generation for
-visual assets. Segmentation success requires semantic evidence when the output
-contract requests a specific subject or region.
+activities and Provider payloads are fetched on demand. Image-based presentation
+workflows must report that representation truthfully and complete their text QA
+and bounded repair cycle before assembly. Segmentation success requires semantic
+evidence when the output contract requests a specific subject or region.
 
 ## Verification
 
