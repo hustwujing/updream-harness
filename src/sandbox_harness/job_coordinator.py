@@ -97,6 +97,11 @@ class JobCoordinator:
                     raise ValueError('Job input artifact role is outside Descriptor')
                 if not {item.artifact_role for item in request.expected_outputs}<=set(descriptor.output_roles):
                     raise ValueError('Job output artifact role is outside Descriptor')
+                if request.kind==JobKind.OPERATION:
+                    for output in request.expected_outputs:
+                        allowed=set(descriptor.output_validators.get(output.artifact_role,()))
+                        if not set(output.validators)<=allowed:
+                            raise ValueError('Job output validator is outside Descriptor for '+output.artifact_role)
                 resources=dict(descriptor.resources)
                 resources['required_capability_ids']=(list(descriptor.required_capabilities)
                     if request.kind==JobKind.OPERATION else [descriptor.id])

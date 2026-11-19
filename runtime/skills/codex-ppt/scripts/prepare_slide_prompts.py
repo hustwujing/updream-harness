@@ -259,6 +259,8 @@ def _build_prompt(
     prompt_parts.append(
         "## Universal Constraints\n"
         "- The final image itself must contain the title and key points.\n"
+        "- For Chinese slides, render one exact title plus at most five short labels; each label should usually be no more than eight Chinese characters.\n"
+        "- Detailed prose belongs in speaker notes, not in provider-rendered slide text.\n"
         "- Render Chinese text exactly and legibly; avoid garbled characters.\n"
         "- Keep the confirmed deck style consistent while varying layout by slide role.\n"
         "- No watermark, unrelated logo, or extra slide number.\n"

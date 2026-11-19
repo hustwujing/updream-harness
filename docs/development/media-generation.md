@@ -144,6 +144,8 @@ side effect. Draft APIs are owner-scoped and idempotent:
 POST/PATCH /api/media/drafts
 POST       /api/media/drafts/{draft_id}/confirm
 POST       /api/media/drafts/{draft_id}/cancel
+POST       /api/turns/{turn_id}/media/drafts/confirm
+POST       /api/turns/{turn_id}/media/drafts/cancel
 ```
 
 The confirmation card has media-specific fields (image ratio/quality,
@@ -151,6 +153,14 @@ video duration/resolution/references, audio voice/format) and a Details modal.
 The modal is dismissible, stays over the conversation, and never shows keys,
 private URLs or raw upstream responses. The server revalidates every parameter
 and creates exactly one Job on confirm.
+
+Drafts prepared and sealed by one Agent Turn form one authorization batch. The
+browser presents one confirm/cancel action for the complete batch; the server
+revalidates every member before one transaction creates any Jobs. An expired,
+invalid or foreign member rejects the entire batch. Replaying the same batch
+confirmation returns the existing ordered Jobs and never duplicates Provider
+work. Individual Draft endpoints remain available only for an explicitly
+separate item decision.
 
 One Agent Turn may prepare any number of image, video, audio and 3D drafts. It then
 calls `sandbox-media commit` once to seal that Turn's media batch. A sealed
@@ -229,8 +239,10 @@ Provider cancellation becomes `CANCEL_UNKNOWN`.
 
 The model-facing CLI is a thin client: `sandbox-media catalog`, `prepare`,
 `commit`, `status`, `cancel`, `fetch` and `promote`. It does not persist state,
-confirm a draft or call Providers
-directly. Draft editing and confirmation remain owner-scoped API/UI actions.
+confirm a draft or call Providers directly. Prose and `sandbox-interact` also
+cannot authorize a Provider call that has a media card; semantic outline/style
+questions remain separate from Provider authorization. Draft editing and
+confirmation remain owner-scoped API/UI actions.
 Draft confirmation defaults to 24 hours and is configurable through
 `SANDBOX_HARNESS_MEDIA_DRAFT_TTL_SECONDS`. Generic Harness approval cannot
 confirm media drafts. When confirmation creates an asynchronous Job, the

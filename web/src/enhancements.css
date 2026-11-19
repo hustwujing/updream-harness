@@ -3,9 +3,21 @@
 }
 
 .app > main {
+  display: flex;
+  flex-direction: column;
   height: 100dvh;
   min-height: 0;
   overflow: hidden;
+}
+
+.app > main > .topbar,
+.app > main > .conversation-controls,
+.app > main > .workspace-stale {
+  flex: none;
+}
+
+.app > main > .transcript {
+  flex: 1 1 auto;
 }
 
 .welcome {
@@ -316,6 +328,9 @@ body[data-network-access="restricted"] .topbar>div:nth-child(2)>span::after{cont
 .interaction-receipt small { overflow: hidden; color: #777b77; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .interaction-error { margin-top: 8px; color: #a1443d; font-size: 9px; }
 .interaction-card.resolved { opacity: .72; }
+.media-confirmation-batch { display: grid; gap: 8px; border-top: 1px solid #e1e3df; padding-top: 9px; }
+.media-confirmation-batch:first-of-type { border-top: 0; padding-top: 0; }
+.media-confirmation-batch > .media-confirmation-actions { display: flex; justify-content: flex-end; gap: 7px; margin: 0 0 4px; }
 
 @media (max-width: 700px) {
   .app > main {

@@ -38,6 +38,7 @@ class OperationDescriptor(BaseModel):
     parameter_schema: dict[str, Any]
     input_roles: tuple[str, ...] = ()
     output_roles: tuple[str, ...] = ()
+    output_validators: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     required_capabilities: tuple[str, ...] = ()
     network_origins: tuple[str, ...] = ()
     resources: dict[str, int] = Field(default_factory=dict)
@@ -65,6 +66,11 @@ class OperationDescriptor(BaseModel):
         elif (not self.retry_policy or "max_pre_accept_attempts" not in self.retry_policy
                 or not self.cancellation_policy or not self.reconciliation_policy):
             raise ValueError("durable Operation requires explicit retry, cancellation, and reconciliation policies")
+        if not set(self.output_validators)<=set(self.output_roles):
+            raise ValueError("output validator role is outside Operation outputs")
+        for role,validators in self.output_validators.items():
+            if len(validators)!=len(set(validators)) or any(not value or len(value)>160 for value in validators):
+                raise ValueError("invalid output validator declaration for "+role)
         return self
 
 

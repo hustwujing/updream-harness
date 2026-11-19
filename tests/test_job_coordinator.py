@@ -158,6 +158,27 @@ async def test_descriptor_freezes_adapter_schema_roles_network_resources_and_ret
     finally:await store.close()
 
 
+async def test_descriptor_rejects_undeclared_output_validator_before_job_creation(tmp_path):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"validator-contract.db"));await store.initialize()
+    value=catalog().payload.model_dump(mode="json")
+    value["operations"][0]["output_validators"]={"result":["result.valid"]}
+    coordinator=JobCoordinator(store,JobCatalog(JobCatalogPayload.model_validate(value),"e"*64))
+    try:
+        invalid=job("invalid-validator").model_copy(update={"expected_outputs":(
+            JobExpectedOutput(artifact_role="result",validators=("transparent_image",)),)})
+        with pytest.raises(ValueError,match="validator.*Descriptor"):
+            await coordinator.prepare_group("owner",JobGroupCreate(thread_id="a"*32,
+                origin_turn_id="b"*32,idempotency_key="invalid-validator-group",jobs=(invalid,)))
+        assert await store.list_jobs_for_thread("a"*32)==[]
+
+        valid=job("valid-validator").model_copy(update={"expected_outputs":(
+            JobExpectedOutput(artifact_role="result",validators=("result.valid",)),)})
+        prepared=await coordinator.prepare_group("owner",JobGroupCreate(thread_id="a"*32,
+            origin_turn_id="b"*32,idempotency_key="valid-validator-group",jobs=(valid,)))
+        assert prepared.mode=="committed"
+    finally:await store.close()
+
+
 async def test_descriptor_review_policy_cannot_be_weakened_by_request(tmp_path):
     store=Store("sqlite+aiosqlite:///"+str(tmp_path/"review-policy.db"));await store.initialize()
     value=catalog().payload.model_dump(mode="json")

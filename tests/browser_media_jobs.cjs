@@ -19,7 +19,7 @@ const assert=require('node:assert/strict');
   if(path.endsWith('/api/threads/media-thread/turns'))return json([{id:'turn-media',thread_id:thread.id,harness:'claude',model:'claude-4.6-sonnet',reasoning_level:'standard',state:'COMPLETED',updated_at:now}]);
   if(path.includes('/api/threads/media-thread/items')||path.includes('/interactions')||path.includes('/project-files')||path.includes('/background-jobs'))return json([]);
   if(path.endsWith('/api/threads/media-thread/media/drafts'))return json(drafts);
-  if(path.endsWith('/api/media/drafts/draft-image/confirm')){drafts[0]={...drafts[0],status:'confirmed',job_id:'job-image'};visibleJobs.push(...jobs);return json(jobs[0])}
+  if(path.endsWith('/api/turns/turn-media/media/drafts/confirm')){drafts[0]={...drafts[0],status:'confirmed',job_id:'job-image'};visibleJobs.push(...jobs);return json(jobs)}
   if(path.endsWith('/api/threads/media-thread/media/jobs'))return json(visibleJobs);
   if(path.includes('/api/media/jobs/')&&path.endsWith('/refresh')){refreshAttempts+=1;if(refreshAttempts===1)return json({detail:'refresh_failed'},503);return json({status:'running'})}
   if(path.endsWith('/api/media/jobs/job-video/cancel')){cancelAttempts+=1;if(cancelAttempts===1)return json({detail:'cancel_failed'},503);jobs[1]={...jobs[1],status:'cancel_requested',phase:'cancelling',cancelable:false};visibleJobs[1]=jobs[1];return json(jobs[1])}

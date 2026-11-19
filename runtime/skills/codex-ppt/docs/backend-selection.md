@@ -34,4 +34,9 @@ CLI/API fallback:
 我检查后没有可用的内置图片生成工具，或内置工具缺少本页必需能力，因此准备使用本地 API/CLI fallback 生成样张，读取 ~/.codex-ppt-skill/.env 中的 OPENAI_BASE_URL / CODEX_PPT_IMAGE_MODEL 配置。可以开始生成 1 页样张吗？
 ```
 
-Wait for confirmation before generating the sample slide. If the user questions the backend, resolve that before continuing.
+In sandbox-harness, the sample's platform media confirmation card is the user
+authorization for both the selected backend and that Provider call. State what
+you checked and why you selected it, then prepare the sample Draft. Do not use
+`sandbox-interact`, prose confirmation, or another decision card to authorize
+the same Provider before the media card. If the user questions the backend,
+cancel or edit the Draft and resolve the choice before generation.

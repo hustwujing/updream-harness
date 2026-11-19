@@ -82,6 +82,7 @@ def load_speaker_notes(ppt_project_dir: str) -> Dict[int, str]:
     从 speech.md 读取每页演讲备注。
 
     支持以下标题格式：
+    - # Slide 1: 标题
     - ## Slide 1: 标题
     - ### Slide 1: 标题
     - ## 第 1 页：标题
@@ -96,7 +97,7 @@ def load_speaker_notes(ppt_project_dir: str) -> Dict[int, str]:
     notes: Dict[int, str] = {}
     current_slide: Optional[int] = None
     current_lines: List[str] = []
-    heading_pattern = re.compile(r"^#{2,4}\s*(?:Slide\s*(\d+)|第\s*(\d+)\s*页)\b.*$", re.IGNORECASE)
+    heading_pattern = re.compile(r"^#{1,4}\s*(?:Slide\s*(\d+)|第\s*(\d+)\s*页)\b.*$", re.IGNORECASE)
 
     def flush_current() -> None:
         if current_slide is None:

@@ -79,7 +79,8 @@ async def test_delivery_job_artifacts_become_visible_atomically_at_group_termina
             expected_generation=attempt.generation,result={'ok':True})
         visible=[row for row in await store.items_after(thread.id) if row.type==ItemType.ARTIFACT]
         assert [row.summary for row in visible]==['file-0.txt','file-1.txt']
-        assert all(row.payload['job_id']==jobs[0].id and not row.payload['partial'] for row in visible)
+        assert all(row.payload['job_id']==jobs[0].id and not row.payload['partial']
+            and row.payload['local_job_id']=='deliver' for row in visible)
     finally:await store.close()
 
 

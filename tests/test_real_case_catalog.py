@@ -23,13 +23,21 @@ def test_real_case_catalog_is_reproducible_complete_and_parallel_specific():
     assert {row["id"] for row in catalog["cases"] if row.get("executor")=="inherited_protocol"}=={
         f"D{value:02d}" for value in range(1,52)}
     assert {row["id"] for row in catalog["cases"] if row["id"].startswith("P")}=={
-        *(f"P{value:02d}" for value in range(1,21)),"P22","P23","P24"}
+        *(f"P{value:02d}" for value in range(1,21)),
+        *(f"P{value:02d}" for value in range(22,28))}
     compact=next(row for row in catalog["cases"] if row["id"]=="P22")
     assert compact["executor"]=="parallel_protocol"
     assert compact["expect"]=={"compiled_jobs":2,"metadata_required":False,
         "child_harnesses":2,"continuation_count":1}
     autonomous=next(row for row in catalog["cases"] if row["id"]=="P23")
     assert autonomous['expect']['primary_delegated'] and autonomous['expect']['attempts_overlapped']
+    complex_cases={row['id']:row for row in catalog['cases'] if row['id'] in {'P25','P26','P27'}}
+    assert set(complex_cases)=={'P25','P26','P27'}
+    assert all({'operation','provider','complex_skill'}<=set(row['required_features'])
+        for row in complex_cases.values())
+    assert complex_cases['P25']['expect']['skill']=='codex-ppt'
+    assert complex_cases['P26']['expect']['skill']=='docx'
+    assert complex_cases['P27']['expect']['worker_restarted'] is True
     c04=next(row for row in catalog["cases"] if row["id"]=="C04")
     assert c04["allowed_external_operations"]==["image.segment"]
     review_cases=[row for row in catalog['cases'] if row.get('review_candidate_authorized')]

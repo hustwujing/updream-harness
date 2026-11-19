@@ -1,11 +1,15 @@
 from pathlib import Path
 import io
+from datetime import timedelta
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from PIL import Image
 
 from sandbox_harness.app import create_app
+from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.config import Settings
+from sandbox_harness.domain import Harness,MediaDraftCreate,ThreadCreate,TurnCreate,now
 from sandbox_runtime import media_cli
 
 
@@ -15,6 +19,37 @@ ROOT = Path(__file__).resolve().parents[1]
 class Response:
     is_success = True
     text = '{"ok":true}'
+
+
+def test_media_batch_confirm_api_creates_all_jobs_once(tmp_path):
+    settings=Settings(data_root=tmp_path,database_url="sqlite+aiosqlite:///"+str(tmp_path/"batch-api.db"),
+        redis_url="",backend="fake",object_backend="local",model_catalog_discovery=False,
+        session_signing_key="media-batch-api-secret")
+    app=create_app(settings);store=app.state.store
+    with TestClient(app) as client:
+        thread=client.post("/api/threads",json={"harness":"codex","model":"gpt-5.6",
+            "reasoning_level":"standard","title":"Batch API"}).json()
+        async def seed():
+            current=await store.get_thread(thread["id"]);profile=HarnessCatalog().resolve(
+                "codex","gpt-5.6","standard")
+            turn,_,_=await store.create_turn(thread["id"],TurnCreate(message="batch",
+                idempotency_key="media-batch-api-turn"),profile,current.owner_id)
+            spec=SimpleNamespace(kind="image",model="seedream-5.0",provider="ark",adapter="ark_image",execution="sync",
+                cancellation="unsupported")
+            for index in range(2):
+                await store.create_media_draft(current.owner_id,thread["id"],MediaDraftCreate(
+                    kind="image",model="seedream-5.0",generation_mode="text_to_image",
+                    parameters={"prompt":f"slide {index}","size":"2560x1440"},turn_id=turn.id,
+                    idempotency_key=f"media-batch-api-{index}",output_role="workspace"),
+                    expires_at=now()+timedelta(minutes=10),provider_spec=spec)
+            await store.seal_media_batch(turn.id,thread["id"],current.owner_id)
+            return turn
+        turn=client.portal.call(seed)
+        first=client.post(f"/api/turns/{turn.id}/media/drafts/confirm")
+        second=client.post(f"/api/turns/{turn.id}/media/drafts/confirm")
+        assert first.status_code==200 and second.status_code==200
+        assert len(first.json())==2 and [row["id"] for row in first.json()]==[
+            row["id"] for row in second.json()]
 
 
 def test_media_worker_is_a_separate_service():

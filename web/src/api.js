@@ -46,6 +46,8 @@ export const createMediaDraft=(threadId,value)=>api(`threads/${threadId}/media/d
 export const updateMediaDraft=(draftId,value)=>api(`media/drafts/${draftId}`,{method:'PATCH',body:JSON.stringify(value)});
 export const confirmMediaDraft=draftId=>api(`media/drafts/${draftId}/confirm`,{method:'POST'});
 export const cancelMediaDraft=draftId=>api(`media/drafts/${draftId}/cancel`,{method:'POST'});
+export const confirmMediaBatch=turnId=>api(`turns/${turnId}/media/drafts/confirm`,{method:'POST'});
+export const cancelMediaBatch=turnId=>api(`turns/${turnId}/media/drafts/cancel`,{method:'POST'});
 export const listSiteDrafts=threadId=>api(`threads/${threadId}/sites/drafts`);
 export const confirmSiteDraft=draftId=>api(`sites/drafts/${draftId}/confirm`,{method:'POST'});
 export const cancelSiteDraft=draftId=>api(`sites/drafts/${draftId}/cancel`,{method:'POST'});

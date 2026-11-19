@@ -743,6 +743,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except RuntimeError as exc:
             raise HTTPException(409, str(exc))
 
+    @app.post("/api/turns/{turn_id}/media/drafts/confirm")
+    async def confirm_media_batch(turn_id:str,request:Request):
+        drafts=await store.list_media_drafts_for_turn(turn_id,request.state.owner_id)
+        if not drafts:raise HTTPException(404,"Media batch not found")
+        specs={}
+        try:
+            for draft in drafts:
+                if draft.status!="awaiting_confirmation":continue
+                spec=media_catalog.resolve(draft.kind,draft.model)
+                snapshot=await store.get_media_draft_snapshot(draft.id,request.state.owner_id)
+                media_catalog.validate_parameters(draft.kind,draft.model,draft.parameters,
+                    generation_mode=draft.generation_mode,references=snapshot["references"])
+                specs[draft.id]=spec
+            return await store.confirm_media_batch(turn_id,request.state.owner_id,
+                provider_specs=specs)
+        except (KeyError,ValueError) as exc:
+            raise HTTPException(422,str(exc))
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc))
+
+    @app.post("/api/turns/{turn_id}/media/drafts/cancel")
+    async def cancel_media_batch(turn_id:str,request:Request):
+        try:return await store.cancel_media_batch(turn_id,request.state.owner_id)
+        except KeyError:raise HTTPException(404,"Media batch not found")
+        except RuntimeError as exc:raise HTTPException(409,str(exc))
+
     @app.post("/api/media/drafts/{draft_id}/cancel")
     async def cancel_media_draft(draft_id: str, request: Request):
         try:

@@ -83,6 +83,57 @@ async def test_media_draft_confirm_is_idempotent_and_snapshots_provider(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_media_batch_confirm_is_atomic_and_idempotent(tmp_path):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"media-batch-confirm.db"));await store.initialize()
+    try:
+        owner="a"*64;profile=HarnessCatalog().resolve("codex","gpt-5.6","standard")
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level="standard",title="Batch confirm"),profile,owner)
+        turn,_,_=await store.create_turn(thread.id,TurnCreate(message="batch",
+            idempotency_key="media-batch-confirm-turn"),profile,owner)
+        spec=SimpleNamespace(kind="image",model="seedream-5.0",provider="ark",adapter="ark_image",execution="sync",cancellation="unsupported")
+        drafts=[]
+        for index in range(3):
+            draft,_=await store.create_media_draft(owner,thread.id,MediaDraftCreate(kind="image",
+                model="seedream-5.0",turn_id=turn.id,idempotency_key=f"batch-draft-{index}"),
+                expires_at=now()+timedelta(minutes=10),provider_spec=spec)
+            drafts.append(draft)
+        await store.seal_media_batch(turn.id,thread.id,owner)
+        specs={draft.id:spec for draft in drafts}
+        first=await store.confirm_media_batch(turn.id,owner,provider_specs=specs)
+        second=await store.confirm_media_batch(turn.id,owner,provider_specs=specs)
+        assert [job.id for job in first]==[job.id for job in second]
+        assert len(first)==3 and len(await store.list_media_jobs(thread.id,owner))==3
+    finally:await store.close()
+
+
+@pytest.mark.asyncio
+async def test_media_batch_confirm_rejects_entire_batch_when_one_draft_expired(tmp_path):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"media-batch-expired.db"));await store.initialize()
+    try:
+        owner="a"*64;profile=HarnessCatalog().resolve("codex","gpt-5.6","standard")
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level="standard",title="Batch expiry"),profile,owner)
+        turn,_,_=await store.create_turn(thread.id,TurnCreate(message="batch",
+            idempotency_key="media-batch-expiry-turn"),profile,owner)
+        spec=SimpleNamespace(kind="image",model="seedream-5.0",provider="ark",adapter="ark_image",execution="sync",cancellation="unsupported")
+        valid,_=await store.create_media_draft(owner,thread.id,MediaDraftCreate(kind="image",
+            model="seedream-5.0",turn_id=turn.id,idempotency_key="batch-valid"),
+            expires_at=now()+timedelta(minutes=10),provider_spec=spec)
+        expired,_=await store.create_media_draft(owner,thread.id,MediaDraftCreate(kind="image",
+            model="seedream-5.0",turn_id=turn.id,idempotency_key="batch-expired"),
+            expires_at=now()-timedelta(seconds=1),provider_spec=spec)
+        await store.seal_media_batch(turn.id,thread.id,owner)
+        with pytest.raises(RuntimeError,match="media_batch_not_confirmable"):
+            await store.confirm_media_batch(turn.id,owner,
+                provider_specs={valid.id:spec,expired.id:spec})
+        assert await store.list_media_jobs(thread.id,owner)==[]
+        assert {draft.status for draft in await store.list_media_drafts(thread.id,owner)}=={
+            "awaiting_confirmation","expired"}
+    finally:await store.close()
+
+
+@pytest.mark.asyncio
 async def test_expired_media_draft_cannot_confirm(tmp_path):
     store = Store("sqlite+aiosqlite:///" + str(tmp_path / "media-expired.db"))
     await store.initialize()

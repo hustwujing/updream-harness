@@ -55,24 +55,25 @@ def require(response:httpx.Response)->httpx.Response:
     return response
 
 
-def provider_job(index:int)->dict:
+def provider_job(index:int,*,prompt:str|None=None)->dict:
     return {'local_job_id':f'image-{index}','kind':'provider','adapter':'image.generate',
         'descriptor_id':'image.generate','descriptor_version':'1','descriptor_digest':'c'*64,
         'idempotency_key':f'protocol-image-{index}-'+uuid.uuid4().hex,
         'parameters':{'kind':'image','model':'seedream-5.0','generation_mode':'text_to_image',
-            'parameters':{'prompt':f'A simple blue geometric poster variant {index}'}},
+            'parameters':{'prompt':prompt or f'A simple blue geometric poster variant {index}'}},
         'expected_outputs':[{'artifact_role':'generated_images','output_disposition':'candidate',
             'min_items':1,'max_items':1,'mime_patterns':['image/*']}]}
 
 
 def harness_job(index:int,args,*,objective:str='Return a concise factual analysis.',
                 outputs:list[dict]|None=None,skills:list[str]|None=None,
-                child_profile_id:str='child-general',replaces_job_id:str='')->dict:
+                inputs:list[dict]|None=None,child_profile_id:str='child-general',
+                replaces_job_id:str='')->dict:
     return {'local_job_id':f'child-{index}','kind':'harness','adapter':'child-harness',
         'descriptor_id':'delegate.harness','descriptor_version':'1','descriptor_digest':'d'*64,
         'idempotency_key':f'protocol-child-{index}-'+uuid.uuid4().hex,
         'parameters':{'harness':args.harness,'model':args.model,'objective':objective},
-        'expected_outputs':outputs or [],'child_profile_id':child_profile_id,
+        'input_artifacts':inputs or [],'expected_outputs':outputs or [],'child_profile_id':child_profile_id,
         'skill_ids':skills or [],'replaces_job_id':replaces_job_id}
 
 
@@ -85,6 +86,39 @@ def operation_job(artifact_id:str)->dict:
         'input_artifacts':[{'artifact_id':artifact_id,'artifact_role':'source'}],
         'expected_outputs':[{'artifact_role':'rendered_media','output_disposition':'workspace',
             'min_items':1,'max_items':1,'mime_patterns':['image/png']}]}
+
+
+def segment_job(artifact_id:str,*,identity:str='segment-subject')->dict:
+    return {'local_job_id':identity,'kind':'operation','adapter':'image.segment',
+        'descriptor_id':'image.segment','descriptor_version':'1','descriptor_digest':'1'*64,
+        'idempotency_key':'protocol-segment-'+uuid.uuid4().hex,
+        'parameters':{'prompt':'person','confidence':0.25,'refine':True},
+        'input_artifacts':[{'artifact_id':artifact_id,'artifact_role':'source'}],
+        'expected_outputs':[{'artifact_role':'foreground','output_disposition':'workspace',
+            'min_items':1,'max_items':1,'mime_patterns':['image/png'],
+            'validators':['image.dimensions_exact','image.alpha']}]}
+
+
+def transcribe_job(artifact_id:str)->dict:
+    return {'local_job_id':'transcribe-source','kind':'operation','adapter':'audio.transcribe',
+        'descriptor_id':'audio.transcribe','descriptor_version':'1','descriptor_digest':'2'*64,
+        'idempotency_key':'protocol-transcribe-'+uuid.uuid4().hex,
+        'parameters':{'language':'zh','translate':False,'beam_size':3},
+        'input_artifacts':[{'artifact_id':artifact_id,'artifact_role':'source'}],
+        'expected_outputs':[{'artifact_role':'transcript_text','output_disposition':'workspace',
+            'min_items':1,'max_items':1,'mime_patterns':['text/plain']}]}
+
+
+def video_render_job(artifact_id:str)->dict:
+    return {'local_job_id':'normalize-video','kind':'operation','adapter':'media.render',
+        'descriptor_id':'media.render','descriptor_version':'1','descriptor_digest':'b'*64,
+        'idempotency_key':'protocol-video-render-'+uuid.uuid4().hex,
+        'parameters':{'recipe':{'operation':'video.transcode','input_role':'source','width':640,
+            'height':360,'fps':24,'output_filename':'normalized-video.mp4'}},
+        'input_artifacts':[{'artifact_id':artifact_id,'artifact_role':'source'}],
+        'expected_outputs':[{'artifact_role':'rendered_media','output_disposition':'workspace',
+            'min_items':1,'max_items':1,'mime_patterns':['video/mp4'],
+            'validators':['video.dimensions_exact','video.fps','video.mp4']}]}
 
 
 async def wait_job(client,job_id,timeout=900):
@@ -176,10 +210,50 @@ async def origin(client,args,identity):
         'delivery_mode':'start'});require(response);return thread,response.json()
 
 
-async def prepare(client,thread,turn,jobs,identity):
+async def prepare(client,thread,turn,jobs,identity,*,suppress_continuation:bool=False):
     response=await client.post('api/job-group-drafts',json={'thread_id':thread['id'],
         'origin_turn_id':turn['id'],'idempotency_key':'protocol-group-'+identity+'-'+uuid.uuid4().hex,
-        'jobs':jobs});return response
+        'jobs':jobs,'suppress_continuation':suppress_continuation});return response
+
+
+async def register_case_asset(thread_id:str,turn_id:str,path:Path):
+    settings=load_platform_settings()
+    from sandbox_harness.app import object_store
+    from sandbox_harness.store import Store
+    data=path.read_bytes();objects=object_store(settings)
+    object_ref,digest=await asyncio.to_thread(objects.put,data)
+    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    try:
+        owner=(await store.get_thread(thread_id)).owner_id
+        return await store.add_artifact(turn_id,path='inputs/'+path.name,sha256=digest,
+            size=len(data),mime=('video/mp4' if path.suffix=='.mp4' else 'image/png'),
+            object_ref=object_ref)
+    finally:await store.close()
+
+
+async def job_artifacts(job_ids:list[str]):
+    settings=load_platform_settings()
+    from sandbox_harness.store import Store
+    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    try:
+        return {job_id:await store.list_job_artifacts(job_id) for job_id in job_ids}
+    finally:await store.close()
+
+
+async def attempts_overlap(job_ids:list[str])->bool:
+    settings=load_platform_settings()
+    from sqlalchemy import select
+    from sandbox_harness.store import JobAttemptRow,Store
+    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    try:
+        async with store.connections() as db:
+            attempts=list((await db.execute(select(JobAttemptRow).where(
+                JobAttemptRow.job_id.in_(job_ids)))).scalars().all())
+        intervals=[(row.started_at,row.finished_at) for row in attempts if row.finished_at]
+        return any(left_start<right_end and right_start<left_end
+            for index,(left_start,left_end) in enumerate(intervals)
+            for right_start,right_end in intervals[index+1:])
+    finally:await store.close()
 
 
 async def case_p01(client,args):
@@ -764,16 +838,170 @@ async def case_p24(client,args):
     finally:await store.close()
 
 
+async def case_p25(client,args):
+    thread,turn=await origin(client,args,'P25')
+    source=await register_case_asset(thread['id'],turn['id'],
+        ROOT/'tests/real_cases/assets/portrait.png')
+    phase_one=[segment_job(source.id),provider_job(25,prompt=(
+        'Clean premium technology brand background, cobalt blue and white geometric light, '
+        'no words, no letters, widescreen presentation composition'))]
+    prepared=require(await prepare(client,thread,turn,phase_one,'P25-source',
+        suppress_continuation=True)).json()
+    if prepared.get('mode')!='draft':raise AssertionError('sensitive mixed group bypassed confirmation')
+    committed=require(await client.post(
+        f"api/job-group-drafts/{prepared['draft']['id']}/confirm")).json()
+    completed=await wait_jobs(client,committed['jobs'],args.timeout)
+    if not await attempts_overlap([row['id'] for row in completed]):
+        raise AssertionError('phase-one operation and provider did not overlap')
+    by_local={row['local_job_id']:row for row in completed}
+    artifacts=await job_artifacts([row['id'] for row in completed])
+    foreground=next(row for row in artifacts[by_local['segment-subject']['id']]
+        if row.artifact_role=='foreground')
+    background=next(row for row in artifacts[by_local['image-25']['id']]
+        if row.artifact_role=='generated_images')
+    presentation_mime='application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    objective=('Use the injected codex-ppt Skill and only the two frozen input images. Create exactly '
+        'one three-slide Chinese presentation: cover, brand visual analysis, and launch checklist. '
+        'Use the transparent subject and generated background as actual visuals, include concise speaker '
+        'notes, validate the PPTX, and write exactly /workspace/outputs/parallel-brand-deck.pptx. '
+        'Do not call any Provider or create any other output file.')
+    aggregate=harness_job(25,args,objective=objective,skills=['codex-ppt'],inputs=[
+        {'artifact_id':foreground.artifact_id,'artifact_role':'subject'},
+        {'artifact_id':background.artifact_id,'artifact_role':'background'}],outputs=[{
+            'artifact_role':'presentation','output_disposition':'delivery','min_items':1,'max_items':1,
+            'mime_patterns':[presentation_mime],'max_item_bytes':128*1024*1024,
+            'max_total_bytes':128*1024*1024}])
+    phase_two=require(await prepare(client,thread,turn,[aggregate],'P25-aggregate',
+        suppress_continuation=True)).json()
+    if phase_two.get('mode')!='committed':raise AssertionError('non-billable aggregation required confirmation')
+    final=(await wait_jobs(client,phase_two['jobs'],args.timeout))[0]
+    delivered=await job_artifacts([final['id']])
+    names=[row.filename for row in delivered[final['id']]]
+    if names!=['parallel-brand-deck.pptx']:
+        raise AssertionError('presentation delivery mismatch:'+json.dumps(names))
+    return {'classification':'success','thread_id':thread['id'],'phase_one_jobs':2,
+        'phase_one_group_id':committed['group']['id'],'phase_two_group_id':phase_two['group']['id'],
+        'operation':'image.segment','provider':'image.generate','skill':'codex-ppt',
+        'one_group_confirmation':True,'immutable_handoff':True,'delivery_names':names}
+
+
+async def case_p26(client,args):
+    thread,turn=await origin(client,args,'P26')
+    source=await register_case_asset(thread['id'],turn['id'],
+        ROOT/'tests/real_cases/assets/portrait_clip.mp4')
+    phase_one=[transcribe_job(source.id),video_render_job(source.id),provider_job(26,prompt=(
+        'Editorial cover image for a concise video insight report, clean cyan and coral shapes, '
+        'audio waveform motif, no words, no letters, portrait-safe center composition'))]
+    prepared=require(await prepare(client,thread,turn,phase_one,'P26-source',
+        suppress_continuation=True)).json()
+    if prepared.get('mode')!='draft':raise AssertionError('sensitive multimodal group bypassed confirmation')
+    committed=require(await client.post(
+        f"api/job-group-drafts/{prepared['draft']['id']}/confirm")).json()
+    completed=await wait_jobs(client,committed['jobs'],args.timeout)
+    if not await attempts_overlap([row['id'] for row in completed]):
+        raise AssertionError('multimodal phase-one jobs did not overlap')
+    by_local={row['local_job_id']:row for row in completed}
+    artifacts=await job_artifacts([row['id'] for row in completed])
+    transcript=next(row for row in artifacts[by_local['transcribe-source']['id']]
+        if row.artifact_role=='transcript_text')
+    video=next(row for row in artifacts[by_local['normalize-video']['id']]
+        if row.artifact_role=='rendered_media')
+    cover=next(row for row in artifacts[by_local['image-26']['id']]
+        if row.artifact_role=='generated_images')
+    docx_mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    objective=('Use the injected docx Skill and all three frozen inputs to create a polished Chinese '
+        'content report. Include a cover using the supplied image, a transcript summary that quotes '
+        'only evidence present in the transcript, normalized-video technical metadata, and a source '
+        'provenance table. Validate the document and write exactly '
+        '/workspace/outputs/multimodal-report.docx. Create no other output file.')
+    aggregate=harness_job(26,args,objective=objective,skills=['docx'],inputs=[
+        {'artifact_id':transcript.artifact_id,'artifact_role':'transcript'},
+        {'artifact_id':video.artifact_id,'artifact_role':'normalized_video'},
+        {'artifact_id':cover.artifact_id,'artifact_role':'cover'}],outputs=[{
+            'artifact_role':'report','output_disposition':'delivery','min_items':1,'max_items':1,
+            'mime_patterns':[docx_mime],'max_item_bytes':128*1024*1024,
+            'max_total_bytes':128*1024*1024}])
+    phase_two=require(await prepare(client,thread,turn,[aggregate],'P26-aggregate',
+        suppress_continuation=True)).json()
+    if phase_two.get('mode')!='committed':raise AssertionError('document aggregation required confirmation')
+    final=(await wait_jobs(client,phase_two['jobs'],args.timeout))[0]
+    delivered=await job_artifacts([final['id']]);names=[row.filename for row in delivered[final['id']]]
+    if names!=['multimodal-report.docx']:
+        raise AssertionError('report delivery mismatch:'+json.dumps(names))
+    return {'classification':'success','thread_id':thread['id'],'phase_one_jobs':3,
+        'phase_one_group_id':committed['group']['id'],'phase_two_group_id':phase_two['group']['id'],
+        'operations':['audio.transcribe','media.render'],'provider':'image.generate','skill':'docx',
+        'one_group_confirmation':True,'immutable_handoff':True,'delivery_names':names}
+
+
+async def case_p27(client,args):
+    thread,turn=await origin(client,args,'P27')
+    source=await register_case_asset(thread['id'],turn['id'],
+        ROOT/'tests/real_cases/assets/poster.png')
+    shared=[{'artifact_id':source.id,'artifact_role':'source'}]
+    docx_mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    jobs=[provider_job(27,prompt=('Abstract recovery architecture illustration, durable jobs and '
+        'checkpoints, clean blue line art, no words, no letters')),operation_job(source.id),
+        harness_job(270,args,skills=['docx'],inputs=shared,objective=(
+            'First run a shell sleep for 20 seconds. Then use the injected docx Skill and the frozen '
+            'image to create exactly /workspace/outputs/recovery-notes.docx with a short Chinese '
+            'recovery checklist. Create no other output file.'),outputs=[{
+                'artifact_role':'recovery_notes','output_disposition':'workspace','min_items':1,'max_items':1,
+                'mime_patterns':[docx_mime]}]),
+        harness_job(271,args,skills=['pdf'],inputs=shared,objective=(
+            'First run a shell sleep for 20 seconds. Then use the injected pdf Skill and the frozen '
+            'image to create exactly /workspace/outputs/recovery-evidence.pdf with a one-page Chinese '
+            'evidence sheet. Create no other output file.'),outputs=[{
+                'artifact_role':'recovery_evidence','output_disposition':'workspace','min_items':1,'max_items':1,
+                'mime_patterns':['application/pdf']}])]
+    prepared=require(await prepare(client,thread,turn,jobs,'P27')).json()
+    if prepared.get('mode')!='draft':raise AssertionError('mixed recovery group bypassed confirmation')
+    committed=require(await client.post(
+        f"api/job-group-drafts/{prepared['draft']['id']}/confirm")).json()
+    by_local={row['local_job_id']:row for row in committed['jobs']};provider=by_local['image-27']
+    deadline=time.monotonic()+300
+    while time.monotonic()<deadline:
+        states={row['local_job_id']:require(await client.get(f"api/jobs/{row['id']}")).json()['state']
+            for row in committed['jobs']}
+        active=sum(value in {'RUNNING','WAITING_EXTERNAL'} for value in states.values())
+        if states['image-27']=='WAITING_EXTERNAL' and active>=2:break
+        await asyncio.sleep(.25)
+    else:raise TimeoutError('mixed_jobs_never_reached_inflight_state:'+json.dumps(states))
+    await asyncio.to_thread(subprocess.run,['systemctl','restart',
+        'sandbox-harness-parallel-job-worker.service'],check=True)
+    completed=await wait_jobs(client,committed['jobs'],args.timeout)
+    _,continuations=await wait_continuations(client,thread['id'],maximum=1)
+    settings=load_platform_settings()
+    from sqlalchemy import select
+    from sandbox_harness.store import JobAttemptRow,Store
+    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    try:
+        async with store.connections() as db:
+            attempts=list((await db.execute(select(JobAttemptRow).where(
+                JobAttemptRow.job_id==provider['id']))).scalars().all())
+    finally:await store.close()
+    external_ids={row.external_execution_id for row in attempts if row.external_execution_id}
+    if len(external_ids)!=1:
+        raise AssertionError('provider submission identity changed:'+json.dumps(sorted(external_ids)))
+    if len(continuations)!=1:raise AssertionError('mixed group did not create one continuation')
+    return {'classification':'success','thread_id':thread['id'],'group_id':committed['group']['id'],
+        'group_members':len(completed),'operation':'media.render','provider':'image.generate',
+        'complex_skills':['docx','pdf'],'worker_restarted':True,
+        'duplicate_provider_submission':False,'provider_external_execution_id':next(iter(external_ids)),
+        'one_primary_continuation':True,'continuation_id':continuations[0]['id']}
+
+
 HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case_p05,
     'P06':case_p06,'P07':case_p07,'P08':case_p08,'P09':case_p09,'P10':case_p10,
     'P11':case_p11,'P12':case_p12,'P13':case_p13,'P14':case_p14,'P15':case_p15,
     'P16':case_p16,'P17':case_p17,'P18':case_p18,'P19':case_p19,'P20':case_p20,
-    'P21':case_p21,'P22':case_p22,'P23':case_p23,'P24':case_p24}
+    'P21':case_p21,'P22':case_p22,'P23':case_p23,'P24':case_p24,
+    'P25':case_p25,'P26':case_p26,'P27':case_p27}
 
 
 async def main():
     parser=argparse.ArgumentParser();parser.add_argument('--base-url',default='http://127.0.0.1:24766/')
-    parser.add_argument('--case',required=True,choices=[f'P{value:02d}' for value in range(1,25)])
+    parser.add_argument('--case',required=True,choices=[f'P{value:02d}' for value in range(1,28)])
     parser.add_argument('--report',type=Path,required=True);parser.add_argument('--harness',default='codex')
     parser.add_argument('--model',default='gpt-5.6-sol');parser.add_argument('--reasoning',default='deep')
     parser.add_argument('--timeout',type=float,default=1200)

@@ -50,6 +50,10 @@ Make sure `outline.md` reflects the final confirmed deck outline. Do not recreat
 
 Create `speech.md` as presenter notes that a speaker can use directly. Do not write a brief summary of visible slide text. Write in the presentation language; for Chinese decks, speaker notes should be in Chinese.
 
+Use `## Slide N` as the canonical heading for every page, for example
+`## Slide 1`. Do not invent another heading scheme. The assembler accepts
+heading levels 1-4 defensively, but generated projects must use level 2.
+
 For each slide, write only the spoken talk track directly under the slide heading, without an extra label. It is the script the presenter can read or closely follow. It should connect the slide to the deck's main story, explain the point the audience should take away, and include a natural transition at the end when useful.
 
 Before writing the slide notes, choose a delivery style based on the deck content, audience, and purpose. The delivery style is not a label added after writing; it should shape the actual talk track, including how direct the claim is, how much background is explained, which examples are used, how quickly the speaker moves, and how transitions are phrased.

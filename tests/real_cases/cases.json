@@ -14,10 +14,10 @@
     "evidence_root": ".data/evidence/real-campaign",
     "forbid_case_specific_product_fixes": true
   },
-  "runnable_case_count": 152,
+  "runnable_case_count": 155,
   "business_case_count": 78,
   "inherited_protocol_case_count": 51,
-  "parallel_case_count": 23,
+  "parallel_case_count": 26,
   "cases": [
     {
       "id": "S01",
@@ -7020,6 +7020,128 @@
         "image_segment",
         "child_continuation",
         "artifact_delivery"
+      ],
+      "provenance": "parallel-design"
+    },
+    {
+      "id": "P25",
+      "title": "并行品牌演示包",
+      "complexity": "parallel_protocol",
+      "assets": [
+        "portrait.png"
+      ],
+      "prompt": "并行抠出人物主体并通过外部异步接口生成品牌背景；两项完成后，把不可变产物交给 codex-ppt Skill 制作一份三页中文品牌演示稿。",
+      "expect": {
+        "phase_one_jobs": 2,
+        "operation": "image.segment",
+        "provider": "image.generate",
+        "skill": "codex-ppt",
+        "delivery": "parallel-brand-deck.pptx",
+        "one_group_confirmation": true,
+        "immutable_handoff": true
+      },
+      "content_checks": [
+        "Operation 与 Provider 的执行时间重叠",
+        "第一阶段只确认一次",
+        "PPTX 来自带 codex-ppt Skill 的 Child Harness",
+        "聚合阶段绑定真实 Job Artifact"
+      ],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_browser_or_api",
+      "executor": "parallel_protocol",
+      "required_features": [
+        "operation",
+        "provider",
+        "complex_skill",
+        "two_stage_dag",
+        "artifact_handoff",
+        "group_confirmation"
+      ],
+      "provenance": "parallel-design"
+    },
+    {
+      "id": "P26",
+      "title": "并行多模态内容报告",
+      "complexity": "parallel_protocol",
+      "assets": [
+        "portrait_clip.mp4"
+      ],
+      "prompt": "并行完成视频语音转写、视频规格化和外部异步封面生成；三项完成后，用 docx Skill 汇总为带来源说明的中文内容报告。",
+      "expect": {
+        "phase_one_jobs": 3,
+        "operations": [
+          "audio.transcribe",
+          "media.render"
+        ],
+        "provider": "image.generate",
+        "skill": "docx",
+        "delivery": "multimodal-report.docx",
+        "one_group_confirmation": true,
+        "immutable_handoff": true
+      },
+      "content_checks": [
+        "转写、转码和外部生成同组并行",
+        "第一阶段只确认一次",
+        "DOCX 来自带 docx Skill 的 Child Harness",
+        "报告输入绑定真实 Job Artifact"
+      ],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_browser_or_api",
+      "executor": "parallel_protocol",
+      "required_features": [
+        "operation",
+        "provider",
+        "complex_skill",
+        "two_stage_dag",
+        "artifact_handoff",
+        "group_confirmation",
+        "multimodal"
+      ],
+      "provenance": "parallel-design"
+    },
+    {
+      "id": "P27",
+      "title": "混合并行任务节点恢复",
+      "complexity": "parallel_protocol",
+      "assets": [
+        "poster.png"
+      ],
+      "prompt": "Operation、外部异步 Provider 和两个复杂 Skill 子任务同时在途时重启 Job Worker；恢复后完成所有成员并由 Primary 只续接一次。",
+      "expect": {
+        "group_members": 4,
+        "operation": "media.render",
+        "provider": "image.generate",
+        "complex_skills": [
+          "docx",
+          "pdf"
+        ],
+        "worker_restarted": true,
+        "duplicate_provider_submission": false,
+        "one_primary_continuation": true
+      },
+      "content_checks": [
+        "Worker 重启发生在至少两个成员在途时",
+        "已接受 Provider 不重复提交",
+        "独立成员均达到终态",
+        "整个 JobGroup 只创建一次 Primary continuation"
+      ],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_browser_or_api",
+      "executor": "parallel_protocol",
+      "required_features": [
+        "operation",
+        "provider",
+        "complex_skill",
+        "mixed_group",
+        "node_loss",
+        "recovery",
+        "continuation"
       ],
       "provenance": "parallel-design"
     }

@@ -2784,7 +2784,8 @@ class Store:
                                 summary=artifact_row.filename,payload_json=json.dumps({
                                     'artifact_id':artifact_row.artifact_id,'mime':artifact_row.mime,
                                     'size':artifact_row.size,'partial':False,'job_id':artifact_job.id,
-                                    'artifact_role':artifact_row.artifact_role}),
+                                    'artifact_role':artifact_row.artifact_role,
+                                    'local_job_id':artifact_job.local_job_id}),
                                 created_at=timestamp,updated_at=timestamp))
                             visible_ids.add(artifact_row.artifact_id)
                         all_cancelled = all(member.state == JobState.CANCELLED.value for member in jobs)
@@ -3218,7 +3219,8 @@ class Store:
                             turn_id=source.origin_turn_id,sequence=sequence,type=ItemType.ARTIFACT.value,
                             status="completed",summary=row.filename,payload_json=json.dumps({
                                 "artifact_id":row.artifact_id,"mime":row.mime,"size":row.size,
-                                "partial":False,"job_id":source.id,"artifact_role":row.artifact_role}),
+                                "partial":False,"job_id":source.id,"artifact_role":row.artifact_role,
+                                "local_job_id":source.local_job_id}),
                             created_at=timestamp,updated_at=timestamp))
             gate.state="published" if verdict=="PASS" else "optional_warning"
         else:
@@ -5832,6 +5834,13 @@ class Store:
             ).order_by(MediaDraftRow.created_at.desc()))).scalars().all()
         return [self._media_draft_view(row) for row in rows]
 
+    async def list_media_drafts_for_turn(self, turn_id: str, owner_id: str) -> list[MediaDraftView]:
+        async with self.connections() as db:
+            rows=(await db.execute(select(MediaDraftRow).where(MediaDraftRow.turn_id==turn_id,
+                MediaDraftRow.owner_id==owner_id).order_by(MediaDraftRow.created_at,
+                    MediaDraftRow.id))).scalars().all()
+        return [self._media_draft_view(row) for row in rows]
+
     async def owner_id_for_thread(self, thread_id: str) -> str:
         async with self.connections() as db:
             return (await db.execute(select(ThreadRow.owner_id).where(ThreadRow.id == thread_id))).scalar_one_or_none() or ""
@@ -5890,6 +5899,59 @@ class Store:
                 await db.execute(update(MediaBatchRow).where(MediaBatchRow.turn_id == draft.turn_id,
                     MediaBatchRow.status == "sealed").values(lease_expires_at=None, updated_at=now()))
         return self._media_job_view(job)
+
+    async def confirm_media_batch(self,turn_id:str,owner_id:str,*,provider_specs:dict[str,object])->list[MediaJobView]:
+        async with self.connections.begin() as db:
+            batch=await db.get(MediaBatchRow,turn_id,with_for_update=True)
+            if not batch or batch.owner_id!=owner_id:
+                raise KeyError("media_batch_not_found")
+            if batch.status not in {"sealed","delivering","continued"}:
+                raise RuntimeError("media_batch_not_confirmable")
+            drafts=list((await db.execute(select(MediaDraftRow).where(
+                MediaDraftRow.turn_id==turn_id,MediaDraftRow.owner_id==owner_id)
+                .order_by(MediaDraftRow.created_at,MediaDraftRow.id).with_for_update())).scalars().all())
+            if not drafts or any(draft.status not in {"awaiting_confirmation","confirmed"}
+                    or draft.status=="awaiting_confirmation" and utc_datetime(draft.expires_at)<=now()
+                    for draft in drafts):
+                raise RuntimeError("media_batch_not_confirmable")
+            pending=[draft for draft in drafts if not draft.job_id]
+            if any(draft.id not in provider_specs for draft in pending):
+                raise RuntimeError("media_batch_provider_spec_missing")
+            jobs=[];timestamp=now()
+            for draft in drafts:
+                job=await db.get(MediaJobRow,draft.job_id) if draft.job_id else None
+                if not job:
+                    spec=provider_specs[draft.id]
+                    if spec.kind!=draft.kind or spec.model!=draft.model:
+                        raise RuntimeError("media_batch_provider_spec_mismatch")
+                    job=MediaJobRow(id=identifier(),owner_id=owner_id,thread_id=draft.thread_id,
+                        turn_id=draft.turn_id,draft_id=draft.id,kind=draft.kind,model=draft.model,
+                        generation_mode=draft.generation_mode,provider=spec.provider,adapter=spec.adapter,
+                        execution_mode=spec.execution,cancellation_mode=spec.cancellation,
+                        status="created",phase="prepared",parameters_json=draft.parameters_json,
+                        references_json=draft.references_json,idempotency_key=draft.idempotency_key,
+                        output_role=draft.output_role,created_at=timestamp,updated_at=timestamp)
+                    db.add(job);draft.status="confirmed";draft.job_id=job.id;draft.updated_at=timestamp
+                jobs.append(job)
+            batch.lease_expires_at=None;batch.updated_at=timestamp
+        return [self._media_job_view(job) for job in jobs]
+
+    async def cancel_media_batch(self,turn_id:str,owner_id:str)->list[MediaDraftView]:
+        async with self.connections.begin() as db:
+            batch=await db.get(MediaBatchRow,turn_id,with_for_update=True)
+            if not batch or batch.owner_id!=owner_id:
+                raise KeyError("media_batch_not_found")
+            drafts=list((await db.execute(select(MediaDraftRow).where(
+                MediaDraftRow.turn_id==turn_id,MediaDraftRow.owner_id==owner_id)
+                .order_by(MediaDraftRow.created_at,MediaDraftRow.id).with_for_update())).scalars().all())
+            if not drafts or any(draft.status not in {"awaiting_confirmation","cancelled"} for draft in drafts):
+                raise RuntimeError("media_batch_not_cancellable")
+            timestamp=now()
+            for draft in drafts:
+                if draft.status=="awaiting_confirmation":
+                    draft.status="cancelled";draft.updated_at=timestamp
+            batch.lease_expires_at=None;batch.updated_at=timestamp
+        return [self._media_draft_view(draft) for draft in drafts]
 
     async def get_media_job(self, job_id: str, owner_id: str) -> MediaJobView | None:
         async with self.connections() as db:

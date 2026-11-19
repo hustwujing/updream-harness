@@ -124,6 +124,11 @@ already released reservation.
 
 ## Reviewer gates
 
+Operation Descriptors declare the validator IDs each output role can produce.
+The Job Coordinator rejects an undeclared requested validator before creating a
+Group or reserving GPU/Provider capacity. Adapter receipts remain authoritative
+at publication; prompt text cannot invent a validator contract.
+
 Descriptor `review_policy` is frozen into each output contract. Required and
 optional policy both keep the validated collection as candidates and create a
 read-only Reviewer Job; disabled policy does not infer review from prompt text.

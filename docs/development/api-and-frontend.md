@@ -48,6 +48,9 @@ Turn has no remaining rows. Do not make reconnect correctness depend on Redis.
   terminal even though the Job remains manually recoverable.
 - Activity rows summarize model waits and tools; agent public output belongs in
   the transcript.
+- A terminal Turn with pending media Drafts is displayed as `等待确认 N 项媒体生成`,
+  not as completed. Drafts sharing the same origin Turn use one batch decision;
+  pending confirmation does not animate the execution graph as active work.
 - Markdown renders no raw HTML. Sandbox paths become links only after resolving
   to owner-checked artifact/project-file APIs.
 - Preview and download use API URLs, never object-store URLs.
@@ -75,6 +78,9 @@ the submitted action/answers as a read-only receipt. Only a definite POST
 failure restores the editable controls. A successful POST followed by a refresh
 failure remains locked until durable interaction state is observed, preventing
 an ambiguous duplicate decision.
+Generic Job filenames use persisted `local_job_id` only for presentation, so
+multiple `foreground.png` outputs are distinguishable without renaming their
+immutable Artifact objects. Explicit deliverable filenames remain unchanged.
 
 ## Required checks
 
