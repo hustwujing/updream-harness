@@ -122,7 +122,7 @@
 - [x] Add failing graph/browser tests for remaining names, elapsed time and bounded semantic grouping.
 - [x] Implement wait-barrier payload/UI without adding graph nodes per raw event.
 - [x] Add K12 Skill continuation, K13 mixed group and K14 two-stage Provider cases.
-- [ ] Run focused UI/API tests and commit.
+- [x] Run focused UI/API tests and commit.
 
 ### Task 6: Real Verification And Release
 
@@ -135,8 +135,8 @@
 - Consumes: Tasks 1-5.
 - Produces: deployed release and remote branch evidence.
 
-- [ ] Run focused real recovery/readiness/offline Skill cases.
-- [ ] Run representative complex K cases and the three new E2E cases; fix only generic defects.
+- [x] Run focused real recovery/readiness/offline Skill cases.
+- [x] Run representative complex K cases and the three new E2E cases; fix only generic defects.
 - [ ] Run the complete gate once on the final clean revision.
 - [ ] Deploy signed Runtime/Profile bundles and affected services/images.
 - [ ] Verify Nginx, cleanup, active leases and deployed revision; push GitHub.

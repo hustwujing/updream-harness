@@ -23,6 +23,12 @@ deleting any predecessor runtime tree, inspect `systemctl cat
 sandbox-agent-opensandbox.service` and reject the cleanup if a path escapes the
 OpenSandbox-owned tree.
 
+The local immutable-image registry likewise owns its writable storage at
+`/data2/wujing03/opensandbox-stack/data/registry`. Its container bind mount must
+not reference a product checkout or predecessor `.sandbox-cluster` directory.
+Before an image build, verify `docker inspect sandbox-agent-registry` and a small
+registry upload when the mount was recreated or cleaned.
+
 ## Release sequence
 
 1. Inspect `git status`; preserve concurrent edits.
