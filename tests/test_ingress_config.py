@@ -28,7 +28,20 @@ def test_frpc_ingress_is_private_login_only_and_has_no_registration_route_overri
     assert 'registration_not_available' in app
 
 
+def test_shared_frpc_location_preserves_parallel_prefix_and_trusted_ingress():
+    source=(ROOT/"deploy/nginx-frpc-shared-location.conf").read_text()
+    assert "location ^~ /sandbox-harness-platform-parallel/" in source
+    assert "proxy_pass http://127.0.0.1:24766/;" in source
+    assert "X-Forwarded-Prefix /sandbox-harness-platform-parallel" in source
+    assert "X-Updream-Ingress frpc" in source
+    assert "X-Real-IP $proxy_protocol_addr" in source
+    assert "X-Forwarded-For $proxy_protocol_addr" in source
+    assert "proxy_request_buffering off" in source and "proxy_buffering off" in source
+    assert "Upgrade $http_upgrade" in source
+
+
 def test_ingress_does_not_expose_gateway_or_database_ports():
-    source=(ROOT/"deploy/nginx.conf").read_text()+(ROOT/"deploy/nginx-frpc.conf").read_text()
+    source="".join((ROOT/path).read_text() for path in (
+        "deploy/nginx.conf","deploy/nginx-frpc.conf","deploy/nginx-frpc-shared-location.conf"))
     for value in ("28432","29880","29881","6379"):
         assert value not in source

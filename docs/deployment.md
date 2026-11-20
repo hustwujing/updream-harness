@@ -82,6 +82,13 @@ FRPC ingress always sets `X-Updream-Ingress: frpc`: anonymous API access is deni
 is unavailable. Direct loopback ingress retains the existing anonymous/account behavior. Neither
 Nginx listener exposes PostgreSQL, Redis or Gateway bridge ports.
 
+The standalone `deploy/nginx-frpc.conf` listens on `18091` when Parallel owns a
+dedicated FRPC mapping. When the existing public `8090` endpoint is shared by
+path, install `deploy/nginx-frpc-shared-location.conf` as an Nginx snippet and
+include it inside the existing PROXY v2 server on `127.0.0.1:18090`. The shared
+location keeps the same `frpc` authentication boundary and forwards only to the
+independent Parallel API at `127.0.0.1:24766`.
+
 ## Release Safety
 
 - Query active Turns and Jobs before a planned restart; do not treat graceful shutdown as a
