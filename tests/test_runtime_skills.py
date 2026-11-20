@@ -259,6 +259,8 @@ def test_web_artifact_skill_is_offline_and_profile_declares_complete_toolchain()
     skill=ROOT/'runtime/skills/web-artifacts-builder'
     scripts='\n'.join((skill/'scripts'/name).read_text() for name in (
         'init-artifact.sh','bundle-artifact.sh'))
+    assert all((skill/'scripts'/name).stat().st_mode&0o111 for name in (
+        'init-artifact.sh','bundle-artifact.sh'))
     for forbidden in ('pnpm create','pnpm install','pnpm add','npm install','npm view'):
         assert forbidden not in scripts
     assert 'npm root -g' in scripts and 'bundle-artifact.mjs' in scripts
