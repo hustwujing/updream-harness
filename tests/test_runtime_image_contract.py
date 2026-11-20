@@ -171,6 +171,9 @@ def test_selective_build_keeps_state_under_data2_and_reuses_original_vendor():
     assert 'bootstrap_hash=$(content_hash bootstrap-v1' in source
     assert 'common_hash=$(content_hash "$bootstrap_hash"' in source
     assert 'profile_hash=$(content_hash "$common_hash"' in source
+    assert 'SANDBOX_HARNESS_CODEX_SOURCE_IMAGE' in source
+    assert 'SANDBOX_HARNESS_CLAUDE_SOURCE_IMAGE' in source
+    assert '.runtime_dependency_profiles[]|select(.id=="primary-full-cpu")' in source
     for value in ("requirements-runtime.txt","bundle_public_key.pem","bootstrap_entrypoint.sh",
             "runtime_cli_dispatch.sh","proxy_bridge.cjs","playwright_proxy_patch.cjs","apply_patch.py"):
         assert value in source

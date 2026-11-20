@@ -17,7 +17,8 @@ if(tailwind.status!==0)throw new Error(`tailwind failed: ${tailwind.stderr||tail
 const alias={name:'workspace-alias',setup(build){build.onResolve({filter:/^@\//},args=>({
   path:path.join(project,'src',args.path.slice(2))}));}};
 const result=await esbuild.build({absWorkingDir:project,entryPoints:['src/main.tsx'],bundle:true,
-  write:false,format:'iife',platform:'browser',target:['es2022'],jsx:'automatic',minify:true,
+  outfile:path.join(buildRoot,'app.js'),write:false,format:'iife',platform:'browser',
+  target:['es2022'],jsx:'automatic',minify:true,
   plugins:[alias],loader:{'.png':'dataurl','.jpg':'dataurl','.jpeg':'dataurl','.gif':'dataurl',
     '.webp':'dataurl','.svg':'dataurl','.css':'empty'}});
 const javascript=result.outputFiles.find(file=>file.path.endsWith('.js'));

@@ -82,10 +82,10 @@
 **Interfaces:**
 - Produces: network-free `init-artifact.sh PROJECT` and `bundle-artifact.sh` using pinned Profile packages.
 
-- [ ] Add dependency-closure and no-network-script assertions.
-- [ ] Implement offline scaffold/link/bundle scripts and pinned Profile dependencies.
-- [ ] Build the affected image using existing `/data2` caches and run its Skill probe.
-- [ ] Commit image source and signed Profile Catalog update.
+- [x] Add dependency-closure and no-network-script assertions.
+- [x] Implement offline scaffold/link/bundle scripts and pinned Profile dependencies.
+- [x] Build the affected image using existing `/data2` caches and run its Skill probe.
+- [x] Commit image source and signed Profile Catalog update.
 
 ### Task 4: Truthful K Protocol Evidence
 

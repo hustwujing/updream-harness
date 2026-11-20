@@ -20,6 +20,21 @@ all_profiles="primary-full-cpu general-cpu media-cpu office web-browser data-ana
 all_harnesses="codex claude deepseek"
 drawio_vendor=${SANDBOX_HARNESS_DRAWIO_VENDOR:-/data2/wujing03/sandbox-harness-platform/runtime/vendor}
 asr_source_image=${SANDBOX_HARNESS_ASR_SOURCE_IMAGE:-sandbox-harness-runtime-base:0027ec835f16}
+profile_catalog_path=${SANDBOX_HARNESS_PROFILE_CATALOG_PATH:-}
+if [[ -z "$profile_catalog_path" && -f "$root/.data/config/platform.env" ]]; then
+  profile_catalog_path=$(sed -n 's/^SANDBOX_HARNESS_PROFILE_CATALOG_PATH=//p' \
+    "$root/.data/config/platform.env" | tail -1)
+fi
+codex_source_image=${SANDBOX_HARNESS_CODEX_SOURCE_IMAGE:-}
+claude_source_image=${SANDBOX_HARNESS_CLAUDE_SOURCE_IMAGE:-}
+if [[ -f "$profile_catalog_path" ]]; then
+  [[ -n "$codex_source_image" ]] || codex_source_image=$(jq -r \
+    '.runtime_dependency_profiles[]|select(.id=="primary-full-cpu")|.image_refs.codex' \
+    "$profile_catalog_path")
+  [[ -n "$claude_source_image" ]] || claude_source_image=$(jq -r \
+    '.runtime_dependency_profiles[]|select(.id=="primary-full-cpu")|.image_refs.claude' \
+    "$profile_catalog_path")
+fi
 output_root="$root/.data/image-build/$tag"
 mkdir -p "$output_root"
 [[ "$output_root" == /data2/wujing03/sandbox-harness-platform-parallel/.data/* ]]
@@ -100,8 +115,14 @@ for profile in $profiles; do
   fi
   for harness in $harnesses; do
     image="$registry/$profile-$harness:$tag"
+    harness_args=(--build-arg "PROFILE_IMAGE=$profile_image")
+    if [[ "$harness" == codex && -n "$codex_source_image" ]]; then
+      harness_args+=(--build-arg "CODEX_SOURCE_IMAGE=$codex_source_image")
+    elif [[ "$harness" == claude && -n "$claude_source_image" ]]; then
+      harness_args+=(--build-arg "CLAUDE_SOURCE_IMAGE=$claude_source_image")
+    fi
     "$docker" build --network host -f "$root/runtime/$harness.Dockerfile" \
-      --build-arg "PROFILE_IMAGE=$profile_image" -t "$image" "$root"
+      "${harness_args[@]}" -t "$image" "$root"
     "$docker" push "$image"
     digest=$($docker image inspect "$image" --format '{{index .RepoDigests 0}}')
     test -n "$digest"
