@@ -89,6 +89,13 @@ include it inside the existing PROXY v2 server on `127.0.0.1:18090`. The shared
 location keeps the same `frpc` authentication boundary and forwards only to the
 independent Parallel API at `127.0.0.1:24766`.
 
+The independent Ali deployment uses the same shared public `8090` endpoint at
+`/sandbox-harness-platform-parallel-ali/`. Include the versioned
+`deploy/nginx-frpc-ali-shared-location.conf` inside the existing PROXY v2 server
+on `127.0.0.1:18090`; it forwards only to the Ali API at `127.0.0.1:24767`.
+The root Nginx configuration contains only the include directive and must not
+store Ali logs, caches, temporary files or application state.
+
 ## Release Safety
 
 - Query active Turns and Jobs before a planned restart; do not treat graceful shutdown as a
