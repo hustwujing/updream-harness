@@ -42,6 +42,7 @@ def test_shared_frpc_location_preserves_parallel_prefix_and_trusted_ingress():
 
 def test_shared_frpc_location_preserves_ali_prefix_and_isolated_upstream():
     source=(ROOT/"deploy/nginx-frpc-ali-shared-location.conf").read_text()
+    assert "absolute_redirect off" in source
     assert "location ^~ /sandbox-harness-platform-parallel-ali/" in source
     assert "proxy_pass http://127.0.0.1:24767/;" in source
     assert "X-Forwarded-Prefix /sandbox-harness-platform-parallel-ali" in source
