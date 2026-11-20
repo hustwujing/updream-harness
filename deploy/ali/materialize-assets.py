@@ -61,31 +61,20 @@ def promote_registry_manifest(source_ref:str,target_ref:str)->None:
     source_host_repo,source_digest=source_ref.split("@sha256:",1)
     target_host_repo,target_digest=target_ref.split("@sha256:",1)
     if source_digest!=target_digest:raise ValueError("digest_mismatch:registry_target")
-    source_host,source_repo=source_host_repo.split("/",1)
+    source_host,_=source_host_repo.split("/",1)
     target_host,target_repo=target_host_repo.split("/",1)
     if source_host!=target_host:raise ValueError("registry_host_mismatch")
     headers={"Accept":",".join((
         "application/vnd.docker.distribution.manifest.v2+json",
         "application/vnd.oci.image.manifest.v1+json",
         "application/vnd.oci.image.index.v1+json"))}
+    docker="/data2/wujing03/opensandbox-stack/tools/docker-29.9.3/docker"
+    image_id=subprocess.check_output([docker,"image","inspect",source_ref,
+        "--format","{{.Id}}"],text=True).strip()
+    target_tag=f"{target_host_repo}:ali-{source_digest[:16]}"
+    subprocess.run([docker,"tag",image_id,target_tag],check=True)
+    subprocess.run([docker,"push",target_tag],check=True)
     with httpx.Client(base_url=f"http://{source_host}",timeout=60,trust_env=False) as client:
-        tag="ali-"+source_digest[:16]
-        response=client.get(f"/v2/{source_repo}/manifests/sha256:{source_digest}",headers=headers)
-        if response.status_code==404:
-            docker="/data2/wujing03/opensandbox-stack/tools/docker-29.9.3/docker"
-            image_id=subprocess.check_output([docker,"image","inspect",source_ref,
-                "--format","{{.Id}}"],text=True).strip()
-            target_tag=f"{target_host_repo}:{tag}"
-            subprocess.run([docker,"tag",image_id,target_tag],check=True)
-            subprocess.run([docker,"push",target_tag],check=True)
-        else:
-            response.raise_for_status()
-            if response.headers.get("docker-content-digest") not in (None,"sha256:"+source_digest):
-                raise ValueError("digest_mismatch:registry_source")
-            media=response.headers.get("content-type","application/vnd.docker.distribution.manifest.v2+json")
-            uploaded=client.put(f"/v2/{target_repo}/manifests/{tag}",content=response.content,
-                headers={"Content-Type":media})
-            uploaded.raise_for_status()
         checked=client.head(f"/v2/{target_repo}/manifests/sha256:{target_digest}",headers=headers)
         checked.raise_for_status()
 
