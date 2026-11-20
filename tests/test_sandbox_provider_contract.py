@@ -2,6 +2,7 @@ from datetime import datetime,timezone
 
 import httpx
 import pytest
+import re
 
 from sandbox_harness.domain import Harness
 from sandbox_harness.sandbox_contracts import (
@@ -17,6 +18,13 @@ def request():
     return SandboxCreateRequest(harness=Harness.CODEX,profile=profile,
         environment={"TEST":"1"},metadata={"sandbox-harness.io/turn":"turn-1"},
         ttl_seconds=300,idempotency_key="turn-1")
+
+
+def test_opensandbox_profile_metadata_uses_provider_safe_labels():
+    values=OpenSandboxBackend._profile_metadata(request().profile)
+    assert values["sandbox-harness.io/profile-key"]==request().profile.compatibility_key
+    assert all(len(value)<=63 and re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?",value)
+        for value in values.values())
 
 
 @pytest.mark.asyncio
@@ -90,4 +98,35 @@ async def test_opensandbox_endpoint_cache_refreshes_after_deadline():
     second=await backend.endpoint(sandbox,8080)
     refreshed=await backend.endpoint(sandbox,8080,force_refresh=True)
     assert first==second and refreshed.url=="http://runtime-2.local" and endpoint_requests==2
+    await backend.aclose()
+
+
+@pytest.mark.asyncio
+async def test_opensandbox_unknown_create_waits_for_delayed_inventory_without_replay():
+    creation=request();post_calls=0;list_calls=0
+    async def respond(http_request:httpx.Request):
+        nonlocal post_calls,list_calls
+        path=http_request.url.path
+        if http_request.method=="POST" and path=="/v1/sandboxes":
+            post_calls+=1;raise httpx.ReadError("response lost",request=http_request)
+        if http_request.method=="GET" and path=="/v1/sandboxes":
+            list_calls+=1
+            if list_calls==1:return httpx.Response(200,json={"items":[]})
+            metadata={**creation.metadata,"sandbox-harness.io/namespace":"test-namespace",
+                "sandbox-harness.io/idempotency-key":creation.idempotency_key,
+                "sandbox-harness.io/harness":"codex"}
+            return httpx.Response(200,json={"items":[{"id":"delayed","metadata":metadata,
+                "image":{"uri":creation.profile.provider_ref}}]})
+        if path=="/v1/sandboxes/delayed":return httpx.Response(200,json={"id":"delayed",
+            "metadata":{**creation.metadata,"sandbox-harness.io/namespace":"test-namespace",
+                "sandbox-harness.io/idempotency-key":creation.idempotency_key,
+                "sandbox-harness.io/harness":"codex"},"image":{"uri":creation.profile.provider_ref},
+            "status":{"state":"running"}})
+        if path.endswith("/endpoints/8080"):return httpx.Response(200,json={"endpoint":"http://runtime"})
+        if http_request.url.host=="runtime":return httpx.Response(200,json={"status":"ok"})
+        raise AssertionError(str(http_request.url))
+    backend=OpenSandboxBackend("http://opensandbox","",300,"test-namespace",
+        transport=httpx.MockTransport(respond))
+    sandbox=await backend.create(creation)
+    assert sandbox.id=="delayed" and post_calls==1 and list_calls==2
     await backend.aclose()

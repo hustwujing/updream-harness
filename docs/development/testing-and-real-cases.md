@@ -90,3 +90,19 @@ revision produces `composite_verified`; summaries must not describe that as one
 complete green matrix. After a generic fix, rerun the failed member and affected
 passed members first, then run the complete matrix once before release when the
 claim requires a clean full pass.
+
+## Sandbox provider protocol evidence
+
+Provider lifecycle changes run `tests/run_real_sandbox_provider_protocol.py`
+before the K campaign. SP01 drops a real accepted create response and requires
+unique idempotency reconciliation; SP02 externally deletes an attached sandbox
+and proves capacity can be reacquired; SP03 expires the endpoint cache and
+requires a real refresh plus Runtime health; SP04 repeats deletion and requires
+empty owned inventory. Evidence is written below
+`.data/evidence/sandbox-provider/` with revision, unique run ID, sandbox IDs,
+elapsed time and cleanup assertions.
+
+These are real-provider cases even though SP01 uses a fault transport: the
+transport forwards the request to OpenSandbox and drops only the successful
+response. No case may delete an ID that was not recorded by its own ownership
+tracker.

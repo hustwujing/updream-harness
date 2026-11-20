@@ -17,13 +17,8 @@ from .sandbox_contracts import (
     SandboxProviderUnavailable,SandboxRateLimited,SandboxScope,SandboxState,SandboxUpdate)
 
 
-_PROFILE_KEYS={
-    "profile_id":"sandbox-harness.io/profile",
-    "revision":"sandbox-harness.io/profile-revision",
-    "runtime_contract":"sandbox-harness.io/runtime-contract",
-    "runtime_bundle_digest":"sandbox-harness.io/runtime-bundle",
-    "runtime_code_bundle_digest":"sandbox-harness.io/runtime-code-bundle",
-}
+_PROFILE_ID_KEY="sandbox-harness.io/profile"
+_PROFILE_COMPATIBILITY_KEY="sandbox-harness.io/profile-key"
 
 
 class OpenSandboxBackend:
@@ -65,13 +60,19 @@ class OpenSandboxBackend:
 
     @staticmethod
     def _profile_metadata(profile:SandboxProfile)->dict[str,str]:
-        return {target:getattr(profile,source) for source,target in _PROFILE_KEYS.items()}
+        identity=profile.profile_id[:63].strip("-_.")
+        if not identity or any(value not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_." for value in identity):
+            identity="profile-"+profile.compatibility_key[:40]
+        return {_PROFILE_ID_KEY:identity,_PROFILE_COMPATIBILITY_KEY:profile.compatibility_key}
 
     def _profile(self,sandbox_id:str,harness:Harness,image:str,metadata:Mapping[str,str])->SandboxProfile:
         existing=self._profiles.get(sandbox_id)
         if existing:return existing
-        values={source:str(metadata.get(target) or "legacy") for source,target in _PROFILE_KEYS.items()}
-        profile=SandboxProfile(provider="opensandbox",provider_ref=image or "legacy",**values)
+        profile=SandboxProfile(profile_id=str(metadata.get(_PROFILE_ID_KEY) or "legacy"),
+            revision=image or "legacy",provider="opensandbox",provider_ref=image or "legacy",
+            runtime_contract="sandbox-harness-runtime/v1",runtime_bundle_digest="provider-recovered",
+            runtime_code_bundle_digest="provider-recovered",
+            compatibility_key=str(metadata.get(_PROFILE_COMPATIBILITY_KEY) or ""))
         self._profiles[sandbox_id]=profile;return profile
 
     def _sandbox(self,payload:dict[str,Any],harness:Harness,image:str,
@@ -177,11 +178,13 @@ class OpenSandboxBackend:
             sandbox.expires_at_monotonic=time.monotonic()+request.ttl_seconds
             return await self._ready(sandbox)
         except (httpx.TimeoutException,httpx.TransportError) as exc:
-            matches=await self.find({"sandbox-harness.io/idempotency-key":request.idempotency_key})
-            ready=[value for value in matches if value.state==SandboxState.READY]
-            if len(ready)==1:return ready[0]
-            if len(ready)>1:raise SandboxCreateOutcomeUnknown(
-                "Duplicate sandboxes found for one create request",provider=self.provider) from exc
+            for attempt in range(20):
+                matches=await self.find({"sandbox-harness.io/idempotency-key":request.idempotency_key})
+                ready=[value for value in matches if value.state==SandboxState.READY]
+                if len(ready)==1:return ready[0]
+                if len(matches)>1:raise SandboxCreateOutcomeUnknown(
+                    "Duplicate sandboxes found for one create request",provider=self.provider) from exc
+                if attempt<19:await asyncio.sleep(.25)
             raise SandboxCreateOutcomeUnknown("OpenSandbox create outcome is unknown",
                 provider=self.provider) from exc
 

@@ -46,15 +46,19 @@ class SandboxProfile:
     runtime_contract:str
     runtime_bundle_digest:str
     runtime_code_bundle_digest:str
-    compatibility_key:str=field(init=False)
+    compatibility_key:str=""
 
     def __post_init__(self)->None:
         values=(self.profile_id,self.revision,self.provider,self.provider_ref,self.runtime_contract,
             self.runtime_bundle_digest,self.runtime_code_bundle_digest)
         if any(not isinstance(value,str) or not value or len(value)>512 for value in values):
             raise ValueError("sandbox_profile_identity_invalid")
+        if self.compatibility_key:
+            if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9_-]{18,61}[A-Za-z0-9])",self.compatibility_key):
+                raise ValueError("sandbox_profile_compatibility_key_invalid")
+            return
         payload=json.dumps(values,separators=(",",":"),ensure_ascii=True).encode()
-        object.__setattr__(self,"compatibility_key",hashlib.sha256(payload).hexdigest())
+        object.__setattr__(self,"compatibility_key",hashlib.sha256(payload).hexdigest()[:63])
 
 
 @dataclass(frozen=True)
