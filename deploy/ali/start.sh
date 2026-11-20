@@ -38,6 +38,12 @@ fi
 start_transient sandbox-harness-parallel-ali-gateway sandbox-harness \
   "$root/deploy/ali/run-service.sh" gateway
 wait_port 172.31.0.1 29882
+if [[ ! -f "$root/.data/services/image-layered/service/app.py" ]]; then
+  "$root/deploy/ali/materialize-image-decompose.sh"
+fi
+start_transient sandbox-harness-parallel-ali-image-decompose root \
+  "$root/deploy/ali/run-service.sh" image-decompose
+wait_port 127.0.0.1 8912
 start_transient sandbox-harness-parallel-ali-job-worker sandbox-harness \
   "$root/deploy/ali/run-service.sh" job-worker
 start_transient sandbox-harness-parallel-ali-controlled-worker root \

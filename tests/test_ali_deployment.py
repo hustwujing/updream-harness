@@ -152,7 +152,7 @@ def test_ali_transient_service_graph_is_complete_and_root_partition_free():
     status=(ROOT/"deploy/ali/status.sh").read_text()
     runner=(ROOT/"deploy/ali/run-service.sh").read_text()
     combined=start+stop+status+runner
-    for service in ("postgresql","network","gateway","job-worker","controlled-worker",
+    for service in ("postgresql","network","gateway","image-decompose","job-worker","controlled-worker",
                     "media-worker","site-worker","api"):
         assert f"sandbox-harness-parallel-ali-{service}" in combined
     assert "systemd-run" in start and "--collect" in start
@@ -162,6 +162,17 @@ def test_ali_transient_service_graph_is_complete_and_root_partition_free():
     assert "systemctl enable" not in combined
     assert "/data2/wujing03/sandbox-harness-platform-parallel-ali" in combined
     assert "stop_units" in stop and "network-rule.sh" in stop and " remove" in stop
+
+
+def test_ali_image_decompose_service_is_materialized_under_data2():
+    source=(ROOT/"deploy/ali/materialize-image-decompose.sh").read_text()
+    assert 'target="$root/.data/services/image-layered"' in source
+    assert "/data2/wujing03/sandbox-harness-platform-parallel-ali" in source
+    assert "source_root=/data/wujing03/image-layered" in source
+    assert 'model_source="$source_root/models"' in source
+    assert "ln -s" in source and "models" in source
+    assert "runtime" in source and "sandbox-harness" in source
+    assert "unexpected_project_root" in source
 
 
 def test_ali_service_runner_uses_only_ali_environment_and_logs():

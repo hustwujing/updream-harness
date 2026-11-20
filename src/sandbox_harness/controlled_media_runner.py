@@ -153,7 +153,7 @@ def _transcribe(work:Path,source:Path,parameters:dict,runtime:Path)->dict:
     _require_audio_stream(source)
     script=work/'transcribe_job.py';shutil.copyfile(Path(__file__).with_name('transcribe_job.py'),script)
     request={**parameters,'source':'/work/'+source.name,
-        'model':str(runtime/'models/media-foundation/faster-whisper-small'),
+        'model':str(RUNTIME_MOUNT/'models/media-foundation/faster-whisper-small'),
         'threads':max(1,min(8,int(parameters.get('threads',4)))),
         'beam_size':max(1,min(10,int(parameters.get('beam_size',5))))}
     (work/'request.json').write_text(json.dumps(request));args=_base_args(work,runtime)

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -5,6 +6,7 @@ import pytest
 from sandbox_harness.controlled_media_runner import (
     CONDA_ENV_PREFIXES,RUNTIME_MOUNT,ControlledOperationError,THREAD_ENVIRONMENT,_base_args,_gpu_uuid,
     _require_audio_stream,_thread_environment_args,probe_controlled_gpu,
+    _transcribe,
 )
 
 
@@ -70,3 +72,20 @@ def test_transcribe_rejects_media_without_audio_before_model_execution(tmp_path,
     assert raised.value.failed_phase=='input_validation'
     assert not raised.value.infrastructure
     assert not raised.value.retryable
+
+
+def test_transcribe_uses_runtime_mount_model_path_inside_bwrap(tmp_path,monkeypatch):
+    runtime=tmp_path/'runtime';work=tmp_path/'work';work.mkdir()
+    source=work/'speech.wav';source.write_bytes(b'audio')
+    monkeypatch.setattr('sandbox_harness.controlled_media_runner._require_audio_stream',lambda path:None)
+    monkeypatch.setattr('sandbox_harness.controlled_media_runner._base_args',
+        lambda work,runtime:['bwrap'])
+    def run(args,work,timeout):
+        request=json.loads((work/'request.json').read_text())
+        assert request['model']=='/runtime/models/media-foundation/faster-whisper-small'
+        (work/'transcript.json').write_text(json.dumps({'language':'zh','segments':[{'text':'ok'}]}))
+        (work/'transcript.txt').write_text('ok\n');(work/'transcript.srt').write_text('1\nok\n')
+    monkeypatch.setattr('sandbox_harness.controlled_media_runner._run',run)
+    result=_transcribe(work,source,{'language':'zh','beam_size':3},runtime)
+    assert {row['role'] for row in result['outputs']}=={
+        'transcript_json','transcript_text','transcript_srt'}

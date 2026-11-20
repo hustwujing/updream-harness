@@ -22,13 +22,19 @@ export npm_config_cache="$root/.data/npm-cache"
 export PLAYWRIGHT_BROWSERS_PATH="$root/.data/playwright-browsers"
 
 case "$component" in
-  api) command="$root/.venv/bin/sandbox-harness-parallel-api" ;;
-  gateway) command="$root/.venv/bin/sandbox-harness-parallel-gateway" ;;
-  job-worker) command="$root/.venv/bin/sandbox-harness-parallel-job-worker" ;;
-  controlled-worker) command="$root/.venv/bin/sandbox-harness-parallel-controlled-worker" ;;
-  media-worker) command="$root/.venv/bin/sandbox-harness-parallel-media-worker" ;;
-  site-worker) command="$root/.venv/bin/sandbox-harness-parallel-site-worker" ;;
+  api) command=("$root/.venv/bin/sandbox-harness-parallel-api") ;;
+  gateway) command=("$root/.venv/bin/sandbox-harness-parallel-gateway") ;;
+  image-decompose)
+    service_root="$root/.data/services/image-layered"
+    [[ -f "$service_root/service/app.py" ]] || { echo "image decompose service is not materialized" >&2; exit 1; }
+    export PYTHONPATH="/data/wujing03/media-foundation-core:$service_root:${PYTHONPATH:-}"
+    command=(/data/wujing03/miniforge3/envs/media-foundation/bin/python -m uvicorn
+      service.app:app --host 127.0.0.1 --port 8912 --no-access-log)
+    ;;
+  job-worker) command=("$root/.venv/bin/sandbox-harness-parallel-job-worker") ;;
+  controlled-worker) command=("$root/.venv/bin/sandbox-harness-parallel-controlled-worker") ;;
+  media-worker) command=("$root/.venv/bin/sandbox-harness-parallel-media-worker") ;;
+  site-worker) command=("$root/.venv/bin/sandbox-harness-parallel-site-worker") ;;
   *) echo "unknown Ali service: $component" >&2; exit 2 ;;
 esac
-exec "$command" >>"$log_root/$component.log" 2>&1
-
+exec "${command[@]}" >>"$log_root/$component.log" 2>&1

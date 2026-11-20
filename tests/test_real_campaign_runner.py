@@ -140,6 +140,18 @@ def test_skill_product_archive_validation_rejects_links_and_traversal():
         module.validate_skill_product_archive(archive(link,b''))
 
 
+def test_skill_product_archive_accepts_safe_dot_root_directory():
+    path=ROOT/'tests/run_real_parallel_protocol.py'
+    spec=importlib.util.spec_from_file_location('parallel_protocol_dot_archive',path)
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    stream=io.BytesIO()
+    with tarfile.open(fileobj=stream,mode='w:gz') as output:
+        root=tarfile.TarInfo('.');root.type=tarfile.DIRTYPE;output.addfile(root)
+        file=tarfile.TarInfo('./result.md');data=b'product';file.size=len(data)
+        output.addfile(file,io.BytesIO(data))
+    assert module.validate_skill_product_archive(stream.getvalue())['files']==['result.md']
+
+
 def test_campaign_report_distinguishes_clean_run_from_composite_reruns(tmp_path):
     module=campaign_module();target=tmp_path/'report.json';catalog=tmp_path/'catalog.json'
     module.write_report_checkpoint(target,revision='new',catalog=catalog,selected_count=2,

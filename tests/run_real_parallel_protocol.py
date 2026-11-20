@@ -34,6 +34,7 @@ def validate_skill_product_archive(data:bytes)->dict:
             members=archive.getmembers()
             if not members or len(members)>200:raise AssertionError('skill product member count invalid')
             for member in members:
+                if member.name in {'.','./'} and member.isdir():continue
                 path=PurePosixPath(member.name)
                 if (path.is_absolute() or not path.parts or any(part in {'','..'} for part in path.parts)
                         or member.issym() or member.islnk() or member.isdev()):
