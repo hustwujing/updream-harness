@@ -33,6 +33,9 @@ revision's report as evidence for current code.
 | Frontend | production build plus the affected `tests/browser_*.cjs` scripts |
 | Runtime image | `test_runtime_image_contract.py`, image build and real sandbox smoke |
 | Durable Jobs / delegation | coordinator, worker, scheduler, continuation, Reviewer and PostgreSQL race tests |
+| External collection retry | accepted-handle reuse, worker takeover, bounded exhaustion and zero duplicate submissions |
+| Reviewer | malformed verdict, required/optional Gate atomics and immediate terminalization of deterministic contract errors |
+| Catalog readiness / Provider preflight | unhealthy-to-healthy generation, prepare/edit/confirm rejection and zero side effects |
 | Deployment | `test_deployment_isolation.py`, `test_ingress_config.py`, service-kill recovery and browser ingress |
 
 ## Iteration and release
@@ -40,6 +43,17 @@ revision's report as evidence for current code.
 Run focused tests after each coherent fix. Do not rerun the complete suite after
 every small edit. Before a release, run the full Python suite and frontend build
 when shared contracts, lifecycle, Gateway, Runtime or deployment changed.
+
+After a failure, reproduce it with the smallest relevant case, fix the shared
+boundary, rerun that case and the affected previously-passing cases, then resume
+the remaining matrix. Do not add case-name branches or prompt keywords to make a
+real case green. Run the complete gate once after all fixes and documentation
+are committed; its receipt must identify the exact release revision.
+
+Real protocol cases are concurrent by default. Serialize only cases that mutate
+shared services or global configuration, and list those IDs explicitly in the
+runner. A global protocol lock hides concurrency bugs and unnecessarily delays
+unrelated K cases.
 
 Real tests must use unique namespaces, data directories and idempotency keys.
 They must clean only resources they created and must not restart shared Redis,
@@ -56,6 +70,12 @@ the program response, state, cleanup and user-visible error are correct.
 Completion means no known program error in affected cases and no clear,
 bounded prompt/UI improvement left unaddressed. It does not mean every model
 response is semantically successful.
+
+Evidence for external execution must distinguish submission, polling,
+collection, deterministic validation/Review and cleanup. A successful upstream
+task followed by a collection failure is not evidence for a second submission;
+the report must retain the original external execution ID and show the bounded
+collection attempt generations.
 
 ## K campaign evidence
 

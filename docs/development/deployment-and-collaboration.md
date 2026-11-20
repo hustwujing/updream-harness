@@ -51,6 +51,12 @@ registry upload when the mount was recreated or cleaned.
    `Host: updream-lab.bilibili.co`; bare `127.0.0.1` selects a different server.
 10. Run a focused deployed case and confirm state, logs and cleanup.
 
+Before the final gate and push, refresh `README.md`, the affected documents in
+`docs/development/` and the corresponding evidence report. Documentation must
+describe current implemented behavior and link to source/tests; do not publish
+planned behavior as a mandatory rule. Commit documentation before running the
+release gate so the gate receipt and deployed revision refer to the same tree.
+
 `record-release.py` refuses staged or unstaged changes to tracked files and
 untracked deployable files in the selected checkout. Ignored `.data` evidence
 is allowed. It rebuilds and hashes the selected checkout's frontend. Inspect `git status`
@@ -89,3 +95,7 @@ unexpected active leases, Gateway/API telemetry has no new loss/error counters,
 the warm pool reports the intended image digests, Runtime reports the frozen
 Bundle digest, the public entry works, and a targeted real case proves the
 changed boundary.
+
+Push only after deployed verification. Record the local release commit, remote
+branch head, gate receipt, Runtime Code/Content Bundle digests and immutable
+image digests separately; equality is required for the claimed release.

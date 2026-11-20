@@ -37,6 +37,21 @@ Classify the change before editing:
 Never advertise a command in a Skill before the selected image exposes it.
 Content Bundle materialization does not prove that a command or import exists.
 
+Use this rebuild decision exactly:
+
+| Changed source | Publish | Rebuild final images |
+| --- | --- | --- |
+| `SKILL.md`, Skill references/templates using existing dependencies | Content Bundle | No |
+| Runtime Python, CLI, prompt adapter or shared helper | Code Bundle | No |
+| Bootstrap, Bundle verification protocol or native helper executable | Image release | Yes |
+| OS/Python/Node/browser/font/codec/Harness dependency | Image release | Yes, for every affected `Profile x Harness` |
+| Profile metadata only | Catalog plus affected bundle | Only when the resolved native dependency closure changes |
+
+Do not rebuild just the image exercised by one failing test when a shared
+Profile changed. During iteration it is valid to build the smallest affected
+Profile/Harness target, but release evidence must build and probe every final
+image whose dependency closure changed.
+
 ## Adding A Skill
 
 1. Copy or author one canonical directory under `runtime/skills/<skill-id>`.
@@ -95,6 +110,13 @@ For every image dependency:
 
 The final image must retain runtime libraries, but it must not retain compiler
 headers or temporary build packages that are only needed to compile a wheel.
+
+Skills must be executable with sandbox public networking disabled unless their
+metadata explicitly authorizes the Gateway. Package managers are not runtime
+dependency resolvers. Web Skills keep their scaffold and deterministic build
+scripts in the Content Bundle and their pinned React/Tailwind/component
+dependencies in the selected Web Profile. Image probes must execute a real
+offline build and validate its artifact, not merely import packages.
 
 ## Verification Gates
 

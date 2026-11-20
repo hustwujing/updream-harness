@@ -1,6 +1,13 @@
 # sandbox-harness-platform-parallel
 
-A thin, stateful OpenSandbox platform that sends every user message to a Codex, Claude or DeepSeek Harness. The platform restores the Harness workspace, streams its public output and steps, exports files, checkpoints the environment and removes the sandbox. It contains no DAG, planner or reviewer; media generation and static-site deployment use durable Jobs with independent Workers.
+A thin, stateful OpenSandbox platform that sends every user message to a Codex,
+Claude or DeepSeek Primary Harness. The Primary Harness owns the conversation
+and may delegate one dependency-free JobGroup to parallel Child Harnesses,
+Operations or Providers. Durable Continuations return bounded results to the
+same native session; optional Reviewer Jobs gate publication without becoming a
+second planner. The platform restores the workspace, streams public output and
+semantic steps, exports files, checkpoints the environment and removes the
+sandbox.
 
 ## Services
 
@@ -12,6 +19,11 @@ Web → Session API → Leased Turn Worker → Warm Sandbox Pool → OpenSandbox
 Media confirmation → Session API → PostgreSQL Job → Media Worker → Provider
                                       ├── reference → public BOSS → Ark Asset
                                       └── terminal Outbox → Broker continuation
+
+Harness delegation → Job Coordinator → PostgreSQL JobGroup → Job Worker
+                                             ├── Child Harness / Operation
+                                             ├── optional Reviewer Gate
+                                             └── all-terminal Outbox → Primary Harness
 
 Site confirmation  → Session API → PostgreSQL Job → Site Worker → Object storage
                                                         └── immutable version → public route
@@ -34,6 +46,16 @@ The Media Worker is a separate systemd service. API creates and queries Jobs;
 the Worker alone submits external Provider requests, persists external IDs,
 resumes polling after crashes and commits the Artifact, terminal state and
 Outbox transaction. API and Worker can restart independently.
+
+The generic Job Worker uses the same accepted-handle rule for Child Harnesses,
+Operations and Providers. Submission identity is persisted before polling. A
+transient collection failure retries the same completed external execution and
+never resubmits business work. Deterministic Reviewer verdict/schema failures
+terminalize immediately and atomically update the Review Gate.
+
+The execution catalog publishes dynamic readiness. Unavailable Operations are
+rejected before confirmation or Job creation, and Provider references, modes
+and artifact bytes are preflighted before the user authorizes side effects.
 
 The Site Worker is another independent service. A Harness packages a complete
 static site with `sandbox-site prepare`; user confirmation creates a durable
@@ -145,6 +167,7 @@ The browser keeps the selected Thread in `?thread=<id>`, restores it after refre
 ```bash
 UV_CACHE_DIR=.data/uv-cache uv sync --extra test --extra runtime-media
 .venv/bin/pytest
+.venv/bin/python tests/gate.py
 .venv/bin/uvicorn sandbox_harness.app:create_app --factory --reload --port 24766
 ```
 
@@ -173,6 +196,11 @@ Non-graceful API restart, Runtime event replay, Turn lease fencing and cleanup r
 Versioned uploads and outputs restored into a different Sandbox, plus desktop/mobile Workspace UI evidence, are recorded in [project-files-report.md](docs/test-evidence/project-files-report.md).
 
 The final 21-case capability, interaction, Workspace, background execution, recovery and browser matrix is recorded in [full-product-report.md](docs/test-evidence/full-product-report.md).
+
+Durable collection recovery, dynamic execution readiness, Provider preflight,
+offline Web Profile closure, truthful K evidence and K12-K14 continuation
+workflows are recorded in
+[k-campaign-hardening-report.md](docs/test-evidence/k-campaign-hardening-report.md).
 
 ## Runtime Toolchain
 

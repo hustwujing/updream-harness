@@ -40,6 +40,14 @@ Scheduler ownership is released only after external absence is confirmed.
 Reservation expiry is diagnostic, not permission to double-allocate a live
 exclusive GPU; the durable cleanup obligation is the recovery authority.
 
+An accepted execution and its collected Artifacts are separate durable
+boundaries. If submission/execution completed but Artifact collection failed,
+the next worker generation reuses the persisted external ID and acceptance
+receipt. It may query and collect the same execution, but may not submit a
+replacement. The collection retry count is persisted and bounded. Deterministic
+validation and Reviewer contract failures are terminal, because another read of
+the same immutable result cannot repair them.
+
 Thread archival is a durable barrier: active Jobs/Groups and ready or claimed
 continuation outboxes prevent archive. The final Job transaction locks the
 Thread while creating its outbox, closing the archive race. Legacy blocked
@@ -186,6 +194,10 @@ state, so a later input failure cannot overwrite an earlier completion.
 - Capability revoke or sandbox delete failure followed by recovery.
 - Redis unavailable with PostgreSQL SSE replay.
 - Checkpoint/object-store failure without false success.
+- Worker death between accepted execution and collection retry, with the same
+  external ID and no duplicate submission.
+- Reviewer malformed verdict/schema failure, with Job and Review Gate reaching
+  the correct terminal state in one transaction rather than waiting externally.
 - Best-effort partial checkpoint after an execution exception; a later retry
   must inspect current project artifacts rather than trust stale Harness memory.
 - Telemetry queue/export/disk failure without business-state mutation.

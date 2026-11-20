@@ -23,6 +23,7 @@ Every code change requires:
 | Add a model route or Provider | [Gateway, security and Providers](gateway-security-providers.md), [Adding a model Provider](add-model-provider.md) |
 | Add image/video/audio/3D generation | [Media Generation Design and Provider Integration Standard](media-generation.md) |
 | Add or change an Operation, Provider, Child Harness or external worker error | [External execution error contract](external-error-contracts.md), [Recovery and observability](recovery-and-observability.md) |
+| Change execution catalog readiness, Provider preflight, collection retry or Reviewer terminalization | [External execution error contract](external-error-contracts.md), [State and data contracts](state-and-data-contracts.md), [Testing and real cases](testing-and-real-cases.md) |
 | Add a Runtime CLI or image dependency | [Sandbox and Harness](sandbox-and-harness.md), [Adding a Runtime tool](add-runtime-tool.md) |
 | Add an OS, Python, Node or media dependency to Runtime images | [Adding an image dependency](add-image-dependency.md), [Skill and image lifecycle](skill-and-image-lifecycle.md) |
 | Add, upgrade or retire an Agent Skill; change Skill runtime requirements | [Adding an Agent Skill](add-agent-skill.md), [Skill and image lifecycle](skill-and-image-lifecycle.md), [Sandbox and Harness](sandbox-and-harness.md) |

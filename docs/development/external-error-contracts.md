@@ -55,12 +55,34 @@ opaque Provider message.
    use a reconciliation error code.
 6. `collect()` failures are collection failures. The Durable Worker records
    `artifact_collection_failed` and preserves the accepted execution boundary.
+   If the Descriptor permits collection retry, the Store closes the current
+   Attempt as `COLLECTION_RETRY`, releases its lease and creates a later
+   generation against the same external execution ID. It must not call
+   `submit()` again. `max_collection_attempts` is frozen with the Job.
 7. Deterministic Operations may retry only before acceptance and only up to the
    frozen Descriptor limit. Input failures are never infrastructure failures.
 8. GPU node failures use `retry_class=node_health_change`; invalid media,
    missing audio, no target and policy rejection do not.
 9. New stable error codes must be added to `JOB_ERROR_CONTRACTS` with tests
    before the Adapter can ship.
+10. Reviewer verdict/schema validation is deterministic. It never uses generic
+    artifact collection retry: the Reviewer Job and required/optional Review
+    Gate reach their terminal outcome atomically on the first such failure.
+
+## Readiness And Preflight
+
+Dynamic service availability belongs in the execution catalog, not in prompt
+text. A Descriptor readiness probe publishes `available`, stable reason,
+checked time and generation. Prepare, edit and confirm refresh this state and
+reject an unavailable execution before a confirmation card, budget reservation
+or Job exists.
+
+Provider adapters expose a side-effect-free preflight for Capability scope,
+mode/model parameters, Artifact bindings, bytes and media metadata. Preflight
+must share validation logic with submission but may not publish assets, consume
+Provider budget or create an external task. A successful preflight is not a
+promise that capacity remains available after confirmation; that later failure
+still follows the normal structured error contract.
 
 ## User Experience
 
@@ -80,3 +102,8 @@ remote execution failure, collection failure, invalid output, cancellation
 ambiguity and deadline behavior where those states are supported. Tests assert
 the stable code, phase, retryability, side-effect state, public message and
 guidance, plus the absence of duplicate external submissions.
+
+Adapters with accepted-handle collection cover worker death between collection
+attempts and exhaustion. Reviewer adapters instead cover malformed verdict and
+schema failures as immediate terminal outcomes. Readiness-enabled Descriptors
+cover unhealthy rejection and healthy re-enablement without a process restart.
