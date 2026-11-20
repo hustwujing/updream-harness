@@ -54,7 +54,7 @@
       "supported_harnesses": ["codex", "claude", "deepseek"],
       "image_digests": {"codex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "claude": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "deepseek": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
       "commands": ["chromium", "node", "pnpm", "python3"],
-      "python_modules": ["playwright"], "node_modules": ["esbuild", "react", "react-dom", "typescript"],
+      "python_modules": ["playwright"], "node_modules": ["@radix-ui/react-accordion", "@radix-ui/react-aspect-ratio", "@radix-ui/react-avatar", "@radix-ui/react-checkbox", "@radix-ui/react-collapsible", "@radix-ui/react-context-menu", "@radix-ui/react-dialog", "@radix-ui/react-dropdown-menu", "@radix-ui/react-hover-card", "@radix-ui/react-label", "@radix-ui/react-menubar", "@radix-ui/react-navigation-menu", "@radix-ui/react-popover", "@radix-ui/react-progress", "@radix-ui/react-radio-group", "@radix-ui/react-scroll-area", "@radix-ui/react-select", "@radix-ui/react-separator", "@radix-ui/react-slider", "@radix-ui/react-slot", "@radix-ui/react-switch", "@radix-ui/react-tabs", "@radix-ui/react-toast", "@radix-ui/react-toggle", "@radix-ui/react-toggle-group", "@radix-ui/react-tooltip", "autoprefixer", "class-variance-authority", "clsx", "cmdk", "embla-carousel-react", "esbuild", "lucide-react", "next-themes", "postcss", "react", "react-day-picker", "react-dom", "react-hook-form", "react-resizable-panels", "sonner", "tailwind-merge", "tailwindcss", "tailwindcss-animate", "typescript", "vaul"],
       "dependency_capabilities": [], "network_origins": [], "gpu": false, "priority": 20
     },
     {

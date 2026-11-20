@@ -271,6 +271,9 @@ def test_web_artifact_skill_is_offline_and_profile_declares_complete_toolchain()
     required={'react','react-dom','typescript','esbuild','tailwindcss','postcss','autoprefixer',
         'lucide-react','class-variance-authority','tailwind-merge','@radix-ui/react-dialog'}
     assert required<=dependencies
+    profiles=json.loads((ROOT/'deploy/profile-catalog.example.json').read_text())
+    web=next(row for row in profiles['runtime_dependency_profiles'] if row['id']=='web-browser')
+    assert dependencies<=set(web['node_modules'])
     image=(ROOT/'runtime/profiles/web-browser.Dockerfile').read_text()
     for package in required-{'typescript'}:
         assert package+'@' in image

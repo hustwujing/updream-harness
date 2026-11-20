@@ -23,6 +23,7 @@ from dotenv import dotenv_values
 ROOT=Path(__file__).resolve().parents[1]
 TERMINAL_JOBS={'SUCCEEDED','FAILED','CANCELLED','BLOCKED','UNKNOWN'}
 PROTOCOL_LOCK=ROOT/'.data/tmp/real-protocol.lock'
+SERIAL_CASES={'P13','P19','P21','P27'}
 
 
 def validate_skill_product_archive(data:bytes)->dict:
@@ -54,6 +55,10 @@ async def protocol_lock():
         yield
     finally:
         fcntl.flock(stream.fileno(),fcntl.LOCK_UN);stream.close()
+
+
+@asynccontextmanager
+async def concurrent_case():yield
 
 
 class ResilientAsyncClient(httpx.AsyncClient):
@@ -1588,7 +1593,8 @@ async def main():
     try:
         handler=HANDLERS.get(args.case)
         if not handler:raise NotImplementedError('protocol_handler_not_implemented:'+args.case)
-        async with protocol_lock():
+        boundary=protocol_lock() if args.case in SERIAL_CASES else concurrent_case()
+        async with boundary:
             async with ResilientAsyncClient(base_url=args.base_url,timeout=None,trust_env=False) as client:
                 session=await client.get('api/session');session.raise_for_status();value=await handler(client,args)
     except Exception as exc:
