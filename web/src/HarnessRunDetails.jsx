@@ -55,9 +55,9 @@ export default function HarnessRunDetails({node,activities=[],progress=null,now=
   </section>
   <section className={`harness-token-usage ${active?'active':''}`}>
    <header><b>模型用量</b><span>{formatCompactTokens(tokenUsageTotal(node.token_usage))} tokens{node.token_usage_truncated?'（部分）':''}</span></header>
-   <div>{tokenMetrics.map(([kind,label,field])=><article className="harness-token-metric" key={`${node.id}:${kind}`}>
+   <div>{tokenMetrics.map(([kind,label,field])=><div className="harness-token-metric" key={`${node.id}:${kind}`}>
     <small>{label}</small><AnimatedToken nodeId={node.id} kind={kind} value={node.token_usage?.[field]}/>
-   </article>)}</div>
+   </div>)}</div>
   </section>
   {progress&&progress.total>0&&<section className="harness-child-progress">
    <header><b>子任务进度</b><span>{progress.terminal}/{progress.total}</span></header>
