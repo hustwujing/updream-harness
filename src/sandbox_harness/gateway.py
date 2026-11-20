@@ -33,6 +33,7 @@ from .job_coordinator import JobCoordinator, JobGroupDraftUpdate
 from .job_contracts import JobGroupCreate
 from .profiles import ProfileResolver
 from .catalog import HarnessCatalog
+from .execution_readiness import ExecutionReadiness
 from .reviewer import ReviewSubmission,ReviewerCoordinator
 from .config import Settings, load_settings, validate_service_settings
 from .domain import Harness, MediaDraftCreate, now
@@ -40,6 +41,7 @@ from .model_routes import ModelRoutes
 from .model_activity import ModelActivity
 from .media_catalog import MediaCatalog
 from .media_references import resolve_media_references
+from .provider_preflight import ProviderPreflight
 from .objects import object_store
 from .site_bundle import MAX_SITE_ARCHIVE_BYTES, normalize_site_slug, stage_site_archive
 from .store import Store
@@ -290,10 +292,6 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     profile_resolver=ProfileResolver.from_json(profile_raw,
         expected_digest=(settings.profile_catalog_digest or hashlib.sha256(profile_raw.encode()).hexdigest()),
         skill_manifest=skill_manifest)
-    job_coordinator = JobCoordinator(activity_store, job_catalog, profile_resolver=profile_resolver,
-        draft_ttl_seconds=settings.media_draft_ttl_seconds)
-    execution_catalog=HarnessCatalog(job_catalog=job_catalog,profile_resolver=profile_resolver)
-    reviewer=ReviewerCoordinator(job_coordinator)
     objects = object_store(settings)
     artifact_gateway = ArtifactGateway(activity_store, objects,
         settings.data_root / "tmp" / "job-artifacts", maximum_bytes=settings.max_artifact_bytes)
@@ -301,6 +299,13 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         ark_assets_configured=bool(settings.ark_access_key and settings.ark_secret_key
             and settings.ark_asset_group_id and settings.ark_project_name),
         tripo_configured=bool(settings.tripo_api_key))
+    readiness=ExecutionReadiness.from_settings(settings,job_catalog)
+    provider_preflight=ProviderPreflight(activity_store,objects,media_catalog)
+    job_coordinator = JobCoordinator(activity_store, job_catalog, profile_resolver=profile_resolver,
+        draft_ttl_seconds=settings.media_draft_ttl_seconds,readiness=readiness,
+        provider_preflight=provider_preflight)
+    execution_catalog=HarnessCatalog(job_catalog=job_catalog,profile_resolver=profile_resolver)
+    reviewer=ReviewerCoordinator(job_coordinator)
     upstreams = {
         "/v1/models/codex": (settings.upstream_codex, os.environ.get("SANDBOX_HARNESS_UPSTREAM_CODEX_KEY", "")),
         "/v1/models/claude": (settings.upstream_claude, os.environ.get("SANDBOX_HARNESS_UPSTREAM_CLAUDE_KEY", "")),
@@ -591,7 +596,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         claims=await authorize_runtime_request(request,"/v1/execution/catalog")
         owner_id=await activity_store.owner_id_for_thread(claims.thread_id)
         inputs=await activity_store.turn_input_artifacts(claims.turn_id,owner_id)
-        return {**execution_catalog.public_execution_metadata(),
+        return {**execution_catalog.public_execution_metadata(await readiness.snapshot()),
             "job_group_schema":JobGroupCreate.model_json_schema(),"input_artifacts":[{
             "artifact_id":item["artifact"].id,"project_file_id":item["project_file_id"],
             "project_path":item["project_path"],"source_type":item["source_type"],

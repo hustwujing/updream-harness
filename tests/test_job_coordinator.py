@@ -108,6 +108,46 @@ async def test_one_paid_member_holds_complete_mixed_batch_until_single_confirmat
     finally:await store.close()
 
 
+async def test_unavailable_descriptor_is_rejected_before_draft_and_rechecked_on_confirm(tmp_path):
+    class Readiness:
+        available=True
+        async def require_available(self,descriptor_id):
+            if descriptor_id=='image.generate' and not self.available:
+                raise ValueError('descriptor_unavailable:image.generate:provider_offline')
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/'readiness.db'));await store.initialize()
+    readiness=Readiness();coordinator=JobCoordinator(store,catalog(),readiness=readiness)
+    value=JobGroupCreate(thread_id='a'*32,origin_turn_id='b'*32,
+        idempotency_key='readiness-group',jobs=[job('paid','image.generate')])
+    try:
+        readiness.available=False
+        with pytest.raises(ValueError,match='descriptor_unavailable'):
+            await coordinator.prepare_group('owner',value)
+        assert await store.list_jobs_for_thread('a'*32)==[]
+        readiness.available=True;prepared=await coordinator.prepare_group('owner',value)
+        readiness.available=False
+        with pytest.raises(ValueError,match='descriptor_unavailable'):
+            await coordinator.confirm_group(prepared.draft.id,'owner')
+        assert await store.list_jobs_for_thread('a'*32)==[]
+    finally:await store.close()
+
+
+async def test_provider_preflight_rejects_before_confirmation_persistence(tmp_path):
+    class Preflight:
+        calls=[]
+        async def validate(self,request):
+            self.calls.append(request.local_job_id)
+            raise ValueError('provider_preflight_invalid:reference_mime')
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/'preflight.db'));await store.initialize()
+    preflight=Preflight();coordinator=JobCoordinator(store,catalog(),provider_preflight=preflight)
+    try:
+        with pytest.raises(ValueError,match='provider_preflight_invalid'):
+            await coordinator.prepare_group('owner',JobGroupCreate(thread_id='a'*32,
+                origin_turn_id='b'*32,idempotency_key='preflight-group',
+                jobs=[job('paid','image.generate')]))
+        assert preflight.calls==['paid'] and await store.list_jobs_for_thread('a'*32)==[]
+    finally:await store.close()
+
+
 async def test_confirmed_scope_is_inherited_by_contained_terminal_replacement(tmp_path):
     store,coordinator=await setup(tmp_path)
     try:

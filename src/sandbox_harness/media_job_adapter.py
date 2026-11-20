@@ -9,20 +9,7 @@ from .domain import MediaDraftCreate,now
 from .job_adapters import (AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExecutionContext,
     PreAcceptFailure)
 from .job_contracts import JobState
-from .media_references import inspect_reference
-
-
-CAPABILITY_SCOPES={
-    'image.generate':('image',frozenset({'text_to_image','reference_image'})),
-    'video.generate':('video',frozenset({
-        'text_to_video','first_frame','first_last_frame','multimodal_reference'})),
-    'video.edit':('video',frozenset({'edit_video','extend_video'})),
-    'audio.generate':('audio',frozenset({'text_to_audio','reference_voice'})),
-    'model3d.generate':('model3d',frozenset({
-        'text_to_model','image_to_model','multiview_to_model'})),
-    'model3d.transform':('model3d',frozenset({
-        'texture_model','decimate_model','convert_model'})),
-}
+from .provider_preflight import CAPABILITY_SCOPES,ProviderPreflight,ProviderPreflightError
 
 
 class MediaProviderJobAdapter(BaseJobAdapter):
@@ -30,58 +17,27 @@ class MediaProviderJobAdapter(BaseJobAdapter):
         self.settings=settings;self.store=store;self.objects=objects;self.catalog=catalog
         self.artifacts=ArtifactGateway(store,objects,settings.data_root/'tmp'/'provider-job-artifacts',
             maximum_bytes=settings.max_artifact_bytes)
-
-    async def _references(self,context:JobExecutionContext)->list[dict]:
-        bindings=context.request.parameters.get('reference_bindings',{})
-        if set(bindings)!=set(item.artifact_id for item in context.request.input_artifacts):
-            if context.request.input_artifacts:raise ValueError('media_reference_bindings_mismatch')
-            return []
-        values=[]
-        for item in context.request.input_artifacts:
-            artifact=await self.store.get_artifact(item.artifact_id)
-            if not artifact:raise KeyError('media_reference_artifact_not_found')
-            binding=bindings[item.artifact_id];role=str(binding.get('role',''));usage=str(binding.get('usage',''))
-            data=await asyncio.to_thread(self.objects.get,artifact.object_ref,maximum=200*1024*1024)
-            metadata=await asyncio.to_thread(inspect_reference,data,role,artifact.path)
-            values.append({'artifact_id':artifact.id,'path':artifact.path,'version':1,
-                'sha256':artifact.sha256,'size':artifact.size,'mime':metadata['mime'],
-                'kind':metadata['mime'].split('/',1)[0],'object_ref':artifact.object_ref,
-                'role':role,'usage':usage,'width':metadata.get('width'),'height':metadata.get('height'),
-                'duration_seconds':metadata.get('duration_seconds'),'fps':metadata.get('fps'),
-                'codec':metadata.get('codec',''),'audio_codec':metadata.get('audio_codec','')})
-        return values
+        self.preflight=ProviderPreflight(store,objects,catalog)
 
     async def submit(self,context:JobExecutionContext)->AdapterSubmission:
-        request=context.request;parameters=request.parameters
-        kind=str(parameters.get('kind',''));model=str(parameters.get('model',''))
-        generation_mode=str(parameters.get('generation_mode','')) or None
-        provider_parameters=parameters.get('parameters',{})
-        if not kind or not model or not isinstance(provider_parameters,dict):
-            raise PreAcceptFailure('Media Provider parameters are invalid',
-                error_code='provider_input_invalid',failed_phase='input_validation',retryable=False)
-        scope=CAPABILITY_SCOPES.get(request.descriptor_id)
-        if (not scope or kind!=scope[0] or generation_mode not in scope[1]
-                or request.adapter!=request.descriptor_id):
-            raise PreAcceptFailure('Provider request is outside the frozen Capability',
-                error_code='provider_input_invalid',failed_phase='authorization',retryable=False)
+        request=context.request
         try:
-            spec=self.catalog.resolve(kind,model);references=await self._references(context)
-            self.catalog.validate_parameters(kind,model,provider_parameters,
-                generation_mode=generation_mode,references=references)
-        except PreAcceptFailure:raise
-        except (KeyError,ValueError) as exc:
+            validated=await self.preflight.inspect(request)
+        except ProviderPreflightError as exc:
             raise PreAcceptFailure('Media Provider input validation failed',
-                error_code='provider_input_invalid',failed_phase='input_validation',
+                error_code='provider_input_invalid',failed_phase=(
+                    'authorization' if exc.code=='capability_scope_invalid' else 'input_validation'),
                 retryable=False) from exc
         owner_id=await self.store.owner_id_for_thread(context.job.thread_id)
         if not owner_id:raise KeyError('media_provider_thread_not_found')
-        value=MediaDraftCreate(kind=kind,model=model,generation_mode=generation_mode,
-            parameters=provider_parameters,references=[],idempotency_key=request.idempotency_key,
+        value=MediaDraftCreate(kind=validated.kind,model=validated.model,
+            generation_mode=validated.generation_mode,
+            parameters=validated.parameters,references=[],idempotency_key=request.idempotency_key,
             turn_id='',output_role='candidate')
         draft,_=await self.store.create_media_draft(owner_id,context.job.thread_id,value,
             expires_at=now()+timedelta(seconds=self.settings.media_draft_ttl_seconds),
-            provider_spec=spec,reference_snapshots=references)
-        media_job=await self.store.confirm_media_draft(draft.id,owner_id,provider_spec=spec)
+            provider_spec=validated.spec,reference_snapshots=validated.references)
+        media_job=await self.store.confirm_media_draft(draft.id,owner_id,provider_spec=validated.spec)
         return AdapterSubmission(external_execution_id=media_job.id,acceptance_receipt={
             'media_job_id':media_job.id,'provider':media_job.provider,'provider_adapter':media_job.adapter,
             'execution_mode':media_job.execution_mode})

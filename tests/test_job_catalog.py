@@ -54,6 +54,20 @@ def test_catalog_verifies_digest_and_exact_descriptor_identity():
         catalog.operation("artifact.inspect", "2", "a" * 64)
 
 
+def test_execution_catalog_exposes_dynamic_availability_without_probe_details():
+    payload={"schema_version":1,"operations":[operation(
+        availability_probe="image_decompose")],"capabilities":[]}
+    raw=json.dumps(payload,sort_keys=True,separators=(",",":"));digest=hashlib.sha256(raw.encode()).hexdigest()
+    value=JobCatalog.from_json(raw,expected_digest=digest)
+    public=HarnessCatalog(job_catalog=value,profile_resolver=SimpleNamespace(
+        skills={},children={})).public_execution_metadata({'artifact.inspect':{
+            'available':False,'reason':'connection_refused','generation':3,
+            'checked_at':'2026-11-20T00:00:00+00:00'}})
+    exposed=public['operations'][0]
+    assert exposed['available'] is False and exposed['availability']['generation']==3
+    assert 'availability_probe' not in exposed
+
+
 def test_durable_descriptor_requires_explicit_recovery_policies():
     with pytest.raises(ValidationError, match="durable"):
         OperationDescriptor.model_validate(operation(

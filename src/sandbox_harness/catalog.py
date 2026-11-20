@@ -106,11 +106,15 @@ class HarnessCatalog:
         self.job_catalog = job_catalog
         self.profile_resolver = profile_resolver
 
-    def public_execution_metadata(self) -> dict[str, list[dict]]:
+    def public_execution_metadata(self,availability:dict[str,dict]|None=None) -> dict[str, list[dict]]:
         if not self.job_catalog or not self.profile_resolver:
             return {"operations": [], "capabilities": [], "skills": [],
                 "child_execution_profiles": []}
         adapter,descriptor_id,descriptor_version,descriptor_digest=CHILD_HARNESS_DESCRIPTOR
+        availability=availability or {}
+        def health(identity):
+            state=availability.get(identity,{'available':True,'reason':'','generation':0,'checked_at':''})
+            return {'available':bool(state.get('available',True)),'availability':dict(state)}
         return {
             "operations": [{"id": row.id, "version": row.version,
                 "digest": row.digest, "execution_mode": row.execution_mode,
@@ -118,14 +122,14 @@ class HarnessCatalog:
                 "input_roles": list(row.input_roles), "output_roles": list(row.output_roles),
                 "resources":row.resources,"billable":row.billable,"side_effects":row.side_effects,
                 "runtime_profile_id":row.runtime_profile_id,"runtime_harness":row.runtime_harness,
-                "guidance":row.guidance}
+                "guidance":row.guidance,**health(row.id)}
                 for row in self.job_catalog.payload.operations],
             "capabilities": [{"id": row.id, "version": row.version,
                 "digest": row.digest, "operations": list(row.operations),
                 "parameter_schema":row.parameter_schema,
                 "input_roles": list(row.input_roles), "output_roles": list(row.output_roles),
                 "resources":row.resources,"billable":row.billable,"side_effects":row.side_effects,
-                "guidance":row.guidance}
+                "guidance":row.guidance,**health(row.id)}
                 for row in self.job_catalog.payload.capabilities],
             "skills": [{"id": row.id, "version": row.version, "digest": row.digest,
                 "summary":row.summary,

@@ -52,6 +52,7 @@ class OperationDescriptor(BaseModel):
     runtime_profile_id: str = ""
     runtime_harness: Literal["codex","claude","deepseek"] = "codex"
     guidance: str = Field(default="",max_length=2000)
+    availability_probe: str = Field(default="",pattern=r"^$|^[a-z][a-z0-9_]{0,63}$")
 
     @model_validator(mode="after")
     def valid_execution_boundary(self):

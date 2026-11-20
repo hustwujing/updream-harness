@@ -62,10 +62,10 @@
 **Interfaces:**
 - Produces: `ExecutionReadiness.snapshot()` / `require_available()` and async `ProviderPreflight.validate(request)`.
 
-- [ ] Add failing tests for unavailable/recovered Catalog state and stale draft confirmation.
-- [ ] Add failing tests proving invalid Provider references fail before draft persistence.
-- [ ] Implement shared readiness and pure Provider validation used by API and Gateway.
-- [ ] Run coordinator/catalog/media tests and commit.
+- [x] Add failing tests for unavailable/recovered Catalog state and stale draft confirmation.
+- [x] Add failing tests proving invalid Provider references fail before draft persistence.
+- [x] Implement shared readiness and pure Provider validation used by API and Gateway.
+- [x] Run coordinator/catalog/media tests and commit.
 
 ### Task 3: Offline Web Skill Closure
 

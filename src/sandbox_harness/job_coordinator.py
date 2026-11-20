@@ -37,11 +37,19 @@ class ConfirmedGroup(BaseModel):
 
 class JobCoordinator:
     def __init__(self, store, catalog: JobCatalog, *, profile_resolver: ProfileResolver | None = None,
-                 draft_ttl_seconds: int = 86400):
+                 draft_ttl_seconds: int = 86400,readiness=None,provider_preflight=None):
         self.store = store
         self.catalog = catalog
         self.profile_resolver = profile_resolver
         self.draft_ttl_seconds = draft_ttl_seconds
+        self.readiness=readiness;self.provider_preflight=provider_preflight
+
+    async def _preflight(self,value:JobGroupCreate)->None:
+        for request in value.jobs:
+            if request.kind==JobKind.HARNESS:continue
+            if self.readiness:await self.readiness.require_available(request.descriptor_id)
+            if request.kind==JobKind.PROVIDER and self.provider_preflight:
+                await self.provider_preflight.validate(request)
 
     async def _inherit_delegated_runtime(self,owner_id:str,value:JobGroupCreate)->JobGroupCreate:
         delegated=[request for request in value.jobs if request.adapter=='child-harness'
@@ -259,6 +267,7 @@ class JobCoordinator:
         value=await self._inherit_delegated_runtime(owner_id,value)
         value=self._normalize(value)
         await self.store.validate_job_input_artifacts(owner_id,value.thread_id,value.jobs)
+        await self._preflight(value)
         value.validate_member_limit()
         sensitive = self._validate(value.jobs)
         inherited=await self._inherited_sensitive(owner_id,value,sensitive)
@@ -291,6 +300,7 @@ class JobCoordinator:
         normalized_group=self._with_authorization_scopes(normalized_group)
         sensitive = self._validate(normalized_group.jobs)
         await self.store.validate_job_input_artifacts(owner_id,current.thread_id,normalized_group.jobs)
+        await self._preflight(normalized_group)
         updated = JobGroupDraftCreate.model_validate({
             **current.model_dump(),
             "jobs": [job.model_dump() for job in normalized_group.jobs],
@@ -310,6 +320,7 @@ class JobCoordinator:
         current=self._normalize(current)
         self._validate(current.jobs)
         await self.store.validate_job_input_artifacts(owner_id,current.thread_id,current.jobs)
+        await self._preflight(current)
         group, jobs = await self.store.confirm_job_group_draft(draft_id, owner_id)
         return ConfirmedGroup(group=group, jobs=jobs)
 

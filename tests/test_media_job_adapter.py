@@ -11,6 +11,7 @@ from sandbox_harness.job_contracts import (JobArtifactInput,JobExpectedOutput,Jo
     JobState,OutputDisposition)
 from sandbox_harness.media_job_adapter import MediaProviderJobAdapter
 from sandbox_harness.objects import ObjectStore
+from sandbox_harness.provider_preflight import ProviderPreflight,ProviderPreflightError
 from sandbox_harness.store import Store
 
 
@@ -101,6 +102,8 @@ async def test_media_provider_adapter_preserves_artifact_reference_lineage(tmp_p
     })
     context=JobExecutionContext(job=job,request=referenced,generation=attempt.generation)
     try:
+        await ProviderPreflight(store,objects,Catalog()).validate(referenced)
+        assert await store.list_media_drafts(thread.id,'owner')==[]
         accepted=await adapter.submit(context)
         assert accepted.external_execution_id
         drafts=await store.list_media_drafts(thread.id,'owner')
@@ -108,6 +111,17 @@ async def test_media_provider_adapter_preserves_artifact_reference_lineage(tmp_p
         assert drafts[0].references[0].artifact_id==artifact.id
         assert drafts[0].references[0].project_file_id==''
         assert drafts[0].references[0].path=='input/reference.png'
+    finally:await store.close()
+
+
+async def test_provider_preflight_rejects_unbound_reference_without_creating_media_draft(tmp_path):
+    store,thread,job,attempt,request=await setup(tmp_path);objects=ObjectStore(tmp_path/'objects')
+    invalid=request.model_copy(update={'parameters':{**request.parameters,
+        'reference_bindings':{'f'*32:{'role':'reference_image','usage':'subject'}}}})
+    try:
+        with __import__('pytest').raises(ProviderPreflightError,match='reference_bindings_mismatch'):
+            await ProviderPreflight(store,objects,Catalog()).validate(invalid)
+        assert await store.list_media_drafts(thread.id,'owner')==[]
     finally:await store.close()
 
 

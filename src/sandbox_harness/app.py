@@ -32,6 +32,7 @@ from .profiles import ProfileResolver
 from .job_coordinator import JobCoordinator, JobGroupDraftUpdate
 from .job_continuation import ContinuationDispatcher
 from .execution_graph import ExecutionGraphProjector
+from .execution_readiness import ExecutionReadiness
 from .job_contracts import JobGroupCreate
 from .config import Settings, load_settings, validate_service_settings
 from .observability import RequestLoggingMiddleware, telemetry, event
@@ -40,6 +41,7 @@ from .document_preview import is_presentation, presentation_pdf
 from .model_discovery import ModelDiscovery
 from .media_catalog import MediaCatalog
 from .media_references import inspect_reference, resolve_media_references
+from .provider_preflight import ProviderPreflight
 from .objects import object_store
 from .pool import SandboxPool
 from .runtime import RuntimeClient
@@ -252,8 +254,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         skill_manifest=skill_manifest)
     catalog.job_catalog = job_catalog
     catalog.profile_resolver = profile_resolver
+    readiness=ExecutionReadiness.from_settings(settings,job_catalog)
+    provider_preflight=ProviderPreflight(store,objects,media_catalog)
     job_coordinator = JobCoordinator(store, job_catalog, profile_resolver=profile_resolver,
-        draft_ttl_seconds=settings.media_draft_ttl_seconds)
+        draft_ttl_seconds=settings.media_draft_ttl_seconds,readiness=readiness,
+        provider_preflight=provider_preflight)
     continuation_dispatcher = ContinuationDispatcher(store, broker)
     execution_graph = ExecutionGraphProjector(store)
     sessions = Sessions(settings.session_signing_key)
@@ -523,7 +528,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/catalog/execution")
     async def execution_catalog():
-        return catalog.public_execution_metadata()
+        return catalog.public_execution_metadata(await readiness.snapshot())
 
     @app.post("/api/job-group-drafts")
     async def prepare_job_group(value: JobGroupCreate, request: Request):
