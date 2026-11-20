@@ -25,7 +25,7 @@ from .pool import SandboxPool
 from .profiles import ProfileResolver
 from .reviewer import ReviewerCoordinator,ReviewerJobAdapter,ReviewSubmission,ReviewTrigger
 from .runtime import RuntimeClient
-from .sandbox import FakeSandboxBackend, OpenSandboxBackend
+from . import sandbox_factory
 from .scheduler import NodeProfile, Scheduler
 from .store import Store
 
@@ -53,12 +53,11 @@ def profile_resolver(settings: Settings) -> ProfileResolver:
 
 
 def sandbox_pool(settings: Settings) -> SandboxPool:
-    backend=(FakeSandboxBackend(namespace=settings.namespace) if settings.backend=="fake" else
-        OpenSandboxBackend(settings.opensandbox_url,settings.opensandbox_api_key,
-            settings.sandbox_timeout_seconds,settings.namespace,settings.gateway_url,
-            settings.gateway_proxy_port))
+    backend=sandbox_factory.build_sandbox_backend(settings)
+    profiles=sandbox_factory.build_profile_resolver(settings,backend)
     return SandboxPool(backend,{harness:settings.image_for(harness.value) for harness in Harness},
-        {harness:0 for harness in Harness},max_sandboxes=settings.max_sandboxes)
+        {harness:0 for harness in Harness},max_sandboxes=settings.max_sandboxes,
+        profile_resolver=profiles,ttl_seconds=settings.sandbox_timeout_seconds)
 
 
 async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) -> None:
@@ -70,7 +69,7 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
         bundle_dir=settings.runtime_bundle_dir,default_bundle_digest=settings.runtime_bundle_digest,
         code_bundle_dir=settings.runtime_code_bundle_dir,
         default_code_bundle_digest=settings.runtime_code_bundle_digest,
-        staging_root=settings.data_root / "tmp" / "runtime-downloads")
+        staging_root=settings.data_root / "tmp" / "runtime-downloads",backend=pool.backend)
     scheduler=Scheduler(store)
     resolver=profile_resolver(settings)
     child_backend=OpenSandboxChildBackend(pool=pool,runtime=runtime,store=store,objects=objects,
@@ -149,8 +148,7 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
         stop_task.cancel();await asyncio.gather(stop_task,return_exceptions=True)
         preserved={value.id for value in child_backend.sessions.values()}
         await pool.close(preserve_sandbox_ids=preserved)
-        client=getattr(pool.backend,"client",None)
-        if client:await client.aclose()
+        await pool.backend.aclose()
         await store.close()
 
 

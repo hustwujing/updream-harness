@@ -16,6 +16,7 @@ import httpx
 
 from .domain import Attachment, RuntimeEvent, RuntimeResult
 from .sandbox import Sandbox
+from .sandbox_contracts import SandboxBackend
 
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ class RuntimeClient:
                  bundle_dir: Path | None = None, default_bundle_digest: str = "",
                  code_bundle_dir: Path | None = None, default_code_bundle_digest: str = "",
                  transport: httpx.AsyncBaseTransport | None = None,
-                 staging_root: Path | None = None):
+                 staging_root: Path | None = None,backend:SandboxBackend|None=None):
         self.timeout = httpx.Timeout(timeout_seconds, connect=20)
         self.reattach_attempts = reattach_attempts
         self.reattach_max_delay_seconds = reattach_max_delay_seconds
@@ -78,11 +79,18 @@ class RuntimeClient:
         self.code_bundle_dir = code_bundle_dir
         self.default_code_bundle_digest = default_code_bundle_digest
         self.transport = transport
+        self.backend=backend
         self.staging_root = (staging_root or Path.cwd() / ".data" / "tmp" / "runtime-downloads").resolve()
         self.process_start = _process_start(os.getpid()) or "unknown"
 
+    async def _resolve_endpoint(self,sandbox:Sandbox)->None:
+        if self.backend is None:return
+        endpoint=await self.backend.endpoint(sandbox,8080)
+        sandbox.runtime_url=endpoint.url;sandbox.runtime_headers=dict(endpoint.headers)
+
     async def _download(self, sandbox: Sandbox, path: str, *, maximum: int,
                         error_code: str, params: dict | None = None) -> StagedRuntimeObject:
+        await self._resolve_endpoint(sandbox)
         if maximum < 0:
             raise RuntimeTransferError(error_code)
         _reap_stale_downloads(self.staging_root)
@@ -131,6 +139,7 @@ class RuntimeClient:
                      skill_ids: list[str] | None = None, skill_digests: dict[str, str] | None = None,
                      child_mode: bool = False, delegation_depth: int = 0,
                      logical_thread_id: str = "", logical_turn_id: str = "") -> None:
+        await self._resolve_endpoint(sandbox)
         bundle_digest = runtime_bundle_digest or self.default_bundle_digest
         code_digest = runtime_code_bundle_digest or self.default_code_bundle_digest
         payload = {"capability_token": capability_token, "gateway_url": gateway_url,
@@ -195,6 +204,7 @@ class RuntimeClient:
 
     @observed("workspace.restore")
     async def restore(self, sandbox: Sandbox, archive, *, size: int) -> None:
+        await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url,
                 headers={**sandbox.runtime_headers,**carrier()}, timeout=120,
                 trust_env=False, transport=self.transport) as client:
@@ -203,12 +213,14 @@ class RuntimeClient:
             response.raise_for_status()
 
     async def put_attachment(self, sandbox: Sandbox, name: str, data: bytes, mime: str) -> None:
+        await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()}, timeout=300, trust_env=False) as client:
             response = await client.put("/v1/attachments/file", params={"name": name}, content=data,
                 headers={"Content-Type": mime})
             response.raise_for_status()
 
     async def put_project_file(self, sandbox: Sandbox, path: str, data: bytes, mime: str) -> None:
+        await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()},
             timeout=300, trust_env=False) as client:
             response = await client.put("/v1/project-files/file", params={"path": path,"size":len(data)},
@@ -217,6 +229,7 @@ class RuntimeClient:
 
     async def put_project_file_stream(self, sandbox: Sandbox, path: str, content,
                                       *, size: int, mime: str) -> None:
+        await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url,
                 headers={**sandbox.runtime_headers,**carrier()},timeout=300,
                 trust_env=False,transport=self.transport) as client:
@@ -226,12 +239,14 @@ class RuntimeClient:
             return response.json()
 
     async def reset_project_files(self, sandbox: Sandbox) -> None:
+        await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()},
             timeout=60, trust_env=False) as client:
             response = await client.post("/v1/project-files/reset")
             response.raise_for_status()
 
     async def project_file_manifest(self, sandbox: Sandbox) -> dict:
+        await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url,
             headers={**sandbox.runtime_headers, **carrier()}, timeout=300,
             trust_env=False, transport=self.transport) as client:
@@ -245,6 +260,7 @@ class RuntimeClient:
             maximum=maximum, error_code="artifact_too_large")
 
     async def preserve_project_files(self, sandbox: Sandbox, paths: list[str], destination: str) -> dict:
+        await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url,
             headers={**sandbox.runtime_headers, **carrier()}, timeout=300, trust_env=False) as client:
             response = await client.post("/v1/project-files/preserve",
@@ -264,6 +280,7 @@ class RuntimeClient:
                               attachments: list[Attachment], native_thread_id: str,
                               reasoning_effort: str, execution_id: str,
                               input_id: str = "initial") -> dict:
+        await self._resolve_endpoint(sandbox)
         body = {"message":message,"attachments":[item.model_dump(mode="json") for item in attachments],
             "native_thread_id":native_thread_id,"reasoning_effort":reasoning_effort,
             "execution_id":execution_id,"input_id":input_id,"after_sequence":0}
@@ -275,6 +292,7 @@ class RuntimeClient:
 
     async def _execution_stream(self, sandbox: Sandbox, execution_id: str, after_sequence: int,
                                 *, body: dict | None = None):
+        await self._resolve_endpoint(sandbox)
         cursor = after_sequence
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()},
             timeout=self.timeout, trust_env=False, transport=self.transport) as client:
@@ -327,6 +345,7 @@ class RuntimeClient:
     @observed("runtime.input")
     async def append_input(self, sandbox: Sandbox, *, message: str, attachments: list[Attachment], reasoning_effort: str,
                            execution_id: str = "legacy", input_id: str = "initial") -> str:
+        await self._resolve_endpoint(sandbox)
         body = {"message": message, "attachments": [item.model_dump(mode="json") for item in attachments],
                 "native_thread_id": "", "reasoning_effort": reasoning_effort,
                 "execution_id": execution_id, "input_id": input_id}
@@ -343,8 +362,9 @@ class RuntimeClient:
                 "deepseek": "native_safe_point"}[sandbox.harness.value]
 
     async def execution_status(self, sandbox: Sandbox, execution_id: str) -> dict | None:
+        await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()},
-            timeout=20, trust_env=False) as client:
+            timeout=20, trust_env=False,transport=self.transport) as client:
             response = await client.get("/v1/executions/" + execution_id)
             if response.status_code == 404:
                 return None
@@ -354,6 +374,7 @@ class RuntimeClient:
     @observed("runtime.interaction")
     async def respond_interaction(self, sandbox: Sandbox, interaction_id: str,
                                   response_value: dict) -> bool | None:
+        await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()},
             timeout=20, trust_env=False) as client:
             response = await client.post(f"/v1/interactions/{interaction_id}", json=response_value)
@@ -366,6 +387,7 @@ class RuntimeClient:
             return bool(response.json().get("accepted"))
 
     async def background_jobs(self, sandbox: Sandbox) -> list[dict]:
+        await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()},
             timeout=20, trust_env=False) as client:
             response = await client.get("/v1/background-jobs")
@@ -373,6 +395,7 @@ class RuntimeClient:
             return response.json()["items"]
 
     async def cancel_background_job(self, sandbox: Sandbox, job_id: str) -> dict:
+        await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()},
             timeout=20, trust_env=False) as client:
             response = await client.post(f"/v1/background-jobs/{job_id}/cancel")
@@ -392,6 +415,7 @@ class RuntimeClient:
         return await self._inspect_json(sandbox, "/v1/inspect/processes")
 
     async def stop_inspect_process(self, sandbox: Sandbox, pid: int) -> dict:
+        await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url,
             headers={**sandbox.runtime_headers, **carrier()}, timeout=20, trust_env=False) as client:
             response = await client.post(f"/v1/inspect/processes/{pid}/stop")
@@ -402,6 +426,7 @@ class RuntimeClient:
         return await self._inspect_json(sandbox, "/v1/inspect/ports")
 
     async def inspect_file(self, sandbox: Sandbox, path: str) -> tuple[bytes, str]:
+        await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url,
             headers={**sandbox.runtime_headers, **carrier()}, timeout=30, trust_env=False) as client:
             response = await client.get("/v1/inspect/file", params={"path": path})
@@ -410,6 +435,7 @@ class RuntimeClient:
 
     async def write_inspect_file(self, sandbox: Sandbox, path: str, data: bytes,
                                  mime: str = "text/plain") -> dict:
+        await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url,
             headers={**sandbox.runtime_headers, **carrier()}, timeout=30, trust_env=False) as client:
             response = await client.put("/v1/inspect/file", params={"path": path}, content=data,
@@ -418,6 +444,7 @@ class RuntimeClient:
             return response.json()
 
     async def _inspect_json(self, sandbox: Sandbox, path: str, *, params: dict | None = None) -> dict:
+        await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url,
             headers={**sandbox.runtime_headers, **carrier()}, timeout=20, trust_env=False) as client:
             response = await client.get(path, params=params)
@@ -434,6 +461,7 @@ class RuntimeClient:
             error_code="checkpoint_too_large")
 
     async def artifacts(self, sandbox: Sandbox, expected_batch_id: str) -> list[dict]:
+        await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()},
             timeout=60, trust_env=False, transport=self.transport) as client:
             response = await client.get("/v1/artifacts")
@@ -460,6 +488,7 @@ class RuntimeClient:
             maximum=maximum, error_code="artifact_too_large")
 
     async def media_render(self,sandbox:Sandbox,value:dict)->dict:
+        await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url,
             headers={**sandbox.runtime_headers,**carrier()},timeout=None,trust_env=False,
             transport=self.transport) as client:
@@ -467,6 +496,7 @@ class RuntimeClient:
             response.raise_for_status();return response.json()
 
     async def diagnostics(self, sandbox: Sandbox, after: int = 0) -> dict:
+        await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url,headers={**sandbox.runtime_headers,**carrier()},
             timeout=5,trust_env=False) as client:
             response=await client.get("/v1/diagnostics",params={"after":after,"limit":500})
@@ -476,6 +506,7 @@ class RuntimeClient:
 
     @observed("runtime.cancel")
     async def cancel(self, sandbox: Sandbox) -> dict:
+        await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()}, timeout=10, trust_env=False) as client:
             response = await client.post("/v1/cancel")
             response.raise_for_status()

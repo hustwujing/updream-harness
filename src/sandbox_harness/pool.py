@@ -10,17 +10,23 @@ import time
 
 from .domain import Harness, identifier
 from .sandbox import Sandbox, SandboxBackend, SandboxNotFound
+from .sandbox_contracts import SandboxCreateRequest,SandboxState,SandboxUpdate
+from .sandbox_factory import SandboxProfileResolver
 
 
 logger = logging.getLogger(__name__)
 
 
 class SandboxPool:
-    def __init__(self, backend: SandboxBackend, images: dict[Harness, str], targets: dict[Harness, int], *, max_sandboxes: int | None = None):
+    def __init__(self, backend: SandboxBackend, images: dict[Harness, str], targets: dict[Harness, int], *, max_sandboxes: int | None = None,profile_resolver:SandboxProfileResolver|None=None,ttl_seconds:int=3600):
         self.backend = backend
         self.images = images
         self.targets = targets
         self.max_sandboxes = max_sandboxes or sum(targets.values()) + 32
+        self.profile_resolver=profile_resolver or SandboxProfileResolver(provider=backend.provider,
+            runtime_contract="sandbox-harness-runtime/v1",runtime_bundle_digest="legacy",
+            runtime_code_bundle_digest="legacy")
+        self.ttl_seconds=ttl_seconds
         user_capacity = self.max_sandboxes - sum(targets.values())
         if user_capacity < 1:
             raise ValueError("Sandbox maximum must leave at least one user slot")
@@ -156,9 +162,12 @@ class SandboxPool:
                 self._creating[harness] += 1
             sandbox = None
             try:
-                sandbox = await self.backend.create(harness, self.images[harness],
-                    {"sandbox-harness.io/pool": "warm", "sandbox-harness.io/turn": "warm-" + identifier(),
-                     "sandbox-harness.io/harness": harness.value}, {})
+                identity="warm-"+identifier();profile=self.profile_resolver.resolve(
+                    harness,self.images[harness])
+                sandbox=await self.backend.create(SandboxCreateRequest(harness=harness,profile=profile,
+                    metadata={"sandbox-harness.io/pool":"warm","sandbox-harness.io/turn":identity,
+                        "sandbox-harness.io/harness":harness.value},environment={},
+                    idempotency_key=identity,ttl_seconds=self.ttl_seconds))
                 sandbox.warm = True
                 async with self._lock:
                     if not self._closed:
@@ -208,6 +217,7 @@ class SandboxPool:
                       environment: dict[str, str], image: str | None = None) -> Sandbox:
         async with self._thread_lock(thread_id):
             desired_image = image or self.images[harness]
+            desired_profile=self.profile_resolver.resolve(harness,desired_image)
             image_frozen = image is not None
             slot_reserved = False
             async with self._lock:
@@ -215,8 +225,8 @@ class SandboxPool:
                     raise RuntimeError("sandbox_pool_closed")
                 attached = self._attached.get(thread_id)
                 expiry = None
-                incompatible = bool(attached and (attached.harness != harness
-                    or image_frozen and attached.image != desired_image))
+                incompatible=bool(attached and (attached.harness!=harness
+                    or image_frozen and attached.compatibility_key!=desired_profile.compatibility_key))
                 if incompatible:
                     self._attached.pop(thread_id, None)
                     self._idle_since.pop(thread_id, None)
@@ -228,7 +238,9 @@ class SandboxPool:
                 attached = None
             if attached:
                 try:
-                    await self.backend.bind(attached, thread_id, turn_id)
+                    await self.backend.update(attached,SandboxUpdate(metadata={
+                        "sandbox-harness.io/pool":None,"sandbox-harness.io/thread":thread_id,
+                        "sandbox-harness.io/turn":turn_id},ttl_seconds=self.ttl_seconds))
                     async with self._lock:
                         expiry = self._expiry.pop(thread_id, None)
                         self._idle_since.pop(thread_id, None)
@@ -237,6 +249,7 @@ class SandboxPool:
                     attached.turn_id = turn_id
                     attached.reused = True
                     attached.health_state = "ready"
+                    attached.state=SandboxState.READY
                     attached.health_error = ""
                     return attached
                 except SandboxNotFound:
@@ -262,30 +275,30 @@ class SandboxPool:
                 async with self._lock:
                     if self._closed:
                         raise RuntimeError("sandbox_pool_closed")
-                    matching = next((index for index in range(len(self._warm[harness]) - 1, -1, -1)
-                        if not image_frozen or self._warm[harness][index].image == desired_image), None)
+                    matching=next((index for index in range(len(self._warm[harness])-1,-1,-1)
+                        if not image_frozen or self._warm[harness][index].compatibility_key==
+                            desired_profile.compatibility_key),None)
                     sandbox = self._warm[harness].pop(matching) if matching is not None else None
                 if sandbox:
                     # Pristine warm instances do not contain a user token. Runtime injection
                     # happens through its control endpoint after ownership is frozen.
                     try:
-                        await self.backend.bind(sandbox, thread_id, turn_id)
+                        await self.backend.update(sandbox,SandboxUpdate(metadata={
+                            "sandbox-harness.io/pool":None,"sandbox-harness.io/thread":thread_id,
+                            "sandbox-harness.io/turn":turn_id},ttl_seconds=self.ttl_seconds))
                         sandbox.warm = False
                     except SandboxNotFound:
-                        sandbox = await self.backend.create(
-                            harness,
-                            desired_image,
-                            {"sandbox-harness.io/thread": thread_id, "sandbox-harness.io/turn": turn_id,
-                             "sandbox-harness.io/harness": harness.value},
-                            environment,
-                        )
+                        sandbox=await self.backend.create(SandboxCreateRequest(harness=harness,
+                            profile=desired_profile,metadata={"sandbox-harness.io/thread":thread_id,
+                                "sandbox-harness.io/turn":turn_id,
+                                "sandbox-harness.io/harness":harness.value},environment=environment,
+                            ttl_seconds=self.ttl_seconds,idempotency_key=turn_id))
                 else:
-                    sandbox = await self.backend.create(
-                        harness,
-                        desired_image,
-                        {"sandbox-harness.io/thread": thread_id, "sandbox-harness.io/turn": turn_id, "sandbox-harness.io/harness": harness.value},
-                        environment,
-                    )
+                    sandbox=await self.backend.create(SandboxCreateRequest(harness=harness,
+                        profile=desired_profile,metadata={"sandbox-harness.io/thread":thread_id,
+                            "sandbox-harness.io/turn":turn_id,
+                            "sandbox-harness.io/harness":harness.value},environment=environment,
+                        ttl_seconds=self.ttl_seconds,idempotency_key=turn_id))
                 sandbox.thread_id = thread_id
                 sandbox.turn_id = turn_id
                 sandbox.reused = False
@@ -317,7 +330,9 @@ class SandboxPool:
                     return existing
             await self._reserve_user_slot()
             try:
-                await self.backend.bind(sandbox, thread_id, turn_id)
+                await self.backend.update(sandbox,SandboxUpdate(metadata={
+                    "sandbox-harness.io/pool":None,"sandbox-harness.io/thread":thread_id,
+                    "sandbox-harness.io/turn":turn_id},ttl_seconds=self.ttl_seconds))
                 sandbox.thread_id = thread_id
                 sandbox.turn_id = turn_id
                 sandbox.warm = False

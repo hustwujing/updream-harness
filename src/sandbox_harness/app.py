@@ -45,7 +45,7 @@ from .provider_preflight import ProviderPreflight
 from .objects import object_store
 from .pool import SandboxPool
 from .runtime import RuntimeClient
-from .sandbox import FakeSandboxBackend, OpenSandboxBackend
+from . import sandbox_factory
 from .sandbox_inspector import SandboxInspector, websocket_endpoint_headers
 from .site_bundle import safe_site_path
 from .sessions import COOKIE, Sessions
@@ -161,18 +161,8 @@ def managed_project_path(value: str, *, upload: bool = False) -> str:
 def components(settings: Settings):
     store = Store(settings.database_url, settings.redis_url, settings.redis_prefix)
     objects = object_store(settings)
-    backend = (
-        FakeSandboxBackend(namespace=settings.namespace)
-        if settings.backend == "fake"
-        else OpenSandboxBackend(
-            settings.opensandbox_url,
-            settings.opensandbox_api_key,
-            settings.sandbox_timeout_seconds,
-            settings.namespace,
-            settings.gateway_url,
-            settings.gateway_proxy_port,
-        )
-    )
+    backend=sandbox_factory.build_sandbox_backend(settings)
+    profile_resolver=sandbox_factory.build_profile_resolver(settings,backend)
     images = {harness: settings.image_for(harness.value) for harness in Harness}
     targets = {
         Harness.CODEX: settings.warm_pool_codex,
@@ -181,7 +171,8 @@ def components(settings: Settings):
     }
     if sum(targets.values()) >= settings.max_sandboxes:
         raise ValueError("max_sandboxes must exceed the total warm pool target")
-    pool = SandboxPool(backend, images, targets, max_sandboxes=settings.max_sandboxes)
+    pool=SandboxPool(backend,images,targets,max_sandboxes=settings.max_sandboxes,
+        profile_resolver=profile_resolver,ttl_seconds=settings.sandbox_timeout_seconds)
     runtime = RuntimeClient(timeout_seconds=settings.sandbox_timeout_seconds,
         reattach_attempts=settings.runtime_stream_reattach_attempts,
         reattach_max_delay_seconds=settings.runtime_stream_reattach_max_delay_seconds,
@@ -189,7 +180,7 @@ def components(settings: Settings):
         default_bundle_digest=settings.runtime_bundle_digest,
         code_bundle_dir=settings.runtime_code_bundle_dir,
         default_code_bundle_digest=settings.runtime_code_bundle_digest,
-        staging_root=settings.data_root / "tmp" / "runtime-downloads")
+        staging_root=settings.data_root / "tmp" / "runtime-downloads",backend=backend)
     catalog = HarnessCatalog(settings.harness_catalog_json or None)
     media_catalog = MediaCatalog(settings.media_catalog_json,
         ark_assets_configured=bool(settings.ark_access_key and settings.ark_secret_key
@@ -425,6 +416,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         preserve_sandbox_ids = await broker.close()
         await pool.close(preserve_sandbox_ids=(preserve_sandbox_ids
             | await store.active_sandbox_control_ids()))
+        await pool.backend.aclose()
         await store.close()
 
     app = FastAPI(title="Sandbox Harness Platform", lifespan=lifespan)

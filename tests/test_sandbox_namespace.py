@@ -293,19 +293,19 @@ async def test_reacquiring_attached_sandbox_cancels_expiration():
     await pool.close()
 
 
-async def test_attached_bind_failure_preserves_expiry_idle_and_capacity_for_retry():
+async def test_attached_claim_update_failure_preserves_expiry_idle_and_capacity_for_retry():
     class Backend(FakeSandboxBackend):
         fail=True
-        async def bind(self,sandbox,thread_id,turn_id):
-            if self.fail:raise RuntimeError('temporary bind failure')
-            await super().bind(sandbox,thread_id,turn_id)
+        async def update(self,sandbox,value):
+            if self.fail:raise RuntimeError('temporary claim failure')
+            return await super().update(sandbox,value)
     import pytest
     backend=Backend();pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness},
         max_sandboxes=1)
     sandbox=await pool.acquire(thread_id='thread',turn_id='one',harness=Harness.CLAUDE,environment={})
     await pool.release(sandbox,keep_attached=True,keepalive_seconds=60)
     expiry=pool._expiry['thread'];idle=pool._idle_since['thread']
-    with pytest.raises(RuntimeError,match='temporary bind failure'):
+    with pytest.raises(RuntimeError,match='temporary claim failure'):
         await pool.acquire(thread_id='thread',turn_id='two',harness=Harness.CLAUDE,environment={})
     assert pool._attached['thread'] is sandbox
     assert pool._expiry['thread'] is expiry and not expiry.cancelled()
@@ -321,14 +321,14 @@ async def test_attached_bind_failure_preserves_expiry_idle_and_capacity_for_retr
     await pool.release(other,keep_attached=False);await pool.close()
 
 
-async def test_cancellation_during_attached_bind_keeps_expiry_tracking():
+async def test_cancellation_during_attached_claim_update_keeps_expiry_tracking():
     class Backend(FakeSandboxBackend):
         block=False
         entered=asyncio.Event()
-        async def bind(self,sandbox,thread_id,turn_id):
+        async def update(self,sandbox,value):
             if self.block:
                 self.entered.set();await asyncio.Event().wait()
-            await super().bind(sandbox,thread_id,turn_id)
+            return await super().update(sandbox,value)
     backend=Backend();pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness})
     sandbox=await pool.acquire(thread_id='thread',turn_id='one',harness=Harness.CLAUDE,environment={})
     await pool.release(sandbox,keep_attached=True,keepalive_seconds=60);backend.block=True
