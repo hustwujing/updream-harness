@@ -61,6 +61,7 @@ def test_ali_configurator_has_fail_closed_preflights():
         assert contract in source
     assert "SHARED_KEYS" in source
     assert "source.items()" not in source
+    assert 'DATA_ROOT/"logs"' in source
 
 
 def test_ali_postgresql_scripts_use_dedicated_cluster_under_data2():

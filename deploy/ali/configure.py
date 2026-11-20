@@ -6,6 +6,8 @@ import hashlib
 import importlib.util
 import os
 from pathlib import Path
+import pwd
+import grp
 import secrets
 import socket
 import stat
@@ -136,13 +138,20 @@ def main()->None:
     if args.check_only:return
     target=DATA_ROOT/"config/platform.env"
     if target.exists() and not args.force:raise FileExistsError(target)
-    for path in (DATA_ROOT/"config",DATA_ROOT/"catalogs",DATA_ROOT/"runtime-bundles",
-                 DATA_ROOT/"runtime-code-bundles",DATA_ROOT/"service-logs",DATA_ROOT/"tmp",
-                 DATA_ROOT/"postgresql",DATA_ROOT/"postgresql/run"):
+    service_paths=(DATA_ROOT/"logs",DATA_ROOT/"cache",DATA_ROOT/"pip-cache",
+        DATA_ROOT/"npm-cache",DATA_ROOT/"playwright-browsers",DATA_ROOT/"objects",
+        DATA_ROOT/"service-logs",DATA_ROOT/"tmp",DATA_ROOT/"catalogs",
+        DATA_ROOT/"runtime-bundles",DATA_ROOT/"runtime-code-bundles")
+    for path in (DATA_ROOT/"config",*service_paths,DATA_ROOT/"postgresql",DATA_ROOT/"postgresql/run"):
         path.mkdir(parents=True,exist_ok=True)
+    service_uid=pwd.getpwnam("sandbox-harness").pw_uid
+    service_gid=grp.getgrnam("sandbox-harness").gr_gid
+    for path in service_paths:
+        os.chown(path,service_uid,service_gid);path.chmod(0o700)
     temporary=target.with_suffix(".tmp")
     temporary.write_text(render_environment(values));temporary.chmod(0o600)
-    temporary.replace(target);os.chmod(target,stat.S_IRUSR|stat.S_IWUSR)
+    temporary.replace(target);os.chown(target,service_uid,service_gid)
+    os.chmod(target,stat.S_IRUSR|stat.S_IWUSR)
     print(f"configured {target}")
 
 
