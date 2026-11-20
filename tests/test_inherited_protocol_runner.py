@@ -39,7 +39,9 @@ def test_destructive_protocols_are_serialized_and_business_assets_are_configured
     inherited=(ROOT/'tests/run_real_inherited_protocol.py').read_text()
     parallel=(ROOT/'tests/run_real_parallel_protocol.py').read_text()
     assert 'async with parallel.protocol_lock():protocol=await handler' in inherited
-    assert 'async with protocol_lock()' in parallel
+    assert "SERIAL_CASES={'P13','P19','P21','P27'}" in parallel
+    assert 'boundary=protocol_lock() if args.case in SERIAL_CASES else concurrent_case()' in parallel
+    assert 'async with boundary:' in parallel
     assert "args.asset_root=" in inherited and "ResilientAsyncClient" in inherited
 
 

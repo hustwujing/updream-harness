@@ -310,7 +310,8 @@ class JobWorker:
         except JobDeadlineExceeded:
             await self._timeout(adapter,context,external_id,submission_started)
         except ExternalJobFailure as exc:
-            if exc.result.get('retry_class')=='collect_same_execution':
+            if (exc.result.get('retry_class')=='collect_same_execution'
+                    and request.adapter!='reviewer-harness'):
                 maximum=int(request.retry_policy.get('max_collection_attempts',1))
                 deferred=await self.store.defer_collection_retry(job.id,self.worker_id,
                     attempt.generation,maximum_attempts=maximum,
