@@ -1,5 +1,8 @@
 import importlib.util
 from pathlib import Path
+import shutil
+
+import pytest
 
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -19,12 +22,50 @@ def runtime_fixture(tmp_path,module):
     return source
 
 
-def test_controlled_runtime_manifest_is_deterministic_and_entry_is_read_only_alias(tmp_path):
+def test_controlled_runtime_manifest_is_deterministic_and_entry_is_owned_snapshot(tmp_path):
     module=load_builder();source=runtime_fixture(tmp_path,module)
     first=module.build_manifest(source);second=module.build_manifest(source)
     assert first==second and len(first['digest'])==64
-    entry=tmp_path/'parallel-data/provider-runtime';module.publish_entry(source,entry)
-    module.publish_entry(source,entry)
-    assert entry.is_symlink() and entry.resolve()==source.resolve()
-    (source/module.CRITICAL_FILES[0]).write_text('changed')
-    assert module.build_manifest(source)['digest']!=first['digest']
+    entry=tmp_path/'parallel-data/provider-runtime'
+    snapshot=module.materialize_entry(source,entry,first)
+    assert snapshot==entry.parent/'controlled-runtime'/first['digest']
+    assert entry.is_symlink() and entry.resolve()==snapshot.resolve()
+    assert module.materialize_entry(source,entry,first)==snapshot
+    shutil.rmtree(source)
+    rebuilt=module.build_manifest(snapshot)
+    assert rebuilt['files']==first['files']
+
+
+def test_controlled_runtime_snapshot_materializes_external_symlinks(tmp_path):
+    module=load_builder();source=runtime_fixture(tmp_path,module)
+    external=tmp_path/'external';external.write_text('owned bytes')
+    (source/'absolute-link').symlink_to(external)
+    manifest=module.build_manifest(source);entry=tmp_path/'parallel-data/provider-runtime'
+    snapshot=module.materialize_entry(source,entry,manifest)
+    copied=snapshot/'absolute-link'
+    assert copied.is_file() and not copied.is_symlink()
+    assert copied.read_text()=='owned bytes'
+
+
+def test_controlled_runtime_snapshot_rejects_corrupt_existing_digest(tmp_path):
+    module=load_builder();source=runtime_fixture(tmp_path,module)
+    manifest=module.build_manifest(source);entry=tmp_path/'parallel-data/provider-runtime'
+    snapshot=module.materialize_entry(source,entry,manifest)
+    (snapshot/module.CRITICAL_FILES[0]).chmod(0o644)
+    (snapshot/module.CRITICAL_FILES[0]).write_text('corrupt')
+    with pytest.raises(ValueError,match='controlled_runtime_snapshot_corrupt'):
+        module.materialize_entry(source,entry,manifest)
+
+
+def test_failed_materialization_keeps_previous_stable_entry(tmp_path,monkeypatch):
+    module=load_builder();first_source=runtime_fixture(tmp_path/'first',module)
+    first_manifest=module.build_manifest(first_source)
+    entry=tmp_path/'parallel-data/provider-runtime'
+    first_snapshot=module.materialize_entry(first_source,entry,first_manifest)
+    second_source=runtime_fixture(tmp_path/'second',module)
+    (second_source/module.CRITICAL_FILES[0]).write_text('new release')
+    second_manifest=module.build_manifest(second_source)
+    monkeypatch.setattr(module,'_copy_tree',lambda *_: (_ for _ in ()).throw(RuntimeError('copy failed')))
+    with pytest.raises(RuntimeError,match='copy failed'):
+        module.materialize_entry(second_source,entry,second_manifest)
+    assert entry.resolve()==first_snapshot.resolve()

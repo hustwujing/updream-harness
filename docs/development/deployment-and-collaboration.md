@@ -29,6 +29,14 @@ not reference a product checkout or predecessor `.sandbox-cluster` directory.
 Before an image build, verify `docker inspect sandbox-agent-registry` and a small
 registry upload when the mount was recreated or cleaned.
 
+The controlled CPU/GPU Runtime is also project-owned. Installation materializes
+the source into an immutable manifest-addressed directory below
+`.data/controlled-runtime/` and atomically points `.data/provider-runtime` to
+that snapshot. The stable entry must never resolve to a predecessor checkout,
+shared user's environment or `/data` path. Before removing an installation
+source, rebuild its manifest from the published snapshot and require identical
+file rows; restart the controlled worker once to prove the snapshot is complete.
+
 ## Release sequence
 
 1. Inspect `git status`; preserve concurrent edits.

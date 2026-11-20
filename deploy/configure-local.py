@@ -170,7 +170,9 @@ def main() -> None:
     if target.exists() and not args.force:raise FileExistsError(str(target))
     target.parent.mkdir(parents=True,exist_ok=True);target.parent.chmod(0o750)
     module,source,manifest=controlled
-    module.publish_entry(source,EXPECTED_DATA_ROOT/'provider-runtime')
+    snapshot=module.materialize_entry(source,EXPECTED_DATA_ROOT/'provider-runtime',manifest)
+    if not snapshot.is_relative_to(EXPECTED_DATA_ROOT):
+        raise ValueError('controlled_runtime_snapshot_outside_data_root')
     manifest_path=target.parent/'controlled-runtime-manifest.json'
     manifest_path.write_text(json.dumps(manifest,ensure_ascii=True,indent=2,sort_keys=True)+'\n')
     manifest_path.chmod(0o444)

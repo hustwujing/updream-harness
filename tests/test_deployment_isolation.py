@@ -81,6 +81,9 @@ def test_configure_local_rejects_collision_and_non_data2_storage():
     assert "os.path.commonpath" in source
     assert "controlled_runtime_source_required" in source
     assert "build_controlled_runtime_manifest.py" in source
+    assert "module.materialize_entry" in source
+    assert "controlled_runtime_snapshot_outside_data_root" in source
+    assert "module.publish_entry" not in source
     assert "SANDBOX_HARNESS_IMAGE_DECOMPOSE_BASE_URL" in source
 
 
