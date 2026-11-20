@@ -422,7 +422,8 @@ async def case_skill_coverage(client,args,identity:str):
         'min_items':1,'max_items':1,'mime_patterns':['application/json'],
         'max_item_bytes':2*1024*1024,'max_total_bytes':2*1024*1024}
     product={'artifact_role':'skill_product','output_disposition':'workspace',
-        'min_items':1,'max_items':1,'mime_patterns':['application/gzip','application/x-gzip'],
+        'min_items':1,'max_items':1,'mime_patterns':[
+            'application/gzip','application/x-gzip','application/x-tar'],
         'max_item_bytes':32*1024*1024,'max_total_bytes':32*1024*1024}
     jobs=[]
     for index,skill_id in enumerate(declared):

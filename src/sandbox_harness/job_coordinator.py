@@ -160,9 +160,11 @@ class JobCoordinator:
                     *resources.get('required_capability_ids',())))),
                 "required_operation_ids":list(dict.fromkeys(resources.get('required_operation_ids',())))})
             parameters={**request.parameters,"skill_digests":resolved.skill_digests}
+            retry_policy={**request.retry_policy,'max_collection_attempts':max(2,
+                int(request.retry_policy.get('max_collection_attempts',0)))}
             jobs.append(JobRequest.model_validate({**request.model_dump(),"parameters":parameters,
                 "runtime_profile_id":resolved.runtime_profile.id,"resource_requirements":sanitized,
-                "network_origins":list(resolved.network_origins)}))
+                "network_origins":list(resolved.network_origins),'retry_policy':retry_policy}))
         return JobGroupCreate.model_validate({**value.model_dump(),"jobs":[job.model_dump() for job in jobs]})
 
     def _validate(self, requests: tuple[JobRequest, ...]) -> tuple[str, ...]:
