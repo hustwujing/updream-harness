@@ -1,4 +1,7 @@
 import importlib.util
+import pwd
+import stat
+import sys
 from pathlib import Path
 
 
@@ -65,6 +68,19 @@ def test_ali_configurator_has_fail_closed_preflights():
     assert "source.items()" not in source
     assert 'DATA_ROOT/"logs"' in source
     assert 'DATA_ROOT/"image-decompose"' in source
+
+
+def test_ali_configurator_provisions_private_preview_cache(tmp_path,monkeypatch):
+    configure=load("ali_configure_preview",ROOT/"deploy/ali/configure.py")
+    source_env=tmp_path/"source.env";source_env.write_text("")
+    monkeypatch.setattr(configure,"DATA_ROOT",tmp_path/"data")
+    monkeypatch.setattr(configure,"ensure_checkout",lambda:None)
+    monkeypatch.setattr(sys,"argv",["configure.py","--source-env",str(source_env),"--allow-running"])
+    configure.main()
+    preview=configure.DATA_ROOT/"preview-cache";metadata=preview.stat()
+    assert preview.is_dir()
+    assert metadata.st_uid==pwd.getpwnam("sandbox-harness").pw_uid
+    assert stat.S_IMODE(metadata.st_mode)==0o700
 
 
 def test_ali_postgresql_scripts_use_dedicated_cluster_under_data2():

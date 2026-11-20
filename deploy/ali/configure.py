@@ -141,7 +141,8 @@ def main()->None:
     if target.exists() and not args.force:raise FileExistsError(target)
     service_paths=(DATA_ROOT/"logs",DATA_ROOT/"cache",DATA_ROOT/"pip-cache",
         DATA_ROOT/"npm-cache",DATA_ROOT/"playwright-browsers",DATA_ROOT/"objects",
-        DATA_ROOT/"service-logs",DATA_ROOT/"tmp",DATA_ROOT/"image-decompose",DATA_ROOT/"catalogs",
+        DATA_ROOT/"service-logs",DATA_ROOT/"tmp",DATA_ROOT/"image-decompose",
+        DATA_ROOT/"preview-cache",DATA_ROOT/"catalogs",
         DATA_ROOT/"runtime-bundles",DATA_ROOT/"runtime-code-bundles")
     for path in (DATA_ROOT/"config",*service_paths,DATA_ROOT/"postgresql",DATA_ROOT/"postgresql/run"):
         path.mkdir(parents=True,exist_ok=True)
