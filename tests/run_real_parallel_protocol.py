@@ -406,6 +406,24 @@ SKILL_COVERAGE={
 }
 
 
+def skill_coverage_objective(skill_id:str,test_case:str)->str:
+    return (f'Read and follow the injected {skill_id} Skill. Actually execute its declared '
+        f'coverage objective: {test_case}. Use frozen inputs when relevant. Perform the real local '
+        'commands and checks in /workspace/project or scratch; do not merely describe them and do '
+        'not call an external Provider. Any preview server or other background process must exit '
+        'successfully through a bounded command or self-termination; do not cancel a registered '
+        'background job, because cancellation is a failed execution boundary. Then write the evidence file '
+        f'/workspace/outputs/{skill_id}-coverage.json as JSON with skill_id exactly "{skill_id}", '
+        'test_case, commands (a non-empty array of commands actually run), checks (a non-empty '
+        'array of concrete observed results), and produced_files (paths made in project or scratch). '
+        f'Copy at least one real non-evidence product created by the Skill into '
+        f'/workspace/project/work/{skill_id}-product, then create exactly '
+        f'/workspace/outputs/{skill_id}-product.tar.gz from that directory. The archive must '
+        'contain regular non-empty product files, no symlinks, node_modules, caches, or evidence JSON. '
+        'Delete every other file from /workspace/outputs before finishing, leaving exactly the '
+        'coverage JSON and product tar.gz.')
+
+
 async def case_skill_coverage(client,args,identity:str):
     thread,turn=await origin(client,args,identity)
     declared=SKILL_COVERAGE[identity]
@@ -429,19 +447,7 @@ async def case_skill_coverage(client,args,identity:str):
     jobs=[]
     for index,skill_id in enumerate(declared):
         test_case=str(manifest[skill_id].get('test_case') or 'validate the Skill contract')
-        objective=(f'Read and follow the injected {skill_id} Skill. Actually execute its declared '
-            f'coverage objective: {test_case}. Use frozen inputs when relevant. Perform the real local '
-            'commands and checks in /workspace/project or scratch; do not merely describe them and do '
-            'not call an external Provider. Then write the evidence file '
-            f'/workspace/outputs/{skill_id}-coverage.json as JSON with skill_id exactly "{skill_id}", '
-            'test_case, commands (a non-empty array of commands actually run), checks (a non-empty '
-            'array of concrete observed results), and produced_files (paths made in project or scratch). '
-            f'Copy at least one real non-evidence product created by the Skill into '
-            f'/workspace/project/work/{skill_id}-product, then create exactly '
-            f'/workspace/outputs/{skill_id}-product.tar.gz from that directory. The archive must '
-            'contain regular non-empty product files, no symlinks, node_modules, caches, or evidence JSON. '
-            'Delete every other file from /workspace/outputs before finishing, leaving exactly the '
-            'coverage JSON and product tar.gz.')
+        objective=skill_coverage_objective(skill_id,test_case)
         jobs.append(harness_job(1000+index,args,objective=objective,outputs=[output,product],
             skills=[skill_id],inputs=bindings))
         jobs[-1]['local_job_id']='skill-'+skill_id

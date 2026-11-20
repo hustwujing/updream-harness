@@ -152,6 +152,15 @@ def test_skill_product_archive_accepts_safe_dot_root_directory():
     assert module.validate_skill_product_archive(stream.getvalue())['files']==['result.md']
 
 
+def test_skill_coverage_objective_requires_successful_background_cleanup():
+    path=ROOT/'tests/run_real_parallel_protocol.py'
+    spec=importlib.util.spec_from_file_location('parallel_protocol_background_rule',path)
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    objective=module.skill_coverage_objective('webapp-testing','render a local page')
+    assert 'must exit successfully' in objective
+    assert 'do not cancel a registered background job' in objective
+
+
 def test_campaign_report_distinguishes_clean_run_from_composite_reruns(tmp_path):
     module=campaign_module();target=tmp_path/'report.json';catalog=tmp_path/'catalog.json'
     module.write_report_checkpoint(target,revision='new',catalog=catalog,selected_count=2,
