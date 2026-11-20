@@ -114,6 +114,7 @@ def test_ali_asset_materializer_owns_all_runtime_paths():
     assert "sandbox-harness-platform-parallel/.data" not in source
     assert '[docker,"push",target_tag]' in source
     assert "client.put" not in source
+    assert "copy_function=os.link" in source
 
 
 def test_ali_network_rule_is_disjoint_from_parallel_gateway():

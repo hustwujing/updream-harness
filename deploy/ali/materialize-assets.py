@@ -92,7 +92,8 @@ def _materialize_controlled(source:Path,digest:str,force:bool)->Path:
     if resolved.name!=digest:raise ValueError("digest_mismatch:controlled_runtime")
     target=DATA_ROOT/"controlled-runtime"/digest
     if target.exists() and force:shutil.rmtree(target)
-    if not target.exists():shutil.copytree(resolved,target,symlinks=True)
+    if not target.exists():
+        shutil.copytree(resolved,target,symlinks=True,copy_function=os.link)
     link=DATA_ROOT/"provider-runtime"
     temporary=DATA_ROOT/"provider-runtime.tmp"
     temporary.unlink(missing_ok=True);temporary.symlink_to(Path("controlled-runtime")/digest)
