@@ -29,6 +29,8 @@ def test_runtime_guidance_has_network_and_browser_fallbacks():
     assert "different name or command" in runtime_app.RUNTIME_GUIDANCE
     assert "Build and patch files under `/workspace/project/work`" in runtime_app.RUNTIME_GUIDANCE
     assert "do not use an absolute `/workspace/outputs` path" in runtime_app.RUNTIME_GUIDANCE
+    assert "Never print binary asset contents" in runtime_app.RUNTIME_GUIDANCE
+    assert "publish the declared outputs before additional narrative" in runtime_app.RUNTIME_GUIDANCE
 
 
 def test_background_failure_requires_successful_explicit_replacement():
@@ -619,6 +621,34 @@ def test_runtime_waits_for_supervised_background_job_and_captures_status(tmp_pat
     rows = [json.loads(line) for line in result["response"].text.splitlines()]
     assert any(row.get("payload", {}).get("background_job_id") for row in rows)
     assert rows[-1]["result"]["status"] == "completed"
+
+
+def test_runtime_background_failure_exposes_name_exit_code_and_log_tail(tmp_path,monkeypatch):
+    monkeypatch.setattr(runtime_app,"RUN",tmp_path/'run')
+    monkeypatch.setattr(runtime_app,"WORKSPACE",tmp_path/'workspace')
+    monkeypatch.setattr(runtime_app,"OUTPUTS",tmp_path/'workspace/outputs')
+    runner=tmp_path/'harness.py';runner.write_text("import json,sys,time\nv=json.loads(sys.stdin.readline());time.sleep(.15)\nprint(json.dumps({'type':'harness.input.completed','input_ids':[v['id']]}),flush=True)\n")
+    monkeypatch.setattr(runtime_app,"command",lambda *args,**kwargs:HarnessCommand(
+        [sys.executable,str(runner)],{},streaming_input=True,control_input=True,batched_completion=True))
+    app=runtime_app.create_app();result={}
+    with TestClient(app) as client:
+        client.post('/v1/configure',json={'capability_token':'x'*32,'gateway_url':'http://gateway:28600',
+            'harness':'codex','model':'model','proxy_url':'http://172.31.0.1:28601'})
+        thread=threading.Thread(target=lambda:result.setdefault('response',client.post('/v1/turns',
+            json={'message':'first','execution_id':'background-failure','input_id':'input-one'})))
+        thread.start()
+        for _ in range(100):
+            if app.state.execution:break
+            time.sleep(.01)
+        response=client.post('/v1/background-jobs',json={'name':'frontend-preview',
+            'argv':[sys.executable,'-c',"print('renderer exploded');raise SystemExit(7)"],
+            'cwd':str(tmp_path/'workspace/project')})
+        assert response.status_code==200;thread.join(timeout=5)
+    terminal=json.loads(result['response'].text.splitlines()[-1])['result']
+    assert terminal['status']=='failed' and terminal['error_code']=='background_job_failed'
+    detail=json.loads(terminal['error_detail'])['background_jobs'][0]
+    assert detail['name']=='frontend-preview' and detail['status']=='failed'
+    assert detail['returncode']==7 and 'renderer exploded' in detail['log_tail']
 
 
 def test_runtime_generic_interaction_blocks_any_harness_until_user_response(tmp_path, monkeypatch):

@@ -332,6 +332,12 @@ def unresolved_replacement_targets(jobs:list[BackgroundJob])->list[BackgroundJob
     return [job for job in unresolved if job.id not in parents]
 
 
+def background_failure_detail(jobs:list[BackgroundJob],log_tails:dict[str,str])->str:
+    values=[{'id':job.id,'name':job.name,'status':job.status,'returncode':job.returncode,
+        'log_tail':str(log_tails.get(job.id) or '')[-2000:]} for job in jobs]
+    return json.dumps({'background_jobs':values},ensure_ascii=False)[:4000]
+
+
 @dataclass
 class Execution:
     id: str
@@ -735,18 +741,21 @@ def create_app() -> FastAPI:
                     if done:
                         await stop_process(execution)
                         background = await wait_background(execution)
+                        unresolved=unresolved_background_jobs(background)
                         failed = (
                             native.get("status") == "failed"
                             or bool(native.get("is_error"))
                             or native.get("subtype") in {"error", "error_max_turns", "error_during_execution"}
-                            or bool(unresolved_background_jobs(background))
+                            or bool(unresolved)
                         )
-                        detail = native.get("error_detail") or native.get("result") or native.get("message") or ""
+                        detail = (native.get("error_detail") or native.get("result")
+                            or native.get("message") or background_failure_detail(unresolved,
+                                {job.id:job_log_tail(job) for job in unresolved}))
                         await finish_execution(execution, {
                             "status": "failed" if failed else "completed",
                             "native_thread_id": execution.native_thread_id,
                             "error_code": (normalize_error_code(native.get("error_code")) if native.get("error_code") else (
-                                "background_job_failed" if unresolved_background_jobs(background)
+                                "background_job_failed" if unresolved
                                 else "harness_failed")) if failed else "",
                             "error_detail": str(detail)[:4000] if failed else "",
                             "input_ids": execution.completed_input_ids,
@@ -769,14 +778,15 @@ def create_app() -> FastAPI:
                 })
                 return
             background = await wait_background(execution)
-            background_failed = bool(unresolved_background_jobs(background))
+            unresolved=unresolved_background_jobs(background);background_failed=bool(unresolved)
             await finish_execution(execution, {
                 "status": "completed" if code == 0 and not background_failed else "failed",
                 "native_thread_id": execution.native_thread_id,
                 "error_code": "" if code == 0 and not background_failed else (
                     "background_job_failed" if background_failed else "harness_exit"),
                 "error_detail": "" if code == 0 and not background_failed else (
-                    "A supervised background job did not complete" if background_failed else f"Harness exited with {code}"),
+                    background_failure_detail(unresolved,{job.id:job_log_tail(job) for job in unresolved})
+                    if background_failed else f"Harness exited with {code}"),
                 "input_ids": execution_input_ids(execution),
             })
             execution.pending_input_ids.clear()

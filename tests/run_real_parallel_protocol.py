@@ -431,7 +431,7 @@ async def case_skill_coverage(client,args,identity:str):
         objective=(f'Read and follow the injected {skill_id} Skill. Actually execute its declared '
             f'coverage objective: {test_case}. Use frozen inputs when relevant. Perform the real local '
             'commands and checks in /workspace/project or scratch; do not merely describe them and do '
-            'not call an external Provider. Then write exactly one output file '
+            'not call an external Provider. Then write the evidence file '
             f'/workspace/outputs/{skill_id}-coverage.json as JSON with skill_id exactly "{skill_id}", '
             'test_case, commands (a non-empty array of commands actually run), checks (a non-empty '
             'array of concrete observed results), and produced_files (paths made in project or scratch). '
@@ -448,7 +448,8 @@ async def case_skill_coverage(client,args,identity:str):
     prepared=require(await prepare(client,thread,turn,jobs,identity,
         suppress_continuation=True)).json()
     if prepared.get('mode')!='committed':raise AssertionError('skill coverage unexpectedly required confirmation')
-    completed=await wait_jobs(client,prepared['jobs'],args.timeout)
+    completed=await asyncio.gather(*(wait_job(client,row['id'],args.timeout)
+        for row in prepared['jobs']))
     if len(completed)>1 and not await attempts_overlap([row['id'] for row in completed]):
         raise AssertionError('skill coverage attempts did not overlap')
     settings=load_platform_settings()
@@ -458,6 +459,7 @@ async def case_skill_coverage(client,args,identity:str):
     evidence={}
     try:
         for row in completed:
+            if row['state']!='SUCCEEDED':continue
             request=await store.get_job_request(row['id']);skill_id=row['local_job_id'].removeprefix('skill-')
             if request.skill_ids!=(skill_id,) or not request.runtime_profile_id:
                 raise AssertionError('skill grant/profile mismatch:'+skill_id)
@@ -479,6 +481,14 @@ async def case_skill_coverage(client,args,identity:str):
                 'product_files':len(product_evidence['files']),
                 'product_bytes':product_evidence['total_bytes']}
     finally:await store.close()
+    failed=[row for row in completed if row['state']!='SUCCEEDED']
+    if failed:
+        codes=[str((row.get('result') or {}).get('error_code') or row['state']) for row in failed]
+        non_program=('model_','provider_','infrastructure_','media_reference_','voice_clone_')
+        classification='non_program_failure' if all(code.startswith(non_program) for code in codes) else 'program_failure'
+        return {'classification':classification,'reason':','.join(codes),'thread_id':thread['id'],
+            'failed_jobs':[row['local_job_id'] for row in failed],
+            'verified_products':len(evidence),'evidence':evidence}
     return {'classification':'success','thread_id':thread['id'],'skills':list(declared),
         'child_harnesses':len(completed),'parallel':True,'evidence':evidence}
 
