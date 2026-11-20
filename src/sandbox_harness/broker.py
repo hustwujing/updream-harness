@@ -21,6 +21,7 @@ from .errors import public_failure
 from .pool import SandboxPool
 from .runtime import RuntimeClient, RuntimeStreamInterrupted
 from .sandbox import SandboxNotFound
+from .sandbox_factory import SandboxProfileResolver
 from .store import Store
 from .site_bundle import build_site_archive_from_paths, normalize_site_slug
 
@@ -69,6 +70,16 @@ class Broker:
         self.recovery_task: asyncio.Task | None = None
         self.reaper_task: asyncio.Task | None = None
         self.closing = False
+
+    def _sandbox_profile_for_turn(self,turn:TurnView):
+        current=self.pool.profile_resolver
+        resolver=SandboxProfileResolver(provider=self.pool.backend.provider,
+            runtime_contract=current.runtime_contract,
+            runtime_bundle_digest=turn.runtime_bundle_digest or current.runtime_bundle_digest,
+            runtime_code_bundle_digest=(turn.runtime_code_bundle_digest
+                or current.runtime_code_bundle_digest))
+        return resolver.resolve(turn.harness,
+            turn.runtime_image_digest or self.settings.image_for(turn.harness.value))
 
     @asynccontextmanager
     async def thread_lock(self, thread_id: str):
@@ -752,7 +763,7 @@ class Broker:
                     ready = [value for value in matches if value.health_state == "ready"]
                     if ready:
                         sandbox = await self.pool.adopt(ready[0], thread_id=thread.id,
-                            turn_id=turn.id)
+                            turn_id=turn.id,expected_profile=self._sandbox_profile_for_turn(turn))
                         self.active_sandboxes[turn.id] = sandbox
                         extra_sandboxes = [value for value in matches if value.id != sandbox.id]
                     else:
@@ -764,7 +775,7 @@ class Broker:
                     ready = [value for value in matches if value.health_state == "ready"]
                     if ready:
                         sandbox = await self.pool.adopt(ready[0], thread_id=thread.id,
-                            turn_id=turn.id)
+                            turn_id=turn.id,expected_profile=self._sandbox_profile_for_turn(turn))
                         self.active_sandboxes[turn.id] = sandbox
                         extra_sandboxes = [value for value in matches if value.id != sandbox.id]
                     else:
@@ -800,7 +811,8 @@ class Broker:
                     for duplicate in matches:
                         if duplicate.id != selected.id:
                             await self.pool.retire(duplicate)
-                    sandbox = await self.pool.adopt(selected, thread_id=thread.id, turn_id=turn.id)
+                    sandbox = await self.pool.adopt(selected,thread_id=thread.id,turn_id=turn.id,
+                        expected_profile=self._sandbox_profile_for_turn(turn))
                     self.active_sandboxes[turn.id] = sandbox
                     if status.get("state") == "completed" and turn.runtime_sequence >= int(status.get("last_sequence") or 0):
                         recovered_result = RuntimeResult.model_validate({

@@ -145,3 +145,18 @@ async def test_opensandbox_post_accept_readiness_failure_is_not_pre_accept_rate_
         with pytest.raises(SandboxCreateOutcomeUnknown,match="accepted"):
             await backend.create(request())
     finally:await backend.aclose()
+
+
+@pytest.mark.asyncio
+async def test_opensandbox_unknown_create_inventory_rate_limit_stays_outcome_unknown(monkeypatch):
+    async def respond(http_request:httpx.Request):
+        if http_request.method=="POST":raise httpx.ReadError("response lost",request=http_request)
+        if http_request.url.path=="/v1/sandboxes":return httpx.Response(429)
+        raise AssertionError(str(http_request.url))
+    async def no_sleep(_):return None
+    monkeypatch.setattr("sandbox_harness.sandbox_opensandbox.asyncio.sleep",no_sleep)
+    backend=OpenSandboxBackend("http://opensandbox","",300,"test-namespace",
+        transport=httpx.MockTransport(respond))
+    try:
+        with pytest.raises(SandboxCreateOutcomeUnknown):await backend.create(request())
+    finally:await backend.aclose()

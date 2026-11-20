@@ -185,7 +185,14 @@ class OpenSandboxBackend:
                     provider=self.provider,request_id=exc.request_id) from exc
         except (httpx.TimeoutException,httpx.TransportError) as exc:
             for attempt in range(20):
-                matches=await self.find({"sandbox-harness.io/idempotency-key":request.idempotency_key})
+                try:matches=await self.find({
+                    "sandbox-harness.io/idempotency-key":request.idempotency_key})
+                except SandboxProviderError as reconciliation_error:
+                    if attempt<19:
+                        await asyncio.sleep(.25);continue
+                    raise SandboxCreateOutcomeUnknown(
+                        "OpenSandbox create reconciliation is unavailable",
+                        provider=self.provider,request_id=reconciliation_error.request_id) from exc
                 ready=[value for value in matches if value.state==SandboxState.READY]
                 if len(ready)==1:return ready[0]
                 if len(matches)>1:raise SandboxCreateOutcomeUnknown(

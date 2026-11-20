@@ -14,6 +14,8 @@ from sandbox_harness.objects import ObjectStore
 from sandbox_harness.pool import SandboxPool
 from sandbox_harness.runtime import RuntimeStreamInterrupted, StagedRuntimeObject
 from sandbox_harness.sandbox import FakeSandboxBackend
+from sandbox_harness.sandbox_contracts import SandboxCreateRequest
+from sandbox_harness.sandbox_factory import SandboxProfileResolver
 from sandbox_harness.store import Store
 
 
@@ -573,21 +575,32 @@ async def test_broker_reattaches_expired_running_turn_and_replays_runtime_journa
         async def get(self,sandbox_id):self.get_calls.append(sandbox_id);return await super().get(sandbox_id)
         async def find_by_turn(self,turn_id):
             raise AssertionError("durable sandbox ID must be tried before metadata inventory")
-    backend = DurableIdBackend(); pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
+    frozen_image="registry/runtime@sha256:"+"1"*64
+    frozen_bundle="2"*64;frozen_code="3"*64
+    frozen_resolver=SandboxProfileResolver(provider="fake",
+        runtime_contract="sandbox-harness-runtime/v1",runtime_bundle_digest=frozen_bundle,
+        runtime_code_bundle_digest=frozen_code)
+    current_resolver=SandboxProfileResolver(provider="fake",
+        runtime_contract="sandbox-harness-runtime/v1",runtime_bundle_digest="4"*64,
+        runtime_code_bundle_digest="5"*64)
+    backend = DurableIdBackend(); pool = SandboxPool(backend,
+        {h:frozen_image for h in Harness},{h:0 for h in Harness},profile_resolver=current_resolver)
     catalog = HarnessCatalog(); owner = "a" * 64
     profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
     thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
         reasoning_level="standard", title="Recover"), profile, owner)
     turn, _, _ = await store.create_turn(thread.id,
-        TurnCreate(message="survive restart", idempotency_key="recover-running-key"), profile, owner)
+        TurnCreate(message="survive restart", idempotency_key="recover-running-key"), profile, owner,
+        runtime_image_digest=frozen_image,runtime_bundle_digest=frozen_bundle,
+        runtime_code_bundle_digest=frozen_code)
     old = await store.claim_turn(turn.id, "dead-broker", 30)
     execution_id = turn.id + ":" + turn.id
     await store.start_runtime_execution(turn.id, execution_id, "dead-broker", old.recovery_generation)
-    sandbox = await backend.create(Harness.CLAUDE, "", {
-        "sandbox-harness.io/turn": turn.id,
-        "sandbox-harness.io/thread": thread.id,
-        "sandbox-harness.io/harness": Harness.CLAUDE.value,
-    }, {})
+    sandbox = await backend.create(SandboxCreateRequest(harness=Harness.CLAUDE,
+        profile=frozen_resolver.resolve(Harness.CLAUDE,frozen_image),environment={},metadata={
+            "sandbox-harness.io/turn":turn.id,"sandbox-harness.io/thread":thread.id,
+            "sandbox-harness.io/harness":Harness.CLAUDE.value},ttl_seconds=3600,
+        idempotency_key=turn.id))
     await store.set_turn_state(turn.id, TurnState.RUNNING, sandbox_id=sandbox.id,
         lease_owner="dead-broker", recovery_generation=old.recovery_generation)
     await store.release_turn_lease(turn.id, "dead-broker", old.recovery_generation)
