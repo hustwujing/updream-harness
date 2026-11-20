@@ -80,7 +80,8 @@ def browser_server(port:int):
     process=subprocess.Popen([str(ROOT/".venv/bin/sandbox-harness-parallel-api")],cwd=ROOT,env=environment,
         stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
     try:
-        for _ in range(200):
+        deadline=time.monotonic()+float(os.environ.get("GATE_BROWSER_STARTUP_TIMEOUT_SECONDS","60"))
+        while time.monotonic()<deadline:
             if process.poll() is not None:raise RuntimeError("gate_browser_server_exited")
             try:
                 with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health",timeout=.2) as response:

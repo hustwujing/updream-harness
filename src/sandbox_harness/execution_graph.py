@@ -9,7 +9,7 @@ from sqlalchemy import case,func,or_,select
 from .domain import TERMINAL, TurnState
 from .job_errors import JOB_ERROR_CONTRACTS
 from .store import (InteractionRow,JobDisplayActivityRow,JobArtifactRow,JobAttemptRow,JobGroupDraftRow,
-    JobGroupRow,JobOutboxRow,JobRow,MediaBatchRow,MediaDraftRow,MediaJobRow,
+    ItemRow,JobGroupRow,JobOutboxRow,JobRow,MediaBatchRow,MediaDraftRow,MediaJobRow,
     ResourceReservationRow,ReviewGateRow,ThreadRow,TurnOrderRow,TurnRow,now,utc_datetime)
 
 
@@ -18,6 +18,9 @@ TERMINAL_JOB_STATES={'SUCCEEDED','FAILED','CANCELLED','BLOCKED','UNKNOWN'}
 MAX_TURNS=50;MAX_DRAFTS=100;MAX_GROUPS=200;MAX_JOBS=300;MAX_INTERACTIONS=100
 MAX_ARTIFACT_SUMMARIES=200;MAX_NODES=900;MAX_EDGES=1400
 MAX_MEDIA_BATCHES=100;MAX_MEDIA_DRAFTS=300;MAX_MEDIA_JOBS=300
+MAX_MODEL_USAGE_ROWS=5000
+TOKEN_USAGE_FIELDS=('ordinary_input_tokens','cache_read_input_tokens',
+    'cache_write_input_tokens','output_tokens')
 
 
 def iso(value):return utc_datetime(value).isoformat() if value else None
@@ -71,6 +74,21 @@ def remaining_jobs(rows):
     return [{'job_id':row.id,'local_job_id':row.local_job_id,'descriptor_id':row.descriptor_id,
         'state':row.state,'started_at':iso(row.created_at)} for row in rows
         if row.state in RUNNING_JOB_STATES]
+
+
+def aggregate_model_usage(rows):
+    values={};seen=set()
+    for row in rows:
+        try:payload=json.loads(row.payload_json or '{}')
+        except (TypeError,ValueError):continue
+        request_id=str(payload.get('model_request_id') or '')
+        if not request_id or request_id in seen:continue
+        seen.add(request_id);key=(row.turn_id,str(payload.get('job_id') or ''))
+        usage=values.setdefault(key,{field:0 for field in TOKEN_USAGE_FIELDS})
+        for field in TOKEN_USAGE_FIELDS:
+            count=payload.get(field)
+            if isinstance(count,int) and not isinstance(count,bool) and count>=0:usage[field]+=count
+    return values
 
 
 def wait_barrier(group,progress,remaining=()):
@@ -192,6 +210,10 @@ class ExecutionGraphProjector:
             job_state_rows=(await db.execute(select(JobRow.group_id,JobRow.state,func.count()).where(
                 JobRow.group_id.in_(group_ids or {''})).group_by(JobRow.group_id,JobRow.state))).all()
             job_ids={row.id for row in jobs}
+            model_usage_rows=list((await db.execute(select(ItemRow).where(
+                ItemRow.turn_id.in_(turn_ids or {''}),ItemRow.type=='plan',
+                ItemRow.payload_json.like('%"model_request_id"%')).order_by(
+                ItemRow.created_at.desc()).limit(MAX_MODEL_USAGE_ROWS+1))).scalars().all())
             batch_turn_ids={row.turn_id for row in media_batches}
             media_drafts=list(reversed(list((await db.execute(select(MediaDraftRow).where(
                 MediaDraftRow.thread_id==thread_id,or_(MediaDraftRow.turn_id.in_(batch_turn_ids or {''}),
@@ -226,6 +248,8 @@ class ExecutionGraphProjector:
             gates=list((await db.execute(select(ReviewGateRow).where(
                 ReviewGateRow.reviewer_job_id.in_(job_ids or {''})))).scalars().all())
         reservation_by_job={row.job_id:row for row in reservations}
+        usage_truncated=len(model_usage_rows)>MAX_MODEL_USAGE_ROWS
+        model_usage=aggregate_model_usage(model_usage_rows[:MAX_MODEL_USAGE_ROWS])
         activity_count={identity:int(count) for identity,count in activity_rows}
         retry_count={identity:int(count or 0) for identity,count in retry_rows}
         artifacts_by_job={identity:[] for identity in job_ids}
@@ -256,6 +280,8 @@ class ExecutionGraphProjector:
                 'title':f'{turn.harness} · {turn.model}','state':turn.state,'visual_role':'primary_harness',
                 'harness_view':True,'objective':turn.public_message or turn.message,
                 'harness':turn.harness,'model':turn.model,
+                'token_usage':model_usage.get((turn.id,''),{field:0 for field in TOKEN_USAGE_FIELDS}),
+                'token_usage_truncated':usage_truncated,
                 'location':'opensandbox' if turn.sandbox_id else 'scheduler',
                 'location_label':'OpenSandbox' if turn.sandbox_id else '等待调度',
                 'started_at':iso(turn.created_at),'ended_at':iso(turn.updated_at) if TurnState(turn.state) in TERMINAL else None,
@@ -315,6 +341,9 @@ class ExecutionGraphProjector:
                 'objective':str(parameters.get('objective') or job.local_job_id),
                 'harness':str(requirements.get('harness') or parameters.get('harness') or ''),
                 'model':str(parameters.get('model') or ''),
+                'token_usage':model_usage.get((job.origin_turn_id,job.id),
+                    {field:0 for field in TOKEN_USAGE_FIELDS}) if job.kind=='harness' else None,
+                'token_usage_truncated':usage_truncated if job.kind=='harness' else False,
                 'location':location,'location_label':location_label,
                 'started_at':iso(job.created_at),'ended_at':iso(job.terminal_at),
                 'duration_ms':duration_ms(job.created_at,job.terminal_at) if job.terminal_at else 0,

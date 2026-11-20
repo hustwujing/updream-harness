@@ -34,6 +34,18 @@ async def test_execution_graph_contains_only_factual_boundaries_and_truthful_loc
         group,jobs=await store.confirm_job_group_draft(draft.id,'owner')
         attempt=await store.claim_job(jobs[1].id,'worker','node',30)
         await store.append_job_activity(jobs[1].id,1,'tool_started',{'name':'读取候选图片'})
+        for index,usage in enumerate((
+                {'ordinary_input_tokens':100,'cache_read_input_tokens':200,
+                    'cache_write_input_tokens':300,'output_tokens':400},
+                {'ordinary_input_tokens':1,'cache_read_input_tokens':2,
+                    'cache_write_input_tokens':3,'output_tokens':4}),1):
+            await store.append_item(thread.id,turn.id,ItemType.PLAN,status='completed',
+                summary='model usage',payload={'model_request_id':f'primary-{index}',
+                    'phase':'completed','job_id':'',**usage})
+        await store.append_item(thread.id,turn.id,ItemType.PLAN,status='completed',
+            summary='child model usage',payload={'model_request_id':'child-1','phase':'completed',
+                'job_id':jobs[1].id,'ordinary_input_tokens':10,'cache_read_input_tokens':20,
+                'cache_write_input_tokens':30,'output_tokens':40})
         await store.upsert_interaction(thread.id,turn.id,'execution','question-1','question',
             {'prompt':'选择风格'})
         graph=await ExecutionGraphProjector(store).snapshot(thread.id,'owner')
@@ -54,9 +66,13 @@ async def test_execution_graph_contains_only_factual_boundaries_and_truthful_loc
         assert child_node['harness_view'] is True
         assert child_node['objective']=='Analyze the source and produce the requested edit'
         assert child_node['harness']=='codex' and child_node['model']=='gpt-5.6'
+        assert child_node['token_usage']=={'ordinary_input_tokens':10,
+            'cache_read_input_tokens':20,'cache_write_input_tokens':30,'output_tokens':40}
         primary_node=next(node for node in graph['nodes'] if node['type']=='primary_harness')
         assert primary_node['harness_view'] is True and primary_node['objective']=='parallel work'
         assert primary_node['harness']=='codex' and primary_node['model']=='gpt-5.6'
+        assert primary_node['token_usage']=={'ordinary_input_tokens':101,
+            'cache_read_input_tokens':202,'cache_write_input_tokens':303,'output_tokens':404}
         assert {node['visual_role'] for node in graph['nodes']} >= {
             'user','primary_harness','job_confirmation','job_group','wait_barrier',
             'external_capability','child_harness','user_decision'}

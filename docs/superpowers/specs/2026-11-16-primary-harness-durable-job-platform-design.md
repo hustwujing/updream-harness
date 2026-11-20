@@ -631,6 +631,12 @@ Each node shows public role, execution location, state, elapsed time, resources,
 and resulting Artifacts. The UI may reuse the Plus graph layout, but the data comes from original
 Thread Items, Runtime events, Job records, reservations, and Artifact records.
 
+Each Primary, Child and Reviewer Harness also shows its compact aggregate model-token usage. Its
+details separate ordinary input, cache-read input, cache-write input and output. Durable model
+request IDs prevent duplicate aggregation; `(turn_id, job_id)` keeps parent and child accounting
+isolated. Bounded projections visibly mark partial usage. The browser animates later updates for
+the same selected Harness, but switches Harness identity and reduced-motion mode immediately.
+
 Top-level nodes are limited to real isolation or interaction boundaries: user Turns, Primary
 Harness Turns, JobGroupDraft confirmation, immutable JobGroups, Provider/Operation/Harness Jobs,
 Continuation Turns, and user Interactions. Model requests, Skill reads, shell commands, tool calls,

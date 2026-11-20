@@ -1,0 +1,60 @@
+.harness-token-usage {
+  padding: 10px 13px;
+  border-bottom: 1px solid #e8ebe7;
+}
+
+.harness-token-usage > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 9px;
+}
+
+.harness-token-usage > header b {
+  font-weight: 600;
+}
+
+.harness-token-usage > header span {
+  color: #7d857f;
+}
+
+.harness-token-usage > div {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 8px;
+  background: #e6ebe6;
+}
+
+.harness-token-metric {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  min-height: 43px;
+  padding: 7px 6px;
+  background: #f8faf8;
+}
+
+.harness-token-metric small {
+  overflow: hidden;
+  color: #7c847e;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harness-token-metric strong {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+.harness-token-usage.active .harness-token-metric strong {
+  color: #4f735e;
+}
+
+@media (max-width: 700px) {
+  .harness-token-usage > div {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

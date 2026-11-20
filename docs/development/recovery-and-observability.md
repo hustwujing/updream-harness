@@ -121,6 +121,13 @@ metadata, and removes every edge whose endpoint is absent. Active nodes retain
 their ancestor closure. Review Gate nodes expose the publication outcome rather
 than inferring it from Reviewer Job state. Turn retries are takeovers after the
 first claim, not raw lease generation.
+Normalized model activity is also grouped by `(turn_id, job_id)` for per-Harness
+ordinary input, cache-read input, cache-write input and output usage. Empty
+`job_id` belongs only to the Primary Harness; Child and Reviewer usage is keyed
+by its durable Job ID. The projection is bounded and deduplicates stable model
+request IDs. If the selected usage window is truncated, Harness nodes are
+conservatively labelled as partial rather than presenting an incomplete value
+as a complete total.
 History uses a stable `history_before` cursor and frontend merge/load-more
 without duplicate nodes. When node ceilings apply, pending interactions,
 required/warning Review Gates, active Jobs and their ancestors are retained

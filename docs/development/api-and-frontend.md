@@ -61,6 +61,12 @@ Turn has no remaining rows. Do not make reconnect correctness depend on Redis.
 - Execution Graph nodes carry a stable `visual_role`; role icons are distinct
   from their status badge. Frontend code must not infer a role icon from a
   translated display label.
+- Every Harness node appends a compact aggregate token count to its status line.
+  Its selected details expose ordinary input, cache-read input, cache-write
+  input and output separately. Updates to the same selected Harness animate
+  from the currently rendered values; switching Harness identity and reduced
+  motion update immediately. Animation is presentation-only and never changes
+  persisted accounting.
 - A terminal Turn with pending media Drafts is displayed as `等待确认 N 项媒体生成`,
   not as completed. Drafts sharing the same origin Turn use one batch decision;
   pending confirmation does not animate the execution graph as active work.

@@ -28,7 +28,7 @@ import { apiUrl, getExecutionGraph, listJobActivities } from "./api";
 import { formatDuration } from "./activity-time";
 import {activityCursor,groupExecutionActivities,mergeExecutionActivities} from "./execution-activities";
 import "./execution-activities.css";
-import HarnessRunDetails from "./HarnessRunDetails";
+import HarnessRunDetails,{formatCompactTokens,tokenUsageTotal} from "./HarnessRunDetails";
 import "./role-icons.css";
 import {
   defaultCollapsedGroups,
@@ -892,6 +892,7 @@ export default function ExecutionGraph({ thread, items = [] }) {
                           <Clock3 size={10} />
                           {formatDuration(elapsed(node, now))}
                           {node.retries ? ` · 重试 ${node.retries}` : ""}
+                          {node.harness_view&&tokenUsageTotal(node.token_usage)>0?` · ${formatCompactTokens(tokenUsageTotal(node.token_usage))} tokens${node.token_usage_truncated?' 部分':''}`:""}
                         </small>
                         {node.type === "job_group" && (
                           <button
