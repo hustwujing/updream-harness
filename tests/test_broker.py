@@ -568,7 +568,12 @@ async def test_broker_reattaches_expired_running_turn_and_replays_runtime_journa
         backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9",
         session_keepalive_seconds=0, recovery_scan_seconds=300)
     store = Store(settings.database_url); await store.initialize(); objects = ObjectStore(tmp_path / "objects")
-    backend = FakeSandboxBackend(); pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
+    class DurableIdBackend(FakeSandboxBackend):
+        def __init__(self):super().__init__();self.get_calls=[]
+        async def get(self,sandbox_id):self.get_calls.append(sandbox_id);return await super().get(sandbox_id)
+        async def find_by_turn(self,turn_id):
+            raise AssertionError("durable sandbox ID must be tried before metadata inventory")
+    backend = DurableIdBackend(); pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
     catalog = HarnessCatalog(); owner = "a" * 64
     profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
     thread = await store.create_thread(ThreadCreate(harness=Harness.CLAUDE, model=profile.model,
@@ -599,6 +604,7 @@ async def test_broker_reattaches_expired_running_turn_and_replays_runtime_journa
         assert "recovered" in [item.summary for item in await store.items_after(thread.id)]
         assert any(event.payload.get("code") == "turn_runtime_reattached"
             for event in await store.events_after(turn.id, 0))
+        assert backend.get_calls and set(backend.get_calls)=={sandbox.id}
         assert sandbox.id not in backend.items
     finally:
         await broker.close(); await pool.close(); await store.close()
@@ -646,12 +652,12 @@ async def test_reconciliation_lease_loss_cancels_stalled_external_work_before_ta
     from sandbox_harness.store import TurnRow
     class Backend(FakeSandboxBackend):
         entered=asyncio.Event();calls=0;blocked_task=None;old_task_deleted=False
-        async def find_by_turn(self,turn_id):
+        async def get(self,sandbox_id):
             self.calls+=1
             if self.calls==1:
                 self.blocked_task=asyncio.current_task();self.entered.set()
                 await asyncio.Event().wait()
-            return await super().find_by_turn(turn_id)
+            return await super().get(sandbox_id)
         async def delete(self,sandbox):
             if asyncio.current_task() is self.blocked_task:self.old_task_deleted=True
             await super().delete(sandbox)
@@ -697,10 +703,10 @@ async def test_reconciliation_lease_loss_cancels_stalled_external_work_before_ta
 async def test_graceful_shutdown_releases_stalled_reconciliation_lease_immediately(tmp_path):
     class Backend(FakeSandboxBackend):
         entered=asyncio.Event();calls=0
-        async def find_by_turn(self,turn_id):
+        async def get(self,sandbox_id):
             self.calls+=1
             if self.calls==1:self.entered.set();await asyncio.Event().wait()
-            return await super().find_by_turn(turn_id)
+            return await super().get(sandbox_id)
     settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'reconcile-shutdown.db'),
         backend='fake',gateway_signing_key='k'*32,gateway_url='http://127.0.0.1:9',
         session_keepalive_seconds=0,recovery_scan_seconds=300,turn_lease_seconds=30)

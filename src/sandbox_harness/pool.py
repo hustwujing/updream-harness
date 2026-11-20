@@ -9,8 +9,8 @@ import logging
 import time
 
 from .domain import Harness, identifier
-from .sandbox import Sandbox, SandboxBackend, SandboxNotFound
-from .sandbox_contracts import SandboxCreateRequest,SandboxState,SandboxUpdate
+from .sandbox import Sandbox, SandboxBackend, SandboxNotFound, SandboxProfileUnavailable
+from .sandbox_contracts import SandboxCreateRequest,SandboxProfile,SandboxState,SandboxUpdate
 from .sandbox_factory import SandboxProfileResolver
 
 
@@ -218,7 +218,6 @@ class SandboxPool:
         async with self._thread_lock(thread_id):
             desired_image = image or self.images[harness]
             desired_profile=self.profile_resolver.resolve(harness,desired_image)
-            image_frozen = image is not None
             slot_reserved = False
             async with self._lock:
                 if self._closed:
@@ -226,7 +225,7 @@ class SandboxPool:
                 attached = self._attached.get(thread_id)
                 expiry = None
                 incompatible=bool(attached and (attached.harness!=harness
-                    or image_frozen and attached.compatibility_key!=desired_profile.compatibility_key))
+                    or attached.compatibility_key!=desired_profile.compatibility_key))
                 if incompatible:
                     self._attached.pop(thread_id, None)
                     self._idle_since.pop(thread_id, None)
@@ -275,10 +274,13 @@ class SandboxPool:
                 async with self._lock:
                     if self._closed:
                         raise RuntimeError("sandbox_pool_closed")
-                    matching=next((index for index in range(len(self._warm[harness])-1,-1,-1)
-                        if not image_frozen or self._warm[harness][index].compatibility_key==
-                            desired_profile.compatibility_key),None)
-                    sandbox = self._warm[harness].pop(matching) if matching is not None else None
+                    incompatible_warm=[value for value in self._warm[harness]
+                        if value.compatibility_key!=desired_profile.compatibility_key]
+                    self._warm[harness]=[value for value in self._warm[harness]
+                        if value.compatibility_key==desired_profile.compatibility_key]
+                    sandbox = self._warm[harness].pop() if self._warm[harness] else None
+                for stale in incompatible_warm:
+                    await self._delete_tracked(stale,user_slot=False)
                 if sandbox:
                     # Pristine warm instances do not contain a user token. Runtime injection
                     # happens through its control endpoint after ownership is frozen.
@@ -318,8 +320,14 @@ class SandboxPool:
             return sandbox
 
     @observed("sandbox.adopt")
-    async def adopt(self, sandbox: Sandbox, *, thread_id: str, turn_id: str) -> Sandbox:
+    async def adopt(self, sandbox: Sandbox, *, thread_id: str, turn_id: str,
+                    expected_profile:SandboxProfile|None=None) -> Sandbox:
         async with self._thread_lock(thread_id):
+            expected_profile=expected_profile or self.profile_resolver.resolve(
+                sandbox.harness,self.images[sandbox.harness])
+            if sandbox.compatibility_key!=expected_profile.compatibility_key:
+                raise SandboxProfileUnavailable("Sandbox profile is incompatible with this release",
+                    provider=self.backend.provider)
             async with self._lock:
                 if self._closed:
                     raise RuntimeError("sandbox_pool_closed")

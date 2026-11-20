@@ -171,6 +171,8 @@ def test_ali_image_decompose_service_is_materialized_under_data2():
     assert "source_root=/data/wujing03/image-layered" in source
     assert 'model_source="$source_root/models"' in source
     assert "ln -s" in source and "models" in source
+    assert 'media_core_source=/data/wujing03/media-foundation-core/media_core' in source
+    assert '"$media_core_source" "$target/"' in source
     assert "runtime" in source and "sandbox-harness" in source
     assert "unexpected_project_root" in source
 
@@ -180,6 +182,8 @@ def test_ali_service_runner_uses_only_ali_environment_and_logs():
     assert ".data/config/platform.env" in source
     assert ".data/service-logs" in source
     assert "sandbox-harness-platform-parallel/.data" not in source
+    assert "/data/wujing03/media-foundation-core" not in source
+    assert 'export PYTHONPATH="$service_root:${PYTHONPATH:-}"' in source
     assert "unexpected_project_root" in source
 
 

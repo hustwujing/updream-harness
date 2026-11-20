@@ -6,7 +6,8 @@ import re
 
 from sandbox_harness.domain import Harness
 from sandbox_harness.sandbox_contracts import (
-    Sandbox,SandboxCreateRequest,SandboxEndpoint,SandboxProfile,SandboxState,SandboxUpdate)
+    Sandbox,SandboxCreateOutcomeUnknown,SandboxCreateRequest,SandboxEndpoint,SandboxProfile,
+    SandboxState,SandboxUpdate)
 from sandbox_harness.sandbox_opensandbox import OpenSandboxBackend
 
 
@@ -130,3 +131,17 @@ async def test_opensandbox_unknown_create_waits_for_delayed_inventory_without_re
     sandbox=await backend.create(creation)
     assert sandbox.id=="delayed" and post_calls==1 and list_calls==2
     await backend.aclose()
+
+
+@pytest.mark.asyncio
+async def test_opensandbox_post_accept_readiness_failure_is_not_pre_accept_rate_limit():
+    async def respond(http_request:httpx.Request):
+        if http_request.method=="POST":return httpx.Response(200,json={"id":"accepted"})
+        if http_request.url.path=="/v1/sandboxes/accepted":return httpx.Response(429)
+        raise AssertionError(str(http_request.url))
+    backend=OpenSandboxBackend("http://opensandbox","",300,"test-namespace",
+        transport=httpx.MockTransport(respond))
+    try:
+        with pytest.raises(SandboxCreateOutcomeUnknown,match="accepted"):
+            await backend.create(request())
+    finally:await backend.aclose()

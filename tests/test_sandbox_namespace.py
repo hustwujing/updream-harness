@@ -7,7 +7,7 @@ import pytest
 
 from sandbox_harness.domain import Harness
 from sandbox_harness.sandbox import (FakeSandboxBackend,OpenSandboxBackend,
-    SandboxCapacityUnavailable,SandboxNotFound)
+    SandboxCapacityUnavailable,SandboxNotFound,SandboxProfileUnavailable)
 from sandbox_harness.pool import SandboxPool
 
 
@@ -635,8 +635,43 @@ async def test_namespace_sweep_includes_failed_sandboxes_and_exact_turn_lookup()
 async def test_repeated_adoption_does_not_reserve_an_extra_slot():
     backend=FakeSandboxBackend();pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness},max_sandboxes=1)
     external=await backend.create(Harness.CODEX,'',{'sandbox-harness.io/turn':'t'}, {})
-    first=await pool.adopt(external,thread_id='thread',turn_id='t')
-    assert await asyncio.wait_for(pool.adopt(external,thread_id='thread',turn_id='t'),1) is first
+    first=await pool.adopt(external,thread_id='thread',turn_id='t',expected_profile=external.profile)
+    assert await asyncio.wait_for(pool.adopt(external,thread_id='thread',turn_id='t',
+        expected_profile=external.profile),1) is first
     await pool.release(first,keep_attached=False)
     second=await asyncio.wait_for(pool.acquire(thread_id='new',turn_id='next',harness=Harness.CODEX,environment={}),1)
     await pool.release(second,keep_attached=False);await pool.close()
+
+
+async def test_pool_replaces_attached_sandbox_when_default_profile_changes():
+    first_image='registry/runtime@sha256:'+'1'*64
+    second_image='registry/runtime@sha256:'+'2'*64
+    backend=FakeSandboxBackend();images={h:first_image for h in Harness}
+    pool=SandboxPool(backend,images,{h:0 for h in Harness},max_sandboxes=2)
+    first=await pool.acquire(thread_id='thread',turn_id='one',harness=Harness.CODEX,environment={})
+    await pool.release(first,keep_attached=True)
+    images[Harness.CODEX]=second_image
+
+    second=await pool.acquire(thread_id='thread',turn_id='two',harness=Harness.CODEX,environment={})
+
+    assert second.id!=first.id and first.id not in backend.items
+    assert second.profile.provider_ref==second_image
+    await pool.release(second,keep_attached=False);await pool.close()
+
+
+async def test_pool_skips_incompatible_warm_sandbox_and_rejects_incompatible_adoption():
+    first_image='registry/runtime@sha256:'+'1'*64
+    second_image='registry/runtime@sha256:'+'2'*64
+    backend=FakeSandboxBackend();images={h:first_image for h in Harness}
+    targets={h:(1 if h==Harness.CODEX else 0) for h in Harness}
+    pool=SandboxPool(backend,images,targets,max_sandboxes=3)
+    await pool.fill();warm_id=pool._warm[Harness.CODEX][0].id
+    images[Harness.CODEX]=second_image
+    acquired=await pool.acquire(thread_id='thread',turn_id='turn',harness=Harness.CODEX,environment={})
+    assert acquired.id!=warm_id and acquired.profile.provider_ref==second_image
+    await pool.release(acquired,keep_attached=False)
+    external=await backend.create(Harness.CODEX,first_image,
+        {'sandbox-harness.io/turn':'external'}, {})
+    with pytest.raises(SandboxProfileUnavailable):
+        await pool.adopt(external,thread_id='external-thread',turn_id='external')
+    await backend.delete(external);await pool.close()

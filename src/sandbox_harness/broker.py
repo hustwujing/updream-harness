@@ -282,13 +282,23 @@ class Broker:
                     "code": "turn_recovered_before_harness_start", "generation": claimed.recovery_generation})
                 await self._state(turn.id, TurnState.QUEUED, sandbox_id=""); self._schedule(turn.id); return
             if claimed.state in {TurnState.RUNNING, TurnState.AWAITING_USER, TurnState.DRAINING_INPUTS, TurnState.CHECKPOINTING} and claimed.runtime_execution_id:
-                matches = sorted(await self.pool.backend.find_by_turn(turn.id),
-                    key=lambda value:value.id)
-                candidates=[]
-                for match in matches:
-                    if match.health_state != "ready":continue
-                    if await self.runtime.execution_status(match,claimed.runtime_execution_id) is not None:
-                        candidates.append(match)
+                matches=[];candidates=[];durable_missing=not bool(claimed.sandbox_id)
+                if claimed.sandbox_id:
+                    try:durable=await self.pool.backend.get(claimed.sandbox_id)
+                    except SandboxNotFound:durable_missing=True
+                    else:
+                        matches=[durable]
+                        if (durable.health_state=="ready" and await self.runtime.execution_status(
+                                durable,claimed.runtime_execution_id) is not None):
+                            candidates=[durable]
+                if durable_missing:
+                    matches=sorted(await self.pool.backend.find_by_turn(turn.id),
+                        key=lambda value:value.id)
+                    for match in matches:
+                        if match.health_state != "ready":continue
+                        if await self.runtime.execution_status(match,claimed.runtime_execution_id) is not None:
+                            candidates.append(match)
+                    if len(candidates)>1:raise RuntimeError("recoverable_sandbox_ambiguous")
                 if candidates:
                     selected=candidates[0]
                     for duplicate in matches:
@@ -765,16 +775,25 @@ class Broker:
                 } and bool(turn.runtime_execution_id)
                 recovered_result = None
                 if recovering:
-                    matches = sorted(await self.pool.backend.find_by_turn(turn.id),
-                        key=lambda value:value.id)
-                    candidates = []
-                    for match in matches:
-                        if match.health_state != "ready":
-                            continue
-                        status = await self.runtime.execution_status(
-                            match, turn.runtime_execution_id)
-                        if status is not None:
-                            candidates.append((match,status))
+                    matches=[];candidates=[];durable_missing=not bool(turn.sandbox_id)
+                    if turn.sandbox_id:
+                        try:durable=await self.pool.backend.get(turn.sandbox_id)
+                        except SandboxNotFound:durable_missing=True
+                        else:
+                            if durable.health_state=="ready":
+                                status=await self.runtime.execution_status(
+                                    durable,turn.runtime_execution_id)
+                                if status is not None:candidates.append((durable,status))
+                    if durable_missing:
+                        matches=sorted(await self.pool.backend.find_by_turn(turn.id),
+                            key=lambda value:value.id)
+                        for match in matches:
+                            if match.health_state != "ready":continue
+                            status=await self.runtime.execution_status(
+                                match,turn.runtime_execution_id)
+                            if status is not None:candidates.append((match,status))
+                        if len(candidates)>1:
+                            raise RuntimeError("recoverable_sandbox_ambiguous")
                     if not candidates:
                         raise RuntimeError("recoverable_sandbox_not_found")
                     selected,status = candidates[0]

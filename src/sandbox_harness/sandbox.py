@@ -27,8 +27,8 @@ class FakeSandboxBackend:
 
     @staticmethod
     def legacy_profile(harness:Harness,image:str)->SandboxProfile:
-        value=image or "fake@sha256:"+"0"*64
-        return SandboxProfile(profile_id=f"fake-{harness.value}",revision=value,provider="fake",
+        value=image or f"fake:default:{harness.value}"
+        return SandboxProfile(profile_id=f"primary-{harness.value}",revision=value,provider="fake",
             provider_ref=value,runtime_contract="sandbox-harness-runtime/v1",
             runtime_bundle_digest="legacy",runtime_code_bundle_digest="legacy")
 

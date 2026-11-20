@@ -14,7 +14,8 @@ from .sandbox_contracts import (
     Sandbox,SandboxAuthenticationFailed,SandboxCapabilities,SandboxCapacityUnavailable,
     SandboxCreateOutcomeUnknown,SandboxCreateRequest,SandboxEndpoint,
     SandboxEndpointUnavailable,SandboxNotFound,SandboxProfile,SandboxProfileUnavailable,
-    SandboxProviderUnavailable,SandboxRateLimited,SandboxScope,SandboxState,SandboxUpdate)
+    SandboxProviderError,SandboxProviderUnavailable,SandboxRateLimited,SandboxScope,SandboxState,
+    SandboxUpdate)
 
 
 _PROFILE_ID_KEY="sandbox-harness.io/profile"
@@ -176,7 +177,12 @@ class OpenSandboxBackend:
             self._profiles[sandbox.id]=request.profile
             sandbox.expires_at=datetime.now(timezone.utc)+timedelta(seconds=request.ttl_seconds)
             sandbox.expires_at_monotonic=time.monotonic()+request.ttl_seconds
-            return await self._ready(sandbox)
+            try:return await self._ready(sandbox)
+            except (httpx.TimeoutException,httpx.TransportError):raise
+            except SandboxProviderError as exc:
+                raise SandboxCreateOutcomeUnknown(
+                    "OpenSandbox accepted sandbox "+sandbox.id+" but readiness is unresolved",
+                    provider=self.provider,request_id=exc.request_id) from exc
         except (httpx.TimeoutException,httpx.TransportError) as exc:
             for attempt in range(20):
                 matches=await self.find({"sandbox-harness.io/idempotency-key":request.idempotency_key})

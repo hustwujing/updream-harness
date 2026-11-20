@@ -6,6 +6,7 @@ import pytest
 from sandbox_harness.domain import Harness
 from sandbox_harness.runtime import RuntimeClient
 from sandbox_harness.sandbox import Sandbox
+from sandbox_harness.sandbox_contracts import SandboxEndpoint
 
 
 def test_runtime_client_does_not_create_staging_until_a_transfer(tmp_path):
@@ -35,6 +36,29 @@ async def test_runtime_project_file_upload_streams_with_explicit_length():
     assert requests[0].headers["content-length"]=="12"
     assert requests[0].url.params["size"]=="12"
     assert requests[0].content==b"first-second"
+
+
+async def test_runtime_auth_failure_forces_endpoint_refresh_on_next_operation():
+    class Backend:
+        def __init__(self):self.refresh=[]
+        async def endpoint(self,sandbox,port,*,force_refresh=False):
+            self.refresh.append(force_refresh)
+            return SandboxEndpoint(f"http://runtime-{len(self.refresh)}")
+    calls=0
+    def respond(request):
+        nonlocal calls
+        calls+=1
+        return (httpx.Response(401) if calls==1 else
+            httpx.Response(200,json={"state":"running","last_sequence":0,"result":None}))
+    backend=Backend();runtime=RuntimeClient(backend=backend,transport=httpx.MockTransport(respond))
+    sandbox=Sandbox(id="sandbox",harness=Harness.CODEX,image="image",
+        runtime_url="http://runtime",metadata={})
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await runtime.execution_status(sandbox,"execution")
+    assert await runtime.execution_status(sandbox,"execution")=={
+        "state":"running","last_sequence":0,"result":None}
+    assert backend.refresh==[False,True]
 
 
 async def test_runtime_configuration_retries_transient_proxy_startup_errors():

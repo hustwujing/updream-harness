@@ -27,7 +27,7 @@ case "$component" in
   image-decompose)
     service_root="$root/.data/services/image-layered"
     [[ -f "$service_root/service/app.py" ]] || { echo "image decompose service is not materialized" >&2; exit 1; }
-    export PYTHONPATH="/data/wujing03/media-foundation-core:$service_root:${PYTHONPATH:-}"
+    export PYTHONPATH="$service_root:${PYTHONPATH:-}"
     command=(/data/wujing03/miniforge3/envs/media-foundation/bin/python -m uvicorn
       service.app:app --host 127.0.0.1 --port 8912 --no-access-log)
     ;;

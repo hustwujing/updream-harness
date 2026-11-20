@@ -9,11 +9,15 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 source_root=/data/wujing03/image-layered
 target="$root/.data/services/image-layered"
 model_source="$source_root/models"
+media_core_source=/data/wujing03/media-foundation-core/media_core
 [[ -f "$source_root/service/app.py" && -d "$model_source" ]] || {
   echo "image decompose source is unavailable" >&2; exit 1; }
+[[ -f "$media_core_source/__init__.py" ]] || {
+  echo "media core source is unavailable" >&2; exit 1; }
 
 install -d -o sandbox-harness -g sandbox-harness -m 700 "$target"
 cp -a "$source_root/service" "$source_root/web" "$source_root/examples" "$target/"
+cp -a "$media_core_source" "$target/"
 cp -a "$source_root/requirements.txt" "$source_root/extra_model_paths.yaml" "$target/"
 if [[ -L "$target/models" ]]; then
   [[ "$(readlink "$target/models")" == "$model_source" ]] || {
@@ -24,6 +28,7 @@ else
   ln -s "$model_source" "$target/models"
 fi
 install -d -o sandbox-harness -g sandbox-harness -m 700 "$target/runtime" "$target/.run"
-chown -R sandbox-harness:sandbox-harness "$target/service" "$target/web" "$target/examples"
+chown -R sandbox-harness:sandbox-harness "$target/service" "$target/web" "$target/examples" \
+  "$target/media_core"
 chown sandbox-harness:sandbox-harness "$target/requirements.txt" "$target/extra_model_paths.yaml"
 echo "materialized $target"
