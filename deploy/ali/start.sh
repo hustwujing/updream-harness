@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=$(cd "$(dirname "$0")/../.." && pwd)
+[[ "$root" == /data2/wujing03/sandbox-harness-platform-parallel-ali ]] || {
+  echo "unexpected_project_root:$root" >&2; exit 1; }
+[[ $EUID -eq 0 ]] || { echo "run as root" >&2; exit 1; }
+[[ -f "$root/.data/config/platform.env" ]] || { echo "Ali environment is not configured" >&2; exit 1; }
+
+wait_port() {
+  local host=$1 port=$2
+  for _ in $(seq 1 60); do
+    if timeout 1 bash -c "</dev/tcp/$host/$port" 2>/dev/null; then return 0; fi
+    sleep 1
+  done
+  echo "port did not become ready: $host:$port" >&2; return 1
+}
+
+start_transient() {
+  local unit=$1 user=$2 command=$3
+  if systemctl is-active --quiet "$unit.service"; then return 0; fi
+  systemd-run --unit="$unit" --collect --uid="$user" \
+    --property=WorkingDirectory="$root" --property=Restart=on-failure \
+    --property=RestartSec=3 --property=KillMode=control-group "$command"
+}
+
+start_transient sandbox-harness-parallel-ali-postgresql sandbox-harness-db \
+  "$root/deploy/ali/postgresql-start.sh"
+wait_port 127.0.0.1 28433
+
+if ! systemctl is-active --quiet sandbox-harness-parallel-ali-network.service; then
+  systemd-run --unit=sandbox-harness-parallel-ali-network --collect \
+    --property=Type=oneshot --property=RemainAfterExit=yes \
+    "$root/deploy/ali/network-rule.sh" install
+fi
+
+start_transient sandbox-harness-parallel-ali-gateway sandbox-harness \
+  "$root/deploy/ali/run-service.sh gateway"
+wait_port 172.31.0.1 29882
+start_transient sandbox-harness-parallel-ali-job-worker sandbox-harness \
+  "$root/deploy/ali/run-service.sh job-worker"
+start_transient sandbox-harness-parallel-ali-controlled-worker root \
+  "$root/deploy/ali/run-service.sh controlled-worker"
+start_transient sandbox-harness-parallel-ali-media-worker sandbox-harness \
+  "$root/deploy/ali/run-service.sh media-worker"
+start_transient sandbox-harness-parallel-ali-site-worker sandbox-harness \
+  "$root/deploy/ali/run-service.sh site-worker"
+start_transient sandbox-harness-parallel-ali-api sandbox-harness \
+  "$root/deploy/ali/run-service.sh api"
+wait_port 127.0.0.1 24767
+"$root/deploy/ali/status.sh"
+

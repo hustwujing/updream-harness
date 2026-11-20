@@ -112,3 +112,38 @@ def test_ali_asset_materializer_owns_all_runtime_paths():
                      "digest_mismatch","promote_registry_manifest"):
         assert contract in source
     assert "sandbox-harness-platform-parallel/.data" not in source
+
+
+def test_ali_network_rule_is_disjoint_from_parallel_gateway():
+    source=(ROOT/"deploy/ali/network-rule.sh").read_text()
+    assert "29882:29883" in source
+    assert "sandbox-harness-parallel-ali-gateway" in source
+    assert "sandbox-harness-parallel-gateway" not in source
+    assert "29880:29881" not in source
+    assert "sandbox-agent-net" in source
+
+
+def test_ali_transient_service_graph_is_complete_and_root_partition_free():
+    start=(ROOT/"deploy/ali/start.sh").read_text()
+    stop=(ROOT/"deploy/ali/stop.sh").read_text()
+    status=(ROOT/"deploy/ali/status.sh").read_text()
+    runner=(ROOT/"deploy/ali/run-service.sh").read_text()
+    combined=start+stop+status+runner
+    for service in ("postgresql","network","gateway","job-worker","controlled-worker",
+                    "media-worker","site-worker","api"):
+        assert f"sandbox-harness-parallel-ali-{service}" in combined
+    assert "systemd-run" in start and "--collect" in start
+    assert start.index("ali-postgresql")<start.index("ali-network")<start.index("ali-gateway")
+    assert start.index("ali-gateway")<start.index("ali-job-worker")<start.index("ali-api")
+    assert "/etc/systemd" not in combined
+    assert "systemctl enable" not in combined
+    assert "/data2/wujing03/sandbox-harness-platform-parallel-ali" in combined
+    assert "stop_units" in stop and "network-rule.sh" in stop and " remove" in stop
+
+
+def test_ali_service_runner_uses_only_ali_environment_and_logs():
+    source=(ROOT/"deploy/ali/run-service.sh").read_text()
+    assert ".data/config/platform.env" in source
+    assert ".data/service-logs" in source
+    assert "sandbox-harness-platform-parallel/.data" not in source
+    assert "unexpected_project_root" in source
