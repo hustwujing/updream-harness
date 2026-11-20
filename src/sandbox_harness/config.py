@@ -99,7 +99,7 @@ class Settings(BaseSettings):
     public_proxy_request_max_bytes: int = Field(default=16 * 1024 * 1024, ge=1024, le=64 * 1024 * 1024)
     public_proxy_body_idle_timeout_seconds: float = Field(default=15, ge=1, le=120)
     public_proxy_body_total_timeout_seconds: float = Field(default=120, ge=5, le=600)
-    job_node_id: str = Field(default="local-opensandbox",pattern=r"^[A-Za-z0-9._-]{1,160}$")
+    job_node_id: str = Field(default="local-sandbox",pattern=r"^[A-Za-z0-9._-]{1,160}$")
     job_node_cpu_limit: int = Field(default=8,ge=1,le=1024)
     job_node_memory_mb_limit: int = Field(default=32768,ge=128)
     job_node_heartbeat_seconds: float = Field(default=10,ge=1,le=60)
@@ -183,16 +183,16 @@ def load_settings() -> Settings:
 
 
 def validate_service_settings(value: Settings) -> None:
-    if value.backend == "opensandbox":
+    if value.backend != "fake":
         configured = (value.gateway_signing_key, value.gateway_control_key, value.session_signing_key)
         if any(secret in DEVELOPMENT_SECRETS for secret in configured):
-            raise ValueError("OpenSandbox deployment requires explicit signing and control secrets")
+            raise ValueError("Production sandbox deployment requires explicit signing and control secrets")
         if not value.runtime_bundle_digest:
-            raise ValueError("OpenSandbox deployment requires a frozen Runtime Bundle digest")
+            raise ValueError("Production sandbox deployment requires a frozen Runtime Bundle digest")
         if not value.runtime_code_bundle_digest:
-            raise ValueError("OpenSandbox deployment requires a frozen Runtime Code Bundle digest")
+            raise ValueError("Production sandbox deployment requires a frozen Runtime Code Bundle digest")
         if not value.job_catalog_digest or not value.profile_catalog_digest:
-            raise ValueError("OpenSandbox deployment requires frozen Job and Profile Catalog digests")
+            raise ValueError("Production sandbox deployment requires frozen Job and Profile Catalog digests")
         bundle = value.runtime_bundle_dir / (value.runtime_bundle_digest + ".tar")
         code_bundle = value.runtime_code_bundle_dir / (value.runtime_code_bundle_digest + ".tar")
         if not bundle.is_file():

@@ -10,7 +10,7 @@ import time
 
 from .config import Settings, load_settings
 from .domain import Harness
-from .harness_job import HarnessJobAdapter, JobGrantFactory, OpenSandboxChildBackend
+from .harness_job import HarnessJobAdapter, JobGrantFactory, SandboxChildBackend
 from .image_decompose_adapter import ImageDecomposeAdapter
 from .job_worker import JobWorker
 from .job_catalog import JobCatalog
@@ -72,7 +72,7 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
         staging_root=settings.data_root / "tmp" / "runtime-downloads",backend=pool.backend)
     scheduler=Scheduler(store)
     resolver=profile_resolver(settings)
-    child_backend=OpenSandboxChildBackend(pool=pool,runtime=runtime,store=store,objects=objects,
+    child_backend=SandboxChildBackend(pool=pool,runtime=runtime,store=store,objects=objects,
         settings=settings,token_factory=JobGrantFactory(settings))
     harness_adapter=HarnessJobAdapter(scheduler,child_backend)
     media_catalog=MediaCatalog(settings.media_catalog_json,

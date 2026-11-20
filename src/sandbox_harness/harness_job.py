@@ -229,7 +229,7 @@ class HarnessJobAdapter(BaseJobAdapter):
         return result
 
 
-class OpenSandboxChildBackend:
+class SandboxChildBackend:
     def __init__(self,*,pool,runtime,store,objects,settings,
                  token_factory:Callable[[JobExecutionContext,Any,str],Awaitable[tuple[str,Any]]]):
         self.pool=pool;self.runtime=runtime;self.store=store;self.objects=objects
@@ -560,3 +560,7 @@ class OpenSandboxChildBackend:
                 response.raise_for_status()
         if sandbox:await self.pool.release(sandbox,keep_attached=False)
         self.sessions.pop(context.job.id,None)
+
+
+# Temporary import compatibility for external real-case scripts.
+OpenSandboxChildBackend=SandboxChildBackend

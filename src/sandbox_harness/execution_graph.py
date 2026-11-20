@@ -282,8 +282,8 @@ class ExecutionGraphProjector:
                 'harness':turn.harness,'model':turn.model,
                 'token_usage':model_usage.get((turn.id,''),{field:0 for field in TOKEN_USAGE_FIELDS}),
                 'token_usage_truncated':usage_truncated,
-                'location':'opensandbox' if turn.sandbox_id else 'scheduler',
-                'location_label':'OpenSandbox' if turn.sandbox_id else '等待调度',
+                'location':'sandbox' if turn.sandbox_id else 'scheduler',
+                'location_label':'Cloud Sandbox' if turn.sandbox_id else '等待调度',
                 'started_at':iso(turn.created_at),'ended_at':iso(turn.updated_at) if TurnState(turn.state) in TERMINAL else None,
                 'duration_ms':duration_ms(turn.created_at,turn.updated_at) if TurnState(turn.state) in TERMINAL else 0,
                 'retries':max(0,turn.recovery_generation-1),'activity_count':0,'turn_id':turn.id})
@@ -325,10 +325,10 @@ class ExecutionGraphProjector:
                 if job.kind=='harness' else '外部能力任务' if job.kind=='provider' else '任务执行员')
             visual_role=('reviewer' if job.descriptor_id=='review.submit' else 'child_harness'
                 if job.kind=='harness' else 'external_capability' if job.kind=='provider' else 'worker')
-            location=('opensandbox' if job.kind=='harness' else 'external_provider' if job.kind=='provider'
+            location=('sandbox' if job.kind=='harness' else 'external_provider' if job.kind=='provider'
                 else 'gpu_worker' if resources else 'host_worker')
-            labels={'opensandbox':'OpenSandbox','external_provider':'外部服务','gpu_worker':'GPU Worker','host_worker':'宿主 Worker'}
-            location_label=labels[location]+((' · '+runtime_profile) if location=='opensandbox' and runtime_profile else '')
+            labels={'sandbox':'Cloud Sandbox','external_provider':'外部服务','gpu_worker':'GPU Worker','host_worker':'宿主 Worker'}
+            location_label=labels[location]+((' · '+runtime_profile) if location=='sandbox' and runtime_profile else '')
             try:result=json.loads(job.result_json or '{}')
             except (TypeError,ValueError):result={}
             error_code=(str(result.get('error_code') or '')

@@ -60,6 +60,6 @@ def test_default_model_routes_allow_empty_and_normalize_trailing_path():
 
 
 def test_opensandbox_rejects_development_signing_secrets():
-    with pytest.raises(ValueError, match="explicit signing"):
+    with pytest.raises(ValueError,match="Production sandbox deployment"):
         validate_service_settings(Settings(_env_file=None, backend="opensandbox"))
     validate_service_settings(Settings(_env_file=None, backend="fake"))

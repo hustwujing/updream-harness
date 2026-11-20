@@ -61,7 +61,7 @@ def validate_runtime(settings:Settings)->Path:
     if not declared.is_relative_to(data_root) or declared==data_root:
         raise ValueError('Controlled Runtime entry must remain below Parallel data root')
     root=declared.resolve()
-    if settings.backend=='opensandbox' and not root.is_relative_to(Path('/data2/wujing03')):
+    if settings.backend!='fake' and not root.is_relative_to(Path('/data2/wujing03')):
         raise ValueError('Controlled Runtime target must remain below /data2/wujing03')
     if not settings.controlled_runtime_digest:raise ValueError('controlled_runtime_digest_required')
     missing=[value for value in REQUIRED_RUNTIME_PATHS if not (root/value).exists()]

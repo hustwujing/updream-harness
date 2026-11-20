@@ -205,7 +205,7 @@ async def supervise_warm_pool(app, pool, *, initial_delay: float = .5,
             raise
         except Exception as exc:
             fill_error = exc
-            logger.exception("OpenSandbox warm pool convergence failed; retrying")
+            logger.exception("Sandbox warm pool convergence failed; retrying")
         try:
             available = await pool.execution_available()
         except asyncio.CancelledError:
@@ -214,7 +214,7 @@ async def supervise_warm_pool(app, pool, *, initial_delay: float = .5,
             app.state.execution_backend_available = False
             app.state.pool_status = "unavailable"
             app.state.pool_last_error = "probe:" + type(exc).__name__
-            logger.exception("OpenSandbox availability probe failed; retrying")
+            logger.exception("Sandbox availability probe failed; retrying")
             await asyncio.sleep(delay)
             delay = min(delay * 2, maximum_delay)
             continue
@@ -378,7 +378,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     await asyncio.sleep(settings.model_catalog_refresh_seconds)
 
             catalog_task = asyncio.create_task(refresh_catalog(), name="model-catalog-refresh")
-        if settings.backend == "opensandbox":
+        if pool.backend.provider != "fake":
             app.state.pool_status = "starting"
             app.state.execution_backend_available = False
             app.state.pool_attempts = 0
