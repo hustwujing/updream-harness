@@ -99,12 +99,21 @@ class SandboxEndpoint:
             raise ValueError("sandbox_endpoint_expiry_invalid")
         object.__setattr__(self,"headers",_mapping(self.headers,name="endpoint_headers",maximum=64))
 
+    def __iter__(self):
+        # Transitional tuple compatibility for inspector callers migrated in Task 3.
+        yield self.url
+        yield dict(self.headers)
+
 
 class SandboxState(StrEnum):
+    INVENTORY="inventory"
     PROVISIONING="provisioning"
+    STARTING="starting"
     READY="ready"
+    UNHEALTHY="unhealthy"
     STOPPING="stopping"
     STOPPED="stopped"
+    MISSING="missing"
     FAILED="failed"
     UNKNOWN="unknown"
 
@@ -112,10 +121,10 @@ class SandboxState(StrEnum):
 @dataclass
 class Sandbox:
     id:str
-    provider:str
     harness:Harness
-    profile:SandboxProfile
     metadata:dict[str,str]
+    provider:str="legacy"
+    profile:SandboxProfile|None=None
     state:SandboxState=SandboxState.READY
     expires_at:datetime|None=None
     provider_details:dict[str,str]=field(default_factory=dict,repr=False)
@@ -124,16 +133,30 @@ class Sandbox:
     turn_id:str=""
     reused:bool=False
     health_error:str=""
+    health_state:str="ready"
+    # Transitional fields for callers migrated in the next protocol stage.
+    image:str=""
+    runtime_url:str=""
+    runtime_headers:dict[str,str]=field(default_factory=dict,repr=False)
+    expires_at_monotonic:float=0
+    runtime_endpoint_refresh_at_monotonic:float=0
+
+    def __post_init__(self)->None:
+        if self.profile is None:
+            reference=self.image or "legacy"
+            self.profile=SandboxProfile(profile_id=f"legacy-{self.harness.value}",revision=reference,
+                provider=self.provider,provider_ref=reference,
+                runtime_contract="sandbox-harness-runtime/v1",runtime_bundle_digest="legacy",
+                runtime_code_bundle_digest="legacy")
+        elif not self.image:self.image=self.profile.provider_ref
+        if self.state!=SandboxState.READY and self.health_state=="ready":
+            self.health_state=self.state.value
+        elif self.state==SandboxState.READY and self.health_state!="ready":
+            try:self.state=SandboxState(self.health_state)
+            except ValueError:self.state=SandboxState.UNKNOWN
 
     @property
     def compatibility_key(self)->str:return self.profile.compatibility_key
-
-    @property
-    def health_state(self)->str:return self.state.value
-
-    @health_state.setter
-    def health_state(self,value:str)->None:self.state=SandboxState(value)
-
 
 @dataclass(frozen=True)
 class SandboxCapabilities:
@@ -160,6 +183,9 @@ class SandboxProviderError(RuntimeError):
 
     def __init__(self,message:str,*,provider:str="",request_id:str=""):
         super().__init__(message);self.provider=provider;self.request_id=request_id
+
+    @property
+    def error_code(self)->str:return self.code
 
 
 class SandboxNotFound(SandboxProviderError):code="sandbox_not_found"
