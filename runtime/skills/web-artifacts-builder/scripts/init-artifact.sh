@@ -13,6 +13,7 @@ global_root="$(npm root -g)"
 test -d "$global_root"
 mkdir -p "$project"
 cp -R "$skill_root/template/." "$project/"
+chmod -R u+rwX "$project"
 tar -xzf "$script_dir/shadcn-components.tar.gz" -C "$project/src"
 
 node - "$project" "$global_root" <<'NODE'

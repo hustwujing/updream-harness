@@ -49,14 +49,16 @@ const height = integer(value.height, 1000, 16, 8192);
 const waitMs = integer(value['wait-ms'], 2000, 0, 60000);
 const timeoutMs = integer(value['timeout-ms'], 30000, 1000, 120000);
 mkdirSync(path.dirname(value.output), {recursive: true});
+const target=new URL(value.url);
+const localTarget=['localhost','127.0.0.1','::1'].includes(target.hostname);
 
 let browser;
 let proxyBridge;
 try {
-  proxyBridge = await createProxyBridge();
+  if (!localTarget) proxyBridge = await createProxyBridge();
   browser = await chromium.launch({
     headless: true,
-    proxy: proxyBridge.value,
+    ...(proxyBridge ? {proxy: proxyBridge.value} : {}),
     args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu-sandbox', '--disable-crash-reporter', '--disable-crashpad'],
   });
   const page = await browser.newPage({viewport: {width, height}, deviceScaleFactor: 1});

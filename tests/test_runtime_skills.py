@@ -264,6 +264,7 @@ def test_web_artifact_skill_is_offline_and_profile_declares_complete_toolchain()
     for forbidden in ('pnpm create','pnpm install','pnpm add','npm install','npm view'):
         assert forbidden not in scripts
     assert 'npm root -g' in scripts and 'bundle-artifact.mjs' in scripts
+    assert 'chmod -R u+rwX "$project"' in scripts
     assert (skill/'template/package.json').is_file()
     assert (skill/'scripts/bundle-artifact.mjs').is_file()
     sources=json.loads((ROOT/'runtime/skills/sources.json').read_text())

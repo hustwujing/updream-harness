@@ -31,6 +31,7 @@ def test_runtime_guidance_has_network_and_browser_fallbacks():
     assert "do not use an absolute `/workspace/outputs` path" in runtime_app.RUNTIME_GUIDANCE
     assert "Never print binary asset contents" in runtime_app.RUNTIME_GUIDANCE
     assert "publish the declared outputs before additional narrative" in runtime_app.RUNTIME_GUIDANCE
+    assert "sandbox-background cancel JOB_ID" in runtime_app.RUNTIME_GUIDANCE
 
 
 def test_background_failure_requires_successful_explicit_replacement():

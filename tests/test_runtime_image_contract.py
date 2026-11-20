@@ -48,6 +48,9 @@ def test_runtime_installs_supported_public_browser_helper():
     source = (ROOT / "runtime/base.Dockerfile").read_text()
     helper = ROOT / "runtime/browser_screenshot.mjs"
     assert "runtime/browser_screenshot.mjs /usr/local/bin/sandbox-browser-screenshot" in source
+    helper_source=helper.read_text()
+    assert "['localhost','127.0.0.1','::1']" in helper_source
+    assert 'if (!localTarget) proxyBridge' in helper_source
     assert "runtime/chromium_proxy.cjs /usr/local/bin/chromium" in source
     assert "runtime/playwright_proxy_patch.cjs /usr/local/lib/sandbox-playwright-proxy.cjs" in source
     assert "runtime/proxy_bridge.cjs /usr/local/lib/sandbox-proxy-bridge.cjs" in source
