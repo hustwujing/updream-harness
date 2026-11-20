@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-[[ "$root" == /data2/wujing03/sandbox-harness-platform-parallel ]]
+[[ "$root" == /data2/wujing03/sandbox-harness-platform-parallel-ali ]]
 docker=/data2/wujing03/opensandbox-stack/tools/docker-29.9.3/docker
 python=${SANDBOX_HARNESS_BUILD_PYTHON:-$root/.venv/bin/python}
 test -x "$python"
@@ -11,7 +11,8 @@ git -C "$root" diff --quiet
 git -C "$root" diff --cached --quiet
 "$python" "$root/runtime/skill_bundle.py" verify
 
-registry=${SANDBOX_HARNESS_IMAGE_REGISTRY:-127.0.0.1:25001/sandbox-harness-parallel}
+registry=${SANDBOX_HARNESS_IMAGE_REGISTRY:-127.0.0.1:25001/sandbox-harness-platform-parallel-ali}
+local_prefix=${SANDBOX_HARNESS_LOCAL_IMAGE_PREFIX:-sandbox-harness-parallel-ali}
 tag=$(git -C "$root" rev-parse --short=12 HEAD)
 sandbox_username=${SANDBOX_HARNESS_SANDBOX_USERNAME:-updream}
 profiles=${BUILD_PROFILES:-"primary-full-cpu general-cpu media-cpu office web-browser data-analysis"}
@@ -37,7 +38,7 @@ if [[ -f "$profile_catalog_path" ]]; then
 fi
 output_root="$root/.data/image-build/$tag"
 mkdir -p "$output_root"
-[[ "$output_root" == /data2/wujing03/sandbox-harness-platform-parallel/.data/* ]]
+[[ "$output_root" == /data2/wujing03/sandbox-harness-platform-parallel-ali/.data/* ]]
 
 content_hash() {
   local parent=$1
@@ -49,7 +50,7 @@ bootstrap_hash=$(content_hash bootstrap-v1 "$root/runtime/bootstrap.Dockerfile" 
   "$root/runtime/requirements-runtime.txt" "$root/runtime/bundle_public_key.pem" \
   "$root/runtime/bootstrap_entrypoint.sh" "$root/runtime/runtime_cli_dispatch.sh" \
   "${bootstrap_sources[@]}")
-bootstrap="sandbox-harness-parallel-bootstrap:$bootstrap_hash"
+bootstrap="$local_prefix-bootstrap:$bootstrap_hash"
 if ! "$docker" image inspect "$bootstrap" >/dev/null 2>&1; then
   "$docker" build --network host -f "$root/runtime/bootstrap.Dockerfile" \
     --build-arg "SANDBOX_USERNAME=$sandbox_username" -t "$bootstrap" "$root"
@@ -58,7 +59,7 @@ common_hash=$(content_hash "$bootstrap_hash" "$root/runtime/common.Dockerfile" \
   "$root/runtime/requirements-common.txt" "$root/runtime/proxy_bridge.cjs" \
   "$root/runtime/playwright_proxy_patch.cjs" "$root/runtime/apply_patch.py" \
   "$root/runtime/original_compatibility_probe.py")
-common="sandbox-harness-parallel-common:$common_hash"
+common="$local_prefix-common:$common_hash"
 if ! "$docker" image inspect "$common" >/dev/null 2>&1; then
   "$docker" build --network host -f "$root/runtime/common.Dockerfile" \
     --build-arg "BOOTSTRAP_IMAGE=$bootstrap" -t "$common" "$root"
@@ -95,7 +96,7 @@ for profile in $profiles; do
     profile_inputs+=("$root/runtime/drawio_wrapper.sh")
   fi
   profile_hash=$(content_hash "$common_hash" "${profile_inputs[@]}")
-  profile_image="sandbox-harness-parallel-$profile:$profile_hash"
+  profile_image="$local_prefix-$profile:$profile_hash"
   if ! "$docker" image inspect "$profile_image" >/dev/null 2>&1; then
     "$docker" build --network host -f "$dockerfile" \
       --build-arg "COMMON_IMAGE=$common" -t "$profile_image" "$root"
@@ -104,7 +105,7 @@ for profile in $profiles; do
     asr_hash=$(content_hash "$profile_hash:$asr_source_id" \
       "$root/runtime/asr-overlay.Dockerfile" "$root/runtime/requirements-asr.txt" \
       "$root/runtime/asr_cli.py" "$root/runtime/asr_probe.py")
-    asr_image="sandbox-harness-parallel-$profile-asr:$asr_hash"
+    asr_image="$local_prefix-$profile-asr:$asr_hash"
     if ! "$docker" image inspect "$asr_image" >/dev/null 2>&1; then
       "$docker" build --network host -f "$root/runtime/asr-overlay.Dockerfile" \
         --build-arg "PROFILE_IMAGE=$profile_image" --build-arg "ASR_SOURCE_IMAGE=$asr_source_image" \

@@ -147,3 +147,11 @@ def test_ali_service_runner_uses_only_ali_environment_and_logs():
     assert ".data/service-logs" in source
     assert "sandbox-harness-platform-parallel/.data" not in source
     assert "unexpected_project_root" in source
+
+
+def test_ali_image_builder_uses_only_ali_checkout_and_namespaces():
+    source=(ROOT/"runtime/build-images.sh").read_text()
+    assert "[[ \"$root\" == /data2/wujing03/sandbox-harness-platform-parallel-ali ]]" in source
+    assert "127.0.0.1:25001/sandbox-harness-platform-parallel-ali" in source
+    assert "SANDBOX_HARNESS_LOCAL_IMAGE_PREFIX:-sandbox-harness-parallel-ali" in source
+    assert 'output_root="$root/.data/image-build/$tag"' in source
