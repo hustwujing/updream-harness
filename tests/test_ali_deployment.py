@@ -84,3 +84,31 @@ def test_ali_postgresql_initializer_validates_exact_environment_identity():
     assert "@127.0.0.1:28433/sandbox_harness_parallel_ali" in source
     assert "unexpected_project_root" in source
     assert "run as root" in source
+
+
+def test_ali_profile_catalog_rewrite_preserves_digests_and_changes_registry():
+    assets=load("ali_assets",ROOT/"deploy/ali/materialize-assets.py")
+    original={
+        "schema_version":1,
+        "child_execution_profiles":[],
+        "runtime_dependency_profiles":[{
+            "id":"primary-full-cpu","supported_harnesses":["codex"],
+            "image_digests":{"codex":"a"*64},
+            "image_refs":{"codex":"127.0.0.1:25001/sandbox-harness-parallel/primary-full-cpu-codex@sha256:"+"a"*64},
+        }],
+    }
+    rewritten=assets.rewrite_profile_catalog(original)
+    profile=rewritten["runtime_dependency_profiles"][0]
+    assert profile["image_digests"]==original["runtime_dependency_profiles"][0]["image_digests"]
+    assert profile["image_refs"]["codex"].startswith(
+        "127.0.0.1:25001/sandbox-harness-platform-parallel-ali/")
+    assert "sandbox-harness-parallel/" not in profile["image_refs"]["codex"]
+
+
+def test_ali_asset_materializer_owns_all_runtime_paths():
+    source=(ROOT/"deploy/ali/materialize-assets.py").read_text()
+    for contract in ("runtime-bundles","runtime-code-bundles","profile-catalog.json",
+                     "job-catalog.json","controlled-runtime","provider-runtime",
+                     "digest_mismatch","promote_registry_manifest"):
+        assert contract in source
+    assert "sandbox-harness-platform-parallel/.data" not in source
