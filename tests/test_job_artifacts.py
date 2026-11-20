@@ -159,6 +159,9 @@ def test_mime_registry_sniffs_aliases_and_unknowns(tmp_path):
     assert MimeRegistry.detect(m4a,'audio/mp4')=='audio/mp4'
     webp=tmp_path/'image.webp';webp.write_bytes(b'RIFF\x04\x00\x00\x00WEBPVP8 ')
     assert MimeRegistry.detect(webp,'image/webp')=='image/webp'
+    gzip=tmp_path/'product.tar.gz';gzip.write_bytes(b'\x1f\x8b\x08\x00'+b'\x00'*20)
+    assert MimeRegistry.detect(gzip,'application/x-tar')=='application/gzip'
+    assert MimeRegistry.detect(gzip,'application/x-gzip')=='application/gzip'
     invalid=tmp_path/'invalid.svg';invalid.write_text('<svg>')
     with pytest.raises(ValueError,match='does not match'):
         MimeRegistry.detect(invalid,'image/svg+xml')

@@ -21,6 +21,8 @@ MIME_ALIASES = {
     "text/x-markdown": "text/markdown",
     "text/x-sh": "text/plain",
     "application/x-pdf": "application/pdf",
+    "application/x-gzip": "application/gzip",
+    "application/x-tar": "application/gzip",
 }
 
 
@@ -47,6 +49,7 @@ class MimeRegistry:
             detected = "audio/mp4" if normalized=="audio/mp4" else "video/mp4"
         elif head.startswith(b"glTF"):detected="model/gltf-binary"
         elif head.startswith(b"Kaydara FBX Binary"):detected="application/vnd.autodesk.fbx"
+        elif head.startswith(b"\x1f\x8b"):detected="application/gzip"
         elif head.startswith(b"PK\x03\x04"):
             try:
                 with zipfile.ZipFile(path) as archive:
