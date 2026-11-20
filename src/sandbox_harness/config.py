@@ -157,6 +157,7 @@ class Settings(BaseSettings):
     model_routes_json: str = ""
     harness_catalog_json: str = ""
     model_catalog_discovery: bool = True
+    model_catalog_snapshot_path: Path | None = None
     model_catalog_refresh_seconds: int = Field(default=300, ge=30, le=86400)
     model_catalog_timeout_seconds: float = Field(default=10, ge=1, le=60)
     model_probe_enabled: bool = True

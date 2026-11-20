@@ -46,6 +46,8 @@ def test_ali_environment_regenerates_service_secrets_and_isolates_paths():
     assert values["SANDBOX_HARNESS_NAMESPACE"]=="sandbox-harness-platform-parallel-ali"
     assert values["SANDBOX_HARNESS_REDIS_PREFIX"]=="sandbox-harness-platform-parallel-ali:"
     assert values["SANDBOX_HARNESS_OBJECT_PREFIX"]=="sandbox-harness-platform-parallel-ali/"
+    assert values["SANDBOX_HARNESS_MODEL_CATALOG_SNAPSHOT_PATH"]==str(
+        ALI_ROOT/".data/catalogs/model-catalog.json")
     assert "@127.0.0.1:28433/sandbox_harness_parallel_ali" in values["SANDBOX_HARNESS_DATABASE_URL"]
     assert values["SANDBOX_HARNESS_SESSION_SIGNING_KEY"]=="session-secret"
     assert values["SANDBOX_HARNESS_GATEWAY_SIGNING_KEY"]=="gateway-secret"
@@ -62,6 +64,7 @@ def test_ali_configurator_has_fail_closed_preflights():
     assert "SHARED_KEYS" in source
     assert "source.items()" not in source
     assert 'DATA_ROOT/"logs"' in source
+    assert 'DATA_ROOT/"image-decompose"' in source
 
 
 def test_ali_postgresql_scripts_use_dedicated_cluster_under_data2():

@@ -97,6 +97,7 @@ def build_environment(source:dict[str,str],*,token=lambda:secrets.token_urlsafe(
         "SANDBOX_HARNESS_RUNTIME_BUNDLE_DIR":str(DATA_ROOT/"runtime-bundles"),
         "SANDBOX_HARNESS_RUNTIME_CODE_BUNDLE_DIR":str(DATA_ROOT/"runtime-code-bundles"),
         "SANDBOX_HARNESS_CONTROLLED_RUNTIME_ROOT":str(DATA_ROOT/"provider-runtime"),
+        "SANDBOX_HARNESS_MODEL_CATALOG_SNAPSHOT_PATH":str(DATA_ROOT/"catalogs/model-catalog.json"),
         "SANDBOX_HARNESS_SITE_PUBLIC_BASE_PATH":"/sandbox-harness-platform-parallel-ali/sites",
     })
     return values
@@ -140,7 +141,7 @@ def main()->None:
     if target.exists() and not args.force:raise FileExistsError(target)
     service_paths=(DATA_ROOT/"logs",DATA_ROOT/"cache",DATA_ROOT/"pip-cache",
         DATA_ROOT/"npm-cache",DATA_ROOT/"playwright-browsers",DATA_ROOT/"objects",
-        DATA_ROOT/"service-logs",DATA_ROOT/"tmp",DATA_ROOT/"catalogs",
+        DATA_ROOT/"service-logs",DATA_ROOT/"tmp",DATA_ROOT/"image-decompose",DATA_ROOT/"catalogs",
         DATA_ROOT/"runtime-bundles",DATA_ROOT/"runtime-code-bundles")
     for path in (DATA_ROOT/"config",*service_paths,DATA_ROOT/"postgresql",DATA_ROOT/"postgresql/run"):
         path.mkdir(parents=True,exist_ok=True)

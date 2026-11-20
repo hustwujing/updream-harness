@@ -63,7 +63,7 @@ class ModelDiscovery:
         self.settings = settings
         self.catalog = catalog
         self.transport = transport
-        self.snapshot = settings.data_root / "model-catalog.json"
+        self.snapshot = settings.model_catalog_snapshot_path or settings.data_root / "model-catalog.json"
         self.routes = ModelRoutes(settings)
         self.last_refresh_at: str | None = None
         self.last_attempt_at: str | None = None

@@ -8,6 +8,12 @@ from sandbox_harness.domain import Harness
 from sandbox_harness.model_discovery import ModelDiscovery, compatible_models, parse_model_ids
 
 
+def test_model_discovery_uses_configured_snapshot_path(tmp_path):
+    snapshot=tmp_path/"catalogs"/"model-catalog.json"
+    settings=Settings(data_root=tmp_path/"locked",model_catalog_snapshot_path=snapshot)
+    assert ModelDiscovery(settings,HarnessCatalog()).snapshot==snapshot
+
+
 def test_public_reasoning_level_maps_to_native_harness_effort():
     catalog = HarnessCatalog()
     assert catalog.resolve("codex", "gpt-5.6", "maximum").reasoning_effort == "xhigh"
