@@ -158,3 +158,10 @@ def test_ali_image_builder_uses_only_ali_checkout_and_namespaces():
     assert "127.0.0.1:25001/sandbox-harness-platform-parallel-ali" in source
     assert "SANDBOX_HARNESS_LOCAL_IMAGE_PREFIX:-sandbox-harness-parallel-ali" in source
     assert 'output_root="$root/.data/image-build/$tag"' in source
+
+
+def test_ali_transient_runner_passes_service_argument_separately():
+    source=(ROOT/"deploy/ali/start.sh").read_text()
+    assert '"$root/deploy/ali/run-service.sh" gateway' in source
+    assert '"$root/deploy/ali/run-service.sh" job-worker' in source
+    assert '"$root/deploy/ali/run-service.sh gateway"' not in source

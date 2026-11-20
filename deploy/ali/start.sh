@@ -17,11 +17,12 @@ wait_port() {
 }
 
 start_transient() {
-  local unit=$1 user=$2 command=$3
+  local unit=$1 user=$2
+  shift 2
   if systemctl is-active --quiet "$unit.service"; then return 0; fi
   systemd-run --unit="$unit" --collect --uid="$user" \
     --property=WorkingDirectory="$root" --property=Restart=on-failure \
-    --property=RestartSec=3 --property=KillMode=control-group "$command"
+    --property=RestartSec=3 --property=KillMode=control-group "$@"
 }
 
 start_transient sandbox-harness-parallel-ali-postgresql sandbox-harness-db \
@@ -35,18 +36,17 @@ if ! systemctl is-active --quiet sandbox-harness-parallel-ali-network.service; t
 fi
 
 start_transient sandbox-harness-parallel-ali-gateway sandbox-harness \
-  "$root/deploy/ali/run-service.sh gateway"
+  "$root/deploy/ali/run-service.sh" gateway
 wait_port 172.31.0.1 29882
 start_transient sandbox-harness-parallel-ali-job-worker sandbox-harness \
-  "$root/deploy/ali/run-service.sh job-worker"
+  "$root/deploy/ali/run-service.sh" job-worker
 start_transient sandbox-harness-parallel-ali-controlled-worker root \
-  "$root/deploy/ali/run-service.sh controlled-worker"
+  "$root/deploy/ali/run-service.sh" controlled-worker
 start_transient sandbox-harness-parallel-ali-media-worker sandbox-harness \
-  "$root/deploy/ali/run-service.sh media-worker"
+  "$root/deploy/ali/run-service.sh" media-worker
 start_transient sandbox-harness-parallel-ali-site-worker sandbox-harness \
-  "$root/deploy/ali/run-service.sh site-worker"
+  "$root/deploy/ali/run-service.sh" site-worker
 start_transient sandbox-harness-parallel-ali-api sandbox-harness \
-  "$root/deploy/ali/run-service.sh api"
+  "$root/deploy/ali/run-service.sh" api
 wait_port 127.0.0.1 24767
 "$root/deploy/ali/status.sh"
-
