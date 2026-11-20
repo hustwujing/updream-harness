@@ -78,6 +78,6 @@
 - Modify: `docs/development/recovery-and-observability.md`
 - Modify: `docs/development/gateway-security-providers.md`
 
-- [ ] Run focused unit/component tests for all three Harnesses.
-- [ ] Run real Codex, Claude and DeepSeek model probes including cache usage.
+- [x] Run focused unit/component tests for all three Harnesses.
+- [x] Run real Codex, Claude and DeepSeek model probes including cache usage.
 - [ ] Run the full gate, deploy, verify and push.

@@ -39,3 +39,21 @@ supported; its native Session remains authoritative.
 
 Final current-revision gate and deployed real-Harness evidence are appended at
 release completion.
+
+## Deployed Two-Turn Sessions
+
+Candidate `8c7b213307e3` ran two native Turns for each Harness. All six Turns
+completed and the second Turn resumed the original native Session. Durable
+model activity and reservation settlement produced:
+
+| Harness / Turn | Logical input | Ordinary | Cache read | Cache write | Output | Budget charge |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Codex 1 | 21,200 | 17,488 | 3,712 | 0 | 10 | 17,870 |
+| Codex 2 | 23,733 | 2,741 | 20,992 | 0 | 10 | 4,851 |
+| Claude 1 | 44,773 | 2 | 0 | 44,771 | 15 | 55,981 |
+| Claude 2 | 48,291 | 2 | 35,132 | 13,157 | 15 | 19,978 |
+| DeepSeek 1 | 16,322 | 10,306 | 6,016 | 0 | 7 | 10,915 |
+| DeepSeek 2 | 18,969 | 13,593 | 5,376 | 0 | 7 | 14,138 |
+
+The test Threads and their retained Sandboxes were deleted after evidence was
+captured. The temporary probe script was removed.
