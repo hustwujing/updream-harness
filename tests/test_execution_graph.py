@@ -150,6 +150,9 @@ async def test_execution_graph_projects_exact_child_wait_progress_and_join_barri
             'cancelled':0,'blocked':0,'unknown':0,'paused':0}
         assert barrier['state']=='RUNNING' and barrier['title']=='正在等待全部子任务返回 · 2/3'
         assert barrier['progress']==group_node['progress'] and barrier['turn_id']==turn.id
+        assert [row['local_job_id'] for row in barrier['remaining_jobs']]==['child-2']
+        assert barrier['remaining_jobs'][0]['state']=='CREATED'
+        assert barrier['remaining_jobs'][0]['started_at']
         assert await ExecutionGraphProjector(store).waits(thread.id,'owner')==[barrier]
         assert {'from':'group:'+group.id,'to':barrier['id'],'kind':'waits_on'} in graph['edges']
         assert {edge['from'] for edge in graph['edges'] if edge['to']==barrier['id']

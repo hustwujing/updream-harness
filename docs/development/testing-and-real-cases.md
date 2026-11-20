@@ -56,3 +56,17 @@ the program response, state, cleanup and user-visible error are correct.
 Completion means no known program error in affected cases and no clear,
 bounded prompt/UI improvement left unaddressed. It does not mean every model
 response is semantically successful.
+
+## K campaign evidence
+
+K01-K11 are exact capability matrices. K12-K14 are user-path E2E workflows and
+must exercise durable Continuation plus final delivery. Skill coverage requires
+both structured evidence and a host-validated product archive; a Harness-authored
+list of commands or checks is not proof that a product existed.
+
+Campaign reports use `verification_scope=clean_run` only when every reported
+success was executed on the report revision. Resuming passed cases from an older
+revision produces `composite_verified`; summaries must not describe that as one
+complete green matrix. After a generic fix, rerun the failed member and affected
+passed members first, then run the complete matrix once before release when the
+claim requires a clean full pass.

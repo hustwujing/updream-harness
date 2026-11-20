@@ -99,10 +99,10 @@
 **Interfaces:**
 - Produces: independently validated `skill_product` archives and explicit `clean_run` / `composite_verified` report scope.
 
-- [ ] Add tests for safe/nonempty product archives and report-scope classification.
-- [ ] Extend K01-K06 objectives/contracts and host verification.
-- [ ] Make campaign reports refuse to label composite reruns as one clean success.
-- [ ] Run catalog/runner tests and commit.
+- [x] Add tests for safe/nonempty product archives and report-scope classification.
+- [x] Extend K01-K06 objectives/contracts and host verification.
+- [x] Make campaign reports refuse to label composite reruns as one clean success.
+- [x] Run catalog/runner tests and commit.
 
 ### Task 5: E2E K Cases And Long-tail UI
 
@@ -119,9 +119,9 @@
 **Interfaces:**
 - Produces: wait-barrier `remaining_jobs` and K12-K14 user-path evidence with one bounded continuation per group.
 
-- [ ] Add failing graph/browser tests for remaining names, elapsed time and bounded semantic grouping.
-- [ ] Implement wait-barrier payload/UI without adding graph nodes per raw event.
-- [ ] Add K12 Skill continuation, K13 mixed group and K14 two-stage Provider cases.
+- [x] Add failing graph/browser tests for remaining names, elapsed time and bounded semantic grouping.
+- [x] Implement wait-barrier payload/UI without adding graph nodes per raw event.
+- [x] Add K12 Skill continuation, K13 mixed group and K14 two-stage Provider cases.
 - [ ] Run focused UI/API tests and commit.
 
 ### Task 6: Real Verification And Release

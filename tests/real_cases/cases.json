@@ -14,10 +14,10 @@
     "evidence_root": ".data/evidence/real-campaign",
     "forbid_case_specific_product_fixes": true
   },
-  "runnable_case_count": 166,
+  "runnable_case_count": 169,
   "business_case_count": 78,
   "inherited_protocol_case_count": 51,
-  "parallel_case_count": 37,
+  "parallel_case_count": 40,
   "cases": [
     {
       "id": "S01",
@@ -7677,6 +7677,103 @@
               "texture_model",
               "decimate_model",
               "convert_model"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "K12",
+      "title": "Skill并行续接与最终交付",
+      "complexity": "parallel_protocol",
+      "assets": [],
+      "prompt": "两个独立Skill子Harness并行完成真实产品，全部返回后只续接一次Primary并形成最终交付。",
+      "expect": {
+        "child_harnesses": 2,
+        "one_primary_continuation": true,
+        "delivery": "k12-summary.md"
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_browser_or_api",
+      "executor": "parallel_protocol",
+      "required_features": [
+        "skill_coverage",
+        "parallel",
+        "continuation",
+        "delivery"
+      ],
+      "provenance": "parallel-design"
+    },
+    {
+      "id": "K13",
+      "title": "Operation与Skill混合续接",
+      "complexity": "parallel_protocol",
+      "assets": [
+        "poster.png"
+      ],
+      "prompt": "媒体Operation与Skill子Harness并行执行，运行图展示剩余成员，完成后Primary汇总交付。",
+      "expect": {
+        "group_members": 2,
+        "one_primary_continuation": true,
+        "delivery": "k13-summary.json"
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_browser_or_api",
+      "executor": "parallel_protocol",
+      "required_features": [
+        "operation",
+        "complex_skill",
+        "parallel",
+        "continuation",
+        "delivery"
+      ],
+      "provenance": "parallel-design"
+    },
+    {
+      "id": "K14",
+      "title": "两阶段Provider不可变交接",
+      "complexity": "parallel_protocol",
+      "assets": [],
+      "prompt": "第一阶段生成工作区图片，第二阶段以其不可变Artifact作为引用生成最终交付；每阶段整组确认并各续接一次。",
+      "expect": {
+        "phase_one_jobs": 1,
+        "phase_two_jobs": 1,
+        "confirmations": 2,
+        "continuations": 2,
+        "delivery_role": "generated_images"
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_browser_or_api",
+      "executor": "parallel_protocol",
+      "required_features": [
+        "provider_coverage",
+        "two_stage_dag",
+        "artifact_handoff",
+        "group_confirmation",
+        "delivery"
+      ],
+      "provenance": "parallel-design",
+      "coverage": {
+        "tier": "expensive",
+        "skills": [],
+        "operations": [],
+        "providers": [
+          {
+            "adapter": "ark_image",
+            "model": "seedream-5.0",
+            "capability": "image.generate",
+            "modes": [
+              "text_to_image",
+              "reference_image"
             ]
           }
         ]

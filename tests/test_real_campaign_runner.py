@@ -2,6 +2,7 @@ import ast
 import importlib.util
 import io
 from pathlib import Path
+import tarfile
 import time
 
 import pytest
@@ -28,8 +29,8 @@ def test_real_case_catalog_includes_every_inherited_d_case_with_provenance():
     for case in catalog['cases']:
         groups[case['id'][0]].append(case)
     assert {key:len(value) for key,value in groups.items()}=={
-        'S':31,'C':30,'R':17,'D':51,'P':26,'K':11}
-    assert len(catalog['cases'])==166 and catalog['runnable_case_count']==166
+        'S':31,'C':30,'R':17,'D':51,'P':26,'K':14}
+    assert len(catalog['cases'])==169 and catalog['runnable_case_count']==169
     assert not catalog['superseded_cases']
     assert [case['id'] for case in groups['D']]==[f'D{index:02d}' for index in range(1,52)]
     assert all(case['executor']=='inherited_protocol' for case in groups['D'])
@@ -63,7 +64,7 @@ def test_parallel_protocol_runner_never_fakes_unimplemented_success():
     assert "classification':'program_failure'" in source
     assert "in {'program_failure','optimizable_prompt'}:raise SystemExit(2)" in source
     assert source.count("_,continuations=await wait_continuations(client,thread['id'],maximum=1)")==5
-    assert all(f"'K{index:02d}'" in source for index in range(1,12))
+    assert all(f"'K{index:02d}'" in source for index in range(1,15))
     assert 'case_skill_coverage' in source and all(
         f'case_k{index:02d}' in source for index in range(7,12))
     assert "'video.generate'" in source and "'video.edit'" in source
@@ -117,6 +118,39 @@ def campaign_module():
     spec=importlib.util.spec_from_file_location("real_campaign_runner",path)
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     return module
+
+
+def test_skill_product_archive_validation_rejects_links_and_traversal():
+    path=ROOT/'tests/run_real_parallel_protocol.py'
+    spec=importlib.util.spec_from_file_location('parallel_protocol_archive',path)
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    def archive(member,data=b'product'):
+        stream=io.BytesIO()
+        with tarfile.open(fileobj=stream,mode='w:gz') as output:
+            member.size=len(data);output.addfile(member,io.BytesIO(data))
+        return stream.getvalue()
+    regular=tarfile.TarInfo('product/result.md')
+    assert module.validate_skill_product_archive(archive(regular))['files']==['product/result.md']
+    traversal=tarfile.TarInfo('../escape.txt')
+    with pytest.raises(AssertionError,match='path invalid'):
+        module.validate_skill_product_archive(archive(traversal))
+    link=tarfile.TarInfo('product/link');link.type=tarfile.SYMTYPE;link.linkname='/etc/passwd'
+    with pytest.raises(AssertionError,match='path invalid'):
+        module.validate_skill_product_archive(archive(link,b''))
+
+
+def test_campaign_report_distinguishes_clean_run_from_composite_reruns(tmp_path):
+    module=campaign_module();target=tmp_path/'report.json';catalog=tmp_path/'catalog.json'
+    module.write_report_checkpoint(target,revision='new',catalog=catalog,selected_count=2,
+        started_count=1,stopped_for_defect=False,results={
+            'K09':{'classification':'success','run_revision':'old'},
+            'K10':{'classification':'success','run_revision':'new'}})
+    assert __import__('json').loads(target.read_text())['verification_scope']=='composite_verified'
+    module.write_report_checkpoint(target,revision='new',catalog=catalog,selected_count=2,
+        started_count=2,stopped_for_defect=False,results={
+            'K09':{'classification':'success','run_revision':'new'},
+            'K10':{'classification':'success','run_revision':'new'}})
+    assert __import__('json').loads(target.read_text())['verification_scope']=='clean_run'
 
 
 class Response:

@@ -67,7 +67,13 @@ def group_progress(groups,state_rows):
     return values
 
 
-def wait_barrier(group,progress):
+def remaining_jobs(rows):
+    return [{'job_id':row.id,'local_job_id':row.local_job_id,'descriptor_id':row.descriptor_id,
+        'state':row.state,'started_at':iso(row.created_at)} for row in rows
+        if row.state in RUNNING_JOB_STATES]
+
+
+def wait_barrier(group,progress,remaining=()):
     complete=progress['terminal']>=progress['total']
     paused=not complete and progress['paused']>=progress['total']-progress['terminal']
     return {'id':'wait_barrier:'+group.id,'type':'wait_barrier','role':'子任务等待','visual_role':'wait_barrier',
@@ -78,7 +84,7 @@ def wait_barrier(group,progress):
         'ended_at':iso(group.terminal_at) if complete else None,
         'duration_ms':duration_ms(group.created_at,group.terminal_at) if complete else 0,
         'retries':0,'activity_count':0,'turn_id':group.origin_turn_id,
-        'group_id':group.id,'progress':progress}
+        'group_id':group.id,'progress':progress,'remaining_jobs':list(remaining)}
 
 
 class ExecutionGraphProjector:
@@ -95,8 +101,12 @@ class ExecutionGraphProjector:
             identities={row.id for row in groups}
             state_rows=(await db.execute(select(JobRow.group_id,JobRow.state,func.count()).where(
                 JobRow.group_id.in_(identities or {''})).group_by(JobRow.group_id,JobRow.state))).all()
+            active=list((await db.execute(select(JobRow).where(JobRow.group_id.in_(identities or {''}),
+                JobRow.state.in_(RUNNING_JOB_STATES)).order_by(JobRow.created_at))).scalars().all())
         progress=group_progress(groups,state_rows)
-        return [wait_barrier(group,progress[group.id]) for group in groups]
+        by_group={identity:[] for identity in identities}
+        for row in active:by_group[row.group_id].append(row)
+        return [wait_barrier(group,progress[group.id],remaining_jobs(by_group[group.id])) for group in groups]
 
     async def snapshot(self,thread_id:str,owner_id:str,*,cursor:str='',include_history:bool=False,
                        history_before:str='')->dict:
@@ -222,6 +232,9 @@ class ExecutionGraphProjector:
         for row in artifacts:artifacts_by_job[row.job_id].append({'artifact_id':row.artifact_id,
             'artifact_role':row.artifact_role,'filename':row.filename,'mime':row.mime,
             'size':row.size,'sha256':row.sha256,'output_disposition':row.output_disposition})
+        remaining_by_group={identity:[] for identity in group_ids}
+        for row in jobs:
+            if row.state in RUNNING_JOB_STATES:remaining_by_group[row.group_id].append(row)
         nodes=[];edges=[]
         outbox_by_continuation={row.continuation_turn_id:row for row in outboxes
             if row.continuation_turn_id}
@@ -271,7 +284,7 @@ class ExecutionGraphProjector:
             parent=('draft:'+group.draft_id if group.draft_id else f'turn:{group.origin_turn_id}:primary')
             edges.append({'from':parent,'to':identity,'kind':'contains' if group.draft_id else 'submitted_by'})
             barrier_id='wait_barrier:'+group.id
-            nodes.append(wait_barrier(group,progress))
+            nodes.append(wait_barrier(group,progress,remaining_jobs(remaining_by_group[group.id])))
             edges.append({'from':identity,'to':barrier_id,'kind':'waits_on'})
         for outbox in outboxes:
             if outbox.continuation_turn_id in turn_ids and outbox.group_id in group_ids:

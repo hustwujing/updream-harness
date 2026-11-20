@@ -11,7 +11,17 @@ ROOT=Path(__file__).resolve().parents[1]
 
 def coverage_cases():
     catalog=json.loads((ROOT/'tests/real_cases/cases.json').read_text())
-    return [row for row in catalog['cases'] if row['id'].startswith('K')]
+    return [row for row in catalog['cases'] if row['id'] in {
+        f'K{index:02d}' for index in range(1,12)}]
+
+
+def test_k_e2e_cases_are_separate_from_exact_capability_matrix():
+    catalog=json.loads((ROOT/'tests/real_cases/cases.json').read_text())
+    values={row['id']:row for row in catalog['cases'] if row['id'] in {'K12','K13','K14'}}
+    assert set(values)=={'K12','K13','K14'}
+    assert {'continuation','delivery'}<=set(values['K12']['required_features'])
+    assert {'operation','complex_skill','continuation'}<=set(values['K13']['required_features'])
+    assert {'two_stage_dag','artifact_handoff','group_confirmation'}<=set(values['K14']['required_features'])
 
 
 def test_complex_coverage_cases_exactly_cover_every_signed_skill_and_operation():

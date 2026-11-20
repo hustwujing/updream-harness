@@ -573,6 +573,18 @@ export default function ExecutionGraph({ thread, items = [] }) {
             </>
           )}
         </dl>
+        {selected.remaining_jobs?.length > 0 && (
+          <section className="execution-remaining-jobs">
+            <h3>仍在执行</h3>
+            {selected.remaining_jobs.map((job) => (
+              <div key={job.job_id}>
+                <b>{job.local_job_id}</b>
+                <small>{job.descriptor_id} · {stateLabels[job.state] || job.state}</small>
+                <time>{formatDuration(job.started_at ? Math.max(0, now-Date.parse(job.started_at)) : 0)}</time>
+              </div>
+            ))}
+          </section>
+        )}
         {selected.error_summary && (
           <p className="execution-node-error" role="alert">
             <b>{selected.error_summary}</b>

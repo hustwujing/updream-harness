@@ -6,11 +6,13 @@ import asyncio
 from contextlib import asynccontextmanager
 import fcntl
 import hashlib
+import io
 import json
 import mimetypes
 import os
-from pathlib import Path
+from pathlib import Path,PurePosixPath
 import subprocess
+import tarfile
 import time
 import uuid
 
@@ -21,6 +23,26 @@ from dotenv import dotenv_values
 ROOT=Path(__file__).resolve().parents[1]
 TERMINAL_JOBS={'SUCCEEDED','FAILED','CANCELLED','BLOCKED','UNKNOWN'}
 PROTOCOL_LOCK=ROOT/'.data/tmp/real-protocol.lock'
+
+
+def validate_skill_product_archive(data:bytes)->dict:
+    if not data or len(data)>32*1024*1024:raise AssertionError('skill product archive size invalid')
+    files=[];total=0
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as archive:
+            members=archive.getmembers()
+            if not members or len(members)>200:raise AssertionError('skill product member count invalid')
+            for member in members:
+                path=PurePosixPath(member.name)
+                if (path.is_absolute() or not path.parts or any(part in {'','..'} for part in path.parts)
+                        or member.issym() or member.islnk() or member.isdev()):
+                    raise AssertionError('skill product archive path invalid')
+                if member.isfile():
+                    total+=member.size
+                    if member.size>0:files.append(path.as_posix())
+    except (tarfile.TarError,OSError) as exc:raise AssertionError('skill product archive invalid') from exc
+    if not files or total>64*1024*1024:raise AssertionError('skill product content invalid')
+    return {'files':files,'total_bytes':total}
 
 
 @asynccontextmanager
@@ -268,10 +290,10 @@ def load_platform_settings():
     return load_settings()
 
 
-async def origin(client,args,identity):
+async def origin(client,args,identity,message='请简短回复已就绪。'):
     response=await client.post('api/threads',json={'harness':args.harness,'model':args.model,
         'reasoning_level':args.reasoning,'title':'Protocol '+identity});require(response);thread=response.json()
-    response=await client.post(f"api/threads/{thread['id']}/turns",json={'message':'请简短回复已就绪。',
+    response=await client.post(f"api/threads/{thread['id']}/turns",json={'message':message,
         'attachments':[],'idempotency_key':'protocol-origin-'+identity+'-'+uuid.uuid4().hex,
         'delivery_mode':'start'});require(response);return thread,response.json()
 
@@ -394,6 +416,9 @@ async def case_skill_coverage(client,args,identity:str):
     output={'artifact_role':'skill_evidence','output_disposition':'workspace',
         'min_items':1,'max_items':1,'mime_patterns':['application/json'],
         'max_item_bytes':2*1024*1024,'max_total_bytes':2*1024*1024}
+    product={'artifact_role':'skill_product','output_disposition':'workspace',
+        'min_items':1,'max_items':1,'mime_patterns':['application/gzip','application/x-gzip'],
+        'max_item_bytes':32*1024*1024,'max_total_bytes':32*1024*1024}
     jobs=[]
     for index,skill_id in enumerate(declared):
         test_case=str(manifest[skill_id].get('test_case') or 'validate the Skill contract')
@@ -404,8 +429,13 @@ async def case_skill_coverage(client,args,identity:str):
             f'/workspace/outputs/{skill_id}-coverage.json as JSON with skill_id exactly "{skill_id}", '
             'test_case, commands (a non-empty array of commands actually run), checks (a non-empty '
             'array of concrete observed results), and produced_files (paths made in project or scratch). '
-            'Delete every other file from /workspace/outputs before finishing.')
-        jobs.append(harness_job(1000+index,args,objective=objective,outputs=[output],
+            f'Copy at least one real non-evidence product created by the Skill into '
+            f'/workspace/project/work/{skill_id}-product, then create exactly '
+            f'/workspace/outputs/{skill_id}-product.tar.gz from that directory. The archive must '
+            'contain regular non-empty product files, no symlinks, node_modules, caches, or evidence JSON. '
+            'Delete every other file from /workspace/outputs before finishing, leaving exactly the '
+            'coverage JSON and product tar.gz.')
+        jobs.append(harness_job(1000+index,args,objective=objective,outputs=[output,product],
             skills=[skill_id],inputs=bindings))
         jobs[-1]['local_job_id']='skill-'+skill_id
         jobs[-1]['idempotency_key']='coverage-'+identity+'-'+skill_id+'-'+uuid.uuid4().hex
@@ -428,6 +458,10 @@ async def case_skill_coverage(client,args,identity:str):
             outputs=await store.list_job_artifacts(row['id'],'skill_evidence')
             if len(outputs)!=1:raise AssertionError('skill evidence artifact count:'+skill_id)
             value=json.loads(objects.get(outputs[0].object_ref,maximum=2*1024*1024))
+            products=await store.list_job_artifacts(row['id'],'skill_product')
+            if len(products)!=1:raise AssertionError('skill product artifact count:'+skill_id)
+            product_evidence=validate_skill_product_archive(objects.get(
+                products[0].object_ref,maximum=32*1024*1024))
             if (value.get('skill_id')!=skill_id or not value.get('commands') or not value.get('checks')):
                 raise AssertionError('skill evidence content invalid:'+skill_id)
             activities=await store.list_job_activities(row['id'],0,1000)
@@ -435,7 +469,9 @@ async def case_skill_coverage(client,args,identity:str):
                 for item in activities):raise AssertionError('skill produced no tool activity:'+skill_id)
             evidence[skill_id]={'job_id':row['id'],'runtime_profile_id':request.runtime_profile_id,
                 'artifact_id':outputs[0].artifact_id,'commands':len(value['commands']),
-                'checks':len(value['checks'])}
+                'checks':len(value['checks']),'product_artifact_id':products[0].artifact_id,
+                'product_files':len(product_evidence['files']),
+                'product_bytes':product_evidence['total_bytes']}
     finally:await store.close()
     return {'classification':'success','thread_id':thread['id'],'skills':list(declared),
         'child_harnesses':len(completed),'parallel':True,'evidence':evidence}
@@ -692,6 +728,103 @@ async def case_k11(client,args):
         'phase_one_jobs':len(phase_one),'phase_two_jobs':len(phase_two),
         'one_confirmation_per_phase':True,'immutable_handoff':True,
         'evidence':{**first_result['evidence'],**second_result['evidence']}}
+
+
+async def thread_artifact_names(client,thread_id:str)->list[str]:
+    items=require(await client.get(f'api/threads/{thread_id}/items',params={'after':0,'limit':500})).json()
+    return [str(row.get('summary') or '') for row in items if row.get('type')=='artifact']
+
+
+async def case_k12(client,args):
+    thread,turn=await origin(client,args,'K12',(
+        '先回复已就绪。平台稍后会返回两个并行子任务结果；收到全部结果后，读取其不可变成果，'
+        '汇总为 /workspace/outputs/k12-summary.md，验证后作为最终交付。'))
+    await wait_turn(client,turn['id'])
+    output=lambda role,name:{'artifact_role':role,'output_disposition':'workspace',
+        'min_items':1,'max_items':1,'mime_patterns':['text/markdown']}
+    jobs=[harness_job(120,args,skills=['data-quality-audit'],objective=(
+        'Create a small deterministic CSV in scratch, audit null and duplicate rows with the injected '
+        'Skill, and write exactly /workspace/outputs/quality.md with observed counts.'),
+        outputs=[output('quality_report','quality.md')]),
+        harness_job(121,args,skills=['query-validation'],objective=(
+        'Use the injected Skill to validate a deterministic PostgreSQL query and write exactly '
+        '/workspace/outputs/query.md with concrete correctness and performance findings.'),
+        outputs=[output('query_report','query.md')])]
+    prepared=require(await prepare(client,thread,turn,jobs,'K12')).json()
+    if prepared.get('mode')!='committed':raise AssertionError('K12 unexpectedly required confirmation')
+    completed=await wait_jobs(client,prepared['jobs'],args.timeout)
+    _,continuations=await wait_continuations(client,thread['id'],timeout=args.timeout,maximum=1)
+    final=await wait_turn(client,continuations[0]['id'],args.timeout)
+    if final['state']!='COMPLETED':raise AssertionError('K12 continuation did not complete')
+    names=await thread_artifact_names(client,thread['id'])
+    if 'k12-summary.md' not in names:raise AssertionError('K12 final delivery missing')
+    return {'classification':'success','thread_id':thread['id'],'group_id':prepared['group']['id'],
+        'child_harnesses':len(completed),'one_primary_continuation':len(continuations)==1,
+        'continuation_id':continuations[0]['id'],'artifact_names':names}
+
+
+async def case_k13(client,args):
+    thread,turn=await origin(client,args,'K13',(
+        '先回复已就绪。平台稍后会返回图片规格化和检查两个并行结果；收到全部结果后，'
+        '把真实Artifact ID和检查摘要写入 /workspace/outputs/k13-summary.json 并验证交付。'))
+    await wait_turn(client,turn['id'])
+    source=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/poster.png')
+    child=harness_job(130,args,skills=['media-processing'],inputs=[{
+        'artifact_id':source.id,'artifact_role':'source'}],objective=(
+        'Inspect the frozen image with Pillow, report its dimensions and alpha state, and write exactly '
+        '/workspace/outputs/k13-inspection.json.'),outputs=[{'artifact_role':'inspection',
+        'output_disposition':'workspace','min_items':1,'max_items':1,
+        'mime_patterns':['application/json']}])
+    prepared=require(await prepare(client,thread,turn,[operation_job(source.id),child],'K13')).json()
+    if prepared.get('mode')!='committed':raise AssertionError('K13 unexpectedly required confirmation')
+    completed=await wait_jobs(client,prepared['jobs'],args.timeout)
+    _,continuations=await wait_continuations(client,thread['id'],timeout=args.timeout,maximum=1)
+    final=await wait_turn(client,continuations[0]['id'],args.timeout)
+    if final['state']!='COMPLETED':raise AssertionError('K13 continuation did not complete')
+    if 'k13-summary.json' not in await thread_artifact_names(client,thread['id']):
+        raise AssertionError('K13 final delivery missing')
+    graph=require(await client.get(f"api/threads/{thread['id']}/execution-graph",
+        params={'include_history':'true'})).json()
+    barriers=[row for row in graph['nodes'] if row['type']=='wait_barrier']
+    if not barriers or barriers[-1]['progress']['terminal']!=2:raise AssertionError('K13 barrier incomplete')
+    return {'classification':'success','thread_id':thread['id'],'group_id':prepared['group']['id'],
+        'group_members':len(completed),'one_primary_continuation':len(continuations)==1,
+        'continuation_id':continuations[0]['id'],'barrier':barriers[-1]['progress']}
+
+
+async def case_k14(client,args):
+    thread,turn=await origin(client,args,'K14');await wait_turn(client,turn['id'])
+    first=semantic_provider_job('k14-source','image.generate',kind='image',model='seedream-5.0',
+        mode='text_to_image',parameters={'prompt':'clean blue geometric cup on white, no text',
+            'size':'2560x1440'})
+    first['expected_outputs'][0]['output_disposition']='workspace'
+    prepared=require(await prepare(client,thread,turn,[first],'K14-source')).json()
+    if prepared.get('mode')!='draft':raise AssertionError('K14 phase one bypassed confirmation')
+    committed=require(await client.post(f"api/job-group-drafts/{prepared['draft']['id']}/confirm")).json()
+    phase_one=await wait_jobs(client,committed['jobs'],args.timeout)
+    _,first_continuations=await wait_continuations(client,thread['id'],timeout=args.timeout,maximum=1)
+    await wait_turn(client,first_continuations[0]['id'],args.timeout)
+    artifacts=await job_artifacts([phase_one[0]['id']]);source=artifacts[phase_one[0]['id']][0]
+    reference={'artifact_id':source.artifact_id,'role':'reference_image','usage':'subject'}
+    second=semantic_provider_job('k14-final','image.generate',kind='image',model='seedream-5.0',
+        mode='reference_image',parameters={'prompt':'preserve the cup, premium studio lighting, no text',
+            'size':'2560x1440'},references=[reference])
+    second['expected_outputs'][0]['output_disposition']='delivery'
+    phase_two_turn=first_continuations[0]
+    prepared_two=require(await prepare(client,thread,phase_two_turn,[second],'K14-final')).json()
+    if prepared_two.get('mode')!='draft':raise AssertionError('K14 phase two bypassed confirmation')
+    committed_two=require(await client.post(
+        f"api/job-group-drafts/{prepared_two['draft']['id']}/confirm")).json()
+    phase_two=await wait_jobs(client,committed_two['jobs'],args.timeout)
+    _,continuations=await wait_continuations(client,thread['id'],timeout=args.timeout,minimum=2,maximum=2)
+    await wait_turn(client,continuations[-1]['id'],args.timeout)
+    outputs=await job_artifacts([phase_two[0]['id']]);final_artifacts=outputs[phase_two[0]['id']]
+    if not final_artifacts or final_artifacts[0].output_disposition.value!='delivery':
+        raise AssertionError('K14 final delivery missing')
+    return {'classification':'success','thread_id':thread['id'],'phase_one_group_id':committed['group']['id'],
+        'phase_two_group_id':committed_two['group']['id'],'confirmations':2,'continuations':2,
+        'immutable_handoff_artifact_id':source.artifact_id,
+        'delivery_artifact_id':final_artifacts[0].artifact_id}
 
 
 async def case_p01(client,args):
@@ -1438,6 +1571,7 @@ HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case
     'P21':case_p21,'P22':case_p22,'P23':case_p23,'P24':case_p24,
     'P25':case_p25,'P26':case_p26,'P27':case_p27,
     'K07':case_k07,'K08':case_k08,'K09':case_k09,'K10':case_k10,'K11':case_k11,
+    'K12':case_k12,'K13':case_k13,'K14':case_k14,
     **{identity:(lambda client,args,identity=identity:case_skill_coverage(client,args,identity))
         for identity in SKILL_COVERAGE}}
 
@@ -1445,7 +1579,7 @@ HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case
 async def main():
     parser=argparse.ArgumentParser();parser.add_argument('--base-url',default='http://127.0.0.1:24766/')
     parser.add_argument('--case',required=True,choices=[
-        *(f'P{value:02d}' for value in range(1,28)),*(f'K{value:02d}' for value in range(1,12))])
+        *(f'P{value:02d}' for value in range(1,28)),*(f'K{value:02d}' for value in range(1,15))])
     parser.add_argument('--report',type=Path,required=True);parser.add_argument('--harness',default='codex')
     parser.add_argument('--model',default='gpt-5.6-sol');parser.add_argument('--reasoning',default='deep')
     parser.add_argument('--timeout',type=float,default=1200)

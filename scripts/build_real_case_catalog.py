@@ -211,6 +211,22 @@ COVERAGE_CASES=[
                 "modes":["image_to_model","multiview_to_model"]},
             {"adapter":"tripo_v3","model":"v3.1-20260211","capability":"model3d.transform",
                 "modes":["texture_model","decimate_model","convert_model"]}]}),
+    protocol("K12","Skill并行续接与最终交付",
+        "两个独立Skill子Harness并行完成真实产品，全部返回后只续接一次Primary并形成最终交付。",
+        {"child_harnesses":2,"one_primary_continuation":True,"delivery":"k12-summary.md"},
+        features=("skill_coverage","parallel","continuation","delivery")),
+    protocol("K13","Operation与Skill混合续接",
+        "媒体Operation与Skill子Harness并行执行，运行图展示剩余成员，完成后Primary汇总交付。",
+        {"group_members":2,"one_primary_continuation":True,"delivery":"k13-summary.json"},
+        assets=("poster.png",),features=("operation","complex_skill","parallel","continuation","delivery")),
+    protocol("K14","两阶段Provider不可变交接",
+        "第一阶段生成工作区图片，第二阶段以其不可变Artifact作为引用生成最终交付；每阶段整组确认并各续接一次。",
+        {"phase_one_jobs":1,"phase_two_jobs":1,"confirmations":2,
+            "continuations":2,"delivery_role":"generated_images"},
+        features=("provider_coverage","two_stage_dag","artifact_handoff","group_confirmation","delivery"),
+        coverage={"tier":"expensive","skills":[],"operations":[],"providers":[
+            {"adapter":"ark_image","model":"seedream-5.0","capability":"image.generate",
+                "modes":["text_to_image","reference_image"]}]}),
 ]
 
 

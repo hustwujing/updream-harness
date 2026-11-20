@@ -525,9 +525,14 @@ async def progress(total,running,results,started_count,stop,interval):
 
 def write_report_checkpoint(target:Path,*,revision:str,catalog:Path,selected_count:int,
                             started_count:int,stopped_for_defect:bool,results:dict)->None:
+    successful=[row for row in results.values() if row.get('classification')=='success']
+    verification_scope=('clean_run' if successful and all(
+        row.get('run_revision')==revision for row in successful) else 'composite_verified'
+        if successful else 'incomplete')
     report={"revision":revision,"finished_at":now(),"catalog":str(catalog),
         "selected_count":selected_count,"started_count":started_count,
-        "stopped_for_defect":stopped_for_defect,"results":results}
+        "stopped_for_defect":stopped_for_defect,"verification_scope":verification_scope,
+        "results":results}
     target.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.NamedTemporaryFile(mode="w",dir=target.parent,delete=False) as stream:
         temporary=Path(stream.name)
@@ -579,7 +584,8 @@ async def main():
                 except Exception as exc:
                     value={"classification":"program_failure","reason":type(exc).__name__+":"+str(exc)[:500]}
                 value.update(case_id=identity,title=case["title"],elapsed_seconds=round(time.monotonic()-started,3),
-                    finished_at=now());results[identity]=value;running.pop(identity,None);queue.task_done()
+                    finished_at=now(),run_revision=revision);results[identity]=value
+                running.pop(identity,None);queue.task_done()
                 async with report_lock:
                     await asyncio.to_thread(write_report_checkpoint,target,revision=revision,
                         catalog=args.catalog,selected_count=len(selected),started_count=started_count[0],
