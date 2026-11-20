@@ -14,7 +14,7 @@ from .job_adapters import (AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExe
 from .job_contracts import JobState
 from .artifact_gateway import ArtifactEmission,ArtifactGateway
 from .scheduler import ResourceRequest, Scheduler
-from .sandbox import SandboxNotFound
+from .sandbox import SandboxCapacityUnavailable,SandboxNotFound,SandboxRateLimited
 from .objects import object_chunks
 
 
@@ -153,6 +153,11 @@ class HarnessJobAdapter(BaseJobAdapter):
             async with self.scheduler.hold(reservation.id,reservation.node_id,reservation.node_generation):
                 execution_id,receipt=await self.backend.start(context,reservation)
                 await self.scheduler.mark_running(reservation.id,reservation.node_id,reservation.node_generation)
+        except (SandboxCapacityUnavailable,SandboxRateLimited) as exc:
+            await self.scheduler.release(reservation.id,reservation.node_id,reservation.node_generation)
+            raise PreAcceptFailure(str(exc),infrastructure=True,retry_after_seconds=1,
+                error_code=exc.code,failed_phase='submission',retry_class='capacity_wait',
+                retryable=True) from exc
         except BaseException:
             await self.scheduler.release(reservation.id,reservation.node_id,reservation.node_generation)
             raise

@@ -2,7 +2,7 @@ import pytest
 from types import SimpleNamespace
 
 from sandbox_harness.harness_job import HarnessJobAdapter,OpenSandboxChildBackend
-from sandbox_harness.job_adapters import AdapterStatus,JobExecutionContext
+from sandbox_harness.job_adapters import AdapterStatus,JobExecutionContext,PreAcceptFailure
 from sandbox_harness.job_contracts import (JobGroupCreate,JobExpectedOutput,JobKind,JobRequest,
     JobState,OutputDisposition)
 from sandbox_harness.job_worker import JobWorker
@@ -10,7 +10,7 @@ from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.config import Settings
 from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate
 from sandbox_harness.objects import ObjectStore
-from sandbox_harness.sandbox import Sandbox,SandboxNotFound
+from sandbox_harness.sandbox import Sandbox,SandboxCapacityUnavailable,SandboxNotFound
 from sandbox_harness.scheduler import NodeInventory,Scheduler
 from sandbox_harness.runtime import StagedRuntimeObject
 from sandbox_harness.store import Store
@@ -64,6 +64,21 @@ async def test_child_harness_acceptance_status_result_and_cleanup(tmp_path):
             from sandbox_harness.store import ResourceReservationRow
             reservations=list((await db.execute(select(ResourceReservationRow))).scalars())
         assert reservations[0].state=='released'
+    finally:await store.close()
+
+
+async def test_child_harness_maps_sandbox_capacity_to_pre_accept_wait(tmp_path):
+    store,adapter,backend,job=await setup(tmp_path,AdapterStatus(True,JobState.SUCCEEDED,{}))
+    async def unavailable(context,reservation):
+        raise SandboxCapacityUnavailable('provider capacity',provider='opensandbox')
+    backend.start=unavailable
+    try:
+        frozen=await store.get_job_request(job.id)
+        with pytest.raises(PreAcceptFailure) as raised:
+            await adapter.submit(JobExecutionContext(job=job,request=frozen,generation=1))
+        assert raised.value.infrastructure and raised.value.retryable
+        assert raised.value.retry_class=='capacity_wait'
+        assert raised.value.error_code=='infrastructure_capacity_wait'
     finally:await store.close()
 
 
