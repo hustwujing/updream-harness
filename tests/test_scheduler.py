@@ -95,6 +95,23 @@ async def test_scheduler_fences_stale_node_generation_and_reservation_release(tm
     finally:await store.close()
 
 
+async def test_scheduler_reacquires_released_reservation_for_same_attempt(tmp_path):
+    store,scheduler=await setup(tmp_path)
+    try:
+        await scheduler.register_node(node(generation=2))
+        first=await scheduler.reserve('1'*32,1,request())
+        assert await scheduler.release(first.id,first.node_id,first.node_generation)
+
+        second=await scheduler.reserve('1'*32,1,request())
+
+        assert second.id==first.id
+        assert second.state=='reserved'
+        async with scheduler.hold(second.id,second.node_id,second.node_generation):
+            assert (await scheduler.mark_running(
+                second.id,second.node_id,second.node_generation)).state=='running'
+    finally:await store.close()
+
+
 async def test_scheduler_reaps_only_expired_terminal_stale_generation_without_live_sandbox(tmp_path):
     store,scheduler=await setup(tmp_path)
     try:

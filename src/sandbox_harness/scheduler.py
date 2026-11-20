@@ -142,7 +142,7 @@ class Scheduler:
                 expected=(request.child_profile_id,request.runtime_profile_id,request.harness,request.image_digest)
                 actual=(existing.child_profile_id,existing.runtime_profile_id,existing.harness,existing.image_digest)
                 if expected!=actual:raise RuntimeError("resource_reservation_conflict")
-                return self._view(existing)
+                if existing.state in {"reserved","running"}:return self._view(existing)
             nodes=list((await db.execute(select(NodeRow).where(NodeRow.status=="ready",
                 NodeRow.heartbeat_at>now()-timedelta(seconds=self.node_ttl_seconds))
                 .order_by(NodeRow.id).with_for_update())).scalars().all())
@@ -177,14 +177,24 @@ class Scheduler:
             _,node,inventory,gpu_ids=min(candidates,key=lambda value:value[0]);timestamp=now()
             selected_profile=next(value for value in inventory.profiles
                 if value.runtime_profile_id==request.runtime_profile_id and value.harness==request.harness)
-            row=ResourceReservationRow(id=identifier(),job_id=job_id,job_generation=job_generation,
-                node_id=node.id,node_generation=node.generation,child_profile_id=request.child_profile_id,
-                runtime_profile_id=request.runtime_profile_id,harness=request.harness,
-                image_digest=request.image_digest,image_ref=selected_profile.image_ref,
-                cpu=request.cpu,memory_mb=request.memory_mb,
-                disk_mb=request.disk_mb,gpu_ids_json=json.dumps(gpu_ids),state="reserved",
-                expires_at=timestamp+timedelta(seconds=self.reservation_seconds),created_at=timestamp,released_at=None)
-            db.add(row);await db.flush();return self._view(row)
+            if existing:
+                row=existing
+                row.node_id=node.id;row.node_generation=node.generation
+                row.image_ref=selected_profile.image_ref
+                row.cpu=request.cpu;row.memory_mb=request.memory_mb;row.disk_mb=request.disk_mb
+                row.gpu_ids_json=json.dumps(gpu_ids);row.state="reserved"
+                row.expires_at=timestamp+timedelta(seconds=self.reservation_seconds)
+                row.released_at=None
+            else:
+                row=ResourceReservationRow(id=identifier(),job_id=job_id,job_generation=job_generation,
+                    node_id=node.id,node_generation=node.generation,child_profile_id=request.child_profile_id,
+                    runtime_profile_id=request.runtime_profile_id,harness=request.harness,
+                    image_digest=request.image_digest,image_ref=selected_profile.image_ref,
+                    cpu=request.cpu,memory_mb=request.memory_mb,
+                    disk_mb=request.disk_mb,gpu_ids_json=json.dumps(gpu_ids),state="reserved",
+                    expires_at=timestamp+timedelta(seconds=self.reservation_seconds),created_at=timestamp,released_at=None)
+                db.add(row)
+            await db.flush();return self._view(row)
 
     async def active_reservation(self,job_id:str)->ResourceReservation|None:
         async with self.store.connections() as db:
