@@ -61,3 +61,26 @@ def test_ali_configurator_has_fail_closed_preflights():
         assert contract in source
     assert "SHARED_KEYS" in source
     assert "source.items()" not in source
+
+
+def test_ali_postgresql_scripts_use_dedicated_cluster_under_data2():
+    initializer=(ROOT/"deploy/ali/init-postgresql.sh").read_text()
+    starter=(ROOT/"deploy/ali/postgresql-start.sh").read_text()
+    combined=initializer+starter
+    assert "127.0.0.1:28433" in initializer
+    assert "sandbox_harness_parallel_ali" in initializer
+    assert ".data/postgresql" in combined
+    assert ".data/postgresql/run" in combined
+    assert ".data/postgresql/postgresql.log" in starter
+    assert "/usr/lib/postgresql/16/bin/initdb" in initializer
+    assert "/usr/lib/postgresql/16/bin/postgres" in starter
+    for forbidden in ("28432","sandbox_harness_parallel ","/var/lib/postgresql","/var/log","mktemp /tmp"):
+        assert forbidden not in combined
+
+
+def test_ali_postgresql_initializer_validates_exact_environment_identity():
+    source=(ROOT/"deploy/ali/init-postgresql.sh").read_text()
+    assert "SANDBOX_HARNESS_DATABASE_URL" in source
+    assert "@127.0.0.1:28433/sandbox_harness_parallel_ali" in source
+    assert "unexpected_project_root" in source
+    assert "run as root" in source
