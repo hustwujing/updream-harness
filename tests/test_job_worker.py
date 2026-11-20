@@ -267,14 +267,44 @@ async def test_one_job_exception_does_not_crash_service_worker(tmp_path):
     finally:await store.close()
 
 
-async def test_collection_exception_is_failed_without_repeating_accepted_execution(tmp_path):
+async def test_collection_retry_survives_worker_restart_and_reuses_accepted_execution(tmp_path):
+    class FlakyCollector(FakeAdapter):
+        collect_calls=0
+        async def collect(self,*args):
+            self.collect_calls+=1
+            if self.collect_calls==1:raise RuntimeError('secret provider download body')
+            return await super().collect(*args)
+    store,_,job=await setup(tmp_path,request(kind=JobKind.PROVIDER,
+        retry_policy={'max_pre_accept_attempts':2,'max_collection_attempts':2}))
+    adapter=FlakyCollector([AdapterSubmission('external-1',{'accepted':True},
+        completed=True,result={'done':True})],[AdapterStatus(True,JobState.SUCCEEDED,{'done':True})])
+    first=JobWorker(store,{'fake':adapter},node_id='node',worker_id='worker-a')
+    second=JobWorker(store,{'fake':adapter},node_id='node',worker_id='worker-b')
+    try:
+        await first.run_once();waiting=await store.get_job(job.id)
+        assert waiting.state==JobState.WAITING_EXTERNAL and adapter.submit_calls==1
+        await second.run_once();completed=await store.get_job(job.id)
+        assert completed.state==JobState.SUCCEEDED and adapter.submit_calls==1
+        assert adapter.collect_calls==2 and adapter.status_calls==1
+        async with store.connections() as db:
+            attempts=list((await db.execute(select(JobAttemptRow).where(
+                JobAttemptRow.job_id==job.id).order_by(JobAttemptRow.generation))).scalars().all())
+        assert [row.outcome for row in attempts]==['COLLECTION_RETRY','SUCCEEDED']
+        assert [row.retry_kind for row in attempts]==['initial','collection']
+        assert {row.external_execution_id for row in attempts if row.external_execution_id}=={'external-1'}
+    finally:await store.close()
+
+
+async def test_collection_retry_exhaustion_is_structured_without_resubmission(tmp_path):
     class BrokenCollector(FakeAdapter):
         async def collect(self,*_):raise RuntimeError('secret provider download body')
-    store,_,job=await setup(tmp_path,request(kind=JobKind.PROVIDER))
+    store,_,job=await setup(tmp_path,request(kind=JobKind.PROVIDER,
+        retry_policy={'max_pre_accept_attempts':2,'max_collection_attempts':2}))
     adapter=BrokenCollector([AdapterSubmission('external-1',{'accepted':True},
-        completed=True,result={'done':True})])
+        completed=True,result={'done':True})],[AdapterStatus(True,JobState.SUCCEEDED,{'done':True})])
     worker=JobWorker(store,{'fake':adapter},node_id='node',worker_id='worker')
     try:
+        await worker.run_once();assert (await store.get_job(job.id)).state==JobState.WAITING_EXTERNAL
         await worker.run_once();failed=await store.get_job(job.id)
         assert failed.state==JobState.FAILED and adapter.submit_calls==1
         assert failed.result['error_code']=='artifact_collection_failed'

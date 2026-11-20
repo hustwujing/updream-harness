@@ -310,6 +310,17 @@ class JobWorker:
         except JobDeadlineExceeded:
             await self._timeout(adapter,context,external_id,submission_started)
         except ExternalJobFailure as exc:
+            if exc.result.get('retry_class')=='collect_same_execution':
+                maximum=int(request.retry_policy.get('max_collection_attempts',1))
+                deferred=await self.store.defer_collection_retry(job.id,self.worker_id,
+                    attempt.generation,maximum_attempts=maximum,
+                    error_code=str(exc.result.get('error_code') or 'artifact_collection_failed'),
+                    error_detail=str(exc)[:2000])
+                if deferred:
+                    event('job.collection.retry_deferred',level=30,job_id=job.id,
+                        generation=attempt.generation,maximum_attempts=maximum,
+                        external_execution_id=external_id)
+                    return
             await self.store.transition_job(job.id,exc.terminal_state,
                 expected_generation=attempt.generation,result=normalize_job_error(exc.result,
                     side_effect_state=('unknown' if exc.terminal_state==JobState.UNKNOWN else None)))

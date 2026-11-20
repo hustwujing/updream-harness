@@ -2391,6 +2391,39 @@ class Store:
                 await db.flush()
                 return self.job_view(job)
 
+    async def defer_collection_retry(self,job_id:str,worker_id:str,generation:int,*,
+                                      maximum_attempts:int,error_code:str,
+                                      error_detail:str)->JobView|None:
+        """Persist a collection-only retry without reopening external submission."""
+        async with self.connections() as lookup:
+            group_id=(await lookup.execute(select(JobRow.group_id).where(
+                JobRow.id==job_id))).scalar_one_or_none()
+        if not group_id:raise KeyError('job_not_found')
+        async with self.job_lock(f"group:{group_id}"):
+            async with self.connections.begin() as db:
+                job=await db.get(JobRow,job_id,with_for_update=True)
+                attempt=(await db.execute(select(JobAttemptRow).where(
+                    JobAttemptRow.job_id==job_id,JobAttemptRow.generation==generation)
+                    .with_for_update())).scalar_one_or_none()
+                lease=await db.get(JobLeaseRow,job_id,with_for_update=True)
+                if (not job or not attempt or not lease or job.generation!=generation
+                        or lease.generation!=generation or lease.worker_id!=worker_id):
+                    raise RuntimeError('stale_job_generation')
+                previous=int((await db.execute(select(func.count()).select_from(
+                    JobAttemptRow).where(JobAttemptRow.job_id==job_id,
+                        JobAttemptRow.outcome=='COLLECTION_RETRY'))).scalar_one())
+                if previous+1>=max(1,maximum_attempts):return None
+                attempt.finished_at=now();attempt.outcome='COLLECTION_RETRY'
+                attempt.error_code=error_code;attempt.error_detail=error_detail[:2000]
+                job.state=JobState.WAITING_EXTERNAL.value
+                job.result_json=canonical_json(normalize_job_error({
+                    'error_code':error_code,'error_detail':'成果收集将使用原执行句柄重试',
+                    'failed_phase':'collection','retryable':True,
+                    'retry_class':'collect_same_execution','side_effect_state':'completed'}))
+                job.result_digest=hashlib.sha256(job.result_json.encode()).hexdigest()
+                job.updated_at=now();await db.delete(lease);await db.flush()
+                return self.job_view(job)
+
     async def request_job_cancel(self, job_id: str, owner_id: str) -> JobView:
         async with self.job_lock(f"job:{job_id}"):
             async with self.connections.begin() as db:
@@ -2464,6 +2497,11 @@ class Store:
                         and not (job.kind == JobKind.PROVIDER.value
                             and job.state == JobState.WAITING_EXTERNAL.value)):
                     raise RuntimeError("thread_paused")
+                previous_outcome=(await db.execute(select(JobAttemptRow.outcome).where(
+                    JobAttemptRow.job_id==job.id).order_by(
+                    JobAttemptRow.generation.desc()).limit(1))).scalar_one_or_none()
+                if retry_kind=='initial' and previous_outcome=='COLLECTION_RETRY':
+                    retry_kind='collection'
                 job.generation += 1
                 job.state = JobState.RUNNING.value
                 job.updated_at = now()

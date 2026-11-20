@@ -205,7 +205,7 @@ class ExecutionGraphProjector:
                 JobDisplayActivityRow.job_id))).all()
             retry_rows=(await db.execute(select(JobAttemptRow.job_id,func.sum(case(
                 (JobAttemptRow.outcome=='PRE_ACCEPT_RETRY',1),
-                (JobAttemptRow.retry_kind.in_(['recovery','reconcile']),1),else_=0))).where(
+                (JobAttemptRow.retry_kind.in_(['recovery','reconcile','collection']),1),else_=0))).where(
                     JobAttemptRow.job_id.in_(job_ids or {''})).group_by(JobAttemptRow.job_id))).all()
             artifacts=list((await db.execute(select(JobArtifactRow).where(
                 JobArtifactRow.job_id.in_(job_ids or {''})).order_by(
