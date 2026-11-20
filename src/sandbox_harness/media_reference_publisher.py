@@ -28,26 +28,40 @@ class MediaReferencePublisher:
         identity=f"{self.worker_owner}\0{job['id']}\0{job['generation']}".encode()
         return "media-ref-"+hashlib.sha256(identity).hexdigest()[:54]
 
+    async def _verify_boss(self, record: dict) -> None:
+        head = await asyncio.to_thread(self.objects.head_media_upload, record["object_key"])
+        metadata = head["metadata"]
+        if (head["size"] != record["size"] or head["mime"] != record["mime"]
+                or metadata.get("sha256") != record["sha256"]
+                or metadata.get("size") != str(record["size"])
+                or metadata.get("kind") != record["kind"]):
+            raise MediaReferencePreparationError("boss_reference_upload_verification_failed")
+        await asyncio.to_thread(self.objects.verify_media_upload, record["object_key"],
+            digest=record["sha256"], expected_size=record["size"])
+
     async def _publish_boss(self, record: dict, prepared: dict, claim_owner: str) -> dict:
         try:
             size=await asyncio.to_thread(self.objects.size,record["object_ref"],maximum=record["size"])
             if size != record["size"]:
                 raise MediaReferencePreparationError("media_reference_source_integrity_failed")
-            async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
-                response = await client.put(prepared["put_url"],
-                    content=object_chunks(self.objects,record["object_ref"],maximum=record["size"]),
-                    headers={**prepared["headers"],"Content-Length":str(record["size"])})
-            if not response.is_success and response.status_code not in {409, 412}:
-                raise MediaReferencePreparationError(f"boss_reference_upload_http_{response.status_code}")
-            head = await asyncio.to_thread(self.objects.head_media_upload, record["object_key"])
-            metadata = head["metadata"]
-            if (head["size"] != record["size"] or head["mime"] != record["mime"]
-                    or metadata.get("sha256") != record["sha256"]
-                    or metadata.get("size") != str(record["size"])
-                    or metadata.get("kind") != record["kind"]):
-                raise MediaReferencePreparationError("boss_reference_upload_verification_failed")
-            await asyncio.to_thread(self.objects.verify_media_upload, record["object_key"],
-                digest=record["sha256"], expected_size=record["size"])
+            for attempt in range(3):
+                try:
+                    async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
+                        response = await client.put(prepared["put_url"],
+                            content=object_chunks(self.objects,record["object_ref"],maximum=record["size"]),
+                            headers={**prepared["headers"],"Content-Length":str(record["size"])})
+                except (httpx.TimeoutException,httpx.TransportError) as transport:
+                    try:
+                        await self._verify_boss(record)
+                    except Exception:
+                        if attempt==2:raise transport
+                        await asyncio.sleep(.5*(2**attempt))
+                        continue
+                    break
+                if not response.is_success and response.status_code not in {409, 412}:
+                    raise MediaReferencePreparationError(f"boss_reference_upload_http_{response.status_code}")
+                await self._verify_boss(record)
+                break
         except MediaReferencePreparationError:
             raise
         except Exception as exc:

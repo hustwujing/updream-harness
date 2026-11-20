@@ -4,6 +4,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
+import httpx
 from sqlalchemy import select
 
 from sandbox_harness.catalog import HarnessCatalog
@@ -91,6 +92,59 @@ async def test_reference_publisher_uploads_activates_and_reuses_cached_asset(tmp
         repeated=await publisher.prepare(value,require_ark=True)
         assert repeated[0]["asset_uri"]=="asset://asset-test"
         assert objects.uploads==1 and ark.creates==1
+    finally:await store.close()
+
+
+@pytest.mark.asyncio
+async def test_reference_publisher_recovers_or_retries_transient_put_read_error(tmp_path,monkeypatch):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"publisher-put-retry.db"));await store.initialize()
+    try:
+        value=await job(store)
+        class FlakyObjects(Objects):
+            def __init__(self):super().__init__();self.head_calls=0
+            def head_media_upload(self,key):
+                self.head_calls+=1
+                if self.head_calls==1:raise FileNotFoundError(key)
+                return super().head_media_upload(key)
+        class FlakyClient(HttpClient):
+            def __init__(self):self.calls=0
+            async def put(self,*args,**kwargs):
+                self.calls+=1
+                if self.calls==1:
+                    raise httpx.ReadError("response interrupted",request=httpx.Request("PUT",args[0]))
+                return await super().put(*args,**kwargs)
+        objects=FlakyObjects();client=FlakyClient()
+        publisher=MediaReferencePublisher(settings(),store,objects,"worker")
+        monkeypatch.setattr("sandbox_harness.media_reference_publisher.httpx.AsyncClient",lambda **_:client)
+        async def no_sleep(_):return None
+        monkeypatch.setattr("sandbox_harness.media_reference_publisher.asyncio.sleep",no_sleep)
+
+        ready=await publisher.prepare(value,require_ark=False)
+
+        assert ready[0]["public_url"].startswith("https://boss-shjd.biliapi.net/updream/")
+        assert client.calls==2 and objects.head_calls==2 and objects.uploads==1
+    finally:await store.close()
+
+
+@pytest.mark.asyncio
+async def test_reference_publisher_does_not_replay_put_after_dropped_success_response(tmp_path,monkeypatch):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"publisher-put-reconcile.db"));await store.initialize()
+    try:
+        value=await job(store);objects=Objects()
+        class DroppedResponseClient(HttpClient):
+            def __init__(self):self.calls=0
+            async def put(self,*args,**kwargs):
+                self.calls+=1
+                raise httpx.ReadError("accepted response dropped",
+                    request=httpx.Request("PUT",args[0]))
+        client=DroppedResponseClient()
+        publisher=MediaReferencePublisher(settings(),store,objects,"worker")
+        monkeypatch.setattr("sandbox_harness.media_reference_publisher.httpx.AsyncClient",lambda **_:client)
+
+        ready=await publisher.prepare(value,require_ark=False)
+
+        assert ready[0]["public_url"].startswith("https://boss-shjd.biliapi.net/updream/")
+        assert client.calls==1 and objects.uploads==1
     finally:await store.close()
 
 
