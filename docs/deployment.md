@@ -96,6 +96,12 @@ on `127.0.0.1:18090`; it forwards only to the Ali API at `127.0.0.1:24767`.
 The root Nginx configuration contains only the include directive and must not
 store Ali logs, caches, temporary files or application state.
 
+For direct access through `http://updream-lab.bilibili.co`, include the
+versioned `deploy/nginx-ali.conf` inside the existing port 80 server. The direct
+route uses `$remote_addr`, `$proxy_add_x_forwarded_for` and
+`X-Updream-Ingress: direct`; it must not reuse the PROXY v2 variables or the
+`frpc` authentication marker.
+
 ## Release Safety
 
 - Query active Turns and Jobs before a planned restart; do not treat graceful shutdown as a
