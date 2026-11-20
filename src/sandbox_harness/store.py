@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import asyncio
 import hashlib
+import re
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -4858,6 +4859,18 @@ class Store:
             turn_id = row.turn_id
         await self.append_event(turn_id, EventKind.STEP_PROGRESS if status == "in_progress" else EventKind.STEP_FINISHED,
             {"model_request_id": payload["model_request_id"], "phase": phase}, item_id=item_id)
+
+    async def latest_model_activity_error(self,turn_id:str)->str:
+        async with self.connections() as db:
+            rows=list((await db.execute(select(ItemRow).where(
+                ItemRow.turn_id==turn_id,ItemRow.type==ItemType.PLAN.value,
+                ItemRow.status=='failed').order_by(ItemRow.sequence.desc()).limit(8))).scalars().all())
+        for row in rows:
+            try:value=json.loads(row.payload_json or '{}')
+            except (TypeError,ValueError):continue
+            code=value.get('error_code') if isinstance(value,dict) else ''
+            if isinstance(code,str) and re.fullmatch(r'[a-z][a-z0-9_.-]{0,159}',code):return code
+        return ''
 
     async def runtime_event_recorded(self, turn_id: str, execution_id: str, source_sequence: int) -> bool:
         if not execution_id or source_sequence <= 0:

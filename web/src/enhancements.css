@@ -12,9 +12,11 @@
 
 .app > main > .topbar,
 .app > main > .conversation-controls,
-.app > main > .workspace-stale {
+.app > main > .workspace-stale,
+.app > main > .turn-failure-tip {
   flex: none;
 }
+.turn-failure-tip{display:flex;align-items:center;gap:9px;width:min(800px,calc(100% - 32px));margin:8px auto 0;border:1px solid #dfb7aa;border-radius:6px;padding:8px 10px;background:#fff4ef;color:#7f3e32}.turn-failure-tip>svg{flex:none}.turn-failure-tip>span{display:grid;gap:2px;min-width:0;flex:1}.turn-failure-tip b{font-size:11px}.turn-failure-tip small{font-size:9px;line-height:1.45}.turn-failure-tip>button{display:grid;place-items:center;width:26px;height:26px;flex:none;border:0;border-radius:4px;background:transparent;color:#7f3e32}.turn-failure-tip>button:hover{background:#f5ded5}
 
 .app > main > .transcript {
   flex: 1 1 auto;

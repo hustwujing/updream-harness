@@ -38,6 +38,18 @@ async def test_model_wait_stage_records_actual_model_and_updates_one_item(tmp_pa
     finally:await store.close()
 
 
+async def test_latest_model_activity_error_returns_only_stable_failed_model_step(tmp_path):
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'latest-model.db'));await store.initialize()
+    try:
+        profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,title='test'),profile,'owner')
+        turn,_,_=await store.create_turn(thread.id,TurnCreate(message='hello',idempotency_key='latest-model'),profile,'owner')
+        activity=ModelActivity(store,SimpleNamespace(thread_id=thread.id,turn_id=turn.id,model='gpt-5.6'))
+        await activity.start();await activity.finish(429,'model_token_budget_exhausted')
+        assert await store.latest_model_activity_error(turn.id)=='model_token_budget_exhausted'
+    finally:await store.close()
+
+
 def test_malformed_observation_frames_do_not_break_model_stream():
     probe=OutputProbe()
     for frame in [[],{'type':[]},{'type':'content_block_delta','delta':'bad'},{'choices':['bad',{}]}]:
@@ -50,5 +62,30 @@ def test_usage_logging_distinguishes_missing_and_reported_zero():
     probe.feed(b'data: {"type":"message_start","message":{"usage":{"input_tokens":42}}}\n\n')
     probe.feed(b'data: {"type":"message_delta","usage":{"output_tokens":0}}\n\n')
     assert probe.input_tokens==42 and probe.output_tokens==0
+
+
+def test_usage_normalizes_openai_claude_and_deepseek_cache_dimensions():
+    rows=[
+        b'data: {"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":5,"input_tokens_details":{"cached_tokens":80,"cache_write_tokens":10}}}}\n\n',
+        b'data: {"type":"message_start","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":80,"cache_creation_input_tokens":10}}}\n\n'
+        b'data: {"type":"message_delta","usage":{"output_tokens":5}}\n\n',
+        b'{"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20}}',
+    ]
+    expected=[(10,80,10,5,36),(10,80,10,5,36),(20,80,0,5,33)]
+    for raw,value in zip(rows,expected):
+        probe=OutputProbe();probe.feed(raw);probe.finish()
+        usage=probe.token_usage
+        assert (usage.ordinary_input_tokens,usage.cache_read_input_tokens,
+            usage.cache_write_input_tokens,usage.output_tokens,
+            usage.budget_charge(10,125))==value
+        assert probe.input_tokens==100 and probe.output_tokens==5
+
+
+def test_usage_ignores_malformed_cache_breakdown_without_losing_valid_totals():
+    probe=OutputProbe();probe.feed(
+        b'data: {"usage":{"input_tokens":42,"output_tokens":3,"input_tokens_details":{"cached_tokens":99}}}\n\n')
+    assert probe.input_tokens==42 and probe.output_tokens==3
+    assert probe.token_usage.ordinary_input_tokens==42
+    assert probe.token_usage.cache_read_input_tokens==0
     probe.feed(b'data: {"usage":{"input_tokens":"secret","output_tokens":-1}}\n\n')
-    assert probe.input_tokens==42 and probe.output_tokens==0
+    assert probe.input_tokens==42 and probe.output_tokens==3

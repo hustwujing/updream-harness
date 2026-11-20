@@ -148,6 +148,17 @@ surface. A running Harness with no active projected tool remains visibly in
 available for replay and incident analysis even though the browser does not
 request it.
 
+Model usage telemetry retains logical input plus ordinary/cache-read/cache-write
+dimensions and output. A local budget rejection is persisted before it reaches
+the native Harness, so recovery and the user-facing failure do not depend on
+whether Codex, Claude or DeepSeek preserves an HTTP response body. The latest
+failed model activity may refine only a generic native rate-limit/harness error;
+it cannot override a different explicit upstream failure.
+
+The failed-Turn UI tip reads the sanitized Error Item. Raw Turn `error_detail`,
+Provider bodies, credentials and command output remain diagnostic-only. Tip
+dismissal is presentation state and never mutates Turn recovery or retry state.
+
 ## Runtime child durability
 
 Native Interaction delivery is tri-state. A successful stdin drain is

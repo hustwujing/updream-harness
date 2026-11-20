@@ -56,6 +56,8 @@ def command(harness: str, model: str, native_thread_id: str = "") -> HarnessComm
         value = json.loads(override)
         return HarnessCommand(list(value[harness]), common, streaming_input=harness == "claude")
     if harness == "codex":
+        compact_limit=max(1,int(os.environ.get('HARNESS_COMPACT_TOKEN_LIMIT','100000')))
+        post_turn_percent=max(0,min(100,int(os.environ.get('HARNESS_POST_TURN_COMPACT_PERCENT','60'))))
         codex_home = Path("/workspace/state/codex")
         codex_home.mkdir(parents=True, exist_ok=True)
         config = "\n".join([
@@ -64,6 +66,9 @@ def command(harness: str, model: str, native_thread_id: str = "") -> HarnessComm
             'approval_policy = "never"',
             'sandbox_mode = "danger-full-access"',
             "model_reasoning_effort = " + json.dumps(os.environ.get("HARNESS_REASONING_EFFORT", "high")),
+            f'model_auto_compact_token_limit = {compact_limit}',
+            'model_auto_compact_token_limit_scope = "total"',
+            f'model_post_turn_compact_threshold_percent = {post_turn_percent}',
             '[model_providers.sandbox_gateway]',
             'name = "Sandbox Harness capability gateway"',
             "base_url = " + json.dumps(gateway + "/v1/models/codex"),
@@ -72,6 +77,8 @@ def command(harness: str, model: str, native_thread_id: str = "") -> HarnessComm
             'requires_openai_auth = false',
             'request_max_retries = 1',
             'stream_max_retries = 1',
+            '[model_providers.sandbox_gateway.capabilities]',
+            'remote_compaction = "unsupported"',
             '[features]',
             'multi_agent = false',
             '[shell_environment_policy]',

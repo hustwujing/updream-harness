@@ -34,6 +34,13 @@ ROUTES = {
 logger = logging.getLogger(__name__)
 
 
+async def reconcile_native_model_error(store,turn_id:str,error_code:str,error_detail:str)->tuple[str,str]:
+    if error_code not in {'model_rate_limited','harness_failed'}:return error_code,error_detail
+    observed=await store.latest_model_activity_error(turn_id)
+    if observed=='model_token_budget_exhausted':return observed,observed
+    return error_code,error_detail
+
+
 class CheckpointRestoreError(RuntimeError):
     pass
 
@@ -933,6 +940,8 @@ class Broker:
                     final_state = TurnState.FAILED
                     error_code = result.error_code or "harness_failed"
                     error_detail = result.error_detail
+                    error_code,error_detail=await reconcile_native_model_error(
+                        self.store,turn.id,error_code,error_detail)
                     # Preserve inspectable work even if the next model request failed.
                     # A failed Turn remains failed; partial artifacts are labelled as such.
                     try:

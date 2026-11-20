@@ -42,6 +42,14 @@ isolated from both predecessor deployments.
 
 The Capability Gateway is an infrastructure proxy. It injects model and Provider credentials after validating a Turn-scoped token. It does not understand prompts, plans or media quality.
 
+Model accounting is protocol-aware across Codex, Claude and DeepSeek. The
+Gateway records ordinary input, cache-read input, cache-write input and output
+separately, then settles the durable Turn budget with configured cache weights.
+Logical input remains visible for context and throughput analysis. Codex uses
+an explicit native local-compaction threshold; Claude Code and DeepSeek Harness
+retain their native Session compaction. A local budget exhaustion is reported
+as such and is never relabeled as upstream rate limiting.
+
 The Media Worker is a separate systemd service. API creates and queries Jobs;
 the Worker alone submits external Provider requests, persists external IDs,
 resumes polling after crashes and commits the Artifact, terminal state and
@@ -168,6 +176,11 @@ requires an explicit choice: discard and rematerialize, preserve the changed
 files under `project/work`, or register them as new managed versions.
 
 The browser keeps the selected Thread in `?thread=<id>`, restores it after refresh and supports history navigation. Users may delete terminal Threads; deletion first removes any retained Session Sandbox, then removes the owner's conversation records. Images, videos, text files and interactive HTML sites open in ownership-checked previews, while every file retains an explicit download action. A Thread with an active published site must first downline that site before deletion.
+
+When the latest Turn fails, the conversation shows one dismissible public
+failure tip below the top bar. It uses only the sanitized Error Item, never raw
+Turn diagnostics. Dismissal is remembered for that Turn; a later failure is
+shown independently.
 
 ## Development
 

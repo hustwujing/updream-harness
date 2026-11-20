@@ -50,6 +50,11 @@ def test_model_input_estimate_counts_inline_images_by_dimensions_not_base64_byte
     assert enforce_model_output_budget(payload,'/responses',100_000,estimate)==8192
 
 
+def test_output_budget_does_not_precharge_unknown_cache_outcome():
+    payload={'max_output_tokens':20}
+    assert enforce_model_output_budget(payload,'/responses',100,95)==20
+
+
 def test_model_input_estimate_is_conservative_for_text_and_malformed_binary():
     text={'input':'中'*3000+'x'*3000};raw=json.dumps(text,ensure_ascii=False).encode()
     estimate=estimate_model_input_tokens(text,len(raw))
@@ -110,7 +115,7 @@ async def test_native_auxiliary_model_routes_preserve_payload_and_budget_semanti
     async def respond(_client,request,*args):
         requests.append(request)
         body=(b'{"input_tokens":321}' if request.url.path.endswith("count_tokens") else
-            b'{"output":[],"usage":{"input_tokens":12,"output_tokens":3}}')
+            b'{"output":[],"usage":{"input_tokens":12,"output_tokens":3,"input_tokens_details":{"cached_tokens":10}}}')
         return httpx.Response(200,headers={"content-type":"application/json"},content=body)
     monkeypatch.setattr(gateway,"send_with_start_timeout",respond)
     settings=Settings(backend="fake",data_root=tmp_path,
@@ -145,12 +150,50 @@ async def test_native_auxiliary_model_routes_preserve_payload_and_budget_semanti
 
     compacted=await invoke(Harness.CODEX,"/responses/compact",
         {"model":"ignored","input":[{"role":"user","content":"keep this"}]})
-    assert compacted["usage"]=={"input_tokens":12,"output_tokens":3}
+    assert compacted["usage"]=={"input_tokens":12,"output_tokens":3,
+        "input_tokens_details":{"cached_tokens":10}}
     compact_body=json.loads(requests[1].content)
     assert compact_body["model"]=="selected-model" and compact_body["input"][0]["content"]=="keep this"
     assert "max_output_tokens" not in compact_body
     assert len(store.reservations)==1 and len(activities)==1
-    assert store.finalized==[("request-0",15)]
+    assert store.finalized==[("request-0",6)]
+
+
+async def test_local_budget_rejection_terminalizes_model_activity_before_upstream(tmp_path,monkeypatch):
+    import sandbox_harness.gateway as gateway
+    class Redis:pass
+    class SecurityStore:
+        async def authorize_capability(self,*args,**kwargs):
+            return {'request_count':1,'public_request_count':0,'token_remaining':100_000}
+        async def reserve_model_tokens(self,*args,**kwargs):
+            raise ValueError('model_token_budget_exhausted')
+    store=SecurityStore();activities=[]
+    monkeypatch.setattr(gateway.Redis,'from_url',lambda *args,**kwargs:Redis())
+    monkeypatch.setattr(gateway,'Store',lambda *args,**kwargs:store)
+    class Activity:
+        def __init__(self,*args):
+            self.request_id='local-budget';self.started=False;self.finished=[];activities.append(self)
+        async def start(self):self.started=True
+        async def finish(self,*args,**kwargs):self.finished.append((args,kwargs))
+    monkeypatch.setattr(gateway,'ModelActivity',Activity)
+    settings=Settings(backend='fake',data_root=tmp_path,
+        database_url='sqlite+aiosqlite:///'+str(tmp_path/'local-budget.db'),upstream_codex='http://unused')
+    app=gateway.create_gateway(settings)
+    token,_=CapabilityCodec(settings.gateway_signing_key).issue(thread_id='thread',turn_id='turn',
+        sandbox_id='sandbox',harness=Harness.CODEX,model='gpt-5.6',routes=['/v1/models/codex'],
+        ttl_seconds=60,max_requests=10,max_public_requests=1,token_budget=100_000)
+    body=b'{"model":"ignored","input":"hello"}';sent=False
+    async def receive():
+        nonlocal sent
+        if sent:return {'type':'http.request','body':b'','more_body':False}
+        sent=True;return {'type':'http.request','body':body,'more_body':False}
+    request=Request({'type':'http','method':'POST','path':'/v1/models/codex/responses',
+        'query_string':b'','headers':[(b'authorization',('Bearer '+token).encode())]},receive)
+    endpoint=next(route.endpoint for route in app.routes if getattr(route,'path',None)=='/{path:path}')
+    with pytest.raises(Exception) as raised:await endpoint('v1/models/codex/responses',request)
+    assert raised.value.status_code==429 and raised.value.detail=='model_token_budget_exhausted'
+    assert activities[0].started
+    assert activities[0].finished==[((429,),{'error_code':'model_token_budget_exhausted'})]
 
 
 async def test_durable_capability_counts_revocation_and_token_reservations_survive_restart(tmp_path):
@@ -350,6 +393,7 @@ async def test_excessive_native_model_request_never_reaches_upstream(
         def __init__(self,*args,**kwargs):pass
         async def authorize_capability(self,claims,usage="request"):
             return {"request_count":1,"public_request_count":0,"token_remaining":1}
+        async def persist_runtime_event(self,*args,**kwargs):return None
     monkeypatch.setattr(gateway.Redis,"from_url",lambda *args,**kwargs:Redis())
     monkeypatch.setattr(gateway,"Store",SecurityStore)
     calls=[]

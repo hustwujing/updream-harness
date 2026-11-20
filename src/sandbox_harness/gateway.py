@@ -226,7 +226,9 @@ def estimate_model_input_tokens(payload:dict,raw_size:int)->int:
 def enforce_model_output_budget(payload: dict, suffix: str, remaining: int,
                                 input_token_ceiling: int = 0) -> int:
     field = "max_output_tokens" if suffix.rstrip("/") == "/responses" else "max_tokens"
-    available=remaining-max(0,input_token_ceiling)
+    # Cache outcome is known only after Provider usage is returned. Reserve
+    # output here; weighted input is settled after completion.
+    available=remaining
     if available<1:raise HTTPException(429,"model_token_budget_exhausted")
     value = payload.get(field)
     if value is None:
@@ -888,23 +890,28 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(422, "Model request must be an object")
             payload["model"] = claims.model
             payload=normalize_model_request(payload,harness=harness,model=claims.model,suffix=suffix)
-            requested_output = model_token_reservation(payload,suffix,endpoint_kind,
-                int(request.state.capability_security["token_remaining"]),
-                estimate_model_input_tokens(payload,len(body)))
+            if activity:
+                await activity.start()
+            try:
+                requested_output = model_token_reservation(payload,suffix,endpoint_kind,
+                    int(request.state.capability_security["token_remaining"]),
+                    estimate_model_input_tokens(payload,len(body)))
+            except HTTPException as exc:
+                if activity:await activity.finish(exc.status_code,error_code=str(exc.detail))
+                raise
             if activity:
                 reservation_id=activity.request_id
                 try:
                     await activity_store.reserve_model_tokens(claims,reservation_id,requested_output)
                 except ValueError as exc:
                     if str(exc)=="model_token_budget_exhausted":
+                        await activity.finish(429,error_code=str(exc))
                         raise HTTPException(429,str(exc))
                     raise HTTPException(409,str(exc))
                 except Exception as exc:
                     raise HTTPException(503,"capability_authority_unavailable") from exc
             body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
         upstream = client.build_request(request.method, suffix, params=request.query_params, headers=headers, content=body)
-        if activity:
-            await activity.start()
         upstream.headers.update(carrier(getattr(activity,"span",None)))
         started = time.monotonic()
         try:
@@ -956,7 +963,9 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             nonlocal token_finalized
             if token_finalized or not reservation_id:return
             token_finalized=True
-            usage=(activity.probe.input_tokens+activity.probe.output_tokens
+            usage=(activity.probe.token_usage.budget_charge(
+                    settings.model_cache_read_budget_percent,
+                    settings.model_cache_write_budget_percent)
                 if activity and activity.probe.input_tokens is not None
                 and activity.probe.output_tokens is not None else None)
             await activity_store.finalize_model_tokens(reservation_id,usage)

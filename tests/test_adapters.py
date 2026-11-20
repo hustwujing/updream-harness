@@ -1,6 +1,7 @@
 import json
 
 from sandbox_runtime.adapters import control_user_message, normalize, normalize_error_code
+from sandbox_runtime.adapters import command
 
 
 def test_runtime_error_codes_normalize_structured_rate_limits_and_unknown_values():
@@ -9,6 +10,26 @@ def test_runtime_error_codes_normalize_structured_rate_limits_and_unknown_values
         "httpStatusCode":429}) == "model_token_budget_exhausted"
     assert normalize_error_code("provider_service_unavailable") == "provider_service_unavailable"
     assert normalize_error_code({"unexpected": {"detail": "private upstream body"}}) == "harness_failed"
+
+
+def test_codex_config_enables_native_compaction_without_overriding_other_harnesses(tmp_path,monkeypatch):
+    token=tmp_path/'token';token.write_text('secret')
+    monkeypatch.setenv('HARNESS_GATEWAY_URL','http://gateway')
+    monkeypatch.setenv('HARNESS_CAPABILITY_TOKEN_FILE',str(token))
+    monkeypatch.setenv('HARNESS_COMPACT_TOKEN_LIMIT','100000')
+    monkeypatch.setenv('HARNESS_POST_TURN_COMPACT_PERCENT','60')
+    monkeypatch.chdir(tmp_path)
+    codex=command('codex','gpt-5.6')
+    config=(tmp_path/'workspace/state/codex/config.toml')
+    if not config.exists():config=__import__('pathlib').Path(codex.environment['CODEX_HOME'])/'config.toml'
+    text=config.read_text()
+    assert 'model_auto_compact_token_limit = 100000' in text
+    assert 'model_auto_compact_token_limit_scope = "total"' in text
+    assert 'model_post_turn_compact_threshold_percent = 60' in text
+    assert 'remote_compaction = "unsupported"' in text
+    for harness in ('claude','deepseek'):
+        selected=command(harness,'model')
+        assert 'HARNESS_COMPACT_TOKEN_LIMIT' not in selected.environment
 
 
 def test_claude_partial_text_and_final_snapshot_normalization():

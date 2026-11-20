@@ -6,7 +6,7 @@ import httpx
 import pytest
 from types import SimpleNamespace
 
-from sandbox_harness.broker import Broker
+from sandbox_harness.broker import Broker,reconcile_native_model_error
 from sandbox_harness.catalog import HarnessCatalog
 from sandbox_harness.config import Settings
 from sandbox_harness.domain import EventKind, Harness, InteractionResponse, RuntimeEvent, RuntimeResult, ThreadCreate, TurnCreate, TurnInputCreate, TurnState, now
@@ -89,6 +89,16 @@ class SlowPauseRuntime(PausableRuntime):
 class FailingRuntime(Runtime):
     async def run(self, sandbox, **kwargs):
         yield RuntimeResult(status="failed", error_code="harness_exit", error_detail="native process exited")
+
+
+async def test_generic_native_429_recovers_local_budget_identity_only():
+    class StoreStub:
+        async def latest_model_activity_error(self,turn_id):return 'model_token_budget_exhausted'
+    store=StoreStub()
+    assert await reconcile_native_model_error(store,'turn','model_rate_limited','last status 429') == (
+        'model_token_budget_exhausted','model_token_budget_exhausted')
+    assert await reconcile_native_model_error(store,'turn','model_service_overloaded','upstream 503') == (
+        'model_service_overloaded','upstream 503')
 
 
 async def test_broker_close_preserves_sandbox_that_was_active_before_task_cancellation(tmp_path):

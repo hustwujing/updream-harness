@@ -27,6 +27,34 @@ Use [Gateway capability guidance](add-gateway-capability.md) when the new route
 is not an existing model protocol. A generic route prefix is not a substitute
 for operation-specific ownership, budget and idempotency rules.
 
+## Model usage and compaction
+
+Do not treat model protocols as sharing one usage shape. Normalize every model
+response into ordinary input, cache-read input, cache-write input and output:
+
+- Responses/OpenAI-style usage reports total `input_tokens` and nested cached
+  details;
+- Claude reports ordinary `input_tokens` separately from
+  `cache_read_input_tokens` and `cache_creation_input_tokens`;
+- DeepSeek may use either Responses cached details or prompt cache hit/miss.
+
+Logical input is the sum of all input dimensions. The durable Turn budget uses
+configured cache-read/write policy percentages; these are not a pricing claim.
+Missing usage consumes the full reservation. Preflight reserves requested
+output only because cache outcome is unknowable before the response, while the
+full remaining reservation still fences concurrent calls.
+
+Compaction remains Harness-native. Codex freezes an explicit local auto-compact
+threshold and marks remote compaction unsupported because the current upstream
+returns 502 for `/responses/compact`. Claude Code owns its automatic
+compaction. DeepSeek owns its Session state and must not receive unsupported
+Responses `context_management` fields.
+
+A Gateway-local rejection starts and terminalizes the same durable model
+activity as an upstream request. Broker may restore
+`model_token_budget_exhausted` only when a generic native 429 corresponds to
+that durable activity. Never rewrite a genuine upstream 429.
+
 ## Model routes and discovery
 
 - Defaults come from `upstream_{harness}` plus the corresponding
