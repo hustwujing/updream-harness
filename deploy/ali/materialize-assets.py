@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 
 import httpx
 
@@ -68,15 +69,23 @@ def promote_registry_manifest(source_ref:str,target_ref:str)->None:
         "application/vnd.oci.image.manifest.v1+json",
         "application/vnd.oci.image.index.v1+json"))}
     with httpx.Client(base_url=f"http://{source_host}",timeout=60,trust_env=False) as client:
-        response=client.get(f"/v2/{source_repo}/manifests/sha256:{source_digest}",headers=headers)
-        response.raise_for_status()
-        if response.headers.get("docker-content-digest") not in (None,"sha256:"+source_digest):
-            raise ValueError("digest_mismatch:registry_source")
-        media=response.headers.get("content-type","application/vnd.docker.distribution.manifest.v2+json")
         tag="ali-"+source_digest[:16]
-        uploaded=client.put(f"/v2/{target_repo}/manifests/{tag}",content=response.content,
-            headers={"Content-Type":media})
-        uploaded.raise_for_status()
+        response=client.get(f"/v2/{source_repo}/manifests/sha256:{source_digest}",headers=headers)
+        if response.status_code==404:
+            docker="/data2/wujing03/opensandbox-stack/tools/docker-29.9.3/docker"
+            image_id=subprocess.check_output([docker,"image","inspect",source_ref,
+                "--format","{{.Id}}"],text=True).strip()
+            target_tag=f"{target_host_repo}:{tag}"
+            subprocess.run([docker,"tag",image_id,target_tag],check=True)
+            subprocess.run([docker,"push",target_tag],check=True)
+        else:
+            response.raise_for_status()
+            if response.headers.get("docker-content-digest") not in (None,"sha256:"+source_digest):
+                raise ValueError("digest_mismatch:registry_source")
+            media=response.headers.get("content-type","application/vnd.docker.distribution.manifest.v2+json")
+            uploaded=client.put(f"/v2/{target_repo}/manifests/{tag}",content=response.content,
+                headers={"Content-Type":media})
+            uploaded.raise_for_status()
         checked=client.head(f"/v2/{target_repo}/manifests/sha256:{target_digest}",headers=headers)
         checked.raise_for_status()
 

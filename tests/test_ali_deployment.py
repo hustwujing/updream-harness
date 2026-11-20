@@ -109,7 +109,7 @@ def test_ali_asset_materializer_owns_all_runtime_paths():
     source=(ROOT/"deploy/ali/materialize-assets.py").read_text()
     for contract in ("runtime-bundles","runtime-code-bundles","profile-catalog.json",
                      "job-catalog.json","controlled-runtime","provider-runtime",
-                     "digest_mismatch","promote_registry_manifest"):
+                     "digest_mismatch","promote_registry_manifest","image","inspect"):
         assert contract in source
     assert "sandbox-harness-platform-parallel/.data" not in source
 
