@@ -16,6 +16,9 @@ THREAD_ENVIRONMENT={
     'OPENBLAS_NUM_THREADS':'4','OMP_NUM_THREADS':'4','MKL_NUM_THREADS':'4',
     'NUMEXPR_NUM_THREADS':'4','VECLIB_MAXIMUM_THREADS':'4',
 }
+CONDA_ENV_PREFIXES={name:Path('/data/wujing03/miniforge3/envs')/name
+    for name in ('sam3','face-makeup','media-foundation')}
+RUNTIME_MOUNT=Path('/runtime')
 
 
 class ControlledOperationError(RuntimeError):
@@ -31,14 +34,17 @@ def _thread_environment_args()->list[str]:
 
 
 def _base_args(work:Path,runtime:Path)->list[str]:
-    project_root=runtime.parent.parent
-    return ['/usr/bin/bwrap','--die-with-parent','--new-session','--unshare-pid','--unshare-net',
+    args=['/usr/bin/bwrap','--die-with-parent','--new-session','--unshare-pid','--unshare-net',
         '--unshare-ipc','--unshare-uts','--proc','/proc','--dev','/dev','--ro-bind','/usr','/usr',
         '--ro-bind','/bin','/bin','--ro-bind','/lib','/lib','--ro-bind','/lib64','/lib64',
-        '--ro-bind','/etc','/etc','--ro-bind','/sys','/sys','--dir','/data2',
-        '--dir','/data2/wujing03','--dir',str(project_root),
-        '--dir',str(project_root/'.data'),'--ro-bind',str(runtime),str(runtime),'--bind',str(work),'/work',
+        '--ro-bind','/etc','/etc','--ro-bind','/sys','/sys',
+        '--ro-bind',str(runtime),str(RUNTIME_MOUNT),'--bind',str(work),'/work',
         '--tmpfs','/tmp','--chmod','1777','/tmp']
+    args += ['--dir','/data','--dir','/data/wujing03','--dir','/data/wujing03/miniforge3',
+        '--dir','/data/wujing03/miniforge3/envs']
+    for name,prefix in CONDA_ENV_PREFIXES.items():
+        args += ['--ro-bind',str(runtime/'envs'/name),str(prefix)]
+    return args
 
 
 def _run(args:list[str],work:Path,timeout:int)->None:
@@ -73,7 +79,7 @@ def _gpu_isolation_args(work:Path,runtime:Path,index:str)->list[str]:
     return [*args,'--clearenv',*_thread_environment_args(),
         '--setenv','PATH','/usr/bin:/bin','--setenv','HOME','/work',
         '--setenv','TMPDIR','/tmp','--setenv','CUDA_VISIBLE_DEVICES',gpu_uuid,
-        '--setenv','CONTROLLED_MEDIA_RUNTIME_ROOT',str(runtime),'--setenv','HF_HUB_OFFLINE','1',
+        '--setenv','CONTROLLED_MEDIA_RUNTIME_ROOT',str(RUNTIME_MOUNT),'--setenv','HF_HUB_OFFLINE','1',
         '--setenv','TRANSFORMERS_OFFLINE','1','--chdir','/work','/usr/bin/setpriv',
         '--reuid='+str(account.pw_uid),'--regid='+str(account.pw_gid),'--groups='+groups,
         '--no-new-privs','--bounding-set=-all']
@@ -87,7 +93,7 @@ def probe_controlled_gpu(index:str,runtime:Path,work_root:Path)->bool:
         "value=torch.ones((1,),device='cuda'); torch.cuda.synchronize(); "
         "print(json.dumps({'cuda':True,'device':torch.cuda.current_device(),'sum':value.item()}))")
     args=_gpu_isolation_args(work,runtime,index)+[
-        str(runtime/'envs/sam3/bin/python'),'-c',code]
+        str(RUNTIME_MOUNT/'envs/sam3/bin/python'),'-c',code]
     try:_run(args,work,90);return True
     except (OSError,RuntimeError,subprocess.SubprocessError):return False
 
@@ -155,7 +161,7 @@ def _transcribe(work:Path,source:Path,parameters:dict,runtime:Path)->dict:
         '--setenv','HOME','/work','--setenv','TMPDIR','/tmp',
         '--setenv','HF_HUB_OFFLINE','1','--setenv','TRANSFORMERS_OFFLINE','1','--chdir','/work',
         '/usr/bin/setpriv','--reuid=0','--regid=0','--clear-groups','--no-new-privs',
-        '--bounding-set=-all',str(runtime/'envs/media-foundation/bin/python'),'/work/transcribe_job.py',
+        '--bounding-set=-all',str(RUNTIME_MOUNT/'envs/media-foundation/bin/python'),'/work/transcribe_job.py',
         '/work/request.json']
     _run(args,work,1800)
     report=json.loads((work/'transcript.json').read_text())

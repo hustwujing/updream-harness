@@ -26,6 +26,12 @@ ENVIRONMENT_MARKERS=(
     'envs/face-makeup/conda-meta/history',
     'envs/media-foundation/conda-meta/history',
 )
+RUNTIME_TREES=(
+    'models/sam3/sam3',
+    'models/ZIM/source/zim_anything',
+    'models/ZIM/source/zim_config',
+    'lib-director-vF/src/libdirector_vf',
+)
 
 
 def digest(path:Path)->str:
@@ -37,8 +43,15 @@ def digest(path:Path)->str:
 
 def build_manifest(source:Path)->dict:
     source=source.resolve();relative=[*CRITICAL_FILES,*ENVIRONMENT_MARKERS]
-    relative.extend(str(path.relative_to(source)) for path in sorted(
-        (source/'lib-director-vF/src').rglob('*.py')))
+    for name in RUNTIME_TREES:
+        tree=source/name
+        if not tree.is_dir():raise FileNotFoundError(name)
+        files=[path for path in tree.rglob('*') if path.is_file()
+            and '.git' not in path.relative_to(tree).parts
+            and '__pycache__' not in path.relative_to(tree).parts
+            and not path.name.startswith('._') and path.suffix!='.pyc']
+        if not files:raise FileNotFoundError(name+':empty')
+        relative.extend(str(path.relative_to(source)) for path in sorted(files))
     rows=[]
     for name in dict.fromkeys(relative):
         path=source/name
@@ -78,11 +91,13 @@ def _make_read_only(snapshot:Path)->None:
     for root,directories,files in os.walk(snapshot,topdown=False,followlinks=False):
         for name in files:
             path=Path(root)/name
-            if not path.is_symlink():path.chmod(path.stat().st_mode & ~(stat.S_IWUSR|stat.S_IWGRP|stat.S_IWOTH))
+            if not path.is_symlink():
+                executable=bool(path.stat().st_mode & (stat.S_IXUSR|stat.S_IXGRP|stat.S_IXOTH))
+                path.chmod(0o555 if executable else 0o444)
         for name in directories:
             path=Path(root)/name
-            if not path.is_symlink():path.chmod(path.stat().st_mode & ~(stat.S_IWUSR|stat.S_IWGRP|stat.S_IWOTH))
-    snapshot.chmod(snapshot.stat().st_mode & ~(stat.S_IWUSR|stat.S_IWGRP|stat.S_IWOTH))
+            if not path.is_symlink():path.chmod(0o555)
+    snapshot.chmod(0o555)
 
 
 def _verify_snapshot(snapshot:Path,manifest:dict)->None:

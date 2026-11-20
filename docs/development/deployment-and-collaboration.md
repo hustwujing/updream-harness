@@ -36,6 +36,10 @@ that snapshot. The stable entry must never resolve to a predecessor checkout,
 shared user's environment or `/data` path. Before removing an installation
 source, rebuild its manifest from the published snapshot and require identical
 file rows; restart the controlled worker once to prove the snapshot is complete.
+The manifest covers the complete SAM3, ZIM and libdirector import trees as well
+as model and environment markers. bwrap mounts the snapshot at `/runtime` and
+maps each copied Conda environment to its build-time prefix only inside the
+namespace; it never exposes the host `/data` tree.
 
 ## Release sequence
 

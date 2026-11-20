@@ -54,5 +54,16 @@
 - [x] Require the installer to call `materialize_entry` and assert the owned
   snapshot path in deployment tests.
 - [x] Document project-owned controlled Runtime storage and source cleanup.
+
+### Task 3: Relocated Conda execution
+
+**Files:**
+- Modify: `src/sandbox_harness/controlled_media_runner.py`
+- Test: `tests/test_controlled_media_runner.py`
+
+- [x] Bind each project-owned environment read-only at its compiled prefix only
+  inside bwrap; do not expose the host `/data` tree.
+- [x] Prove GPU discovery and a controlled real operation after source cleanup.
+
 - [ ] Run the focused deployment and controlled-worker suites, commit, run the
   full gate, record the release, restart services and verify recovery.

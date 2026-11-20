@@ -22,8 +22,16 @@ must remain below the Parallel `.data` root.
   available; never write runtime bytes to the root filesystem.
 - Materialize any symlink that resolves outside the snapshot. Relative links
   resolving within the snapshot remain links.
+- Conda interpreters retain their build-time prefixes. The bwrap namespace
+  exposes each project-owned environment read-only at that virtual prefix; it
+  never bind-mounts the host `/data` tree.
+- The complete snapshot is mounted at `/runtime` inside bwrap. Operation code
+  never traverses the host checkout or `.data` path after privilege reduction.
 - Rebuild the manifest from the snapshot and require its file rows to equal the
   source manifest before publication.
+- The manifest includes every runtime file in the SAM3 package, ZIM package and
+  config, and libdirector package. Git metadata, caches, examples and unrelated
+  duplicate model weights are not part of the execution closure.
 - Publish the stable symlink atomically. Repeating the same installation is
   idempotent; a corrupt existing digest directory is rejected.
 - The controlled worker continues to validate the frozen manifest digest and

@@ -16,20 +16,26 @@ def load_builder():
 
 def runtime_fixture(tmp_path,module):
     source=tmp_path/'source'
-    for name in (*module.CRITICAL_FILES,*module.ENVIRONMENT_MARKERS,
-            'lib-director-vF/src/package/module.py'):
+    for name in (*module.CRITICAL_FILES,*module.ENVIRONMENT_MARKERS):
         path=source/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(name)
+    for name in module.RUNTIME_TREES:
+        path=source/name/'module.py';path.parent.mkdir(parents=True,exist_ok=True);path.write_text(name)
     return source
 
 
 def test_controlled_runtime_manifest_is_deterministic_and_entry_is_owned_snapshot(tmp_path):
     module=load_builder();source=runtime_fixture(tmp_path,module)
+    restricted=source/'restricted';restricted.mkdir(mode=0o700)
+    tool=restricted/'tool';tool.write_text('runtime data');tool.chmod(0o600)
     first=module.build_manifest(source);second=module.build_manifest(source)
     assert first==second and len(first['digest'])==64
     entry=tmp_path/'parallel-data/provider-runtime'
     snapshot=module.materialize_entry(source,entry,first)
     assert snapshot==entry.parent/'controlled-runtime'/first['digest']
     assert entry.is_symlink() and entry.resolve()==snapshot.resolve()
+    assert restricted.stat().st_mode & 0o777==0o700
+    assert (snapshot/'restricted').stat().st_mode & 0o777==0o555
+    assert (snapshot/'restricted/tool').stat().st_mode & 0o777==0o444
     assert module.materialize_entry(source,entry,first)==snapshot
     shutil.rmtree(source)
     rebuilt=module.build_manifest(snapshot)
@@ -45,6 +51,16 @@ def test_controlled_runtime_snapshot_materializes_external_symlinks(tmp_path):
     copied=snapshot/'absolute-link'
     assert copied.is_file() and not copied.is_symlink()
     assert copied.read_text()=='owned bytes'
+
+
+def test_controlled_runtime_manifest_covers_import_source_trees(tmp_path):
+    module=load_builder();source=runtime_fixture(tmp_path,module)
+    first=module.build_manifest(source)
+    imported=source/module.RUNTIME_TREES[0]/'module.py';imported.write_text('changed import')
+    assert module.build_manifest(source)['digest']!=first['digest']
+    shutil.rmtree(source/module.RUNTIME_TREES[1])
+    with pytest.raises(FileNotFoundError,match=module.RUNTIME_TREES[1]):
+        module.build_manifest(source)
 
 
 def test_controlled_runtime_snapshot_rejects_corrupt_existing_digest(tmp_path):

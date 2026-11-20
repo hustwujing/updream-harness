@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 
 from sandbox_harness.controlled_media_runner import (
-    ControlledOperationError,THREAD_ENVIRONMENT,_base_args,_gpu_uuid,_require_audio_stream,
-    _thread_environment_args,probe_controlled_gpu,
+    CONDA_ENV_PREFIXES,RUNTIME_MOUNT,ControlledOperationError,THREAD_ENVIRONMENT,_base_args,_gpu_uuid,
+    _require_audio_stream,_thread_environment_args,probe_controlled_gpu,
 )
 
 
@@ -16,7 +16,14 @@ def test_controlled_bwrap_exposes_read_only_gpu_system_topology(tmp_path):
     assert args[args.index('/sys')-1]=='--ro-bind'
     assert args[args.index('/sys')+1]=='/sys'
     assert '--unshare-net' in args
-    assert args[args.index(str(runtime))-1]=='--ro-bind'
+    position=next(index for index in range(len(args)-2)
+        if args[index:index+3]==['--ro-bind',str(runtime),str(RUNTIME_MOUNT)])
+    assert position>args.index('/sys')
+    for name,prefix in CONDA_ENV_PREFIXES.items():
+        source=str(runtime/'envs'/name);target=str(prefix)
+        position=next(index for index in range(len(args)-2)
+            if args[index:index+3]==['--ro-bind',source,target])
+        assert position>args.index('--dir')
 
 
 def test_reserved_gpu_index_resolves_to_host_uuid(monkeypatch):
@@ -47,7 +54,7 @@ def test_controlled_gpu_probe_uses_exact_sam3_python_and_returns_health(tmp_path
         lambda args,work,timeout:observed.append((args,work,timeout)))
     assert probe_controlled_gpu('3',runtime,tmp_path/'probes')
     assert observed[0][0][:2]==['bwrap','3']
-    assert str(runtime/'envs/sam3/bin/python') in observed[0][0]
+    assert str(RUNTIME_MOUNT/'envs/sam3/bin/python') in observed[0][0]
     assert observed[0][2]==90
 
 

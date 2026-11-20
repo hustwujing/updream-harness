@@ -42,3 +42,23 @@ Date: 2026-11-20
 
 The protocol lock is now limited to P13/P19/P21/P27, the cases that actually
 restart shared services. Ordinary K cases can run concurrently.
+
+## Controlled Runtime Release Recovery
+
+The final service restart exposed a deployment defect outside the original K
+matrix: `.data/provider-runtime` was a symlink to a removed predecessor tree.
+The controlled Worker correctly failed its startup validation, but the release
+was not healthy. The installation path now materializes a read-only,
+manifest-addressed snapshot under the Parallel data root, converts external
+symlinks to owned files and atomically publishes the stable entry.
+
+Two further real failures identified missing deployment contracts rather than
+case-specific prompt defects: copied Conda interpreters required their compiled
+prefix inside bwrap, and the old manifest omitted the SAM3/ZIM import trees.
+The Runtime is now mounted at `/runtime`, project-owned environments are bound
+to virtual build prefixes, and 242 runtime files are frozen in the manifest.
+After deleting both temporary installation sources and restarting the Worker,
+dynamic inventory registered all eight GPUs. Real protocol P24 then passed:
+Scheduler selected one available GPU dynamically, SAM3 completed, the Child
+Harness resumed from one Continuation and published `segmented-person.png`.
+Evidence: `.data/evidence/real-campaign/p24-controlled-runtime-snapshot-r3.json`.

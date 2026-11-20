@@ -22,6 +22,8 @@ REQUIRED_RUNTIME_PATHS=(
     'envs/sam3/bin/python','envs/face-makeup/bin/python','lib-director-vF/src',
     'models/sam3/sam3.pt','models/ZIM/zim-anything-vitl/zim_vit_l_2092',
     'envs/media-foundation/bin/python','models/media-foundation/faster-whisper-small/model.bin',
+    'models/sam3/sam3/__init__.py','models/ZIM/source/zim_anything/__init__.py',
+    'models/ZIM/source/zim_config/__init__.py',
 )
 
 

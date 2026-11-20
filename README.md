@@ -57,6 +57,13 @@ The execution catalog publishes dynamic readiness. Unavailable Operations are
 rejected before confirmation or Job creation, and Provider references, modes
 and artifact bytes are preflighted before the user authorizes side effects.
 
+`image.segment` and `audio.transcribe` run as controlled host Operations inside
+bwrap rather than a general Sandbox Harness. Their complete environments,
+models and import trees are frozen in a project-owned manifest-addressed
+snapshot, mounted read-only at `/runtime`, and validated on every Worker start.
+GPU inventory is probed dynamically and reservations use discovered GPU IDs;
+no physical card is fixed in configuration.
+
 The Site Worker is another independent service. A Harness packages a complete
 static site with `sandbox-site prepare`; user confirmation creates a durable
 deployment Job. The Worker validates and uploads content-addressed files, then
