@@ -1,0 +1,1 @@
+export default function App(){return <main className="min-h-screen bg-white p-8 text-neutral-950"><h1 className="text-3xl font-semibold">Web Artifact</h1><p className="mt-3 text-neutral-600">Replace this scaffold with the requested experience.</p></main>}

@@ -13,7 +13,7 @@ To build powerful frontend claude.ai artifacts, follow these steps:
 4. Display artifact to user
 5. (Optional) Test the artifact
 
-**Stack**: React 18 + TypeScript + Vite + Parcel (bundling) + Tailwind CSS + shadcn/ui
+**Stack**: React + TypeScript + esbuild (offline bundling) + Tailwind CSS + shadcn/ui
 
 ## Design & Style Guidelines
 
@@ -29,14 +29,15 @@ bash scripts/init-artifact.sh <project-name>
 cd <project-name>
 ```
 
-This creates a fully configured project with:
-- ✅ React + TypeScript (via Vite)
+This copies the bundled offline scaffold and links immutable packages from the
+Runtime Profile. It never installs or downloads packages. The project includes:
+- ✅ React + TypeScript
 - ✅ Tailwind CSS 3.4.1 with shadcn/ui theming system
 - ✅ Path aliases (`@/`) configured
 - ✅ 40+ shadcn/ui components pre-installed
 - ✅ All Radix UI dependencies included
-- ✅ Parcel configured for bundling (via .parcelrc)
-- ✅ Node 18+ compatibility (auto-detects and pins Vite version)
+- ✅ esbuild-based self-contained bundling
+- ✅ Pinned Runtime Profile dependencies
 
 ### Step 2: Develop Your Artifact
 
@@ -54,10 +55,9 @@ This creates `bundle.html` - a self-contained artifact with all JavaScript, CSS,
 **Requirements**: Your project must have an `index.html` in the root directory.
 
 **What the script does**:
-- Installs bundling dependencies (parcel, @parcel/config-default, parcel-resolver-tspaths, html-inline)
-- Creates `.parcelrc` config with path alias support
-- Builds with Parcel (no source maps)
-- Inlines all assets into single HTML using html-inline
+- Compiles Tailwind with the pinned image dependency
+- Bundles TypeScript/React with the pinned esbuild dependency
+- Inlines JavaScript, CSS and imported image assets into one HTML file
 
 ### Step 4: Share Artifact with User
 

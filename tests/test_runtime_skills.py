@@ -253,3 +253,22 @@ def test_runtime_image_declares_skill_dependencies_and_domestic_mirrors():
     assert (ROOT / "runtime/build_runtime_bundle.py").is_file()
     assert 'runtime/skill_smoke.py /usr/local/bin/sandbox-skill-smoke' in base
     assert 'runtime/drawio_wrapper.sh /usr/local/bin/drawio' in base
+
+
+def test_web_artifact_skill_is_offline_and_profile_declares_complete_toolchain():
+    skill=ROOT/'runtime/skills/web-artifacts-builder'
+    scripts='\n'.join((skill/'scripts'/name).read_text() for name in (
+        'init-artifact.sh','bundle-artifact.sh'))
+    for forbidden in ('pnpm create','pnpm install','pnpm add','npm install','npm view'):
+        assert forbidden not in scripts
+    assert 'npm root -g' in scripts and 'bundle-artifact.mjs' in scripts
+    assert (skill/'template/package.json').is_file()
+    assert (skill/'scripts/bundle-artifact.mjs').is_file()
+    sources=json.loads((ROOT/'runtime/skills/sources.json').read_text())
+    dependencies=set(sources['dependency_profiles']['web']['node_modules'])
+    required={'react','react-dom','typescript','esbuild','tailwindcss','postcss','autoprefixer',
+        'lucide-react','class-variance-authority','tailwind-merge','@radix-ui/react-dialog'}
+    assert required<=dependencies
+    image=(ROOT/'runtime/profiles/web-browser.Dockerfile').read_text()
+    for package in required-{'typescript'}:
+        assert package+'@' in image
