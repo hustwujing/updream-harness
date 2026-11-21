@@ -38,6 +38,28 @@ async def test_model_wait_stage_records_actual_model_and_updates_one_item(tmp_pa
     finally:await store.close()
 
 
+async def test_child_job_model_activity_keeps_observability_without_primary_items():
+    class Store:
+        def __init__(self):self.persisted=0;self.updated=0
+        async def persist_runtime_event(self,*args,**kwargs):
+            self.persisted+=1
+            return SimpleNamespace(item_id='primary-item')
+        async def update_model_activity(self,*args,**kwargs):
+            self.updated+=1
+    store=Store()
+    activity=ModelActivity(store,SimpleNamespace(thread_id='a'*32,turn_id='b'*32,
+        job_id='c'*32,sandbox_id='sandbox-1',model='gpt-5.6'))
+    await activity.start()
+    await activity.observe(b'data: {"type":"response.output_text.delta","delta":"hi"}\n\n')
+    await activity.observe(b'data: {"type":"response.completed","response":{"usage":'
+        b'{"input_tokens":9,"output_tokens":3}}}\n\n')
+    await activity.finish(200)
+    assert activity.item_id is None and activity.finished
+    assert store.persisted==0 and store.updated==0
+    assert activity.first_output_ms is not None
+    assert activity.probe.input_tokens==9 and activity.probe.output_tokens==3
+
+
 async def test_latest_model_activity_error_returns_only_stable_failed_model_step(tmp_path):
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'latest-model.db'));await store.initialize()
     try:

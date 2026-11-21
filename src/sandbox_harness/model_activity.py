@@ -145,15 +145,15 @@ class ModelActivity:
             return None
 
     async def start(self):
-        event = await self._observe(self.store.persist_runtime_event(
-            self.claims.thread_id, self.claims.turn_id,
-            RuntimeEvent(kind=EventKind.STEP_STARTED, payload={
-                'name': f'等待 {self.claims.model} 响应', 'model': self.claims.model,
-                'model_request_id': self.request_id, 'phase': 'waiting',
-                'job_id': getattr(self.claims,'job_id',''),
-            }), 'gateway:' + self.request_id))
-        if event:
-            self.item_id = event.item_id
+        if not getattr(self.claims,'job_id',''):
+            event = await self._observe(self.store.persist_runtime_event(
+                self.claims.thread_id, self.claims.turn_id,
+                RuntimeEvent(kind=EventKind.STEP_STARTED, payload={
+                    'name': f'等待 {self.claims.model} 响应', 'model': self.claims.model,
+                    'model_request_id': self.request_id, 'phase': 'waiting', 'job_id': '',
+                }), 'gateway:' + self.request_id))
+            if event:
+                self.item_id = event.item_id
         self.started = time.monotonic()
         self.span=obs._PROVIDER.get_tracer('updream-harness').start_span('model.request',kind=SpanKind.CLIENT,
             attributes=obs.sanitize({'turn_id':self.claims.turn_id,'thread_id':self.claims.thread_id,
