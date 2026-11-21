@@ -85,6 +85,38 @@ async def test_primary_publication_reuses_authoritative_delivery_job_artifact(tm
     finally:await store.close()
 
 
+async def test_reviewed_job_artifact_lookup_is_thread_scoped_and_hides_staged_rows(tmp_path):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"job-artifact-fetch.db"));await store.initialize()
+    try:
+        profile=HarnessCatalog().resolve('codex','gpt-5.6','standard');owner='a'*64
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level='standard',title='Artifact fetch'),profile,owner)
+        turn,_,_=await store.create_turn(thread.id,TurnCreate(message='create',
+            idempotency_key='artifact-fetch-turn'),profile,owner)
+        request=JobRequest(local_job_id='candidate',kind=JobKind.HARNESS,adapter='child-harness',
+            descriptor_id='delegate.harness',descriptor_version='1',descriptor_digest='d'*64,
+            idempotency_key='artifact-fetch-request',parameters={'harness':'codex'},
+            expected_outputs=(JobExpectedOutput(artifact_role='result',
+                output_disposition=OutputDisposition.CANDIDATE,min_items=1,max_items=1),))
+        _,jobs=await store.create_job_group(owner,JobGroupCreate(thread_id=thread.id,
+            origin_turn_id=turn.id,idempotency_key='artifact-fetch-group',jobs=(request,)))
+        attempt=await store.claim_job(jobs[0].id,'job-worker','node',30)
+        emitted=await store.bind_job_artifact(ArtifactEmission(job_id=jobs[0].id,
+            generation=attempt.generation,artifact_role='result',item_key='result',position=0,
+            filename='result.bin',output_disposition=OutputDisposition.CANDIDATE),
+            sha256='1'*64,size=10,mime='application/octet-stream',object_ref='sha256:result')
+
+        assert await store.get_reviewed_job_artifact_for_thread(
+            emitted.artifact_id,thread.id) is None
+        await store.finalize_job_artifact_collection(jobs[0].id,attempt.generation,'result')
+        visible=await store.get_reviewed_job_artifact_for_thread(emitted.artifact_id,thread.id)
+        assert visible and visible.artifact_id==emitted.artifact_id
+        assert visible.output_disposition==OutputDisposition.CANDIDATE
+        assert await store.get_reviewed_job_artifact_for_thread(
+            emitted.artifact_id,'f'*32) is None
+    finally:await store.close()
+
+
 async def test_successor_does_not_republish_identical_prior_job_delivery(tmp_path):
     store=Store("sqlite+aiosqlite:///"+str(tmp_path/"successor-job-delivery.db"));await store.initialize()
     try:

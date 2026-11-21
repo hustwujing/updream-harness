@@ -75,6 +75,10 @@ class ContinuationDispatcher:
             "continuation bounded. Now that continuation has arrived, fetch details once with "
             "`sandbox-job job --job-id JOB_ID` or fetch the group with "
             "`sandbox-job group --group-id GROUP_ID` before deciding; never guess omitted output. "
+            "For a reviewed candidate that already satisfies the request, use "
+            "`sandbox-artifact fetch --artifact-id ID --output PATH`, verify it, then copy the "
+            "intended final file into `/workspace/outputs`; do not rerun a successful Job only "
+            "to change publication disposition. "
             + json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
         try:
             group = await self.store.get_job_group(batch[0]["group_id"])

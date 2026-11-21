@@ -118,6 +118,86 @@ async def test_gateway_media_status_is_capability_and_thread_scoped(tmp_path, mo
     assert calls == [("job-1", "thread-1")]
 
 
+async def test_gateway_job_artifact_fetch_is_turn_scoped_and_redacted(tmp_path,monkeypatch):
+    import json
+    from types import SimpleNamespace
+    from starlette.requests import Request
+    import sandbox_harness.gateway as gateway
+    from sandbox_harness.capability import CapabilityCodec
+    from sandbox_harness.config import Settings
+    from sandbox_harness.domain import Harness
+    artifact_id='f'*32;payload=b'reviewed-candidate';digest=__import__('hashlib').sha256(payload).hexdigest()
+    class Redis:
+        async def eval(self,*args):return 1
+    class Store(CapabilityStoreStub):
+        reviewed=True
+        def __init__(self,*args,**kwargs):pass
+        async def get_reviewed_job_artifact_for_thread(self,identity,thread_id):
+            if not self.reviewed or identity!=artifact_id or thread_id!='a'*32:return None
+            return SimpleNamespace(artifact_id=identity,filename='result.bin',mime='application/octet-stream',
+                size=len(payload),sha256=digest,object_ref='sha256:private-object')
+    class Objects:
+        missing=False
+        def size(self,object_ref,*,maximum):
+            if self.missing:raise FileNotFoundError(object_ref)
+            assert object_ref=='sha256:private-object' and maximum==len(payload)
+            return len(payload)
+        def iter_bytes(self,object_ref,*,maximum):
+            assert object_ref=='sha256:private-object' and maximum==len(payload)
+            yield payload[:5];yield payload[5:]
+    monkeypatch.setattr(gateway.Redis,'from_url',lambda *args,**kwargs:Redis())
+    monkeypatch.setattr(gateway,'Store',Store)
+    monkeypatch.setattr(gateway,'object_store',lambda settings:Objects())
+    settings=Settings(backend='fake',database_url='sqlite+aiosqlite:///'+str(tmp_path/'fetch.db'))
+    app=gateway.create_gateway(settings);codec=CapabilityCodec(settings.gateway_signing_key)
+    endpoint=next(route.endpoint for route in app.routes
+        if getattr(route,'path',None)=='/v1/job-artifacts/{artifact_id}/content')
+    turn_token,_=codec.issue(thread_id='a'*32,turn_id='b'*32,sandbox_id='sandbox-1',
+        harness=Harness.CODEX,model='gpt-5.6',routes=['/v1/job-artifacts'],ttl_seconds=60,
+        max_requests=10,max_public_requests=1,token_budget=100)
+    request=Request({'type':'http','method':'GET','path':f'/v1/job-artifacts/{artifact_id}/content',
+        'query_string':b'','headers':[(b'authorization',('Bearer '+turn_token).encode())]})
+    response=await endpoint(artifact_id,request)
+    body=b''.join([part async for part in response.body_iterator])
+    assert body==payload and response.headers['content-length']==str(len(payload))
+    assert response.headers['x-updream-artifact-sha256']==digest
+    assert 'private-object' not in repr(response.headers)+body.decode(errors='ignore')
+
+    foreign_token,_=codec.issue(thread_id='0'*32,turn_id='1'*32,sandbox_id='sandbox-2',
+        harness=Harness.CODEX,model='gpt-5.6',routes=['/v1/job-artifacts'],ttl_seconds=60,
+        max_requests=10,max_public_requests=1,token_budget=100)
+    foreign=Request({'type':'http','method':'GET','path':f'/v1/job-artifacts/{artifact_id}/content',
+        'query_string':b'','headers':[(b'authorization',('Bearer '+foreign_token).encode())]})
+    with pytest.raises(HTTPException) as hidden:await endpoint(artifact_id,foreign)
+    assert hidden.value.status_code==404
+
+    job_token,_=codec.issue(thread_id='a'*32,turn_id='b'*32,sandbox_id='sandbox-1',
+        harness=Harness.CODEX,model='gpt-5.6',routes=['/v1/job-artifacts'],ttl_seconds=60,
+        max_requests=10,max_public_requests=1,token_budget=100,scope='job',group_id='c'*32,
+        job_id='d'*32,generation=1,source_identity='sandbox-1',descriptor_id='delegate.harness',
+        descriptor_version='1',descriptor_digest='e'*64,operations=['check'],
+        artifact_ids=[artifact_id],parameter_digest='2'*64)
+    job_headers=[(b'authorization',('Bearer '+job_token).encode()),
+        (b'x-updream-thread-id',b'a'*32),(b'x-updream-turn-id',b'b'*32),
+        (b'x-updream-group-id',b'c'*32),(b'x-updream-job-id',b'd'*32),
+        (b'x-updream-job-generation',b'1'),(b'x-updream-source-sandbox',b'sandbox-1'),
+        (b'x-updream-descriptor-id',b'delegate.harness'),(b'x-updream-descriptor-version',b'1'),
+        (b'x-updream-descriptor-digest',b'e'*64),(b'x-updream-operation',b'check'),
+        (b'x-updream-artifact-ids',json.dumps([artifact_id]).encode()),
+        (b'x-updream-skill-ids',b'[]')]
+    job_request=Request({'type':'http','method':'GET',
+        'path':f'/v1/job-artifacts/{artifact_id}/content','query_string':b'','headers':job_headers})
+    with pytest.raises(HTTPException) as job_hidden:await endpoint(artifact_id,job_request)
+    assert job_hidden.value.status_code==404
+
+    Store.reviewed=False
+    with pytest.raises(HTTPException) as unreviewed:await endpoint(artifact_id,request)
+    assert unreviewed.value.status_code==404
+    Store.reviewed=True;Objects.missing=True
+    with pytest.raises(HTTPException) as unavailable:await endpoint(artifact_id,request)
+    assert unavailable.value.status_code==503
+
+
 async def test_gateway_continuously_validates_job_grant_headers_and_parameters(tmp_path, monkeypatch):
     import hashlib,json
     from starlette.requests import Request

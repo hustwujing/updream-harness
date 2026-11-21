@@ -3086,6 +3086,17 @@ class Store:
             size=row.size, mime=row.mime, object_ref=row.object_ref,
         )
 
+    async def get_reviewed_job_artifact_for_thread(self,artifact_id:str,
+                                                   thread_id:str)->JobArtifactOutput|None:
+        async with self.connections() as db:
+            row=(await db.execute(select(JobArtifactRow).join(
+                JobRow,JobRow.id==JobArtifactRow.job_id).where(
+                JobArtifactRow.artifact_id==artifact_id,
+                JobArtifactRow.state=='reviewed',
+                JobRow.thread_id==thread_id).order_by(
+                JobArtifactRow.created_at,JobArtifactRow.id).limit(1))).scalar_one_or_none()
+        return self.job_artifact_view(row) if row else None
+
     async def bind_job_artifact(self, value, *, sha256: str, size: int,
                                 mime: str, object_ref: str) -> JobArtifactOutput:
         async with self.connections() as lookup:

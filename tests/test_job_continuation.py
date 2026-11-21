@@ -56,6 +56,8 @@ async def test_user_turn_queued_before_completion_precedes_factual_continuation(
         assert await dispatcher.run_once()==1
         assert "result_available=true" in dispatcher.broker.submissions[-1][3]
         assert "sandbox-job job --job-id JOB_ID" in dispatcher.broker.submissions[-1][3]
+        assert "sandbox-artifact fetch --artifact-id ID --output PATH" in dispatcher.broker.submissions[-1][3]
+        assert "do not rerun a successful Job" in dispatcher.broker.submissions[-1][3]
         turns=await store.list_turns(thread.id,'owner')
         continuation=next(value for value in turns if value.internal)
         assert [value.id for value in turns]==[origin.id,user.id,continuation.id]

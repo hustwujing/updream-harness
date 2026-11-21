@@ -15,6 +15,7 @@ import re
 import struct
 from tempfile import NamedTemporaryFile
 from pathlib import Path
+from urllib.parse import quote
 from pydantic import ValidationError
 
 import httpx
@@ -575,6 +576,26 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(409, str(exc)) from exc
+
+    @app.get("/v1/job-artifacts/{artifact_id}/content")
+    async def runtime_fetch_job_artifact(artifact_id:str,request:Request):
+        claims=await authorize_runtime_request(request,"/v1/job-artifacts")
+        if claims.scope!='turn':raise HTTPException(404,"Job Artifact not found")
+        artifact=await activity_store.get_reviewed_job_artifact_for_thread(
+            artifact_id,claims.thread_id)
+        if not artifact:raise HTTPException(404,"Job Artifact not found")
+        try:size=await asyncio.to_thread(objects.size,artifact.object_ref,maximum=artifact.size)
+        except Exception as exc:
+            raise HTTPException(503,"Job Artifact content is temporarily unavailable") from exc
+        if size!=artifact.size:
+            raise HTTPException(503,"Job Artifact content is temporarily unavailable")
+        filename=Path(artifact.filename).name or "artifact.bin"
+        fallback=re.sub(r'[^A-Za-z0-9._-]','_',filename)[:160] or 'artifact.bin'
+        headers={"Content-Length":str(artifact.size),
+            "X-Updream-Artifact-Sha256":artifact.sha256,
+            "Content-Disposition":f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename)}"}
+        return StreamingResponse(objects.iter_bytes(artifact.object_ref,maximum=artifact.size),
+            media_type=artifact.mime,headers=headers)
 
     @app.post("/v1/job-group-drafts")
     async def runtime_prepare_job_group(value: JobGroupCreate, request: Request):
