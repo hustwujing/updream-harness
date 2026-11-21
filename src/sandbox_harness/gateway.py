@@ -347,6 +347,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             policy_selector=lambda claims: unrestricted_public_policy
                 if claims.network_access == "public" else public_policy,
             maximum_body=settings.public_proxy_request_max_bytes,
+            connect_timeout=settings.public_proxy_connect_timeout_seconds,
             body_idle_timeout=settings.public_proxy_body_idle_timeout_seconds,
             body_total_timeout=settings.public_proxy_body_total_timeout_seconds)
         try:

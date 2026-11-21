@@ -12,6 +12,70 @@ def test_proxy_allows_public_and_rejects_internal_addresses():
         assert not public_address(address)
 
 
+async def test_public_proxy_connect_failure_is_wrapped_with_safe_dimensions(monkeypatch):
+    import asyncio
+    from sandbox_harness.public_proxy import PublicProxyConnectError,connect_public
+    for failure in (ConnectionRefusedError('private.example'),OSError('private.example'),
+            TimeoutError('private.example')):
+        async def refused(*args,**kwargs):raise failure
+        monkeypatch.setattr(asyncio,'open_connection',refused)
+        with pytest.raises(PublicProxyConnectError) as error:
+            await connect_public('8.8.8.8',443,.01)
+        assert error.value.exception_type==type(failure).__name__
+        assert error.value.address_family=='ipv4'
+        assert 'private.example' not in str(error.value)
+
+
+async def test_public_proxy_connect_and_unexpected_failures_keep_distinct_severity(monkeypatch):
+    import asyncio,logging,time
+    from types import SimpleNamespace
+    import sandbox_harness.public_proxy as proxy_module
+    from sandbox_harness.public_proxy import PublicProxyConnectError,start_proxy
+    events=[]
+    monkeypatch.setattr(proxy_module,'event',lambda name,**fields:events.append((name,fields)))
+    async def resolve(host,port,policy=None):return '8.8.8.8'
+    monkeypatch.setattr(proxy_module,'resolve_public',resolve)
+    async def authorize(token):
+        return SimpleNamespace(nonce='grant',expires_at=time.time()+60,turn_id='turn',
+            thread_id='thread',sandbox_id='sandbox')
+    async def exchange(connect):
+        monkeypatch.setattr(proxy_module,'connect_public',connect)
+        server=await start_proxy('127.0.0.1',0,authorize,connect_timeout=1)
+        reader,writer=await asyncio.open_connection('127.0.0.1',server.sockets[0].getsockname()[1])
+        try:
+            auth=base64.b64encode(b'capability:').decode()
+            writer.write(f'CONNECT private.example:443 HTTP/1.1\r\nProxy-Authorization: Basic {auth}\r\n\r\n'.encode())
+            await writer.drain();return await reader.read()
+        finally:
+            writer.close();server.close();await server.wait_closed()
+    async def unreachable(address,port,timeout):
+        raise PublicProxyConnectError('ConnectionRefusedError','ipv4')
+    assert b'502' in await exchange(unreachable)
+    name,fields=next(row for row in events if row[0]=='public_proxy.unreachable')
+    assert fields['level']==logging.WARNING and fields['failure_stage']=='connect'
+    assert fields['exception_type']=='ConnectionRefusedError' and fields['address_family']=='ipv4'
+    assert 'private.example' not in repr(events) and '8.8.8.8' not in repr(events)
+    events.clear()
+    async def unexpected(address,port,timeout):raise RuntimeError('private.example')
+    assert b'502' in await exchange(unexpected)
+    name,fields=next(row for row in events if row[0]=='public_proxy.failed')
+    assert fields['level']==logging.ERROR and fields['failure_stage']=='connect'
+    assert 'private.example' not in repr(events) and '8.8.8.8' not in repr(events)
+    events.clear()
+    class FailedRelayReader:
+        async def read(self,*args):raise OSError('private.example')
+    class UpstreamWriter:
+        def write(self,*args):pass
+        async def drain(self):pass
+        def close(self):pass
+    async def relay_failure(address,port,timeout):return FailedRelayReader(),UpstreamWriter()
+    assert b'200 Connection Established' in await exchange(relay_failure)
+    name,fields=next(row for row in events if row[0]=='public_proxy.failed')
+    assert fields['level']==logging.ERROR and fields['failure_stage']=='relay'
+    assert fields['exception_type']=='OSError'
+    assert 'private.example' not in repr(events) and '8.8.8.8' not in repr(events)
+
+
 def test_proxy_requires_dynamic_capability_basic_auth():
     token = "signed.turn.capability"
     encoded = base64.b64encode((token + ":").encode()).decode()

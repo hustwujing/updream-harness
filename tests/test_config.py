@@ -63,3 +63,10 @@ def test_opensandbox_rejects_development_signing_secrets():
     with pytest.raises(ValueError,match="Production sandbox deployment"):
         validate_service_settings(Settings(_env_file=None, backend="opensandbox"))
     validate_service_settings(Settings(_env_file=None, backend="fake"))
+def test_public_proxy_connect_timeout_is_bounded():
+    from pydantic import ValidationError
+    from sandbox_harness.config import Settings
+    assert Settings(backend='fake').public_proxy_connect_timeout_seconds==10
+    for value in (0,61):
+        with pytest.raises(ValidationError):
+            Settings(backend='fake',public_proxy_connect_timeout_seconds=value)

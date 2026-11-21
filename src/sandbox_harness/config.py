@@ -97,6 +97,7 @@ class Settings(BaseSettings):
     gateway_body_idle_timeout_seconds: float = Field(default=15, ge=1, le=120)
     gateway_body_total_timeout_seconds: float = Field(default=120, ge=5, le=600)
     public_proxy_request_max_bytes: int = Field(default=16 * 1024 * 1024, ge=1024, le=64 * 1024 * 1024)
+    public_proxy_connect_timeout_seconds: float = Field(default=10, ge=1, le=60)
     public_proxy_body_idle_timeout_seconds: float = Field(default=15, ge=1, le=120)
     public_proxy_body_total_timeout_seconds: float = Field(default=120, ge=5, le=600)
     job_node_id: str = Field(default="local-sandbox",pattern=r"^[A-Za-z0-9._-]{1,160}$")

@@ -30,6 +30,13 @@ class ProxyBodyTimeout(TimeoutError):
     pass
 
 
+class PublicProxyConnectError(ConnectionError):
+    def __init__(self,exception_type:str,address_family:str):
+        super().__init__("public proxy connect failed")
+        self.exception_type=exception_type
+        self.address_family=address_family
+
+
 def normalize_host(value: str) -> str:
     host = value.strip().strip("[]").rstrip(".").lower()
     if not host or "://" in host or any(character in host for character in "/?#@"):
@@ -132,6 +139,17 @@ async def resolve_public(host: str, port: int, policy: DestinationPolicy | None 
     return sorted(addresses)[0]
 
 
+async def connect_public(address:str,port:int,timeout:float):
+    try:
+        family='ipv6' if ipaddress.ip_address(address).version==6 else 'ipv4'
+    except ValueError:
+        family='unknown'
+    try:
+        return await asyncio.wait_for(asyncio.open_connection(address,port),timeout=timeout)
+    except (OSError,TimeoutError) as exc:
+        raise PublicProxyConnectError(type(exc).__name__,family) from None
+
+
 async def relay(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     try:
         while data := await reader.read(64 * 1024):
@@ -179,11 +197,11 @@ def authority_header(host: str, port: int, default_port: int) -> str:
 async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, authorize, *, connections=None,
         policy: DestinationPolicy | None = None, policy_selector=None,
         maximum_body: int = 16*1024*1024, body_idle_timeout: float = 15,
-        body_total_timeout: float = 120) -> None:
+        body_total_timeout: float = 120, connect_timeout:float=10) -> None:
     upstream_writer = None
     registered_nonce = None
     expiry = None
-    started=time.monotonic();log_context={}
+    started=time.monotonic();log_context={};failure_stage='request'
     try:
         header = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=10)
         if len(header) > MAX_HEADER:
@@ -239,7 +257,9 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
                 raise ValueError("Invalid CONNECT target")
             port = int(port_text)
             address = await resolve_public(host, port, request_policy)
-            upstream_reader, upstream_writer = await asyncio.open_connection(address, port)
+            failure_stage='connect'
+            upstream_reader, upstream_writer = await connect_public(address,port,connect_timeout)
+            failure_stage='relay'
             writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             await writer.drain()
             await asyncio.gather(relay(reader, upstream_writer), relay(upstream_reader, writer))
@@ -253,7 +273,9 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
         if "host" in header_map and parse_authority(header_map["host"],80)!=(canonical_host,port):
             raise DestinationDenied("Proxy Host conflicts with absolute URL")
         address = await resolve_public(parsed.hostname, port, request_policy)
-        upstream_reader, upstream_writer = await asyncio.open_connection(address, port)
+        failure_stage='connect'
+        upstream_reader, upstream_writer = await connect_public(address,port,connect_timeout)
+        failure_stage='relay'
         path = parsed.path or "/"
         if parsed.query:
             path += "?" + parsed.query
@@ -290,8 +312,14 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
             status=(413 if isinstance(exc,ProxyRequestTooLarge) else 408 if isinstance(exc,ProxyBodyTimeout)
                 else 503 if code=="capability_authority_unavailable" else 403)
             await reject(writer,status,code)
-    except (ConnectionError, OSError) as exc:
-        event("public_proxy.failed",level=logging.ERROR,exc=exc,**log_context)
+    except PublicProxyConnectError as exc:
+        event("public_proxy.unreachable",level=logging.WARNING,failure_stage="connect",
+            exception_type=exc.exception_type,address_family=exc.address_family,**log_context)
+        if not writer.is_closing():
+            await reject(writer,502,"destination_unreachable")
+    except Exception as exc:
+        event("public_proxy.failed",level=logging.ERROR,failure_stage=failure_stage,
+            exception_type=type(exc).__name__,**log_context)
         if not writer.is_closing():
             await reject(writer,502,"destination_unreachable")
     finally:
@@ -312,10 +340,11 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
 async def start_proxy(host: str, port: int, authorize, *, connections=None,
         policy: DestinationPolicy | None = None, policy_selector=None,
         maximum_body: int = 16*1024*1024, body_idle_timeout: float = 15,
-        body_total_timeout: float = 120) -> asyncio.Server:
+        body_total_timeout: float = 120,connect_timeout:float=10) -> asyncio.Server:
     async def handle(reader, writer):
         await handle_proxy(reader, writer, authorize, connections=connections, policy=policy,
             policy_selector=policy_selector,maximum_body=maximum_body,
-            body_idle_timeout=body_idle_timeout,body_total_timeout=body_total_timeout)
+            body_idle_timeout=body_idle_timeout,body_total_timeout=body_total_timeout,
+            connect_timeout=connect_timeout)
 
     return await asyncio.start_server(handle, host, port, limit=MAX_HEADER + 1)

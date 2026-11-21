@@ -7,8 +7,9 @@ import hashlib
 import logging
 import mimetypes
 from pathlib import PurePosixPath
-from collections import defaultdict
+from collections import defaultdict,OrderedDict
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import timedelta
 import httpx
 
@@ -33,6 +34,13 @@ ROUTES = {
 }
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RuntimeDiagnosticState:
+    instance_id:str
+    cursor:int
+    counters:dict[str,int]
 
 
 async def reconcile_native_model_error(store,turn_id:str,error_code:str,error_detail:str)->tuple[str,str]:
@@ -64,6 +72,7 @@ class Broker:
         self.input_lock_users: dict[str, int] = defaultdict(int)
         self.input_lock_guard = asyncio.Lock()
         self.active_sandboxes = {}
+        self._runtime_diagnostics:OrderedDict[str,RuntimeDiagnosticState]=OrderedDict()
         self.instance_id = "broker-" + __import__("uuid").uuid4().hex
         self.leases: dict[str, int] = {}
         self.heartbeats: dict[str, asyncio.Task] = {}
@@ -687,23 +696,48 @@ class Broker:
         target=telemetry()
         if target is None or not hasattr(self.runtime,"diagnostics"):return
         from .telemetry_ingest import import_snapshot
-        after=0;count=0;stats={}
+        if not isinstance(self._runtime_diagnostics,OrderedDict):
+            self._runtime_diagnostics=OrderedDict(self._runtime_diagnostics)
+        previous=self._runtime_diagnostics.pop(sandbox.id,None)
+        after=previous.cursor if previous else 0
+        previous_instance=previous.instance_id if previous else ''
+        baseline=dict(previous.counters) if previous else {}
+        count=0;stats={};instance_id=previous_instance
         try:
             async with asyncio.timeout(5):
                 for _ in range(20):
                     snapshot=await self.runtime.diagnostics(sandbox,after)
+                    current_instance=str(snapshot.get("instance_id") or "unknown")[:160]
+                    if previous_instance and current_instance!=previous_instance:
+                        after=0;baseline={};previous_instance=''
+                        snapshot=await self.runtime.diagnostics(sandbox,after)
+                        current_instance=str(snapshot.get("instance_id") or "unknown")[:160]
+                    instance_id=current_instance
                     stats=snapshot.get("stats",{})
-                    if after==0 and snapshot.get("retained_from",1)>1:
-                        event("runtime.logs.window",retained_from=snapshot["retained_from"],reason="older_records_require_live_export")
+                    retained_from=max(1,int(snapshot.get("retained_from",1)))
+                    if retained_from>after+1:
+                        event("runtime.logs.window",retained_from=retained_from,
+                            reason="runtime_cursor_rotated")
+                        after=retained_from-1
                     rows=snapshot.get("records",[])
                     if not rows:break
                     count+=import_snapshot(target,snapshot,sandbox)
-                    cursor=max(row.get("sequence",0) for row in rows)
+                    cursor=max(int(row.get("sequence",0)) for row in rows)
                     if cursor<=after:break
                     after=cursor
                     if after>=snapshot.get("last_sequence",after):break
-            event("runtime.logs.collected",level=logging.WARNING if stats.get("dropped_records",0) or stats.get("export_failures",0) or stats.get("disk_errors",0) else logging.INFO,sandbox_id=sandbox.id,count=count,last_sequence=after,reason="runtime_instance_cumulative",dropped_count=stats.get("dropped_records",0),export_failures=stats.get("export_failures",0),disk_errors=stats.get("disk_errors",0),last_export_http_status=stats.get("last_export_http_status"))
+            current={key:max(0,int(stats.get(key,0) or 0))
+                for key in ("dropped_records","export_failures","disk_errors")}
+            delta={key:(value-baseline.get(key,0) if value>=baseline.get(key,0) else value)
+                for key,value in current.items()}
+            self._runtime_diagnostics[sandbox.id]=RuntimeDiagnosticState(instance_id,after,current)
+            while len(self._runtime_diagnostics)>512:self._runtime_diagnostics.popitem(last=False)
+            event("runtime.logs.collected",level=logging.WARNING if any(delta.values()) else logging.INFO,
+                sandbox_id=sandbox.id,count=count,last_sequence=after,reason="runtime_turn_delta",
+                dropped_count=delta["dropped_records"],export_failures=delta["export_failures"],
+                disk_errors=delta["disk_errors"],last_export_http_status=stats.get("last_export_http_status"))
         except Exception as exc:
+            if previous:self._runtime_diagnostics[sandbox.id]=previous
             event("runtime.logs.collection_failed",level=logging.WARNING,exc=exc,sandbox_id=sandbox.id)
 
     @observed("turn.process", new_trace=True)

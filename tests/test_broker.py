@@ -63,6 +63,76 @@ async def test_orphan_reaper_keeps_provisioning_job_sandbox():
     assert backend.deleted==[]
 
 
+async def test_runtime_diagnostics_are_incremental_and_report_counter_deltas(monkeypatch):
+    import logging
+    import sandbox_harness.broker as broker_module
+    import sandbox_harness.telemetry_ingest as ingest
+    snapshots=[
+        {'instance_id':'runtime-1','retained_from':1,'last_sequence':1,
+            'records':[{'sequence':1}],'stats':{'dropped_records':4,'export_failures':1}},
+        {'instance_id':'runtime-1','retained_from':1,'last_sequence':2,
+            'records':[{'sequence':2}],'stats':{'dropped_records':4,'export_failures':1}},
+    ]
+    class RuntimeDiagnostics:
+        def __init__(self):self.after=[]
+        async def diagnostics(self,sandbox,after):
+            self.after.append(after);return snapshots.pop(0)
+    runtime=RuntimeDiagnostics();events=[]
+    monkeypatch.setattr(broker_module,'telemetry',lambda:object())
+    monkeypatch.setattr(broker_module,'event',lambda name,**fields:events.append((name,fields)))
+    monkeypatch.setattr(ingest,'import_snapshot',lambda target,snapshot,sandbox:len(snapshot['records']))
+    broker=Broker.__new__(Broker);broker.runtime=runtime;broker._runtime_diagnostics={}
+    sandbox=SimpleNamespace(id='sandbox-1',turn_id='turn',thread_id='thread',metadata={})
+    await broker._collect_runtime_logs(sandbox);await broker._collect_runtime_logs(sandbox)
+    assert runtime.after==[0,1]
+    collected=[fields for name,fields in events if name=='runtime.logs.collected']
+    assert collected[0]['dropped_count']==4 and collected[0]['export_failures']==1
+    assert collected[1]['dropped_count']==0 and collected[1]['export_failures']==0
+    assert collected[1]['level']==logging.INFO
+    assert collected[1]['reason']=='runtime_turn_delta'
+
+
+async def test_runtime_diagnostics_handle_instance_reset_rotation_and_bound(monkeypatch):
+    import sandbox_harness.broker as broker_module
+    import sandbox_harness.telemetry_ingest as ingest
+    class RuntimeDiagnostics:
+        def __init__(self):self.after=[];self.snapshots=[]
+        async def diagnostics(self,sandbox,after):
+            self.after.append(after);return self.snapshots.pop(0)
+    runtime=RuntimeDiagnostics();events=[]
+    monkeypatch.setattr(broker_module,'telemetry',lambda:object())
+    monkeypatch.setattr(broker_module,'event',lambda name,**fields:events.append((name,fields)))
+    monkeypatch.setattr(ingest,'import_snapshot',lambda target,snapshot,sandbox:len(snapshot['records']))
+    broker=Broker.__new__(Broker);broker.runtime=runtime;broker._runtime_diagnostics={}
+    sandbox=SimpleNamespace(id='sandbox-reset',turn_id='turn',thread_id='thread',metadata={})
+    runtime.snapshots=[{'instance_id':'runtime-1','retained_from':1,'last_sequence':9,
+        'records':[{'sequence':9}],'stats':{'disk_errors':7}}]
+    await broker._collect_runtime_logs(sandbox)
+    runtime.snapshots=[
+        {'instance_id':'runtime-2','retained_from':1,'last_sequence':2,'records':[],
+            'stats':{'disk_errors':2}},
+        {'instance_id':'runtime-2','retained_from':1,'last_sequence':2,
+            'records':[{'sequence':1},{'sequence':2}],'stats':{'disk_errors':2}},
+    ]
+    await broker._collect_runtime_logs(sandbox)
+    assert runtime.after[-2:]==[9,0]
+    assert broker._runtime_diagnostics['sandbox-reset'].cursor==2
+    runtime.snapshots=[{'instance_id':'runtime-2','retained_from':5,'last_sequence':5,
+        'records':[{'sequence':5}],'stats':{'disk_errors':1}}]
+    await broker._collect_runtime_logs(sandbox)
+    assert broker._runtime_diagnostics['sandbox-reset'].cursor==5
+    last=[fields for name,fields in events if name=='runtime.logs.collected'][-1]
+    assert last['disk_errors']==1
+
+    for index in range(513):
+        runtime.snapshots=[{'instance_id':f'instance-{index}','retained_from':1,
+            'last_sequence':0,'records':[],'stats':{}}]
+        await broker._collect_runtime_logs(SimpleNamespace(id=f'sandbox-{index}',turn_id='',
+            thread_id='',metadata={}))
+    assert len(broker._runtime_diagnostics)==512
+    assert 'sandbox-0' not in broker._runtime_diagnostics
+
+
 class PausableRuntime(Runtime):
     def __init__(self):
         super().__init__(); self.started = asyncio.Event(); self.cancelled = 0
