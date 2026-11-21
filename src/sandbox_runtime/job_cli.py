@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 import httpx
-from pydantic import BaseModel,ConfigDict,Field
+from pydantic import BaseModel,ConfigDict,Field,model_validator
 
 from sandbox_harness.job_contracts import JobGroupCreate
 
@@ -57,11 +57,19 @@ class DelegationTaskSpec(BaseModel):
     inputs:tuple[str,...]=Field(default=(),max_length=100)
     skill_ids:tuple[str,...]=Field(default=(),max_length=32)
     result_mode:Literal["text","artifacts","mixed"]="artifacts"
-    output_disposition:Literal["candidate","workspace","delivery"]="candidate"
+    output_disposition:Literal["candidate","workspace","delivery"]|None=None
     max_items:int=Field(default=100,ge=1,le=1000)
     mime_patterns:tuple[str,...]=Field(default=(),max_length=100)
     operation_ids:tuple[str,...]=Field(default=(),max_length=32)
     capability_ids:tuple[str,...]=Field(default=(),max_length=32)
+
+    @model_validator(mode="after")
+    def validate_output_contract(self):
+        if self.result_mode=="text" and self.output_disposition is not None:
+            raise ValueError("output_disposition is invalid for text result_mode")
+        if self.result_mode!="text" and self.output_disposition is None:
+            raise ValueError("output_disposition is required for artifact result_mode")
+        return self
 
 
 class DelegationGroupSpec(BaseModel):
@@ -75,7 +83,7 @@ DELEGATION_EXAMPLE={"tasks":[
     {"id":"task-a","objective":"Complete one independent result","inputs":[],
         "skill_ids":[],"result_mode":"text"},
     {"id":"task-b","objective":"Complete the other independent result","inputs":[],
-        "skill_ids":[],"result_mode":"text"},
+        "skill_ids":[],"result_mode":"artifacts","output_disposition":"delivery"},
 ]}
 
 
@@ -161,7 +169,8 @@ def main(argv: list[str] | None = None) -> int:
     prepare = sub.add_parser("prepare", help="Validate and submit one complete parallel JobGroup")
     prepare.add_argument("--request", required=True, help="JSON object or path to a JSON file")
     delegate = sub.add_parser("delegate", help="Compile compact independent Child Harness tasks",
-        epilog='Request shape: {"tasks":[{"id":"task-a","objective":"...","inputs":[],"skill_ids":[],"result_mode":"text"}]}')
+        epilog=('Artifact outputs require output_disposition=candidate|workspace|delivery. '
+            'Use delivery for final user-facing files.'))
     choice=delegate.add_mutually_exclusive_group(required=True)
     choice.add_argument("--request", help="Compact tasks JSON object or path to a JSON file")
     choice.add_argument("--example",action="store_true",help="Print one valid compact request")
@@ -184,6 +193,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(DELEGATION_EXAMPLE,ensure_ascii=False,indent=2));return 0
     if args.command=="delegate" and args.schema:
         print(json.dumps(DelegationGroupSpec.model_json_schema(),ensure_ascii=False));return 0
+    if args.command=="inspect" and os.environ.get("HARNESS_CHILD_MODE")!="1":
+        print(json.dumps({"error":"sandbox-job inspect is Job-only; use sandbox-artifact fetch "
+            "to retrieve a reviewed Child Artifact"}))
+        return 2
     base = os.environ.get("HARNESS_GATEWAY_URL", "").rstrip("/")
     token_file = Path(os.environ.get("HARNESS_CAPABILITY_TOKEN_FILE", "/run/harness/capability-token"))
     if not base or not token_file.is_file():
