@@ -151,7 +151,8 @@ def test_sandbox_job_delegate_compiles_metadata_free_tasks_from_catalog(tmp_path
     monkeypatch.setattr(job_cli.httpx,'post',lambda url,**kwargs:
         calls.append(('post',url,kwargs)) or Result({'mode':'committed'}))
     request={'tasks':[{'id':'analyze','objective':'Analyze the frozen input',
-        'inputs':['assets/source.bin'],'skill_ids':['plain-skill']}]}
+        'inputs':['assets/source.bin'],'skill_ids':['plain-skill'],
+        'output_disposition':'candidate'}]}
     assert job_cli.main(['delegate','--request',json.dumps(request)])==0
     assert calls[0][1]=='http://gateway.test/v1/execution/catalog'
     submitted=calls[1][2]['json'];job=submitted['jobs'][0]
