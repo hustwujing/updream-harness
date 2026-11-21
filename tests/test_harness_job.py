@@ -1,7 +1,7 @@
 import pytest
 from types import SimpleNamespace
 
-from sandbox_harness.harness_job import HarnessJobAdapter,OpenSandboxChildBackend
+from sandbox_harness.harness_job import HarnessJobAdapter,JobGrantFactory,OpenSandboxChildBackend
 from sandbox_harness.job_adapters import AdapterStatus,JobExecutionContext,PreAcceptFailure
 from sandbox_harness.job_contracts import (JobGroupCreate,JobExpectedOutput,JobKind,JobRequest,
     JobState,OutputDisposition)
@@ -37,6 +37,16 @@ def request(**updates):
         resource_requirements={'harness':'codex','image_digest':'b'*64,'delegation_depth':1,
             'cpu':1,'memory_mb':512,'disk_mb':1024})
     value.update(updates);return JobRequest(**value)
+
+
+async def test_child_harness_grant_can_read_its_scoped_execution_catalog():
+    frozen=request()
+    context=JobExecutionContext(job=SimpleNamespace(thread_id='a'*32,origin_turn_id='b'*32,
+        group_id='c'*32,id='d'*32),request=frozen,generation=1)
+    _,claims=await JobGrantFactory(Settings(backend='fake'))(context,
+        SimpleNamespace(harness='codex'),'sandbox-1')
+    assert '/v1/execution/catalog' in claims.routes
+    assert 'check' in claims.operations
 
 
 async def setup(tmp_path,status):

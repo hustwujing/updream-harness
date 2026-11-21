@@ -57,10 +57,11 @@ class JobGrantFactory:
         output_scopes=tuple(f'{value.artifact_role}:{value.output_disposition.value}'
             for value in request.expected_outputs)
         model_routes=((f'/v1/models/{harness.value}',) if request.kind.value=='harness' else ())
-        tool_routes=(('/v1/execution/catalog','/v1/operations','/v1/job-group-drafts','/v1/job-groups','/v1/jobs')
+        child_catalog_routes=(('/v1/execution/catalog',) if request.adapter=='child-harness' else ())
+        tool_routes=(('/v1/operations','/v1/job-group-drafts','/v1/job-groups','/v1/jobs')
             if capability_ids or len(operation_ids)>1 else ())
         routes=(*model_routes,'/v1/job-artifacts','/v1/telemetry',
-            *tool_routes,
+            *child_catalog_routes,*tool_routes,
             *(('/v1/media',) if capability_ids else ()),
             *(('/v1/public-http',) if request.network_origins else ()))
         token_budget=max(1,int(request.budget_requirements.get('model_tokens',
@@ -77,7 +78,7 @@ class JobGrantFactory:
             child_profile_ids=(request.child_profile_id,),runtime_profile_ids=(request.runtime_profile_id,),
             network_origins=request.network_origins,output_scopes=output_scopes,budget=request.budget_requirements))
         operations=(*(('model',) if request.kind.value=='harness' else ()),
-            *(('check',) if tool_routes else ()),
+            *(('check',) if child_catalog_routes or tool_routes else ()),
             *(('emit',) if request.expected_outputs else ()))
         return self.authority.issue_job(parent,JobGrantRequest(group_id=context.job.group_id,
             job_id=context.job.id,generation=context.generation,source_identity=sandbox_id,

@@ -619,12 +619,29 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         claims=await authorize_runtime_request(request,"/v1/execution/catalog")
         owner_id=await activity_store.owner_id_for_thread(claims.thread_id)
         inputs=await activity_store.turn_input_artifacts(claims.turn_id,owner_id)
-        return {**execution_catalog.public_execution_metadata(await readiness.snapshot()),
-            "job_group_schema":JobGroupCreate.model_json_schema(),"input_artifacts":[{
+        metadata=execution_catalog.public_execution_metadata(await readiness.snapshot())
+        artifacts=[{
             "artifact_id":item["artifact"].id,"project_file_id":item["project_file_id"],
             "project_path":item["project_path"],"source_type":item["source_type"],
             "sha256":item["artifact"].sha256,"size":item["artifact"].size,
-            "mime":item["artifact"].mime} for item in inputs],"media_models":media_catalog.public()}
+            "mime":item["artifact"].mime} for item in inputs]
+        if claims.scope!='job':
+            return {**metadata,"job_group_schema":JobGroupCreate.model_json_schema(),
+                "input_artifacts":artifacts,"media_models":media_catalog.public()}
+        allowed_operations=set(claims.operation_ids)
+        allowed_capabilities=set(claims.capability_ids)
+        allowed_skills=set(claims.skill_ids)
+        allowed_artifacts=set(claims.artifact_ids)
+        return {"job_descriptor":{"id":claims.descriptor_id,"version":claims.descriptor_version,
+                "digest":claims.descriptor_digest},
+            "operations":[row for row in metadata.get("operations",[])
+                if row.get("id") in allowed_operations],
+            "capabilities":[row for row in metadata.get("capabilities",[])
+                if row.get("id") in allowed_capabilities],
+            "skills":[row for row in metadata.get("skills",[]) if row.get("id") in allowed_skills],
+            "child_execution_profiles":[],
+            "input_artifacts":[row for row in artifacts if row["artifact_id"] in allowed_artifacts],
+            "media_models":[]}
 
     @app.get("/v1/operations/artifact.inspect")
     async def runtime_inspect_artifact(artifact_id:str,request:Request):

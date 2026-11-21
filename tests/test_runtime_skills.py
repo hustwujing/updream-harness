@@ -4,6 +4,8 @@ import importlib.util
 import json
 from pathlib import Path
 import tarfile
+import subprocess
+import sys
 
 from fastapi.testclient import TestClient
 import pytest
@@ -103,6 +105,38 @@ def test_presentation_skill_descriptions_are_mutually_exclusive():
     assert 'object-level editability' in native and 'exact Chinese typography' in native
     assert 'full-slide image pages' in native and 'codex-ppt' in native
     assert 'separately editable' in native and 'OOXML validation' in native
+
+
+def test_pptx_montage_helper_is_documented_and_builds_deterministic_grid(tmp_path):
+    from PIL import Image
+    helper=ROOT/'runtime/skills/pptx/scripts/create_montage.py'
+    skill=(ROOT/'runtime/skills/pptx/SKILL.md').read_text()
+    assert 'create_montage.py' in skill and 'ImageMagick' in skill
+    source=tmp_path/'slides';source.mkdir()
+    Image.new('RGB',(40,20),'red').save(source/'slide-10.png')
+    Image.new('RGB',(40,20),'blue').save(source/'slide-2.png')
+    first=tmp_path/'first.png';second=tmp_path/'second.png'
+    command=[sys.executable,str(helper),'--input_dir',str(source),'--output_file']
+    subprocess.run([*command,str(first),'--label_mode','filename'],check=True)
+    subprocess.run([*command,str(second),'--label_mode','filename'],check=True)
+    assert first.read_bytes()==second.read_bytes()
+    with Image.open(first) as result:
+        assert result.width>40 and result.height>20
+
+
+def test_pptx_montage_helper_rejects_symlinks_and_non_images(tmp_path):
+    from PIL import Image
+    helper=ROOT/'runtime/skills/pptx/scripts/create_montage.py'
+    source=tmp_path/'slides';source.mkdir()
+    target=tmp_path/'target.png';Image.new('RGB',(10,10),'red').save(target)
+    (source/'linked.png').symlink_to(target)
+    rejected=subprocess.run([sys.executable,str(helper),'--input_dir',str(source),
+        '--output_file',str(tmp_path/'linked-output.png')],text=True,capture_output=True)
+    assert rejected.returncode!=0 and 'symlink' in rejected.stderr.lower()
+    (source/'linked.png').unlink();(source/'not-image.png').write_text('not an image')
+    rejected=subprocess.run([sys.executable,str(helper),'--input_dir',str(source),
+        '--output_file',str(tmp_path/'bad-output.png')],text=True,capture_output=True)
+    assert rejected.returncode!=0 and 'image' in rejected.stderr.lower()
 
 
 def test_skills_materialize_for_each_native_harness_and_upgrade_managed_entries(tmp_path, monkeypatch):

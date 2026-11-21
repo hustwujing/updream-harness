@@ -248,6 +248,82 @@ async def test_gateway_continuously_validates_job_grant_headers_and_parameters(t
     assert error.value.status_code==403 and 'grant scope' in error.value.detail
 
 
+async def test_job_execution_catalog_is_filtered_to_the_signed_grant(tmp_path,monkeypatch):
+    import json
+    from types import SimpleNamespace
+    from starlette.requests import Request
+    import sandbox_harness.gateway as gateway
+    from sandbox_harness.capability import CapabilityCodec
+    from sandbox_harness.config import Settings
+    from sandbox_harness.domain import Harness
+    artifact_id='f'*32
+    class Redis:
+        async def eval(self,*args):return 1
+    class Store(CapabilityStoreStub):
+        def __init__(self,*args,**kwargs):pass
+        async def owner_id_for_thread(self,thread_id):return 'owner'
+        async def turn_input_artifacts(self,turn_id,owner_id):
+            return [{'artifact':SimpleNamespace(id=artifact_id,sha256='1'*64,size=12,mime='image/png'),
+                'project_file_id':'project-file','project_path':'assets/source.png','source_type':'upload'},
+                {'artifact':SimpleNamespace(id='0'*32,sha256='2'*64,size=13,mime='text/plain'),
+                'project_file_id':'private','project_path':'assets/private.txt','source_type':'upload'}]
+    metadata={'operations':[{'id':'artifact.inspect'},{'id':'private.operation'}],
+        'capabilities':[{'id':'allowed.capability'},{'id':'private.capability'}],
+        'skills':[{'id':'pptx'},{'id':'private-skill'}],
+        'child_execution_profiles':[{'id':'child-general'}]}
+    async def snapshot(self):return {}
+    monkeypatch.setattr(gateway.Redis,'from_url',lambda *args,**kwargs:Redis())
+    monkeypatch.setattr(gateway,'Store',Store)
+    monkeypatch.setattr(gateway.HarnessCatalog,'public_execution_metadata',
+        lambda self,availability=None:metadata)
+    monkeypatch.setattr(gateway.ExecutionReadiness,'snapshot',snapshot)
+    monkeypatch.setattr(gateway.MediaCatalog,'public',lambda self: [{'id':'private-media'}])
+    settings=Settings(backend='fake',database_url='sqlite+aiosqlite:///'+str(tmp_path/'catalog.db'))
+    app=gateway.create_gateway(settings);codec=CapabilityCodec(settings.gateway_signing_key)
+    token,_=codec.issue(thread_id='a'*32,turn_id='b'*32,sandbox_id='sandbox-1',
+        harness=Harness.CODEX,model='gpt-5.6',routes=['/v1/execution/catalog'],ttl_seconds=60,
+        max_requests=10,max_public_requests=1,token_budget=100,scope='job',group_id='c'*32,
+        job_id='d'*32,generation=1,source_identity='sandbox-1',descriptor_id='delegate.harness',
+        descriptor_version='1',descriptor_digest='e'*64,operations=['check'],
+        artifact_ids=[artifact_id],skill_ids=['pptx'],capability_ids=['allowed.capability'],
+        operation_ids=['artifact.inspect'],child_profile_id='child-general',
+        runtime_profile_id='general-cpu',parameter_digest='3'*64)
+    headers=[(b'authorization',('Bearer '+token).encode()),
+        (b'x-updream-thread-id',b'a'*32),(b'x-updream-turn-id',b'b'*32),
+        (b'x-updream-group-id',b'c'*32),(b'x-updream-job-id',b'd'*32),
+        (b'x-updream-job-generation',b'1'),(b'x-updream-source-sandbox',b'sandbox-1'),
+        (b'x-updream-descriptor-id',b'delegate.harness'),(b'x-updream-descriptor-version',b'1'),
+        (b'x-updream-descriptor-digest',b'e'*64),(b'x-updream-operation',b'check'),
+        (b'x-updream-artifact-ids',json.dumps([artifact_id]).encode()),
+        (b'x-updream-skill-ids',json.dumps(['pptx']).encode()),
+        (b'x-updream-child-profile-id',b'child-general'),
+        (b'x-updream-runtime-profile-id',b'general-cpu')]
+    endpoint=next(route.endpoint for route in app.routes
+        if getattr(route,'path',None)=='/v1/execution/catalog')
+    request=Request({'type':'http','method':'GET','path':'/v1/execution/catalog',
+        'query_string':b'','headers':headers})
+    value=await endpoint(request)
+    assert value['job_descriptor']=={'id':'delegate.harness','version':'1','digest':'e'*64}
+    assert [row['id'] for row in value['operations']]==['artifact.inspect']
+    assert [row['id'] for row in value['capabilities']]==['allowed.capability']
+    assert [row['id'] for row in value['skills']]==['pptx']
+    assert [row['artifact_id'] for row in value['input_artifacts']]==[artifact_id]
+    assert value['child_execution_profiles']==[] and value['media_models']==[]
+    assert 'job_group_schema' not in value
+
+    denied_token,_=codec.issue(thread_id='a'*32,turn_id='b'*32,sandbox_id='sandbox-1',
+        harness=Harness.CODEX,model='gpt-5.6',routes=['/v1/job-artifacts'],ttl_seconds=60,
+        max_requests=10,max_public_requests=1,token_budget=100,scope='job',group_id='c'*32,
+        job_id='d'*32,generation=1,source_identity='sandbox-1',descriptor_id='delegate.harness',
+        descriptor_version='1',descriptor_digest='e'*64,operations=['check'],parameter_digest='3'*64)
+    denied_headers=[(key,(('Bearer '+denied_token).encode() if key==b'authorization' else val))
+        for key,val in headers]
+    denied=Request({'type':'http','method':'GET','path':'/v1/execution/catalog',
+        'query_string':b'','headers':denied_headers})
+    with pytest.raises(HTTPException) as error:await endpoint(denied)
+    assert error.value.status_code==401
+
+
 async def test_inline_artifact_inspect_is_fenced_by_job_operation_and_artifact_grants(tmp_path,monkeypatch):
     import json
     from types import SimpleNamespace
