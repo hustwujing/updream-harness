@@ -73,6 +73,19 @@ text repeated by the host in every prompt. Each Harness decides when to read a
 Skill or image. The Gateway supplies authenticated protocol access and durable
 token accounting, but never summarizes or reconstructs native history.
 
+A frozen Child Harness receives catalog access through its signed Job grant.
+The normal route, revocation, quota, generation, descriptor and parameter checks
+still apply. Its catalog response contains only the descriptor identity and the
+Skills, Operations, Capabilities and input Artifact IDs present in that grant;
+it never exposes Child profiles or unrelated media models. Reviewer Harnesses
+remain read-only and do not gain Child catalog access.
+
+Reviewed Child artifacts are fetched only with a Turn-scope capability. The
+Gateway resolves the artifact through its owning Thread and reviewed state,
+streams no object-store reference, and returns authoritative length and SHA-256
+headers. The Runtime CLI writes a sibling temporary file, verifies both values,
+then atomically replaces the requested destination.
+
 `adapters.command` constructs commands and per-Harness environment. `normalize`
 maps native output to the shared Runtime event contract. Unknown plain output is
 public text/tool output; protocol changes must be tested with representative
@@ -101,6 +114,17 @@ snapshot.
   plane; external Providers use their registered durable workers.
 - User decisions use `sandbox-interact` and remain bound to the active execution.
 - A completed or waiting outcome is not published until checkpoint succeeds.
+
+Runtime diagnostic fallback collection is incremental per Sandbox and Runtime
+instance. The Broker retains at most 512 cursor/counter states, resets and
+re-reads from zero when an instance changes, advances across a rotated retained
+window, and reports counter deltas rather than cumulative lifetime warnings.
+
+Public proxy connection establishment has a bounded 10-second default timeout.
+Refusal, unreachable and timeout failures raised by the bounded connect helper
+are warning-level `public_proxy.unreachable` events with only failure stage,
+exception type and address family. Relay failures and unexpected exceptions
+remain error-level; neither class logs the destination host or address.
 
 ## Image rules
 

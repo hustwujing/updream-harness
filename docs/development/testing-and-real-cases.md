@@ -77,6 +77,20 @@ task followed by a collection failure is not evidence for a second submission;
 the report must retain the original external execution ID and show the bounded
 collection attempt generations.
 
+## Delegated artifact publication regression
+
+Artifact-producing delegated tasks must choose `candidate`, `workspace`, or
+`delivery` explicitly. A Primary continuation that accepts an already reviewed
+Child artifact fetches it with `sandbox-artifact fetch`, verifies the advertised
+length and SHA-256, and publishes the intended bytes; it must not create a
+replacement Child Job merely to change publication disposition. Real evidence
+records the source Job/Artifact IDs, the pre/post Job count, fetched digest, and
+the final delivery Artifact digest.
+
+Child model calls retain spans, timing and token accounting but do not create
+Primary Thread timeline Items. Timeline assertions distinguish Primary model
+activity from Job activity rather than accepting a polluted Item count.
+
 ## K campaign evidence
 
 K01-K11 are exact capability matrices. K12-K14 are user-path E2E workflows and
