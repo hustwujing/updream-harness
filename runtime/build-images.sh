@@ -30,10 +30,10 @@ codex_source_image=${SANDBOX_HARNESS_CODEX_SOURCE_IMAGE:-}
 claude_source_image=${SANDBOX_HARNESS_CLAUDE_SOURCE_IMAGE:-}
 if [[ -f "$profile_catalog_path" ]]; then
   [[ -n "$codex_source_image" ]] || codex_source_image=$(jq -r \
-    '.runtime_dependency_profiles[]|select(.id=="primary-full-cpu")|.image_refs.codex' \
+    '.runtime_dependency_profiles[]|select(.id=="primary-full-cpu")|.provider_releases.opensandbox.codex.ref' \
     "$profile_catalog_path")
   [[ -n "$claude_source_image" ]] || claude_source_image=$(jq -r \
-    '.runtime_dependency_profiles[]|select(.id=="primary-full-cpu")|.image_refs.claude' \
+    '.runtime_dependency_profiles[]|select(.id=="primary-full-cpu")|.provider_releases.opensandbox.claude.ref' \
     "$profile_catalog_path")
 fi
 output_root="$root/.data/image-build/$tag"

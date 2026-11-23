@@ -355,7 +355,7 @@ class SandboxChildBackend:
         if not matches:return SubmissionRecovery()
         ready=[value for value in matches if value.health_state=="ready"
             and value.harness.value==reservation.harness
-            and value.image.endswith("@sha256:"+reservation.image_digest)]
+            and value.handle.revision=="sha256:"+reservation.image_digest]
         if len(matches)!=1 or len(ready)!=1:return SubmissionRecovery()
         sandbox=await self.pool.adopt(ready[0],thread_id=self._thread_id(context.job.id),
             turn_id=context.job.id)

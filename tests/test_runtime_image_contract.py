@@ -199,7 +199,7 @@ def test_profile_catalog_builder_requires_complete_digest_pinned_matrix(tmp_path
         "--output",str(output),"--signing-key",str(key)],check=True)
     built=json.loads(output.read_text())
     assert output.with_suffix(".json.sig").is_file()
-    assert all(set(row["image_refs"])==set(row["supported_harnesses"])
+    assert all(set(row["provider_releases"]["opensandbox"])==set(row["supported_harnesses"])
         for row in built["runtime_dependency_profiles"])
     matrix.write_text("\n".join(rows[:-1])+"\n")
     failure=subprocess.run([sys.executable,str(ROOT/"runtime/build_profile_catalog.py"),

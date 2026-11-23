@@ -22,6 +22,8 @@ class SandboxProfileResolver:
     def resolve(self,harness:Harness,provider_ref:str,*,profile_id:str|None=None,
                 revision:str|None=None)->SandboxProfile:
         provider_ref=provider_ref or f"{self.provider}:default:{harness.value}"
+        if revision is None and "@sha256:" in provider_ref:
+            revision="sha256:"+provider_ref.rsplit("@sha256:",1)[1]
         return SandboxProfile(profile_id=profile_id or f"primary-{harness.value}",
             revision=revision or provider_ref,provider=self.provider,provider_ref=provider_ref,
             runtime_contract=self.runtime_contract,

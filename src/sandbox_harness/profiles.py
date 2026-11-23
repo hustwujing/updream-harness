@@ -36,12 +36,18 @@ class ChildExecutionProfile(BaseModel):
     fallback_profile_ids: tuple[str, ...] = ()
 
 
+class ProviderRelease(BaseModel):
+    model_config=ConfigDict(extra="forbid",frozen=True)
+    ref:str=Field(min_length=1,max_length=512)
+    revision:str=Field(min_length=1,max_length=512)
+    artifact_digest:str=Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class RuntimeDependencyProfile(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     id: str = Field(min_length=1, max_length=100)
     supported_harnesses: tuple[str, ...] = Field(min_length=1)
-    image_digests: dict[str, str]
-    image_refs: dict[str, str] = Field(default_factory=dict)
+    provider_releases:dict[str,dict[str,ProviderRelease]]
     commands: tuple[str, ...] = ()
     python_modules: tuple[str, ...] = ()
     node_modules: tuple[str, ...] = ()
@@ -52,17 +58,28 @@ class RuntimeDependencyProfile(BaseModel):
 
     @model_validator(mode="after")
     def exact_images(self):
-        if set(self.image_digests) != set(self.supported_harnesses):
-            raise ValueError("image_digests must exactly cover supported_harnesses")
-        if self.image_refs and set(self.image_refs) != set(self.supported_harnesses):
-            raise ValueError("image_refs must exactly cover supported_harnesses")
-        if any(len(value) != 64 or any(character not in "0123456789abcdef" for character in value)
-               for value in self.image_digests.values()):
-            raise ValueError("Runtime image digest must be a 64-character SHA-256")
-        if any(not self.image_refs[harness].endswith('@sha256:'+self.image_digests[harness])
-               for harness in self.image_refs):
-            raise ValueError("Runtime image reference does not match image digest")
+        if not self.provider_releases:raise ValueError("provider_releases must not be empty")
+        for provider,releases in self.provider_releases.items():
+            if not provider or set(releases)!=set(self.supported_harnesses):
+                raise ValueError("provider release matrix must exactly cover supported_harnesses")
+            if provider=="opensandbox" and any(
+                    not release.ref.endswith("@sha256:"+release.artifact_digest)
+                    for release in releases.values()):
+                raise ValueError("OpenSandbox release must use a digest-pinned image")
         return self
+
+    def release(self,provider:str,harness:str)->ProviderRelease:
+        try:return self.provider_releases[provider][harness]
+        except KeyError as exc:raise ValueError(
+            f"provider release unavailable:{provider}:{harness}") from exc
+
+    @property
+    def image_digests(self)->dict[str,str]:
+        return {key:value.artifact_digest for key,value in self.provider_releases["opensandbox"].items()}
+
+    @property
+    def image_refs(self)->dict[str,str]:
+        return {key:value.ref for key,value in self.provider_releases["opensandbox"].items()}
 
 
 class ProfileRequirements(BaseModel):
@@ -77,7 +94,7 @@ class ProfileRequirements(BaseModel):
 
 class ProfileCatalogPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    schema_version: int = Field(default=1, ge=1, le=1)
+    schema_version: int = Field(default=2, ge=2, le=2)
     child_execution_profiles: tuple[ChildExecutionProfile, ...]
     runtime_dependency_profiles: tuple[RuntimeDependencyProfile, ...]
 

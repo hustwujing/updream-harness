@@ -46,14 +46,15 @@ def rewrite_profile_catalog(value:dict)->dict:
     old_prefix="127.0.0.1:25001/sandbox-harness-parallel/"
     new_prefix=identity.REGISTRY_PREFIX+"/"
     for profile in rewritten.get("runtime_dependency_profiles",[]):
-        refs=profile.get("image_refs",{})
-        for harness,reference in list(refs.items()):
+        releases=profile.get("provider_releases",{}).get("opensandbox",{})
+        for harness,release in list(releases.items()):
+            reference=release["ref"]
             if not reference.startswith(old_prefix):
                 raise ValueError("unexpected_registry_reference")
-            digest=profile["image_digests"][harness]
+            digest=release["artifact_digest"]
             if not reference.endswith("@sha256:"+digest):
                 raise ValueError("digest_mismatch:image_reference")
-            refs[harness]=new_prefix+reference.removeprefix(old_prefix)
+            release["ref"]=new_prefix+reference.removeprefix(old_prefix)
     return rewritten
 
 
@@ -117,8 +118,10 @@ def materialize(source_env:Path,target_env:Path,*,promote_images:bool=False,forc
         original_profiles={row["id"]:row for row in original["runtime_dependency_profiles"]}
         for profile in rewritten["runtime_dependency_profiles"]:
             source_profile=original_profiles[profile["id"]]
-            for harness,target_ref in profile["image_refs"].items():
-                promote_registry_manifest(source_profile["image_refs"][harness],target_ref)
+            target_releases=profile["provider_releases"]["opensandbox"]
+            source_releases=source_profile["provider_releases"]["opensandbox"]
+            for harness,target in target_releases.items():
+                promote_registry_manifest(source_releases[harness]["ref"],target["ref"])
     profile_raw=canonical_json(rewritten).encode();new_profile_digest=digest_bytes(profile_raw)
     profile_target=DATA_ROOT/"catalogs/profile-catalog.json"
     profile_target.parent.mkdir(parents=True,exist_ok=True);profile_target.write_bytes(profile_raw);profile_target.chmod(0o644)
@@ -126,6 +129,7 @@ def materialize(source_env:Path,target_env:Path,*,promote_images:bool=False,forc
     _copy_bundle(Path(source["SANDBOX_HARNESS_RUNTIME_CODE_BUNDLE_DIR"]),DATA_ROOT/"runtime-code-bundles",code_digest)
     _materialize_controlled(Path(source["SANDBOX_HARNESS_CONTROLLED_RUNTIME_ROOT"]),controlled_digest,force)
     primary=next(row for row in rewritten["runtime_dependency_profiles"] if row["id"]=="primary-full-cpu")
+    primary_releases=primary["provider_releases"]["opensandbox"]
     target.update({
         "SANDBOX_HARNESS_JOB_CATALOG_PATH":str(job_target),
         "SANDBOX_HARNESS_JOB_CATALOG_DIGEST":job_digest,
@@ -137,9 +141,9 @@ def materialize(source_env:Path,target_env:Path,*,promote_images:bool=False,forc
         "SANDBOX_HARNESS_RUNTIME_CODE_BUNDLE_DIGEST":code_digest,
         "SANDBOX_HARNESS_CONTROLLED_RUNTIME_ROOT":str(DATA_ROOT/"provider-runtime"),
         "SANDBOX_HARNESS_CONTROLLED_RUNTIME_DIGEST":controlled_digest,
-        "SANDBOX_HARNESS_RUNTIME_IMAGE_CODEX":primary["image_refs"]["codex"],
-        "SANDBOX_HARNESS_RUNTIME_IMAGE_CLAUDE":primary["image_refs"]["claude"],
-        "SANDBOX_HARNESS_RUNTIME_IMAGE_DEEPSEEK":primary["image_refs"]["deepseek"],
+        "SANDBOX_HARNESS_RUNTIME_IMAGE_CODEX":primary_releases["codex"]["ref"],
+        "SANDBOX_HARNESS_RUNTIME_IMAGE_CLAUDE":primary_releases["claude"]["ref"],
+        "SANDBOX_HARNESS_RUNTIME_IMAGE_DEEPSEEK":primary_releases["deepseek"]["ref"],
     })
     raw=configure.render_environment(target)
     source_mutable=str(ROOT.with_name("sandbox-harness-platform-parallel")/".data")

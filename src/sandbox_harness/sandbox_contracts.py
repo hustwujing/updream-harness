@@ -180,7 +180,9 @@ class Sandbox:
     def __post_init__(self)->None:
         if self.profile is None:
             reference=self.image or "legacy"
-            self.profile=SandboxProfile(profile_id=f"legacy-{self.harness.value}",revision=reference,
+            revision=("sha256:"+reference.rsplit("@sha256:",1)[1]
+                if "@sha256:" in reference else reference)
+            self.profile=SandboxProfile(profile_id=f"legacy-{self.harness.value}",revision=revision,
                 provider=self.provider,provider_ref=reference,
                 runtime_contract="sandbox-harness-runtime/v1",runtime_bundle_digest="legacy",
                 runtime_code_bundle_digest="legacy")

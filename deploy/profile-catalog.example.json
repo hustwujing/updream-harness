@@ -1,85 +1,498 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "child_execution_profiles": [
     {
       "id": "reviewer-readonly",
-      "supported_harnesses": ["codex", "claude", "deepseek"],
-      "allowed_skill_ids": ["pdf", "pptx", "docx", "xlsx", "programmatic-eda", "data-quality-audit", "query-validation", "verification-before-completion"],
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "allowed_skill_ids": [
+        "pdf",
+        "pptx",
+        "docx",
+        "xlsx",
+        "programmatic-eda",
+        "data-quality-audit",
+        "query-validation",
+        "verification-before-completion"
+      ],
       "allowed_capability_ids": [],
-      "allowed_operation_ids": ["artifact.inspect"],
+      "allowed_operation_ids": [
+        "artifact.inspect"
+      ],
       "allowed_network_origins": [],
       "max_delegation_depth": 1,
-      "fallback_profile_ids": ["primary-full-cpu"]
+      "fallback_profile_ids": [
+        "primary-full-cpu"
+      ]
     },
     {
       "id": "operation-controlled",
-      "supported_harnesses": ["codex"],
+      "supported_harnesses": [
+        "codex"
+      ],
       "allowed_skill_ids": [],
       "allowed_capability_ids": [],
-      "allowed_operation_ids": ["media.render"],
+      "allowed_operation_ids": [
+        "media.render"
+      ],
       "allowed_network_origins": [],
       "max_delegation_depth": 1,
       "fallback_profile_ids": []
     },
     {
       "id": "child-general",
-      "supported_harnesses": ["codex", "claude", "deepseek"],
-      "allowed_skill_ids": ["academy-guide", "algorithmic-art", "anatomy", "brainstorming", "brand-guidelines", "canvas-design", "claude-api", "codex-ppt", "data-quality-audit", "diagram-design", "discernment-nudge", "doc-and-modernize", "doc-coauthoring", "docx", "drawio-skill", "frontend-design", "image-to-editable-ppt", "internal-comms", "manim-video", "mcp-builder", "media-processing", "pdf", "pptx", "programmatic-eda", "query-validation", "skill-creator", "slack-gif-creator", "systematic-debugging", "theme-factory", "verification-before-completion", "web-artifacts-builder", "webapp-testing", "writing-plans", "xlsx"],
-      "allowed_capability_ids": ["image.generate", "video.generate", "video.edit", "audio.generate", "model3d.generate", "model3d.transform"],
-      "allowed_operation_ids": ["artifact.inspect", "media.render", "image.segment"],
-      "allowed_network_origins": ["image-provider", "video-provider", "audio-provider", "model3d-provider"],
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "allowed_skill_ids": [
+        "academy-guide",
+        "algorithmic-art",
+        "anatomy",
+        "brainstorming",
+        "brand-guidelines",
+        "canvas-design",
+        "claude-api",
+        "codex-ppt",
+        "data-quality-audit",
+        "diagram-design",
+        "discernment-nudge",
+        "doc-and-modernize",
+        "doc-coauthoring",
+        "docx",
+        "drawio-skill",
+        "frontend-design",
+        "image-to-editable-ppt",
+        "internal-comms",
+        "manim-video",
+        "mcp-builder",
+        "media-processing",
+        "pdf",
+        "pptx",
+        "programmatic-eda",
+        "query-validation",
+        "skill-creator",
+        "slack-gif-creator",
+        "systematic-debugging",
+        "theme-factory",
+        "verification-before-completion",
+        "web-artifacts-builder",
+        "webapp-testing",
+        "writing-plans",
+        "xlsx"
+      ],
+      "allowed_capability_ids": [
+        "image.generate",
+        "video.generate",
+        "video.edit",
+        "audio.generate",
+        "model3d.generate",
+        "model3d.transform"
+      ],
+      "allowed_operation_ids": [
+        "artifact.inspect",
+        "media.render",
+        "image.segment"
+      ],
+      "allowed_network_origins": [
+        "image-provider",
+        "video-provider",
+        "audio-provider",
+        "model3d-provider"
+      ],
       "max_delegation_depth": 1,
-      "fallback_profile_ids": ["primary-full-cpu"]
+      "fallback_profile_ids": [
+        "primary-full-cpu"
+      ]
     }
   ],
   "runtime_dependency_profiles": [
     {
       "id": "general-cpu",
-      "supported_harnesses": ["codex", "claude", "deepseek"],
-      "image_digests": {"codex": "1111111111111111111111111111111111111111111111111111111111111111", "claude": "2222222222222222222222222222222222222222222222222222222222222222", "deepseek": "3333333333333333333333333333333333333333333333333333333333333333"},
-      "commands": ["bash", "node", "npm", "python3"],
-      "python_modules": [], "node_modules": [], "dependency_capabilities": [], "network_origins": [], "gpu": false, "priority": 10
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "commands": [
+        "bash",
+        "node",
+        "npm",
+        "python3"
+      ],
+      "python_modules": [],
+      "node_modules": [],
+      "dependency_capabilities": [],
+      "network_origins": [],
+      "gpu": false,
+      "priority": 10,
+      "provider_releases": {
+        "opensandbox": {
+          "codex": {
+            "ref": "registry/general-cpu-codex@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "revision": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "artifact_digest": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "claude": {
+            "ref": "registry/general-cpu-claude@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "revision": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "artifact_digest": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "deepseek": {
+            "ref": "registry/general-cpu-deepseek@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+            "revision": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+            "artifact_digest": "3333333333333333333333333333333333333333333333333333333333333333"
+          }
+        }
+      }
     },
     {
       "id": "office",
-      "supported_harnesses": ["codex", "claude", "deepseek"],
-      "image_digests": {"codex": "4444444444444444444444444444444444444444444444444444444444444444", "claude": "5555555555555555555555555555555555555555555555555555555555555555", "deepseek": "6666666666666666666666666666666666666666666666666666666666666666"},
-      "commands": ["gcc", "git", "libreoffice", "node", "pandoc", "pdftoppm", "pdftotext", "python3", "qpdf", "soffice", "tesseract", "timeout"],
-      "python_modules": ["PIL", "defusedxml", "lxml", "markitdown", "openpyxl", "pandas", "pdf2image", "pdfplumber", "pypdf", "pytesseract"],
-      "node_modules": ["docx", "pptxgenjs", "react", "react-dom", "react-icons", "sharp"],
-      "dependency_capabilities": [], "network_origins": [], "gpu": false, "priority": 20
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "commands": [
+        "gcc",
+        "git",
+        "libreoffice",
+        "node",
+        "pandoc",
+        "pdftoppm",
+        "pdftotext",
+        "python3",
+        "qpdf",
+        "soffice",
+        "tesseract",
+        "timeout"
+      ],
+      "python_modules": [
+        "PIL",
+        "defusedxml",
+        "lxml",
+        "markitdown",
+        "openpyxl",
+        "pandas",
+        "pdf2image",
+        "pdfplumber",
+        "pypdf",
+        "pytesseract"
+      ],
+      "node_modules": [
+        "docx",
+        "pptxgenjs",
+        "react",
+        "react-dom",
+        "react-icons",
+        "sharp"
+      ],
+      "dependency_capabilities": [],
+      "network_origins": [],
+      "gpu": false,
+      "priority": 20,
+      "provider_releases": {
+        "opensandbox": {
+          "codex": {
+            "ref": "registry/office-codex@sha256:4444444444444444444444444444444444444444444444444444444444444444",
+            "revision": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+            "artifact_digest": "4444444444444444444444444444444444444444444444444444444444444444"
+          },
+          "claude": {
+            "ref": "registry/office-claude@sha256:5555555555555555555555555555555555555555555555555555555555555555",
+            "revision": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+            "artifact_digest": "5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "deepseek": {
+            "ref": "registry/office-deepseek@sha256:6666666666666666666666666666666666666666666666666666666666666666",
+            "revision": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+            "artifact_digest": "6666666666666666666666666666666666666666666666666666666666666666"
+          }
+        }
+      }
     },
     {
       "id": "web-browser",
-      "supported_harnesses": ["codex", "claude", "deepseek"],
-      "image_digests": {"codex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "claude": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "deepseek": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
-      "commands": ["chromium", "node", "pnpm", "python3"],
-      "python_modules": ["playwright"], "node_modules": ["@radix-ui/react-accordion", "@radix-ui/react-aspect-ratio", "@radix-ui/react-avatar", "@radix-ui/react-checkbox", "@radix-ui/react-collapsible", "@radix-ui/react-context-menu", "@radix-ui/react-dialog", "@radix-ui/react-dropdown-menu", "@radix-ui/react-hover-card", "@radix-ui/react-label", "@radix-ui/react-menubar", "@radix-ui/react-navigation-menu", "@radix-ui/react-popover", "@radix-ui/react-progress", "@radix-ui/react-radio-group", "@radix-ui/react-scroll-area", "@radix-ui/react-select", "@radix-ui/react-separator", "@radix-ui/react-slider", "@radix-ui/react-slot", "@radix-ui/react-switch", "@radix-ui/react-tabs", "@radix-ui/react-toast", "@radix-ui/react-toggle", "@radix-ui/react-toggle-group", "@radix-ui/react-tooltip", "autoprefixer", "class-variance-authority", "clsx", "cmdk", "embla-carousel-react", "esbuild", "lucide-react", "next-themes", "postcss", "react", "react-day-picker", "react-dom", "react-hook-form", "react-resizable-panels", "sonner", "tailwind-merge", "tailwindcss", "tailwindcss-animate", "typescript", "vaul"],
-      "dependency_capabilities": [], "network_origins": [], "gpu": false, "priority": 20
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "commands": [
+        "chromium",
+        "node",
+        "pnpm",
+        "python3"
+      ],
+      "python_modules": [
+        "playwright"
+      ],
+      "node_modules": [
+        "@radix-ui/react-accordion",
+        "@radix-ui/react-aspect-ratio",
+        "@radix-ui/react-avatar",
+        "@radix-ui/react-checkbox",
+        "@radix-ui/react-collapsible",
+        "@radix-ui/react-context-menu",
+        "@radix-ui/react-dialog",
+        "@radix-ui/react-dropdown-menu",
+        "@radix-ui/react-hover-card",
+        "@radix-ui/react-label",
+        "@radix-ui/react-menubar",
+        "@radix-ui/react-navigation-menu",
+        "@radix-ui/react-popover",
+        "@radix-ui/react-progress",
+        "@radix-ui/react-radio-group",
+        "@radix-ui/react-scroll-area",
+        "@radix-ui/react-select",
+        "@radix-ui/react-separator",
+        "@radix-ui/react-slider",
+        "@radix-ui/react-slot",
+        "@radix-ui/react-switch",
+        "@radix-ui/react-tabs",
+        "@radix-ui/react-toast",
+        "@radix-ui/react-toggle",
+        "@radix-ui/react-toggle-group",
+        "@radix-ui/react-tooltip",
+        "autoprefixer",
+        "class-variance-authority",
+        "clsx",
+        "cmdk",
+        "embla-carousel-react",
+        "esbuild",
+        "lucide-react",
+        "next-themes",
+        "postcss",
+        "react",
+        "react-day-picker",
+        "react-dom",
+        "react-hook-form",
+        "react-resizable-panels",
+        "sonner",
+        "tailwind-merge",
+        "tailwindcss",
+        "tailwindcss-animate",
+        "typescript",
+        "vaul"
+      ],
+      "dependency_capabilities": [],
+      "network_origins": [],
+      "gpu": false,
+      "priority": 20,
+      "provider_releases": {
+        "opensandbox": {
+          "codex": {
+            "ref": "registry/web-browser-codex@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "revision": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "artifact_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "claude": {
+            "ref": "registry/web-browser-claude@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "revision": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "artifact_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "deepseek": {
+            "ref": "registry/web-browser-deepseek@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "revision": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "artifact_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          }
+        }
+      }
     },
     {
       "id": "data-analysis",
-      "supported_harnesses": ["codex", "claude", "deepseek"],
-      "image_digests": {"codex": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "claude": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "deepseek": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"},
-      "commands": ["python3"], "python_modules": ["numpy", "pandas", "sqlglot"], "node_modules": [],
-      "dependency_capabilities": [], "network_origins": [], "gpu": false, "priority": 20
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "commands": [
+        "python3"
+      ],
+      "python_modules": [
+        "numpy",
+        "pandas",
+        "sqlglot"
+      ],
+      "node_modules": [],
+      "dependency_capabilities": [],
+      "network_origins": [],
+      "gpu": false,
+      "priority": 20,
+      "provider_releases": {
+        "opensandbox": {
+          "codex": {
+            "ref": "registry/data-analysis-codex@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "revision": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "artifact_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          },
+          "claude": {
+            "ref": "registry/data-analysis-claude@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "revision": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "artifact_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          },
+          "deepseek": {
+            "ref": "registry/data-analysis-deepseek@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "revision": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "artifact_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          }
+        }
+      }
     },
     {
       "id": "media-cpu",
-      "supported_harnesses": ["codex", "claude", "deepseek"],
-      "image_digests": {"codex": "1212121212121212121212121212121212121212121212121212121212121212", "claude": "1313131313131313131313131313131313131313131313131313131313131313", "deepseek": "1414141414141414141414141414141414141414141414141414141414141414"},
-      "commands": ["dvisvgm", "ffmpeg", "ffprobe", "latex", "manim", "python3"],
-      "python_modules": ["PIL", "imageio", "manim", "numpy"], "node_modules": [],
-      "dependency_capabilities": [], "network_origins": [], "gpu": false, "priority": 20
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "commands": [
+        "dvisvgm",
+        "ffmpeg",
+        "ffprobe",
+        "latex",
+        "manim",
+        "python3"
+      ],
+      "python_modules": [
+        "PIL",
+        "imageio",
+        "manim",
+        "numpy"
+      ],
+      "node_modules": [],
+      "dependency_capabilities": [],
+      "network_origins": [],
+      "gpu": false,
+      "priority": 20,
+      "provider_releases": {
+        "opensandbox": {
+          "codex": {
+            "ref": "registry/media-cpu-codex@sha256:1212121212121212121212121212121212121212121212121212121212121212",
+            "revision": "sha256:1212121212121212121212121212121212121212121212121212121212121212",
+            "artifact_digest": "1212121212121212121212121212121212121212121212121212121212121212"
+          },
+          "claude": {
+            "ref": "registry/media-cpu-claude@sha256:1313131313131313131313131313131313131313131313131313131313131313",
+            "revision": "sha256:1313131313131313131313131313131313131313131313131313131313131313",
+            "artifact_digest": "1313131313131313131313131313131313131313131313131313131313131313"
+          },
+          "deepseek": {
+            "ref": "registry/media-cpu-deepseek@sha256:1414141414141414141414141414141414141414141414141414141414141414",
+            "revision": "sha256:1414141414141414141414141414141414141414141414141414141414141414",
+            "artifact_digest": "1414141414141414141414141414141414141414141414141414141414141414"
+          }
+        }
+      }
     },
     {
       "id": "primary-full-cpu",
-      "supported_harnesses": ["codex", "claude", "deepseek"],
-      "image_digests": {"codex": "7777777777777777777777777777777777777777777777777777777777777777", "claude": "8888888888888888888888888888888888888888888888888888888888888888", "deepseek": "9999999999999999999999999999999999999999999999999999999999999999"},
-      "commands": ["bash", "chromium", "dot", "drawio", "dvisvgm", "ffmpeg", "ffprobe", "gcc", "git", "latex", "libreoffice", "manim", "node", "npm", "pandoc", "pdftoppm", "pdftotext", "pnpm", "python3", "qpdf", "sandbox-job", "soffice", "tesseract", "timeout", "tred"],
-      "python_modules": ["PIL", "anthropic", "defusedxml", "filelock", "fitz", "imageio", "lxml", "manim", "markitdown", "mcp", "numpy", "openai", "openpyxl", "pandas", "pdf2image", "pdfplumber", "playwright", "pptx", "pypdf", "pytesseract", "requests", "sqlglot", "yaml"],
-      "node_modules": ["docx", "esbuild", "pptxgenjs", "react", "react-dom", "react-icons", "sharp", "typescript"],
-      "dependency_capabilities": ["image.generate", "video.generate", "video.edit", "audio.generate", "model3d.generate", "model3d.transform"], "network_origins": ["image-provider", "video-provider", "audio-provider", "model3d-provider"], "gpu": false, "priority": 100
+      "supported_harnesses": [
+        "codex",
+        "claude",
+        "deepseek"
+      ],
+      "commands": [
+        "bash",
+        "chromium",
+        "dot",
+        "drawio",
+        "dvisvgm",
+        "ffmpeg",
+        "ffprobe",
+        "gcc",
+        "git",
+        "latex",
+        "libreoffice",
+        "manim",
+        "node",
+        "npm",
+        "pandoc",
+        "pdftoppm",
+        "pdftotext",
+        "pnpm",
+        "python3",
+        "qpdf",
+        "sandbox-job",
+        "soffice",
+        "tesseract",
+        "timeout",
+        "tred"
+      ],
+      "python_modules": [
+        "PIL",
+        "anthropic",
+        "defusedxml",
+        "filelock",
+        "fitz",
+        "imageio",
+        "lxml",
+        "manim",
+        "markitdown",
+        "mcp",
+        "numpy",
+        "openai",
+        "openpyxl",
+        "pandas",
+        "pdf2image",
+        "pdfplumber",
+        "playwright",
+        "pptx",
+        "pypdf",
+        "pytesseract",
+        "requests",
+        "sqlglot",
+        "yaml"
+      ],
+      "node_modules": [
+        "docx",
+        "esbuild",
+        "pptxgenjs",
+        "react",
+        "react-dom",
+        "react-icons",
+        "sharp",
+        "typescript"
+      ],
+      "dependency_capabilities": [
+        "image.generate",
+        "video.generate",
+        "video.edit",
+        "audio.generate",
+        "model3d.generate",
+        "model3d.transform"
+      ],
+      "network_origins": [
+        "image-provider",
+        "video-provider",
+        "audio-provider",
+        "model3d-provider"
+      ],
+      "gpu": false,
+      "priority": 100,
+      "provider_releases": {
+        "opensandbox": {
+          "codex": {
+            "ref": "registry/primary-full-cpu-codex@sha256:7777777777777777777777777777777777777777777777777777777777777777",
+            "revision": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+            "artifact_digest": "7777777777777777777777777777777777777777777777777777777777777777"
+          },
+          "claude": {
+            "ref": "registry/primary-full-cpu-claude@sha256:8888888888888888888888888888888888888888888888888888888888888888",
+            "revision": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+            "artifact_digest": "8888888888888888888888888888888888888888888888888888888888888888"
+          },
+          "deepseek": {
+            "ref": "registry/primary-full-cpu-deepseek@sha256:9999999999999999999999999999999999999999999999999999999999999999",
+            "revision": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+            "artifact_digest": "9999999999999999999999999999999999999999999999999999999999999999"
+          }
+        }
+      }
     }
   ]
 }

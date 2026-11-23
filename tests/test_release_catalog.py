@@ -23,9 +23,11 @@ def signed_catalog(tmp_path):
     public_path.write_bytes(private.public_key().public_bytes(serialization.Encoding.PEM,
         serialization.PublicFormat.SubjectPublicKeyInfo))
     digest="a"*64;catalog=tmp_path/"profiles.json"
-    catalog.write_text(json.dumps({"runtime_dependency_profiles":[{"id":"general-cpu",
-        "supported_harnesses":["codex"],"image_digests":{"codex":digest},
-        "image_refs":{"codex":"registry/general-cpu-codex@sha256:"+digest}}]},
+    catalog.write_text(json.dumps({"schema_version":2,
+        "runtime_dependency_profiles":[{"id":"general-cpu",
+        "supported_harnesses":["codex"],"provider_releases":{"opensandbox":{"codex":{
+            "ref":"registry/general-cpu-codex@sha256:"+digest,
+            "revision":"sha256:"+digest,"artifact_digest":digest}}}}]},
         sort_keys=True,separators=(",",":"))+"\n")
     signature=catalog.with_suffix(".json.sig")
     signature.write_bytes(subprocess.run(["openssl","pkeyutl","-sign","-rawin","-inkey",
@@ -38,9 +40,10 @@ def complete_signed_catalog(tmp_path):
     value=json.loads(catalog.read_text())
     digests={"codex":"b"*64,"claude":"c"*64,"deepseek":"d"*64}
     value["runtime_dependency_profiles"].append({"id":"primary-full-cpu",
-        "supported_harnesses":list(digests),"image_digests":digests,
-        "image_refs":{key:"registry/primary-"+key+"@sha256:"+digest
-            for key,digest in digests.items()}})
+        "supported_harnesses":list(digests),"provider_releases":{"opensandbox":{
+            key:{"ref":"registry/primary-"+key+"@sha256:"+digest,
+                "revision":"sha256:"+digest,"artifact_digest":digest}
+            for key,digest in digests.items()}}})
     catalog.write_text(json.dumps(value,sort_keys=True,separators=(",",":"))+"\n")
     private=tmp_path/"private.pem"
     catalog.with_suffix(".json.sig").write_bytes(subprocess.run(

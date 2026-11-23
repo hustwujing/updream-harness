@@ -16,6 +16,12 @@ from sandbox_harness.profiles import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def releases(values):
+    return {"opensandbox":{harness:{"ref":f"registry/{harness}@sha256:{digest}",
+        "revision":"sha256:"+digest,"artifact_digest":digest}
+        for harness,digest in values.items()}}
+
+
 def resolver() -> ProfileResolver:
     skills = [
         SkillDescriptor(id="writing", version="1", digest="a" * 64,
@@ -38,16 +44,16 @@ def resolver() -> ProfileResolver:
     )]
     profiles = [
         RuntimeDependencyProfile(id="general-cpu", supported_harnesses=("codex", "claude", "deepseek"),
-            image_digests={"codex": "c" * 64, "claude": "d" * 64, "deepseek": "e" * 64},
+            provider_releases=releases({"codex": "c" * 64, "claude": "d" * 64, "deepseek": "e" * 64}),
             commands=("python3",), python_modules=(), node_modules=(),
             dependency_capabilities=(), network_origins=(), gpu=False, priority=10),
         RuntimeDependencyProfile(id="office", supported_harnesses=("codex", "claude"),
-            image_digests={"codex": "f" * 64, "claude": "1" * 64},
+            provider_releases=releases({"codex": "f" * 64, "claude": "1" * 64}),
             commands=("python3", "libreoffice"), python_modules=("pptx",),
             node_modules=("pptxgenjs",), dependency_capabilities=("image.generate",),
             network_origins=("images",), gpu=False, priority=20),
         RuntimeDependencyProfile(id="primary-full-cpu", supported_harnesses=("codex", "claude", "deepseek"),
-            image_digests={"codex": "2" * 64, "claude": "3" * 64, "deepseek": "4" * 64},
+            provider_releases=releases({"codex": "2" * 64, "claude": "3" * 64, "deepseek": "4" * 64}),
             commands=("python3", "libreoffice", "node"), python_modules=("pptx",),
             node_modules=("pptxgenjs",), dependency_capabilities=("image.generate",),
             network_origins=("images",), gpu=False, priority=100),
@@ -96,6 +102,10 @@ def test_profile_fallback_must_be_explicitly_authorized():
 
 def test_example_profile_catalog_is_digest_verified_and_covers_initial_profiles():
     raw=(ROOT/'deploy/profile-catalog.example.json').read_text()
+    payload=json.loads(raw)
+    assert payload['schema_version']==2
+    assert all('provider_releases' in row and 'image_refs' not in row and 'image_digests' not in row
+        for row in payload['runtime_dependency_profiles'])
     digest=hashlib.sha256(raw.encode()).hexdigest()
     manifest=json.loads((ROOT/'runtime/skills/manifest.json').read_text())
     value=ProfileResolver.from_json(raw,expected_digest=digest,skill_manifest=manifest)

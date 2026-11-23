@@ -68,6 +68,7 @@ async def test_media_render_adapter_reserves_profile_injects_frozen_input_and_bi
         objects=objects,settings=Settings(backend='fake',data_root=tmp_path),token_factory=token_factory)
     context=JobExecutionContext(job=job,request=request,generation=attempt.generation)
     try:
+        await store.mark_job_submission_started(job.id,"worker",attempt.generation)
         submission=await adapter.submit(context)
         assert submission.completed and runtime.rendered['input_path'].startswith('assets/inputs/source-')
         assert runtime.files[0][1]==source and runtime.injected['runtime_profile_id']=='media-cpu'

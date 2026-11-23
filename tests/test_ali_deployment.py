@@ -109,20 +109,22 @@ def test_ali_postgresql_initializer_validates_exact_environment_identity():
 def test_ali_profile_catalog_rewrite_preserves_digests_and_changes_registry():
     assets=load("ali_assets",ROOT/"deploy/ali/materialize-assets.py")
     original={
-        "schema_version":1,
+        "schema_version":2,
         "child_execution_profiles":[],
         "runtime_dependency_profiles":[{
             "id":"primary-full-cpu","supported_harnesses":["codex"],
-            "image_digests":{"codex":"a"*64},
-            "image_refs":{"codex":"127.0.0.1:25001/sandbox-harness-parallel/primary-full-cpu-codex@sha256:"+"a"*64},
+            "provider_releases":{"opensandbox":{"codex":{
+                "ref":"127.0.0.1:25001/sandbox-harness-parallel/primary-full-cpu-codex@sha256:"+"a"*64,
+                "revision":"sha256:"+"a"*64,"artifact_digest":"a"*64}}},
         }],
     }
     rewritten=assets.rewrite_profile_catalog(original)
     profile=rewritten["runtime_dependency_profiles"][0]
-    assert profile["image_digests"]==original["runtime_dependency_profiles"][0]["image_digests"]
-    assert profile["image_refs"]["codex"].startswith(
+    release=profile["provider_releases"]["opensandbox"]["codex"]
+    assert release["artifact_digest"]=="a"*64
+    assert release["ref"].startswith(
         "127.0.0.1:25001/sandbox-harness-platform-parallel-ali/")
-    assert "sandbox-harness-parallel/" not in profile["image_refs"]["codex"]
+    assert "sandbox-harness-parallel/" not in release["ref"]
 
 
 def test_ali_asset_materializer_owns_all_runtime_paths():

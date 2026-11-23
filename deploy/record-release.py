@@ -25,13 +25,15 @@ def publish_immutable(source: Path, target: Path, digest: str) -> None:
 def publish_profile_catalog(source: Path, destination_root: Path, public_key: Path) -> tuple[Path,str,str]:
     raw=source.read_bytes();digest=hashlib.sha256(raw).hexdigest();value=json.loads(raw)
     profiles=value.get('runtime_dependency_profiles',[])
+    if value.get('schema_version')!=2:raise ValueError('Profile Catalog schema must be v2')
     if not profiles:raise ValueError('Profile Catalog has no Runtime Profiles')
     for profile in profiles:
-        harnesses=set(profile.get('supported_harnesses',[]));digests=profile.get('image_digests',{})
-        references=profile.get('image_refs',{})
-        if not harnesses or set(digests)!=harnesses or set(references)!=harnesses:
+        harnesses=set(profile.get('supported_harnesses',[]))
+        releases=profile.get('provider_releases',{}).get('opensandbox',{})
+        if not harnesses or set(releases)!=harnesses:
             raise ValueError('Profile Catalog image matrix is incomplete')
-        if any(not references[harness].endswith('@sha256:'+digests[harness]) for harness in harnesses):
+        if any(not releases[harness]['ref'].endswith(
+                '@sha256:'+releases[harness]['artifact_digest']) for harness in harnesses):
             raise ValueError('Profile Catalog image matrix is not digest-pinned')
     signature=source.with_suffix(source.suffix+'.sig')
     if not signature.is_file():raise ValueError('Profile Catalog signature is unavailable')
@@ -50,7 +52,8 @@ def primary_runtime_images(catalog: Path) -> dict[str,str]:
     profiles={profile.get('id'):profile for profile in value.get('runtime_dependency_profiles',[])}
     primary=profiles.get('primary-full-cpu')
     if not primary:raise ValueError('Profile Catalog has no primary-full-cpu Runtime Profile')
-    references=primary.get('image_refs',{})
+    references={key:value['ref'] for key,value in
+        primary.get('provider_releases',{}).get('opensandbox',{}).items()}
     required={'codex','claude','deepseek'}
     if set(references)!=required or any('@sha256:' not in references[harness] for harness in required):
         raise ValueError('Primary Runtime image matrix is incomplete')

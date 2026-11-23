@@ -49,10 +49,6 @@ def test_job_service_refuses_unsigned_or_incomplete_image_matrix():
 
 async def test_job_service_registers_node_and_stops_without_deleting_shared_state(tmp_path):
     payload=json.loads((ROOT/"deploy/profile-catalog.example.json").read_text())
-    for profile in payload["runtime_dependency_profiles"]:
-        profile["image_refs"]={harness:
-            f"registry/{profile['id']}-{harness}@sha256:{profile['image_digests'][harness]}"
-            for harness in profile["supported_harnesses"]}
     raw=json.dumps(payload,sort_keys=True,separators=(",",":"));catalog=tmp_path/"profiles.json"
     catalog.write_text(raw);database="sqlite+aiosqlite:///"+str(tmp_path/"service.db")
     settings=Settings(backend="fake",data_root=tmp_path,database_url=database,redis_url="",

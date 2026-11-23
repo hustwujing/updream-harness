@@ -12,6 +12,7 @@ from .harness_job import HarnessJobAdapter, staged_file_chunks
 from .job_adapters import (AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExecutionContext,
     PreAcceptFailure)
 from .job_contracts import JobState
+from .sandbox_contracts import SandboxHandle
 
 
 class MediaRenderOperationAdapter(BaseJobAdapter):
@@ -46,9 +47,11 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
         if cached and cached.id==identity:return cached
         attached=await self.pool.get_attached(self._thread_id(context.job.id))
         if attached and attached.id==identity:self.sessions[context.job.id]=attached;return attached
-        matches=[value for value in await self.pool.list_owned() if value.id==identity]
-        if len(matches)!=1:raise RuntimeError('operation_sandbox_unavailable')
-        adopted=await self.pool.adopt(matches[0],thread_id=self._thread_id(context.job.id),turn_id=context.job.id)
+        try:handle=SandboxHandle.from_mapping(receipt.get('sandbox_handle') or {})
+        except ValueError as exc:raise RuntimeError('operation_sandbox_handle_invalid') from exc
+        try:candidate=await self.pool.backend.get(handle)
+        except Exception as exc:raise RuntimeError('operation_sandbox_unavailable') from exc
+        adopted=await self.pool.adopt(candidate,thread_id=self._thread_id(context.job.id),turn_id=context.job.id)
         self.sessions[context.job.id]=adopted;return adopted
 
     async def submit(self,context:JobExecutionContext)->AdapterSubmission:
@@ -66,6 +69,11 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
         try:
             sandbox=await self.pool.acquire(thread_id=self._thread_id(context.job.id),turn_id=context.job.id,
                 harness=harness,environment={},image=image)
+            allocation={'sandbox_id':sandbox.id,'sandbox_handle':sandbox.handle.to_mapping(),
+                'reservation_id':reservation.id,'node_id':reservation.node_id,
+                'node_generation':reservation.node_generation}
+            await self.store.record_job_submission_allocation(context.job.id,context.generation,
+                external_execution_id='operation:'+context.job.id,receipt=allocation)
             token,claims=await self.token_factory(context,reservation,sandbox.id)
             await self.runtime.inject(sandbox,capability_token=token,gateway_url=self.settings.gateway_url,
                 proxy_url=self.settings.public_proxy_url,harness=harness.value,model='operation-only',
@@ -95,7 +103,8 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
             async with self.scheduler.hold(reservation.id,reservation.node_id,reservation.node_generation):
                 value=await self.runtime.media_render(sandbox,runtime_value)
                 self.sessions[context.job.id]=sandbox
-                receipt={'sandbox_id':sandbox.id,'capability_nonce':claims.nonce,
+                receipt={'sandbox_id':sandbox.id,'sandbox_handle':sandbox.handle.to_mapping(),
+                    'capability_nonce':claims.nonce,
                     'reservation_id':reservation.id,'node_id':reservation.node_id,
                     'node_generation':reservation.node_generation,'operation_completed':True,'output':value}
                 await self.scheduler.mark_running(reservation.id,reservation.node_id,reservation.node_generation)
