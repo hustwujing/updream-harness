@@ -299,8 +299,9 @@ class SandboxChildBackend:
             await self.pool.release(sandbox,keep_attached=False)
             raise
         try:
-            await self.runtime.inject(sandbox,capability_token=token,gateway_url=self.settings.gateway_url,
-                proxy_url=self.settings.public_proxy_url,harness=harness.value,
+            route=self.pool.backend.runtime_route(sandbox)
+            await self.runtime.inject(sandbox,capability_token=token,gateway_url=route.gateway_url,
+                proxy_url=route.proxy_url,harness=harness.value,
                 model=str(context.request.parameters.get('model','')),
                 model_start_timeout_seconds=self.settings.runtime_model_start_timeout_seconds,
                 event_idle_timeout_seconds=self.settings.runtime_event_idle_timeout_seconds,

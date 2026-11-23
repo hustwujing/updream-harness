@@ -895,13 +895,14 @@ class Broker:
                     )
                     await self._state(turn.id, TurnState.STARTING, sandbox_id=sandbox.id,
                         sandbox_handle_json=self._handle_json(sandbox))
+                    route=self.pool.backend.runtime_route(sandbox)
                     primary_skills = sorted(skill.id for skill in self.catalog.profile_resolver.skills.values()
                         if turn.harness.value in skill.supported_harnesses) if self.catalog.profile_resolver else []
                     await self.runtime.inject(
                         sandbox,
                         capability_token=token,
-                        gateway_url=self.settings.gateway_url,
-                        proxy_url=self.settings.public_proxy_url,
+                        gateway_url=route.gateway_url,
+                        proxy_url=route.proxy_url,
                         harness=turn.harness.value,
                         model=turn.model,
                         model_start_timeout_seconds=self.settings.runtime_model_start_timeout_seconds,

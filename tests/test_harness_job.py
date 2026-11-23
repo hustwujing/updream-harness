@@ -11,6 +11,7 @@ from sandbox_harness.config import Settings
 from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate
 from sandbox_harness.objects import ObjectStore
 from sandbox_harness.sandbox import Sandbox,SandboxCapacityUnavailable,SandboxNotFound
+from sandbox_harness.sandbox_contracts import SandboxRuntimeRoute
 from sandbox_harness.scheduler import NodeInventory,Scheduler
 from sandbox_harness.runtime import StagedRuntimeObject
 from sandbox_harness.store import Store
@@ -366,6 +367,8 @@ async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(
         def iter_bytes(self,*args,**kwargs):yield from chunks
     class Pool:
         acquired=0
+        backend=SimpleNamespace(runtime_route=lambda sandbox:SandboxRuntimeRoute(
+            "http://sandbox-gateway:29880","http://sandbox-proxy:29881"))
         async def acquire(self,**kwargs):self.acquired+=1;return sandbox
         async def release(self,*args,**kwargs):pass
     class Runtime:
@@ -394,6 +397,7 @@ async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(
     assert execution.startswith("c"*32) and Runtime.sizes==[len(value) for value in chunks]
     assert backend.runtime.injected['logical_thread_id']=='d'*32
     assert backend.runtime.injected['logical_turn_id']=='e'*32
+    assert backend.runtime.injected['gateway_url']=='http://sandbox-gateway:29880'
     assert backend.store.allocations==[
         {"sandbox_id":sandbox.id,"sandbox_handle":sandbox.handle.to_mapping(),
             "reservation_id":"reservation","node_id":"node",

@@ -102,7 +102,9 @@ def build_sandbox_backend(settings:Settings)->SandboxBackend:
         backend=AliyunSandboxBackend(api_key=settings.aliyun_sandbox_api_key,
             api_url=settings.aliyun_sandbox_api_url,domain=settings.aliyun_sandbox_domain,
             timeout_seconds=settings.sandbox_timeout_seconds,namespace=settings.namespace,
-            request_timeout_seconds=settings.aliyun_sandbox_request_timeout_seconds)
+            request_timeout_seconds=settings.aliyun_sandbox_request_timeout_seconds,
+            gateway_url=settings.aliyun_sandbox_gateway_url,
+            proxy_url=settings.aliyun_sandbox_proxy_url)
         backend.capabilities.require_primary_runtime();return backend
     raise ValueError("unsupported_sandbox_backend:"+str(settings.backend))
 

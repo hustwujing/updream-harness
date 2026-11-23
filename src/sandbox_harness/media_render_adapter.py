@@ -75,8 +75,9 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
             await self.store.record_job_submission_allocation(context.job.id,context.generation,
                 external_execution_id='operation:'+context.job.id,receipt=allocation)
             token,claims=await self.token_factory(context,reservation,sandbox.id)
-            await self.runtime.inject(sandbox,capability_token=token,gateway_url=self.settings.gateway_url,
-                proxy_url=self.settings.public_proxy_url,harness=harness.value,model='operation-only',
+            route=self.pool.backend.runtime_route(sandbox)
+            await self.runtime.inject(sandbox,capability_token=token,gateway_url=route.gateway_url,
+                proxy_url=route.proxy_url,harness=harness.value,model='operation-only',
                 runtime_bundle_digest=self.settings.runtime_bundle_digest,
                 runtime_code_bundle_digest=self.settings.runtime_code_bundle_digest,
                 runtime_profile_id=reservation.runtime_profile_id,skill_ids=[],skill_digests={},

@@ -9,6 +9,7 @@ from sandbox_harness.job_contracts import (JobArtifactInput,JobExpectedOutput,Jo
 from sandbox_harness.media_render_adapter import MediaRenderOperationAdapter
 from sandbox_harness.objects import ObjectStore
 from sandbox_harness.sandbox import Sandbox
+from sandbox_harness.sandbox_contracts import SandboxRuntimeRoute
 from sandbox_harness.scheduler import NodeInventory,Scheduler
 from sandbox_harness.runtime import StagedRuntimeObject
 from sandbox_harness.store import Store
@@ -46,7 +47,9 @@ async def test_media_render_adapter_reserves_profile_injects_frozen_input_and_bi
     sandbox=Sandbox(id='sandbox-operation',harness=Harness.CODEX,
         image='registry/media-cpu-codex@sha256:'+'d'*64,runtime_url='http://runtime',metadata={})
     class Pool:
-        backend=SimpleNamespace(list_namespace=lambda:None)
+        backend=SimpleNamespace(list_namespace=lambda:None,
+            runtime_route=lambda sandbox:SandboxRuntimeRoute(
+                "http://sandbox-gateway:29880","http://sandbox-proxy:29881"))
         async def acquire(self,**kwargs):return sandbox
         async def get_attached(self,*args):return sandbox
         async def release(self,*args,**kwargs):return None
@@ -72,6 +75,7 @@ async def test_media_render_adapter_reserves_profile_injects_frozen_input_and_bi
         submission=await adapter.submit(context)
         assert submission.completed and runtime.rendered['input_path'].startswith('assets/inputs/source-')
         assert runtime.files[0][1]==source and runtime.injected['runtime_profile_id']=='media-cpu'
+        assert runtime.injected['gateway_url']=='http://sandbox-gateway:29880'
         context=JobExecutionContext(job=job,request=request,generation=attempt.generation,
             previous_external_execution_id=submission.external_execution_id,
             previous_acceptance_receipt=submission.acceptance_receipt)

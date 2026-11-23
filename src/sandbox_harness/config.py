@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     aliyun_sandbox_domain: str = "cn-shanghai.sandbox.aliyuncs.com"
     aliyun_sandbox_api_key: str = ""
     aliyun_sandbox_request_timeout_seconds: float = Field(default=60, ge=1, le=300)
+    aliyun_sandbox_gateway_url:str="http://10.194.49.8:29882"
+    aliyun_sandbox_proxy_url:str="http://10.194.49.8:29883"
     redis_url: str = "redis://127.0.0.1:6379/0"
     redis_prefix: str = "sandbox-harness-parallel:"
     job_catalog_path: Path = Path("deploy/job-catalog.example.json")

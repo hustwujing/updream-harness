@@ -438,8 +438,9 @@ class SandboxInspector:
                     ttl_seconds=self.settings.sandbox_control_ttl_seconds,
                     max_requests=1, max_public_requests=self.settings.capability_public_request_limit,
                     token_budget=1)
+                route=self.pool.backend.runtime_route(sandbox)
                 await self.runtime.inject(sandbox, capability_token=token,
-                    gateway_url=self.settings.gateway_url, proxy_url=self.settings.public_proxy_url,
+                    gateway_url=route.gateway_url, proxy_url=route.proxy_url,
                     harness=thread.harness.value, model=thread.model,
                     defer_skill_install=bool(thread.checkpoint_ref and not sandbox.reused))
                 if not sandbox.reused:

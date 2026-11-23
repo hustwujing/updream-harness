@@ -19,9 +19,12 @@ def test_backend_factory_is_the_single_provider_construction_boundary(tmp_path):
         opensandbox_url="http://opensandbox",opensandbox_api_key="key"))
     assert isinstance(opened,OpenSandboxBackend) and opened.provider=="opensandbox"
     aliyun=build_sandbox_backend(Settings(_env_file=None,backend="aliyun",data_root=tmp_path,
-        aliyun_sandbox_api_key="e2b_"+"1"*40))
+        aliyun_sandbox_api_key="e2b_"+"1"*40,
+        aliyun_sandbox_gateway_url="http://10.0.0.8:29882",
+        aliyun_sandbox_proxy_url="http://10.0.0.8:29883"))
     assert isinstance(aliyun,AliyunSandboxBackend) and aliyun.provider=="aliyun"
     assert not aliyun.capabilities.native_idempotency
+    assert aliyun.route.gateway_url=="http://10.0.0.8:29882"
 
 
 def test_profile_resolver_freezes_provider_ref_and_runtime_contract():
@@ -37,7 +40,8 @@ def test_profile_resolver_freezes_provider_ref_and_runtime_contract():
 async def test_backend_registry_dispatches_durable_handles_to_their_provider():
     class OtherBackend(FakeSandboxBackend):provider="other"
     fake=FakeSandboxBackend(namespace="product")
-    other=OtherBackend(namespace="product")
+    other=OtherBackend(namespace="product",gateway_url="http://10.0.0.8:29882",
+        proxy_url="http://10.0.0.8:29883")
     registry=SandboxBackendRegistry([fake,other],"fake")
     resolver=SandboxProfileResolver(provider="other",runtime_contract="runtime/v1",
         runtime_bundle_digest="1"*64,runtime_code_bundle_digest="2"*64)
@@ -45,6 +49,7 @@ async def test_backend_registry_dispatches_durable_handles_to_their_provider():
         profile=resolver.resolve(Harness.CODEX,"other-image"),environment={},ttl_seconds=300,
         allocation_id="other-allocation"))
     assert await registry.get(sandbox.handle) is sandbox
+    assert registry.runtime_route(sandbox).gateway_url=="http://10.0.0.8:29882"
     with pytest.raises(TypeError,match="handle_required"):
         await registry.get(sandbox.id)
     with pytest.raises(RuntimeError,match="active_work"):
