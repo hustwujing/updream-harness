@@ -15,8 +15,8 @@ from sandbox_harness.sandbox_contracts import (
     SandboxNotFound,
     SandboxProfile,
     SandboxProfileUnavailable,
+    SandboxProviderUnavailable,
     SandboxScope,
-    SandboxUpdate,
 )
 
 
@@ -34,9 +34,8 @@ def creation() -> SandboxCreateRequest:
         harness=Harness.CODEX,
         profile=profile,
         environment={"MODE": "test"},
-        metadata={},
         ttl_seconds=300,
-        idempotency_key="turn-1",
+        allocation_id="turn-1",
     )
 
 
@@ -62,6 +61,8 @@ class FakeAliyunClient:
         self.create_error = None
         self.accept_before_error = False
         self.traffic_token="traffic-secret"
+        self.hide_inventory=False
+        self.kill_removes=True
 
     @staticmethod
     def _info(sandbox_id, template, metadata, *, state="running"):
@@ -104,7 +105,7 @@ class FakeAliyunClient:
 
     def list(self, metadata):
         self.list_calls.append(dict(metadata))
-        rows = list(self.items.values())
+        rows = [] if self.hide_inventory else list(self.items.values())
         midpoint = min(1, len(rows))
         return FakePaginator([rows[:midpoint], rows[midpoint:]])
 
@@ -115,6 +116,7 @@ class FakeAliyunClient:
 
     async def kill(self, sandbox_id):
         self.kill_calls.append(sandbox_id)
+        if not self.kill_removes:return sandbox_id in self.items
         return self.items.pop(sandbox_id, None) is not None
 
 
@@ -165,19 +167,17 @@ async def test_aliyun_lifecycle_maps_template_metadata_ttl_endpoint_and_delete()
         assert endpoint.url == "https://8080-sandbox-1.sandbox.aliyuncs.com"
         assert endpoint.headers == {"e2b-traffic-access-token": "traffic-secret"}
 
-        sandbox = await value.update(sandbox, SandboxUpdate(ttl_seconds=450))
-        assert client.timeout_calls == [("sandbox-1", 450)]
+        sandbox = await value.renew(sandbox, force=True)
+        assert client.timeout_calls == [("sandbox-1", 600)]
         assert sandbox.expires_at > datetime.now(timezone.utc)
-        assert [row.id for row in await value.find({
-            "sandbox-harness.io/idempotency-key":"turn-1"})] == [
-            "sandbox-1"
-        ]
-        assert [row.id for row in await value.list(SandboxScope("ali-test"))] == ["sandbox-1"]
+        reconciled=await value.reconcile_create(SandboxScope("ali-test"),"turn-1")
+        assert reconciled and reconciled.id=="sandbox-1"
+        assert [row.id for row in await value.list_owned(SandboxScope("ali-test"))] == ["sandbox-1"]
 
         await value.delete(sandbox)
         await value.delete(sandbox)
         assert client.kill_calls == ["sandbox-1"]
-        assert await value.list(SandboxScope("ali-test")) == []
+        assert await value.list_owned(SandboxScope("ali-test")) == []
     finally:
         await value.aclose()
 
@@ -187,7 +187,6 @@ async def test_aliyun_exhausts_pages_and_exactly_filters_provider_results():
     client = FakeAliyunClient()
     wanted = creation()
     values = {
-        **wanted.metadata,
         "sandbox-harness.io/namespace": "ali-test",
         "sandbox-harness.io/idempotency-key":"turn-1",
         "sandbox-harness.io/harness": "codex",
@@ -199,32 +198,26 @@ async def test_aliyun_exhausts_pages_and_exactly_filters_provider_results():
         **values,"sandbox-harness.io/idempotency-key":"other"})
     value = backend(client, httpx.MockTransport(health_transport))
     try:
-        rows = await value.find({"sandbox-harness.io/idempotency-key":"turn-1"})
-        assert [row.id for row in rows] == ["one"]
+        row = await value.reconcile_create(SandboxScope("ali-test"),"turn-1")
+        assert row and row.id == "one"
         assert client.list_calls == [{
             "sandbox-harness.io/namespace": "ali-test",
             "sandbox-harness.io/idempotency-key":"turn-1",
         }]
-        assert await value.find({"sandbox-harness.io/namespace":"another-product"})==[]
+        assert await value.list_owned(SandboxScope("another-product"))==[]
         assert len(client.list_calls)==1
     finally:
         await value.aclose()
 
 
 @pytest.mark.asyncio
-async def test_aliyun_rejects_metadata_mutation_but_accepts_equal_values():
+async def test_aliyun_contract_does_not_expose_metadata_mutation():
     client = FakeAliyunClient()
     value = backend(client, httpx.MockTransport(health_transport))
     try:
         sandbox = await value.create(creation())
-        same = sandbox.metadata["sandbox-harness.io/profile-key"]
-        await value.update(sandbox, SandboxUpdate(metadata={
-            "sandbox-harness.io/profile-key":same}))
-        with pytest.raises(SandboxProfileUnavailable, match="metadata update"):
-            await value.update(
-                sandbox,
-                SandboxUpdate(metadata={"sandbox-harness.io/profile-key":"changed"}),
-            )
+        assert not hasattr(value,"update")
+        assert sandbox.handle and sandbox.handle.allocation_id=="turn-1"
     finally:
         await value.aclose()
 
@@ -252,6 +245,23 @@ async def test_aliyun_unknown_create_without_inventory_match_is_explicit():
         with pytest.raises(SandboxCreateOutcomeUnknown):
             await value.create(creation())
         assert len(client.create_calls) == 1
+    finally:
+        await value.aclose()
+
+
+@pytest.mark.asyncio
+async def test_aliyun_delete_does_not_trust_transient_inventory_absence(monkeypatch):
+    client=FakeAliyunClient();value=backend(client,httpx.MockTransport(health_transport))
+    async def no_sleep(_):return None
+    monkeypatch.setattr("sandbox_harness.sandbox_aliyun.asyncio.sleep",no_sleep)
+    try:
+        sandbox=await value.create(creation())
+        client.hide_inventory=True
+        client.kill_removes=False
+        with pytest.raises(SandboxProviderUnavailable,match="did not converge"):
+            await value.delete(sandbox)
+        assert client.kill_calls==[sandbox.id]
+        assert sandbox.id in client.items
     finally:
         await value.aclose()
 
@@ -287,7 +297,7 @@ async def test_aliyun_get_resumes_paused_sandbox_before_runtime_health():
     client=FakeAliyunClient();request=creation()
     metadata={**AliyunSandboxBackend._profile_metadata(request.profile),
         "sandbox-harness.io/namespace":"ali-test",
-        "sandbox-harness.io/idempotency-key":request.idempotency_key,
+        "sandbox-harness.io/idempotency-key":request.allocation_id,
         "sandbox-harness.io/harness":"codex"}
     client.items["paused"]=client._info("paused","template-1",metadata,state="paused")
     value=backend(client,httpx.MockTransport(health_transport))
@@ -320,7 +330,7 @@ async def test_aliyun_idempotency_rejects_different_template_with_same_compatibi
         runtime_code_bundle_digest=first.profile.runtime_code_bundle_digest,
         compatibility_key=first.profile.compatibility_key)
     conflicting=SandboxCreateRequest(harness=first.harness,profile=conflicting_profile,
-        environment={},metadata={},ttl_seconds=300,idempotency_key=first.idempotency_key)
+        environment={},ttl_seconds=300,allocation_id=first.allocation_id)
     try:
         sandbox=await value.create(first)
         with pytest.raises(SandboxProfileUnavailable,match="idempotency key conflicts"):
@@ -364,11 +374,11 @@ async def test_aliyun_delete_waits_for_confirmed_absence():
         remaining=0
         async def kill(self,sandbox_id):
             self.kill_calls.append(sandbox_id);self.remaining=2;return True
-        def list(self,metadata):
+        async def get_info(self,sandbox_id):
             if self.remaining:
                 self.remaining-=1
                 if not self.remaining:self.items.clear()
-            return super().list(metadata)
+            return await super().get_info(sandbox_id)
     client=DelayedDeleteClient();value=backend(client,httpx.MockTransport(health_transport))
     try:
         sandbox=await value.create(creation());await value.delete(sandbox)

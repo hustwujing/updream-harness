@@ -46,7 +46,7 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
         if cached and cached.id==identity:return cached
         attached=await self.pool.get_attached(self._thread_id(context.job.id))
         if attached and attached.id==identity:self.sessions[context.job.id]=attached;return attached
-        matches=[value for value in await self.pool.backend.list_namespace() if value.id==identity]
+        matches=[value for value in await self.pool.list_owned() if value.id==identity]
         if len(matches)!=1:raise RuntimeError('operation_sandbox_unavailable')
         adopted=await self.pool.adopt(matches[0],thread_id=self._thread_id(context.job.id),turn_id=context.job.id)
         self.sessions[context.job.id]=adopted;return adopted
@@ -164,7 +164,7 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
             except RuntimeError as exc:
                 if str(exc)!='operation_sandbox_unavailable':raise
         else:
-            matches=[value for value in await self.pool.backend.list_namespace()
+            matches=[value for value in await self.pool.list_owned()
                 if value.turn_id==context.job.id]
             for match in matches:
                 adopted=await self.pool.adopt(match,thread_id=self._thread_id(context.job.id),turn_id=context.job.id)

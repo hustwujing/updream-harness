@@ -482,7 +482,7 @@ class SandboxInspector:
                 except (SandboxNotFound, RuntimeError, httpx.HTTPError):
                     sandbox = None
                     try:
-                        for candidate in await self.pool.backend.list_namespace():
+                        for candidate in await self.pool.list_owned():
                             if candidate.id == raw["sandbox_id"]:
                                 await self.pool.backend.delete(candidate)
                                 break

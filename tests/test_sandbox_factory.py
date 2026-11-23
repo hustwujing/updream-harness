@@ -19,7 +19,7 @@ def test_backend_factory_is_the_single_provider_construction_boundary(tmp_path):
     aliyun=build_sandbox_backend(Settings(_env_file=None,backend="aliyun",data_root=tmp_path,
         aliyun_sandbox_api_key="e2b_"+"1"*40))
     assert isinstance(aliyun,AliyunSandboxBackend) and aliyun.provider=="aliyun"
-    assert not aliyun.capabilities.metadata_update
+    assert not aliyun.capabilities.native_idempotency
 
 
 def test_profile_resolver_freezes_provider_ref_and_runtime_contract():
@@ -69,9 +69,9 @@ def immutable_backend():
             assert not value.metadata
             return await super().update(sandbox,value)
     backend=ImmutableFakeBackend()
-    backend.capabilities=SandboxCapabilities(metadata_update=False,metadata_filter=True,
-        arbitrary_ports=True,ttl_renewal=True,idempotent_create=True,
-        authenticated_runtime_http=True)
+    backend.capabilities=SandboxCapabilities(native_idempotency=False,scoped_inventory=True,
+        arbitrary_ports=True,ttl_renewal=True,authenticated_runtime_http=True,
+        delete_convergence=True,pause_resume=False)
     return backend
 
 
@@ -108,7 +108,7 @@ async def test_pool_reuses_same_thread_without_provider_metadata_mutation():
 
 async def test_failed_warm_bind_retires_the_popped_sandbox():
     class FailingBindBackend(FakeSandboxBackend):
-        async def update(self,sandbox,value):
+        async def renew(self,sandbox,*,force=False):
             raise SandboxProviderUnavailable("ttl failed",provider="fake")
     backend=FailingBindBackend();resolver=SandboxProfileResolver(provider="fake",
         runtime_contract="runtime/v1",runtime_bundle_digest="1"*64,

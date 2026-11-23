@@ -153,7 +153,7 @@ class Broker:
             | await self.pool.managed_sandbox_ids() | await self.store.nonterminal_turn_sandbox_ids()
             | await self.store.active_sandbox_control_ids()
             | await self.store.active_job_sandbox_ids())
-        for sandbox in await self.pool.backend.list_namespace():
+        for sandbox in await self.pool.list_owned():
             if sandbox.id not in active_ids:
                 event("sandbox.orphan.delete",level=logging.WARNING,sandbox_id=sandbox.id)
                 await self.pool.backend.delete(sandbox)

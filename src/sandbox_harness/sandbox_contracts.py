@@ -14,6 +14,7 @@ from .domain import Harness
 
 
 _METADATA_KEY=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
+_PROVIDER=re.compile(r"^[a-z][a-z0-9_-]{1,31}$")
 
 
 def _mapping(value:Mapping[str,str],*,name:str,maximum:int)->Mapping[str,str]:
@@ -66,27 +67,14 @@ class SandboxCreateRequest:
     harness:Harness
     profile:SandboxProfile
     environment:Mapping[str,str]
-    metadata:Mapping[str,str]
     ttl_seconds:int
-    idempotency_key:str
+    allocation_id:str
 
     def __post_init__(self)->None:
         if not 30<=self.ttl_seconds<=86400:raise ValueError("sandbox_ttl_invalid")
-        if not isinstance(self.idempotency_key,str) or not 1<=len(self.idempotency_key)<=64:
-            raise ValueError("sandbox_idempotency_key_invalid")
+        if not isinstance(self.allocation_id,str) or not 1<=len(self.allocation_id)<=160:
+            raise ValueError("sandbox_allocation_id_invalid")
         object.__setattr__(self,"environment",_mapping(self.environment,name="environment",maximum=256))
-        object.__setattr__(self,"metadata",_metadata(self.metadata))
-
-
-@dataclass(frozen=True)
-class SandboxUpdate:
-    metadata:Mapping[str,str|None]=field(default_factory=dict)
-    ttl_seconds:int|None=None
-
-    def __post_init__(self)->None:
-        if self.ttl_seconds is not None and not 30<=self.ttl_seconds<=86400:
-            raise ValueError("sandbox_ttl_invalid")
-        object.__setattr__(self,"metadata",_metadata(self.metadata,allow_delete=True))
 
 
 @dataclass(frozen=True)
@@ -107,6 +95,49 @@ class SandboxEndpoint:
         # Transitional tuple compatibility for inspector callers migrated in Task 3.
         yield self.url
         yield dict(self.headers)
+
+
+@dataclass(frozen=True)
+class SandboxHandle:
+    provider:str
+    sandbox_id:str
+    allocation_id:str
+    profile_key:str
+    revision:str
+
+    def __post_init__(self)->None:
+        if not isinstance(self.provider,str) or not _PROVIDER.fullmatch(self.provider):
+            raise ValueError("sandbox_handle_provider_invalid")
+        for name,value,maximum in (
+            ("sandbox_id",self.sandbox_id,512),("allocation_id",self.allocation_id,160),
+            ("profile_key",self.profile_key,160),("revision",self.revision,512)):
+            if not isinstance(value,str) or not value or len(value)>maximum:
+                raise ValueError("sandbox_handle_"+name+"_invalid")
+
+    def to_mapping(self)->dict[str,str]:
+        return {"provider":self.provider,"sandbox_id":self.sandbox_id,
+            "allocation_id":self.allocation_id,"profile_key":self.profile_key,
+            "revision":self.revision}
+
+    @classmethod
+    def from_mapping(cls,value:Mapping[str,str])->"SandboxHandle":
+        return cls(provider=value.get("provider",""),sandbox_id=value.get("sandbox_id",""),
+            allocation_id=value.get("allocation_id",""),profile_key=value.get("profile_key",""),
+            revision=value.get("revision",""))
+
+
+@dataclass(frozen=True)
+class SandboxRuntimeRoute:
+    gateway_url:str
+    proxy_url:str
+
+    def __post_init__(self)->None:
+        for value in (self.gateway_url,self.proxy_url):
+            parsed=urlsplit(value)
+            if (parsed.scheme not in {"http","https"} or not parsed.hostname or not parsed.port
+                    or parsed.username or parsed.password or parsed.path not in {"","/"}
+                    or parsed.query or parsed.fragment):
+                raise ValueError("sandbox_runtime_route_invalid")
 
 
 class SandboxState(StrEnum):
@@ -132,6 +163,7 @@ class Sandbox:
     state:SandboxState=SandboxState.READY
     expires_at:datetime|None=None
     provider_details:dict[str,str]=field(default_factory=dict,repr=False)
+    handle:SandboxHandle|None=None
     warm:bool=False
     thread_id:str=""
     turn_id:str=""
@@ -153,6 +185,14 @@ class Sandbox:
                 runtime_contract="sandbox-harness-runtime/v1",runtime_bundle_digest="legacy",
                 runtime_code_bundle_digest="legacy")
         elif not self.image:self.image=self.profile.provider_ref
+        if self.handle is None:
+            allocation=str(self.metadata.get("sandbox-harness.io/idempotency-key")
+                or self.turn_id or self.id)
+            self.handle=SandboxHandle(provider=self.provider,sandbox_id=self.id,
+                allocation_id=allocation,profile_key=self.profile.compatibility_key,
+                revision=self.profile.revision)
+        elif self.handle.sandbox_id!=self.id or self.handle.provider!=self.provider:
+            raise ValueError("sandbox_handle_identity_mismatch")
         if self.state!=SandboxState.READY and self.health_state=="ready":
             self.health_state=self.state.value
         elif self.state==SandboxState.READY and self.health_state!="ready":
@@ -164,16 +204,17 @@ class Sandbox:
 
 @dataclass(frozen=True)
 class SandboxCapabilities:
-    metadata_update:bool
-    metadata_filter:bool
+    native_idempotency:bool
+    scoped_inventory:bool
     arbitrary_ports:bool
     ttl_renewal:bool
-    idempotent_create:bool
     authenticated_runtime_http:bool
+    delete_convergence:bool
+    pause_resume:bool
 
     def require_primary_runtime(self)->None:
-        required=("metadata_filter","arbitrary_ports","ttl_renewal","idempotent_create",
-            "authenticated_runtime_http")
+        required=("scoped_inventory","arbitrary_ports","ttl_renewal",
+            "authenticated_runtime_http","delete_convergence")
         missing=[name for name in required if not getattr(self,name)]
         if missing:raise ValueError("sandbox_provider_missing_capabilities:"+",".join(missing))
 
@@ -211,11 +252,11 @@ class SandboxBackend(Protocol):
     provider:str
     capabilities:SandboxCapabilities
     async def create(self,request:SandboxCreateRequest)->Sandbox:...
-    async def get(self,sandbox_id:str)->Sandbox:...
-    async def find(self,metadata:Mapping[str,str])->list[Sandbox]:...
-    async def list(self,scope:SandboxScope)->list[Sandbox]:...
-    async def update(self,sandbox:Sandbox,update:SandboxUpdate)->Sandbox:...
+    async def get(self,handle:SandboxHandle)->Sandbox:...
+    async def reconcile_create(self,scope:SandboxScope,allocation_id:str)->Sandbox|None:...
+    async def list_owned(self,scope:SandboxScope)->list[Sandbox]:...
     async def renew(self,sandbox:Sandbox,*,force:bool=False)->Sandbox:...
     async def delete(self,sandbox:Sandbox)->None:...
     async def endpoint(self,sandbox:Sandbox,port:int,*,force_refresh:bool=False)->SandboxEndpoint:...
+    def runtime_route(self,sandbox:Sandbox)->SandboxRuntimeRoute:...
     async def aclose(self)->None:...

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime,timedelta,timezone
+import hashlib
 import time
 from typing import Any,Mapping
 from urllib.parse import urlsplit
@@ -13,9 +14,9 @@ from .observability import event,observed
 from .sandbox_contracts import (
     Sandbox,SandboxAuthenticationFailed,SandboxCapabilities,SandboxCapacityUnavailable,
     SandboxCreateOutcomeUnknown,SandboxCreateRequest,SandboxEndpoint,
-    SandboxEndpointUnavailable,SandboxNotFound,SandboxProfile,SandboxProfileUnavailable,
+    SandboxEndpointUnavailable,SandboxHandle,SandboxNotFound,SandboxProfile,SandboxProfileUnavailable,
     SandboxProviderError,SandboxProviderUnavailable,SandboxRateLimited,SandboxScope,SandboxState,
-    SandboxUpdate)
+    SandboxRuntimeRoute)
 
 
 _PROFILE_ID_KEY="sandbox-harness.io/profile"
@@ -24,9 +25,9 @@ _PROFILE_COMPATIBILITY_KEY="sandbox-harness.io/profile-key"
 
 class OpenSandboxBackend:
     provider="opensandbox"
-    capabilities=SandboxCapabilities(metadata_update=True,metadata_filter=True,
-        arbitrary_ports=True,ttl_renewal=True,idempotent_create=True,
-        authenticated_runtime_http=True)
+    capabilities=SandboxCapabilities(native_idempotency=True,scoped_inventory=True,
+        arbitrary_ports=True,ttl_renewal=True,authenticated_runtime_http=True,
+        delete_convergence=True,pause_resume=False)
 
     def __init__(self,base_url:str,api_key:str,timeout_seconds:int,namespace:str,
                  gateway_url:str="http://172.31.0.1:29880",proxy_port:int=29881,
@@ -39,6 +40,8 @@ class OpenSandboxBackend:
         if gateway.scheme!="http" or not gateway.hostname or not gateway.port or gateway.path not in ("","/"):
             raise ValueError("Sandbox Gateway must be a fixed HTTP origin")
         self.gateway_host=gateway.hostname;self.gateway_port=gateway.port;self.proxy_port=proxy_port
+        self.route=SandboxRuntimeRoute(gateway_url.rstrip("/"),
+            f"{gateway.scheme}://{gateway.hostname}:{proxy_port}")
         self._profiles:dict[str,SandboxProfile]={}
         self._endpoints:dict[tuple[str,int],SandboxEndpoint]={}
         self._endpoint_locks:dict[tuple[str,int],asyncio.Lock]={}
@@ -55,8 +58,7 @@ class OpenSandboxBackend:
                         environment:Mapping[str,str])->SandboxCreateRequest:
         key=str(metadata.get("sandbox-harness.io/idempotency-key") or identifier())
         return SandboxCreateRequest(harness=harness,profile=self.legacy_profile(harness,image),
-            environment=environment,metadata=metadata,ttl_seconds=self.timeout_seconds,
-            idempotency_key=key[:64])
+            environment=environment,ttl_seconds=self.timeout_seconds,allocation_id=key[:160])
 
     @staticmethod
     def _profile_metadata(profile:SandboxProfile)->dict[str,str]:
@@ -64,6 +66,10 @@ class OpenSandboxBackend:
         if not identity or any(value not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_." for value in identity):
             identity="profile-"+profile.compatibility_key[:40]
         return {_PROFILE_ID_KEY:identity,_PROFILE_COMPATIBILITY_KEY:profile.compatibility_key}
+
+    @staticmethod
+    def _request_id(allocation_id:str)->str:
+        return hashlib.sha256(allocation_id.encode("utf-8")).hexdigest()
 
     def _profile(self,sandbox_id:str,harness:Harness,image:str,metadata:Mapping[str,str])->SandboxProfile:
         existing=self._profiles.get(sandbox_id)
@@ -160,16 +166,16 @@ class OpenSandboxBackend:
         if request.profile.provider!=self.provider or "@sha256:" not in request.profile.provider_ref:
             raise SandboxProfileUnavailable("OpenSandbox requires an immutable image profile",
                 provider=self.provider)
-        metadata={**request.metadata,**self._profile_metadata(request.profile),
+        metadata={**self._profile_metadata(request.profile),
             "sandbox-harness.io/namespace":self.namespace,
-            "sandbox-harness.io/idempotency-key":request.idempotency_key,
+            "sandbox-harness.io/idempotency-key":request.allocation_id,
             "sandbox-harness.io/harness":request.harness.value}
         body={"image":{"uri":request.profile.provider_ref},"timeout":request.ttl_seconds,
             "resourceLimits":{"cpu":"4","memory":"8Gi"},"metadata":metadata,
             "env":dict(request.environment),"entrypoint":["sandbox-harness-runtime"]}
         try:
             response=await self.client.post("/v1/sandboxes",json=body,
-                headers={"X-Request-ID":request.idempotency_key})
+                headers={"X-Request-ID":self._request_id(request.allocation_id)})
             if response.status_code==429:raise SandboxCapacityUnavailable(
                 "OpenSandbox capacity is temporarily unavailable",provider=self.provider,
                 request_id=response.headers.get("x-request-id",""))
@@ -186,8 +192,8 @@ class OpenSandboxBackend:
                     provider=self.provider,request_id=exc.request_id) from exc
         except (httpx.TimeoutException,httpx.TransportError) as exc:
             for attempt in range(20):
-                try:matches=await self.find({
-                    "sandbox-harness.io/idempotency-key":request.idempotency_key})
+                try:matches=await self._inventory({
+                    "sandbox-harness.io/idempotency-key":request.allocation_id})
                 except SandboxProviderError as reconciliation_error:
                     if attempt<19:
                         await asyncio.sleep(.25);continue
@@ -243,11 +249,16 @@ class OpenSandboxBackend:
             except (ValueError,SandboxProviderUnavailable):continue
         return result
 
-    async def find(self,metadata:Mapping[str,str])->list[Sandbox]:return await self._inventory(metadata)
-    async def list(self,scope:SandboxScope)->list[Sandbox]:
+    async def reconcile_create(self,scope:SandboxScope,allocation_id:str)->Sandbox|None:
+        if scope.namespace!=self.namespace:return None
+        rows=await self._inventory({"sandbox-harness.io/idempotency-key":allocation_id})
+        if len(rows)>1:raise SandboxCreateOutcomeUnknown(
+            "Duplicate OpenSandbox allocations found",provider=self.provider)
+        return rows[0] if rows else None
+
+    async def list_owned(self,scope:SandboxScope)->list[Sandbox]:
         if scope.namespace!=self.namespace:return []
         return await self._inventory({})
-    async def list_namespace(self)->list[Sandbox]:return await self.list(SandboxScope(self.namespace))
 
     async def _owned_row(self,sandbox_id:str)->dict:
         response=await self.client.get(f"/v1/sandboxes/{sandbox_id}")
@@ -258,30 +269,25 @@ class OpenSandboxBackend:
             "Sandbox is outside this product namespace",provider=self.provider)
         return row
 
-    async def get(self,sandbox_id:str)->Sandbox:
+    async def get(self,handle:SandboxHandle|str)->Sandbox:
+        if isinstance(handle,SandboxHandle):
+            if handle.provider!=self.provider:raise SandboxNotFound(
+                "OpenSandbox provider mismatch",provider=self.provider)
+            sandbox_id=handle.sandbox_id
+        else:sandbox_id=handle
         row=await self._owned_row(sandbox_id);metadata=row.get("metadata") or {}
         harness=Harness(metadata.get("sandbox-harness.io/harness","codex"))
         return await self._ready(self._sandbox(row,harness,(row.get("image") or {}).get("uri",""),metadata))
 
-    async def update(self,sandbox:Sandbox,update:SandboxUpdate)->Sandbox:
+    async def _renew_ttl(self,sandbox:Sandbox,ttl_seconds:int)->Sandbox:
         await self._owned_row(sandbox.id)
-        if update.metadata:
-            response=await self.client.patch(f"/v1/sandboxes/{sandbox.id}/metadata",
-                json=dict(update.metadata))
-            if response.status_code==404:raise SandboxNotFound(
-                "OpenSandbox no longer has sandbox "+sandbox.id,provider=self.provider)
-            self._raise_status(response)
-            for key,value in update.metadata.items():
-                if value is None:sandbox.metadata.pop(key,None)
-                else:sandbox.metadata[key]=value
-        if update.ttl_seconds is not None:
-            target=datetime.now(timezone.utc)+timedelta(seconds=update.ttl_seconds)
-            response=await self.client.post(f"/v1/sandboxes/{sandbox.id}/renew-expiration",
-                json={"expiresAt":target.isoformat()})
-            if response.status_code==404:raise SandboxNotFound(
-                "OpenSandbox no longer has sandbox "+sandbox.id,provider=self.provider)
-            self._raise_status(response);sandbox.expires_at=target
-            sandbox.expires_at_monotonic=time.monotonic()+update.ttl_seconds
+        target=datetime.now(timezone.utc)+timedelta(seconds=ttl_seconds)
+        response=await self.client.post(f"/v1/sandboxes/{sandbox.id}/renew-expiration",
+            json={"expiresAt":target.isoformat()})
+        if response.status_code==404:raise SandboxNotFound(
+            "OpenSandbox no longer has sandbox "+sandbox.id,provider=self.provider)
+        self._raise_status(response);sandbox.expires_at=target
+        sandbox.expires_at_monotonic=time.monotonic()+ttl_seconds
         return sandbox
 
     @observed("sandbox.renew")
@@ -292,10 +298,12 @@ class OpenSandboxBackend:
                 sandbox.expires_at is not None and (sandbox.expires_at-current).total_seconds()<=max(
                     60,self.timeout_seconds/2)) or (sandbox.expires_at_monotonic and
                     sandbox.expires_at_monotonic-monotonic<=max(60,self.timeout_seconds/2)):
-            await self.update(sandbox,SandboxUpdate(ttl_seconds=self.timeout_seconds))
+            await self._renew_ttl(sandbox,self.timeout_seconds)
         if force or sandbox.runtime_endpoint_refresh_at_monotonic<=monotonic:
             await self.endpoint(sandbox,8080,force_refresh=True)
         return sandbox
+
+    def runtime_route(self,sandbox:Sandbox)->SandboxRuntimeRoute:return self.route
 
     @observed("sandbox.delete")
     async def delete(self,sandbox:Sandbox)->None:

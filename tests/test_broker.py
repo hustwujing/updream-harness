@@ -47,13 +47,13 @@ async def test_orphan_reaper_keeps_provisioning_job_sandbox():
     sandbox=SimpleNamespace(id='sandbox-job',metadata={'sandbox-harness.io/turn':'job-live'})
     class Backend:
         deleted=[]
-        async def list_namespace(self):return [sandbox]
         async def delete(self,value):self.deleted.append(value.id)
     backend=Backend()
     pool=SimpleNamespace(backend=backend,retry_deletions=lambda:None)
     async def retry():return None
     async def empty():return set()
-    pool.retry_deletions=retry;pool.managed_sandbox_ids=empty
+    async def owned():return [sandbox]
+    pool.retry_deletions=retry;pool.managed_sandbox_ids=empty;pool.list_owned=owned
     store=SimpleNamespace(nonterminal_turn_sandbox_ids=empty,
         active_sandbox_control_ids=empty,
         active_job_sandbox_ids=empty,nonterminal_job_ids=lambda:None)
@@ -70,13 +70,14 @@ async def test_orphan_reaper_keeps_durable_turn_sandbox_when_provider_metadata_i
         "sandbox-harness.io/turn":"original-turn"})
     class Backend:
         deleted=[]
-        async def list_namespace(self):return [sandbox]
         async def delete(self,value):self.deleted.append(value.id)
     backend=Backend()
     async def retry():return None
     async def empty():return set()
     async def active_sandbox():return {sandbox.id}
-    pool=SimpleNamespace(backend=backend,retry_deletions=retry,managed_sandbox_ids=empty)
+    async def owned():return [sandbox]
+    pool=SimpleNamespace(backend=backend,retry_deletions=retry,managed_sandbox_ids=empty,
+        list_owned=owned)
     store=SimpleNamespace(nonterminal_turn_sandbox_ids=active_sandbox,active_sandbox_control_ids=empty,
         active_job_sandbox_ids=empty,nonterminal_job_ids=empty)
     broker=SimpleNamespace(pool=pool,store=store,active_sandboxes={})
@@ -700,10 +701,8 @@ async def test_broker_reattaches_expired_running_turn_and_replays_runtime_journa
     execution_id = turn.id + ":" + turn.id
     await store.start_runtime_execution(turn.id, execution_id, "dead-broker", old.recovery_generation)
     sandbox = await backend.create(SandboxCreateRequest(harness=Harness.CLAUDE,
-        profile=frozen_resolver.resolve(Harness.CLAUDE,frozen_image),environment={},metadata={
-            "sandbox-harness.io/turn":turn.id,"sandbox-harness.io/thread":thread.id,
-            "sandbox-harness.io/harness":Harness.CLAUDE.value},ttl_seconds=3600,
-        idempotency_key=turn.id))
+        profile=frozen_resolver.resolve(Harness.CLAUDE,frozen_image),environment={},
+        ttl_seconds=3600,allocation_id=turn.id))
     await store.set_turn_state(turn.id, TurnState.RUNNING, sandbox_id=sandbox.id,
         lease_owner="dead-broker", recovery_generation=old.recovery_generation)
     await store.release_turn_lease(turn.id, "dead-broker", old.recovery_generation)
@@ -1169,6 +1168,6 @@ async def test_stale_broker_cleanup_does_not_publish_a_false_failure(tmp_path, m
         assert not any(event.payload.get("code") == "cleanup_failed" for event in events)
         assert turn.id not in broker.leases and turn.id not in broker.active_sandboxes
     finally:
-        for sandbox in await backend.list_namespace():
+        for sandbox in await pool.list_owned():
             await backend.delete(sandbox)
         await broker.close(); await pool.close(); await store.close()

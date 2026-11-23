@@ -7,7 +7,7 @@ import re
 from sandbox_harness.domain import Harness
 from sandbox_harness.sandbox_contracts import (
     Sandbox,SandboxCreateOutcomeUnknown,SandboxCreateRequest,SandboxEndpoint,SandboxProfile,
-    SandboxState,SandboxUpdate)
+    SandboxScope,SandboxState)
 from sandbox_harness.sandbox_opensandbox import OpenSandboxBackend
 
 
@@ -17,8 +17,7 @@ def request():
         runtime_contract="sandbox-harness-runtime/v1",runtime_bundle_digest="2"*64,
         runtime_code_bundle_digest="3"*64)
     return SandboxCreateRequest(harness=Harness.CODEX,profile=profile,
-        environment={"TEST":"1"},metadata={"sandbox-harness.io/turn":"turn-1"},
-        ttl_seconds=300,idempotency_key="turn-1")
+        environment={"TEST":"1"},ttl_seconds=300,allocation_id="turn-1")
 
 
 def test_opensandbox_profile_metadata_uses_provider_safe_labels():
@@ -26,6 +25,14 @@ def test_opensandbox_profile_metadata_uses_provider_safe_labels():
     assert values["sandbox-harness.io/profile-key"]==request().profile.compatibility_key
     assert all(len(value)<=63 and re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?",value)
         for value in values.values())
+
+
+def test_opensandbox_request_id_hashes_the_complete_allocation_id():
+    prefix="x"*64
+    first=OpenSandboxBackend._request_id(prefix+"-first")
+    second=OpenSandboxBackend._request_id(prefix+"-second")
+    assert first!=second
+    assert len(first)==len(second)==64
 
 
 @pytest.mark.asyncio
@@ -46,12 +53,6 @@ async def test_opensandbox_conforms_to_provider_lifecycle_contract():
             return httpx.Response(200,json={"endpoint":"http://runtime.local"})
         if http_request.method=="GET" and path=="/health":
             return httpx.Response(200,json={"status":"ok"})
-        if http_request.method=="PATCH" and path.endswith("/metadata"):
-            patch=__import__("json").loads(http_request.content)
-            for key,value in patch.items():
-                if value is None:metadata.pop(key,None)
-                else:metadata[key]=value
-            return httpx.Response(200,json={})
         if http_request.method=="POST" and path.endswith("/renew-expiration"):
             return httpx.Response(200,json={})
         if http_request.method=="GET" and path=="/v1/sandboxes":
@@ -71,15 +72,14 @@ async def test_opensandbox_conforms_to_provider_lifecycle_contract():
     endpoint=await backend.endpoint(sandbox,8080)
     assert isinstance(endpoint,SandboxEndpoint) and endpoint.url=="http://runtime.local"
     assert endpoint.headers["open-sandbox-api-key"]=="secret"
-    sandbox=await backend.update(sandbox,SandboxUpdate(metadata={
-        "sandbox-harness.io/pool":None,"sandbox-harness.io/thread":"thread-1"},ttl_seconds=600))
-    assert sandbox.metadata["sandbox-harness.io/thread"]=="thread-1"
+    sandbox=await backend.renew(sandbox,force=True)
     assert sandbox.expires_at and sandbox.expires_at>datetime.now(timezone.utc)
-    assert [row.id for row in await backend.find({"sandbox-harness.io/turn":"turn-1"})]==["sandbox-1"]
+    reconciled=await backend.reconcile_create(SandboxScope("test-namespace"),"turn-1")
+    assert reconciled and reconciled.id=="sandbox-1"
     await backend.delete(sandbox);await backend.delete(sandbox)
-    assert await backend.list_namespace()==[]
+    assert await backend.list_owned(SandboxScope("test-namespace"))==[]
     await backend.aclose()
-    assert ("PATCH","/v1/sandboxes/sandbox-1/metadata") in requests
+    assert ("POST","/v1/sandboxes/sandbox-1/renew-expiration") in requests
 
 
 @pytest.mark.asyncio
@@ -98,7 +98,9 @@ async def test_opensandbox_endpoint_cache_refreshes_after_deadline():
     backend=OpenSandboxBackend("http://opensandbox","",300,"namespace",
         transport=httpx.MockTransport(respond))
     creation=request();sandbox=Sandbox(id="sandbox-1",provider="opensandbox",
-        harness=Harness.CODEX,profile=creation.profile,metadata=dict(creation.metadata))
+        harness=Harness.CODEX,profile=creation.profile,metadata={
+            "sandbox-harness.io/namespace":"namespace",
+            "sandbox-harness.io/idempotency-key":creation.allocation_id})
     first=await backend.endpoint(sandbox,8080)
     second=await backend.endpoint(sandbox,8080)
     refreshed=await backend.endpoint(sandbox,8080,force_refresh=True)
@@ -117,14 +119,14 @@ async def test_opensandbox_unknown_create_waits_for_delayed_inventory_without_re
         if http_request.method=="GET" and path=="/v1/sandboxes":
             list_calls+=1
             if list_calls==1:return httpx.Response(200,json={"items":[]})
-            metadata={**creation.metadata,"sandbox-harness.io/namespace":"test-namespace",
-                "sandbox-harness.io/idempotency-key":creation.idempotency_key,
+            metadata={"sandbox-harness.io/namespace":"test-namespace",
+                "sandbox-harness.io/idempotency-key":creation.allocation_id,
                 "sandbox-harness.io/harness":"codex"}
             return httpx.Response(200,json={"items":[{"id":"delayed","metadata":metadata,
                 "image":{"uri":creation.profile.provider_ref}}]})
         if path=="/v1/sandboxes/delayed":return httpx.Response(200,json={"id":"delayed",
-            "metadata":{**creation.metadata,"sandbox-harness.io/namespace":"test-namespace",
-                "sandbox-harness.io/idempotency-key":creation.idempotency_key,
+            "metadata":{"sandbox-harness.io/namespace":"test-namespace",
+                "sandbox-harness.io/idempotency-key":creation.allocation_id,
                 "sandbox-harness.io/harness":"codex"},"image":{"uri":creation.profile.provider_ref},
             "status":{"state":"running"}})
         if path.endswith("/endpoints/8080"):return httpx.Response(200,json={"endpoint":"http://runtime"})

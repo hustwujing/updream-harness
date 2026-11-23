@@ -60,9 +60,7 @@ def create_request(settings,case_id:str,run_id:str)->SandboxCreateRequest:
         runtime_code_bundle_digest=settings.runtime_code_bundle_digest or "legacy")
     identity=(case_id.lower()+"-"+run_id.replace("-",''))[:64]
     return SandboxCreateRequest(harness=Harness.CODEX,profile=profile,environment={},
-        metadata={"sandbox-harness.io/provider-run":run_id,
-            "sandbox-harness.io/provider-case":case_id},
-        ttl_seconds=min(600,settings.sandbox_timeout_seconds),idempotency_key=identity)
+        ttl_seconds=min(600,settings.sandbox_timeout_seconds),allocation_id=identity)
 
 
 def opensandbox(settings,*,transport=None)->OpenSandboxBackend:
@@ -80,10 +78,11 @@ async def case_lost_create_response(settings,run_id:str)->dict:
     backend=opensandbox(settings,transport=transport);sandbox=None
     try:
         request=create_request(settings,"SP01",run_id);sandbox=await backend.create(request);tracker.add(sandbox.id)
-        matches=await backend.find({"sandbox-harness.io/idempotency-key":request.idempotency_key})
-        if len(matches)!=1 or matches[0].id!=sandbox.id:raise AssertionError("create_reconciliation_not_unique")
+        reconciled=await backend.reconcile_create(SandboxScope(settings.namespace),request.allocation_id)
+        if reconciled is None or reconciled.id!=sandbox.id:
+            raise AssertionError("create_reconciliation_not_unique")
         return {"sandbox_id":sandbox.id,"response_dropped":transport.dropped,
-            "reconciled_count":len(matches),"state":sandbox.state.value}
+            "reconciled_count":1,"state":sandbox.state.value}
     finally:
         if sandbox is not None:await _delete_owned(backend,tracker,sandbox)
         await backend.aclose()
@@ -143,8 +142,9 @@ async def case_repeated_delete(settings,run_id:str)->dict:
     try:
         request=create_request(settings,"SP04",run_id);sandbox=await backend.create(request);tracker.add(sandbox.id)
         await _delete_owned(backend,tracker,sandbox);await _delete_owned(backend,tracker,sandbox)
-        matches=await backend.find({"sandbox-harness.io/provider-run":run_id})
-        if matches:raise AssertionError("sandbox_remained_after_repeated_delete")
+        owned=await backend.list_owned(SandboxScope(settings.namespace))
+        if any(value.id==sandbox.id for value in owned):
+            raise AssertionError("sandbox_remained_after_repeated_delete")
         return {"sandbox_id":sandbox.id,"delete_calls":2,"remaining":0}
     finally:
         if sandbox is not None:

@@ -24,13 +24,12 @@ def test_real_provider_case_catalog_covers_four_abnormal_boundaries():
     assert value.CASES["SP04"].__name__=="case_repeated_delete"
 
 
-def test_real_provider_requests_have_unique_bounded_ownership_metadata():
+def test_real_provider_requests_have_unique_bounded_allocation_ids():
     value=module();first=value.create_request(value.settings_fixture(),"SP01","run-one")
     second=value.create_request(value.settings_fixture(),"SP01","run-two")
-    assert first.idempotency_key!=second.idempotency_key
-    assert first.metadata["sandbox-harness.io/provider-case"]=="SP01"
-    assert first.metadata["sandbox-harness.io/provider-run"]=="run-one"
-    assert len(first.idempotency_key)<=64
+    assert first.allocation_id!=second.allocation_id
+    assert first.allocation_id.startswith("sp01-")
+    assert len(first.allocation_id)<=64
 
 
 @pytest.mark.asyncio

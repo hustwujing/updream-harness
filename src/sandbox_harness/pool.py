@@ -10,7 +10,7 @@ import time
 
 from .domain import Harness, identifier
 from .sandbox import Sandbox, SandboxBackend, SandboxNotFound, SandboxProfileUnavailable
-from .sandbox_contracts import SandboxCreateRequest,SandboxProfile,SandboxState,SandboxUpdate
+from .sandbox_contracts import SandboxCreateRequest,SandboxProfile,SandboxScope,SandboxState
 from .sandbox_factory import SandboxProfileResolver
 
 
@@ -69,6 +69,9 @@ class SandboxPool:
             return set(self._retiring) | {sandbox.id for sandbox in self._attached.values()} | {
             sandbox.id for rows in self._warm.values() for sandbox in rows
             }
+
+    async def list_owned(self)->list[Sandbox]:
+        return await self.backend.list_owned(SandboxScope(self.backend.namespace))
 
     async def execution_available(self) -> bool:
         async with self._lock:
@@ -165,8 +168,7 @@ class SandboxPool:
                 identity="warm-"+identifier();profile=self.profile_resolver.resolve(
                     harness,self.images[harness])
                 sandbox=await self.backend.create(SandboxCreateRequest(harness=harness,profile=profile,
-                    metadata={},environment={},
-                    idempotency_key=identity,ttl_seconds=self.ttl_seconds))
+                    environment={},allocation_id=identity,ttl_seconds=self.ttl_seconds))
                 sandbox.warm = True
                 async with self._lock:
                     if not self._closed:
@@ -187,7 +189,7 @@ class SandboxPool:
             if not value.cancelled() and value.exception() else None)
 
     async def _bind(self,sandbox:Sandbox,*,thread_id:str,turn_id:str)->Sandbox:
-        sandbox=await self.backend.update(sandbox,SandboxUpdate(ttl_seconds=self.ttl_seconds))
+        sandbox=await self.backend.renew(sandbox,force=True)
         sandbox.warm=False;sandbox.thread_id=thread_id;sandbox.turn_id=turn_id
         return sandbox
 
@@ -291,8 +293,8 @@ class SandboxPool:
                         sandbox.warm = False
                     except SandboxNotFound:
                         sandbox=await self.backend.create(SandboxCreateRequest(harness=harness,
-                            profile=desired_profile,metadata={},environment=environment,
-                            ttl_seconds=self.ttl_seconds,idempotency_key=turn_id))
+                            profile=desired_profile,environment=environment,
+                            ttl_seconds=self.ttl_seconds,allocation_id=turn_id))
                     except asyncio.CancelledError:
                         cleanup=asyncio.create_task(self._delete_tracked(sandbox,user_slot=False))
                         try:await asyncio.shield(cleanup)
@@ -303,8 +305,8 @@ class SandboxPool:
                         raise
                 else:
                     sandbox=await self.backend.create(SandboxCreateRequest(harness=harness,
-                        profile=desired_profile,metadata={},environment=environment,
-                        ttl_seconds=self.ttl_seconds,idempotency_key=turn_id))
+                        profile=desired_profile,environment=environment,
+                        ttl_seconds=self.ttl_seconds,allocation_id=turn_id))
                 sandbox.thread_id = thread_id
                 sandbox.turn_id = turn_id
                 sandbox.reused = False

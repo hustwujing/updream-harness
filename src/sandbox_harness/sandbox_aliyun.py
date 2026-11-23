@@ -18,15 +18,16 @@ from .sandbox_contracts import (
     SandboxCreateRequest,
     SandboxEndpoint,
     SandboxEndpointUnavailable,
+    SandboxHandle,
     SandboxNotFound,
     SandboxProfile,
     SandboxProfileUnavailable,
     SandboxProviderError,
     SandboxProviderUnavailable,
     SandboxRateLimited,
+    SandboxRuntimeRoute,
     SandboxScope,
     SandboxState,
-    SandboxUpdate,
 )
 
 
@@ -91,22 +92,25 @@ class _E2BClient:
 
 class AliyunSandboxBackend:
     provider = "aliyun"
-    capabilities = SandboxCapabilities(metadata_update=False, metadata_filter=True,
-        arbitrary_ports=True, ttl_renewal=True, idempotent_create=True,
-        authenticated_runtime_http=True)
+    capabilities=SandboxCapabilities(native_idempotency=False,scoped_inventory=True,
+        arbitrary_ports=True,ttl_renewal=True,authenticated_runtime_http=True,
+        delete_convergence=True,pause_resume=True)
 
     def __init__(self, *, api_key: str, api_url: str, domain: str,
                  timeout_seconds: int, namespace: str,
                  request_timeout_seconds: float = 60,
                  client: _AliyunClient | None = None,
                  health_transport: httpx.AsyncBaseTransport | None = None,
-                 reconciliation_attempts:int=12,reconciliation_interval:float=.25):
+                 reconciliation_attempts:int=12,reconciliation_interval:float=.25,
+                 gateway_url:str="http://10.194.49.8:29882",
+                 proxy_url:str="http://10.194.49.8:29883"):
         self.api_url = api_url.rstrip("/")
         self.domain = domain
         self.timeout_seconds = timeout_seconds
         self.namespace = namespace
         self.reconciliation_attempts=max(1,reconciliation_attempts)
         self.reconciliation_interval=max(0,reconciliation_interval)
+        self.route=SandboxRuntimeRoute(gateway_url,proxy_url)
         self.client = client or _E2BClient(api_key=api_key, api_url=self.api_url,
             domain=domain, request_timeout_seconds=request_timeout_seconds)
         self.health_client = httpx.AsyncClient(timeout=10, trust_env=False,
@@ -229,16 +233,17 @@ class AliyunSandboxBackend:
                 result.append(self._sandbox(row))
         return result
 
-    async def find(self, metadata: Mapping[str, str]) -> list[Sandbox]:
-        return await self._inventory(metadata)
+    async def reconcile_create(self,scope:SandboxScope,allocation_id:str)->Sandbox|None:
+        if scope.namespace!=self.namespace:return None
+        rows=await self._inventory({"sandbox-harness.io/idempotency-key":allocation_id})
+        if len(rows)>1:raise SandboxCreateOutcomeUnknown(
+            "Duplicate Aliyun allocations found",provider=self.provider)
+        return rows[0] if rows else None
 
-    async def list(self, scope: SandboxScope) -> list[Sandbox]:
+    async def list_owned(self, scope: SandboxScope) -> list[Sandbox]:
         if scope.namespace != self.namespace:
             return []
         return await self._inventory({})
-
-    async def list_namespace(self) -> list[Sandbox]:
-        return await self.list(SandboxScope(self.namespace))
 
     async def _handle(self, sandbox_id: str, *, force_refresh: bool = False) -> Any:
         current = self._handles.get(sandbox_id)
@@ -327,22 +332,22 @@ class AliyunSandboxBackend:
         if request.profile.provider!=self.provider or not request.profile.provider_ref:
             raise SandboxProfileUnavailable("Aliyun requires a template profile",
                 provider=self.provider)
-        lock=self._create_locks.get(request.idempotency_key)
+        lock=self._create_locks.get(request.allocation_id)
         if lock is None:
-            lock=asyncio.Lock();self._create_locks[request.idempotency_key]=lock
+            lock=asyncio.Lock();self._create_locks[request.allocation_id]=lock
         async with lock:
-            cached=self._allocations.get(request.idempotency_key)
+            cached=self._allocations.get(request.allocation_id)
             if cached:
                 try:existing=await self.get(cached)
-                except SandboxNotFound:self._allocations.pop(request.idempotency_key,None)
+                except SandboxNotFound:self._allocations.pop(request.allocation_id,None)
                 else:
                     self._require_compatible_allocation(existing,request.profile)
                     return existing
-            existing=await self._reconcile_allocation(request.idempotency_key)
+            existing=await self._reconcile_allocation(request.allocation_id)
             if existing:
                 self._require_compatible_allocation(existing,request.profile)
                 self._profiles[existing.id]=request.profile
-                self._allocations[request.idempotency_key]=existing.id
+                self._allocations[request.allocation_id]=existing.id
                 return await self._ready(existing)
             return await self._create_once(request)
 
@@ -354,7 +359,7 @@ class AliyunSandboxBackend:
 
     async def _reconcile_allocation(self,idempotency_key:str)->Sandbox|None:
         for attempt in range(self.reconciliation_attempts):
-            matches=await self.find({"sandbox-harness.io/idempotency-key":idempotency_key})
+            matches=await self._inventory({"sandbox-harness.io/idempotency-key":idempotency_key})
             if len(matches)>1:
                 raise SandboxCreateOutcomeUnknown(
                     "Duplicate Aliyun sandboxes found for one create request",
@@ -366,10 +371,9 @@ class AliyunSandboxBackend:
 
     async def _create_once(self, request: SandboxCreateRequest) -> Sandbox:
         metadata = {
-            **request.metadata,
             **self._profile_metadata(request.profile),
             "sandbox-harness.io/namespace": self.namespace,
-            "sandbox-harness.io/idempotency-key": request.idempotency_key,
+            "sandbox-harness.io/idempotency-key": request.allocation_id,
             "sandbox-harness.io/harness": request.harness.value,
         }
         try:
@@ -382,13 +386,13 @@ class AliyunSandboxBackend:
                 raise mapped from exc
             for attempt in range(3):
                 try:
-                    match=await self._reconcile_allocation(request.idempotency_key)
+                    match=await self._reconcile_allocation(request.allocation_id)
                 except SandboxProviderError:
                     match=None
                 if match:
                     self._require_compatible_allocation(match,request.profile)
                     self._profiles[match.id]=request.profile
-                    self._allocations[request.idempotency_key]=match.id
+                    self._allocations[request.allocation_id]=match.id
                     return await self._ready(match)
                 if attempt<2:await asyncio.sleep(self.reconciliation_interval)
             raise SandboxCreateOutcomeUnknown("Aliyun sandbox create outcome is unknown",
@@ -399,7 +403,7 @@ class AliyunSandboxBackend:
                 provider=self.provider)
         self._handles[sandbox_id] = handle
         self._profiles[sandbox_id] = request.profile
-        self._allocations[request.idempotency_key]=sandbox_id
+        self._allocations[request.allocation_id]=sandbox_id
         sandbox = Sandbox(id=sandbox_id, provider=self.provider, harness=request.harness,
             profile=request.profile, metadata=metadata, state=SandboxState.PROVISIONING,
             expires_at=datetime.now(timezone.utc) + timedelta(seconds=request.ttl_seconds),
@@ -411,28 +415,21 @@ class AliyunSandboxBackend:
                 "Aliyun accepted the sandbox but Runtime readiness is unresolved",
                 provider=self.provider, request_id=exc.request_id) from exc
 
-    async def get(self, sandbox_id: str) -> Sandbox:
+    async def get(self,handle:SandboxHandle|str)->Sandbox:
+        if isinstance(handle,SandboxHandle):
+            if handle.provider!=self.provider:raise SandboxNotFound(
+                "Aliyun provider mismatch",provider=self.provider)
+            sandbox_id=handle.sandbox_id
+        else:sandbox_id=handle
         sandbox = self._sandbox(await self._owned_info(sandbox_id))
         return await self._ready(sandbox)
 
-    async def update(self, sandbox: Sandbox, update: SandboxUpdate) -> Sandbox:
+    async def _renew_ttl(self,sandbox:Sandbox,ttl_seconds:int)->Sandbox:
         info = await self._owned_info(sandbox.id)
         provider_metadata = dict(getattr(info, "metadata", {}) or {})
-        for key, value in update.metadata.items():
-            if value is None and key not in provider_metadata:
-                continue
-            if value == provider_metadata.get(key):
-                continue
-            raise SandboxProfileUnavailable(
-                "Aliyun Agent Sandbox Express does not support metadata update",
-                provider=self.provider)
-        if update.ttl_seconds is not None:
-            try:
-                await self.client.set_timeout(sandbox.id, update.ttl_seconds)
-            except Exception as exc:
-                raise self._map_error(exc) from exc
-            sandbox.expires_at = datetime.now(timezone.utc) + timedelta(
-                seconds=update.ttl_seconds)
+        try:await self.client.set_timeout(sandbox.id,ttl_seconds)
+        except Exception as exc:raise self._map_error(exc) from exc
+        sandbox.expires_at=datetime.now(timezone.utc)+timedelta(seconds=ttl_seconds)
         sandbox.metadata = provider_metadata
         return sandbox
 
@@ -440,8 +437,10 @@ class AliyunSandboxBackend:
         remaining=((sandbox.expires_at-datetime.now(timezone.utc)).total_seconds()
             if sandbox.expires_at else 0)
         if force or remaining<=max(60,self.timeout_seconds/2):
-            return await self.update(sandbox,SandboxUpdate(ttl_seconds=self.timeout_seconds))
+            return await self._renew_ttl(sandbox,self.timeout_seconds)
         return sandbox
+
+    def runtime_route(self,sandbox:Sandbox)->SandboxRuntimeRoute:return self.route
 
     @observed("sandbox.delete")
     async def delete(self, sandbox: Sandbox) -> None:
@@ -456,7 +455,8 @@ class AliyunSandboxBackend:
             if not isinstance(mapped, SandboxNotFound):
                 raise mapped from exc
         for attempt in range(30):
-            if all(value.id!=sandbox.id for value in await self._inventory({})):
+            try:await self._owned_info(sandbox.id)
+            except SandboxNotFound:
                 self._forget(sandbox.id);return
             if attempt<29:await asyncio.sleep(.1)
         raise SandboxProviderUnavailable("Aliyun sandbox deletion did not converge",
