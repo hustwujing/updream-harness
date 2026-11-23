@@ -59,9 +59,9 @@ async def main()->None:
             "error":error,**detail})
     try:
         sandbox=await backend.create(Harness.CLAUDE,settings.image_for("claude"),{
-            "sandbox-harness.io/namespace":namespace,"sandbox-harness.io/turn":identity,
-            "sandbox-harness.io/harness":"claude"},{
+            "sandbox-harness.io/idempotency-key":identity},{
             "HARNESS_COMMAND_JSON":json.dumps({"claude":["python","-c",FIXTURE]})})
+        sandbox.thread_id="background-control";sandbox.turn_id=identity
         await runtime.inject(sandbox,capability_token="synthetic-fixture-no-provider-access",
             gateway_url=settings.gateway_url,
             proxy_url=settings.gateway_url.rsplit(":",1)[0]+":"+str(settings.gateway_proxy_port),

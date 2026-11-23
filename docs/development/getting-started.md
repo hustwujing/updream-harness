@@ -24,7 +24,9 @@ cp .env.example .env
 ```
 
 Use `SANDBOX_HARNESS_BACKEND=fake` only for local API/UI development. Production
-must use `opensandbox`; the code deliberately has no host-execution fallback.
+must use an explicitly configured real Sandbox backend; the code deliberately
+has no host-execution fallback. The deployed Ali environment remains on
+`opensandbox` until the Aliyun template and release gates pass.
 Keep credentials in ignored environment files, never in source or test fixtures.
 
 ## Common commands

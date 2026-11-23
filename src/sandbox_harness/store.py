@@ -2568,12 +2568,44 @@ class Store:
                 raise RuntimeError("job_submission_intent_conflict")
             attempt.outcome = "SUBMITTING"
 
-    async def unresolved_job_submission(self, job_id: str, generation: int) -> bool:
+    async def unresolved_job_submission(self, job_id: str, generation: int) -> dict | None:
         async with self.connections() as db:
-            return bool((await db.execute(select(JobAttemptRow.id).where(
+            row=(await db.execute(select(JobAttemptRow).where(
                 JobAttemptRow.job_id == job_id, JobAttemptRow.generation < generation,
                 JobAttemptRow.outcome == "SUBMITTING", JobAttemptRow.accepted_at.is_(None),
-            ).limit(1))).scalar_one_or_none())
+            ).order_by(JobAttemptRow.generation.desc()).limit(1))).scalar_one_or_none()
+        if not row:return None
+        return {"generation":row.generation,"external_execution_id":row.external_execution_id,
+            "acceptance_receipt":json.loads(row.acceptance_receipt_json)}
+
+    async def resolve_job_submission_absent(self,job_id:str,worker_id:str,
+                                            generation:int,previous_generation:int)->None:
+        async with self.connections.begin() as db:
+            lease=await db.get(JobLeaseRow,job_id,with_for_update=True)
+            previous=(await db.execute(select(JobAttemptRow).where(
+                JobAttemptRow.job_id==job_id,JobAttemptRow.generation==previous_generation)
+                .with_for_update())).scalar_one_or_none()
+            if (not lease or lease.worker_id!=worker_id or lease.generation!=generation
+                    or not previous or previous.accepted_at is not None
+                    or previous.outcome!="SUBMITTING"):
+                raise RuntimeError("stale_job_generation")
+            previous.outcome="PRE_ACCEPT_RETRY";previous.finished_at=now()
+
+    async def record_job_submission_allocation(self,job_id:str,generation:int,*,
+                                               external_execution_id:str,
+                                               receipt:dict)->None:
+        async with self.connections.begin() as db:
+            job=await db.get(JobRow,job_id,with_for_update=True)
+            lease=await db.get(JobLeaseRow,job_id,with_for_update=True)
+            attempt=(await db.execute(select(JobAttemptRow).where(
+                JobAttemptRow.job_id==job_id,JobAttemptRow.generation==generation)
+                .with_for_update())).scalar_one_or_none()
+            if (not job or not lease or not attempt or job.generation!=generation
+                    or lease.generation!=generation or attempt.accepted_at is not None
+                    or attempt.outcome!="SUBMITTING"):
+                raise RuntimeError("stale_job_generation")
+            attempt.external_execution_id=external_execution_id
+            attempt.acceptance_receipt_json=canonical_json(receipt)
 
     async def job_deadline(self, job_id: str, timeout_seconds: int) -> datetime | None:
         async with self.connections() as db:
@@ -2591,6 +2623,12 @@ class Store:
                 attempt=(await db.execute(select(JobAttemptRow).where(
                     JobAttemptRow.job_id==job_id,JobAttemptRow.accepted_at.is_not(None))
                     .order_by(JobAttemptRow.generation.desc()).limit(1).with_for_update()
+                    )).scalar_one_or_none()
+            if not attempt:
+                attempt=(await db.execute(select(JobAttemptRow).where(
+                    JobAttemptRow.job_id==job_id,JobAttemptRow.outcome=="SUBMITTING",
+                    JobAttemptRow.external_execution_id!="").order_by(
+                    JobAttemptRow.generation.desc()).limit(1).with_for_update()
                     )).scalar_one_or_none()
             if not job or not attempt or not attempt.external_execution_id:
                 return False
@@ -2818,7 +2856,6 @@ class Store:
                         ).with_for_update())).scalar_one_or_none()
                         if attempt:
                             attempt.finished_at = now()
-                            attempt.outcome = state.value
                             accepted_attempt=(attempt if attempt.accepted_at and
                                 attempt.external_execution_id else (await db.execute(
                                 select(JobAttemptRow).where(JobAttemptRow.job_id==job.id,
@@ -2826,6 +2863,11 @@ class Store:
                                     JobAttemptRow.external_execution_id!="").order_by(
                                     JobAttemptRow.generation.desc()).limit(1).with_for_update()
                                 )).scalar_one_or_none())
+                            if not accepted_attempt and attempt.external_execution_id:
+                                try:provisional=json.loads(attempt.acceptance_receipt_json)
+                                except (TypeError,ValueError):provisional={}
+                                if provisional.get("sandbox_id"):accepted_attempt=attempt
+                            attempt.outcome = state.value
                             if accepted_attempt:
                                 cleanup=(await db.execute(select(JobCleanupRow).where(
                                     JobCleanupRow.job_id==job.id,
@@ -4047,13 +4089,22 @@ class Store:
             rows=(await db.execute(select(JobAttemptRow.acceptance_receipt_json).join(
                 JobRow,JobRow.id==JobAttemptRow.job_id).where(
                 JobRow.state.not_in([state.value for state in TERMINAL_JOB_STATES]),
-                JobAttemptRow.accepted_at.is_not(None)))).scalars().all()
+                or_(JobAttemptRow.accepted_at.is_not(None),
+                    JobAttemptRow.outcome=="SUBMITTING")))).scalars().all()
+            rows.extend((await db.execute(select(JobCleanupRow.acceptance_receipt_json).where(
+                JobCleanupRow.state!="completed"))).scalars().all())
         result=set()
         for encoded in rows:
             try:identity=json.loads(encoded).get('sandbox_id','')
             except (TypeError,ValueError):continue
             if isinstance(identity,str) and identity:result.add(identity)
         return result
+
+    async def pending_job_cleanup_ids(self)->set[str]:
+        async with self.connections() as db:
+            rows=(await db.execute(select(JobCleanupRow.job_id).where(
+                JobCleanupRow.state!="completed"))).scalars().all()
+        return set(rows)
 
     async def nonterminal_job_ids(self) -> set[str]:
         async with self.connections() as db:
@@ -4299,12 +4350,11 @@ class Store:
                 .order_by(TurnOrderRow.sequence))).scalars().all()
         return [self.turn_view(row) for row in rows]
 
-    async def nonterminal_turn_ids(self) -> set[str]:
-        terminal = [state.value for state in {
-            *TERMINAL,
-        }]
+    async def nonterminal_turn_sandbox_ids(self) -> set[str]:
+        terminal=[state.value for state in TERMINAL]
         async with self.connections() as db:
-            rows = (await db.execute(select(TurnRow.id).where(TurnRow.state.not_in(terminal)))).scalars().all()
+            rows=(await db.execute(select(TurnRow.sandbox_id).where(
+                TurnRow.state.not_in(terminal),TurnRow.sandbox_id!=""))).scalars().all()
         return set(rows)
 
     async def claim_turn(self, turn_id: str, owner: str, lease_seconds: int) -> TurnView | None:

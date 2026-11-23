@@ -39,6 +39,7 @@ async def test_foreign_broker_stop_reaches_owner_and_blocks_new_input(tmp_path):
         await store.request_turn_cancel(second.id)
         owner._schedule(first.id)
         await wait_state(store,first.id,TurnState.RUNNING)
+        sandbox_id=(await store.get_turn(first.id)).sandbox_id
         await receiver.cancel(first.id)
         saved=await store.get_turn(first.id)
         assert saved.cancel_requested
@@ -46,7 +47,7 @@ async def test_foreign_broker_stop_reaches_owner_and_blocks_new_input(tmp_path):
             await store.create_turn_input(first.id,TurnInputCreate(message='late',idempotency_key='late-input-key'),'owner')
         await wait_state(store,first.id,TurnState.CANCELLED)
         assert runtime.cancelled == 1
-        assert not await pool.backend.find_by_turn(first.id)
+        assert sandbox_id not in pool.backend.items
     finally:
         await owner.close();await receiver.close();await pool.close();await store.close()
 
@@ -57,19 +58,20 @@ async def test_cancel_survives_broker_restart_without_replaying_harness(tmp_path
         _,first,second=await seed(store)
         await store.request_turn_cancel(second.id)
         claim=await store.claim_turn(first.id,old.instance_id,30)
-        await store.set_turn_state(first.id,TurnState.RUNNING)
         sandbox=await pool.acquire(thread_id=first.thread_id,turn_id=first.id,harness=first.harness,environment={})
+        await store.set_turn_state(first.id,TurnState.RUNNING,sandbox_id=sandbox.id,
+            lease_owner=old.instance_id,recovery_generation=claim.recovery_generation)
         await store.request_turn_cancel(first.id)
         await store.release_turn_lease(first.id,old.instance_id,claim.recovery_generation)
         await new.reconcile()
         await wait_state(store,first.id,TurnState.CANCELLED)
         assert runtime.messages == [] and runtime.cancelled == 1
-        assert not await pool.backend.find_by_turn(first.id)
+        assert sandbox.id not in pool.backend.items
     finally:
         await old.close();await new.close();await pool.close();await store.close()
 
 
-async def test_cancel_restart_with_fresh_pool_adopts_and_deletes_every_matching_sandbox(tmp_path):
+async def test_cancel_restart_uses_exact_id_and_orphan_reaper_deletes_unowned_sandbox(tmp_path):
     settings=Settings(backend='fake',data_root=tmp_path,gateway_url='http://127.0.0.1:9',
         database_url='sqlite+aiosqlite:///'+str(tmp_path/'fresh-pool.db')).model_copy(
             update={'turn_heartbeat_seconds':.02})
@@ -86,6 +88,8 @@ async def test_cancel_restart_with_fresh_pool_adopts_and_deletes_every_matching_
             lease_owner=old.instance_id,recovery_generation=claim.recovery_generation)
         main=await old_pool.acquire(thread_id=first.thread_id,turn_id=first.id,
             harness=first.harness,environment={})
+        await store.set_turn_state(first.id,TurnState.RUNNING,sandbox_id=main.id,
+            lease_owner=old.instance_id,recovery_generation=claim.recovery_generation)
         duplicate=await backend.create(first.harness,'',{
             'sandbox-harness.io/thread':first.thread_id,
             'sandbox-harness.io/turn':first.id,
@@ -99,8 +103,10 @@ async def test_cancel_restart_with_fresh_pool_adopts_and_deletes_every_matching_
         try:
             await replacement.reconcile();await wait_state(store,first.id,TurnState.CANCELLED)
             assert 'first' not in runtime.messages and runtime.cancelled==1
-            assert await backend.find_by_turn(first.id)==[]
+            assert main.id not in backend.items and duplicate.id in backend.items
             assert not await new_pool.managed_sandbox_ids()
+            await replacement.cleanup_startup_orphans()
+            assert duplicate.id not in backend.items
         finally:
             await replacement.close();await new_pool.close()
     finally:

@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .domain import Harness
+from .domain import Harness,identifier
 from .observability import event,observed
 from .sandbox_contracts import (
     Sandbox,SandboxAuthenticationFailed,SandboxCapabilities,SandboxCapacityUnavailable,
@@ -53,8 +53,7 @@ class OpenSandboxBackend:
 
     def _legacy_request(self,harness:Harness,image:str,metadata:Mapping[str,str],
                         environment:Mapping[str,str])->SandboxCreateRequest:
-        key=str(metadata.get("sandbox-harness.io/turn") or metadata.get(
-            "sandbox-harness.io/idempotency-key") or "legacy")
+        key=str(metadata.get("sandbox-harness.io/idempotency-key") or identifier())
         return SandboxCreateRequest(harness=harness,profile=self.legacy_profile(harness,image),
             environment=environment,metadata=metadata,ttl_seconds=self.timeout_seconds,
             idempotency_key=key[:64])
@@ -100,6 +99,7 @@ class OpenSandboxBackend:
             "OpenSandbox request failed",provider=self.provider,request_id=request_id) from exc
 
     async def _fetch_endpoint(self,sandbox:Sandbox,port:int)->SandboxEndpoint:
+        await self._owned_row(sandbox.id)
         try:response=await self.client.get(f"/v1/sandboxes/{sandbox.id}/endpoints/{port}",
             params={"use_server_proxy":"true"})
         except (httpx.TimeoutException,httpx.TransportError) as exc:
@@ -162,7 +162,8 @@ class OpenSandboxBackend:
                 provider=self.provider)
         metadata={**request.metadata,**self._profile_metadata(request.profile),
             "sandbox-harness.io/namespace":self.namespace,
-            "sandbox-harness.io/idempotency-key":request.idempotency_key}
+            "sandbox-harness.io/idempotency-key":request.idempotency_key,
+            "sandbox-harness.io/harness":request.harness.value}
         body={"image":{"uri":request.profile.provider_ref},"timeout":request.ttl_seconds,
             "resourceLimits":{"cpu":"4","memory":"8Gi"},"metadata":metadata,
             "env":dict(request.environment),"entrypoint":["sandbox-harness-runtime"]}
@@ -202,7 +203,11 @@ class OpenSandboxBackend:
                 provider=self.provider) from exc
 
     async def _inventory(self,metadata:Mapping[str,str])->list[Sandbox]:
-        query={"sandbox-harness.io/namespace":self.namespace,**metadata};token="";rows=[]
+        namespace_key="sandbox-harness.io/namespace"
+        if namespace_key in metadata and metadata[namespace_key]!=self.namespace:return []
+        query={namespace_key:self.namespace,
+            **{key:value for key,value in metadata.items() if key!=namespace_key}}
+        token="";rows=[]
         while True:
             params={"metadata":"&".join(f"{key}={value}" for key,value in query.items()),
                 "pageSize":100}
@@ -242,21 +247,24 @@ class OpenSandboxBackend:
     async def list(self,scope:SandboxScope)->list[Sandbox]:
         if scope.namespace!=self.namespace:return []
         return await self._inventory({})
-    async def find_by_turn(self,turn_id:str)->list[Sandbox]:
-        return await self.find({"sandbox-harness.io/turn":turn_id})
     async def list_namespace(self)->list[Sandbox]:return await self.list(SandboxScope(self.namespace))
 
-    async def get(self,sandbox_id:str)->Sandbox:
+    async def _owned_row(self,sandbox_id:str)->dict:
         response=await self.client.get(f"/v1/sandboxes/{sandbox_id}")
         if response.status_code==404:raise SandboxNotFound(
             "OpenSandbox no longer has sandbox "+sandbox_id,provider=self.provider)
         self._raise_status(response);row=response.json();metadata=row.get("metadata") or {}
         if metadata.get("sandbox-harness.io/namespace")!=self.namespace:raise SandboxNotFound(
             "Sandbox is outside this product namespace",provider=self.provider)
+        return row
+
+    async def get(self,sandbox_id:str)->Sandbox:
+        row=await self._owned_row(sandbox_id);metadata=row.get("metadata") or {}
         harness=Harness(metadata.get("sandbox-harness.io/harness","codex"))
         return await self._ready(self._sandbox(row,harness,(row.get("image") or {}).get("uri",""),metadata))
 
     async def update(self,sandbox:Sandbox,update:SandboxUpdate)->Sandbox:
+        await self._owned_row(sandbox.id)
         if update.metadata:
             response=await self.client.patch(f"/v1/sandboxes/{sandbox.id}/metadata",
                 json=dict(update.metadata))
@@ -276,13 +284,6 @@ class OpenSandboxBackend:
             sandbox.expires_at_monotonic=time.monotonic()+update.ttl_seconds
         return sandbox
 
-    @observed("sandbox.bind")
-    async def bind(self,sandbox:Sandbox,thread_id:str,turn_id:str)->None:
-        await self.update(sandbox,SandboxUpdate(metadata={"sandbox-harness.io/pool":None,
-            "sandbox-harness.io/thread":thread_id,"sandbox-harness.io/turn":turn_id},
-            ttl_seconds=self.timeout_seconds))
-        await self.endpoint(sandbox,8080,force_refresh=True)
-
     @observed("sandbox.renew")
     async def renew(self,sandbox:Sandbox,*,force:bool=False)->Sandbox:
         current=datetime.now(timezone.utc)
@@ -298,6 +299,12 @@ class OpenSandboxBackend:
 
     @observed("sandbox.delete")
     async def delete(self,sandbox:Sandbox)->None:
+        try:await self._owned_row(sandbox.id)
+        except SandboxNotFound:
+            self._profiles.pop(sandbox.id,None)
+            for key in [key for key in self._endpoints if key[0]==sandbox.id]:
+                self._endpoints.pop(key,None)
+            sandbox.state=SandboxState.STOPPED;sandbox.health_state="stopped";return
         response=await self.client.delete(f"/v1/sandboxes/{sandbox.id}")
         if response.status_code not in {204,404}:self._raise_status(response)
         self._profiles.pop(sandbox.id,None)

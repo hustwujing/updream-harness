@@ -60,10 +60,8 @@ def create_request(settings,case_id:str,run_id:str)->SandboxCreateRequest:
         runtime_code_bundle_digest=settings.runtime_code_bundle_digest or "legacy")
     identity=(case_id.lower()+"-"+run_id.replace("-",''))[:64]
     return SandboxCreateRequest(harness=Harness.CODEX,profile=profile,environment={},
-        metadata={"sandbox-harness.io/turn":identity,
-            "sandbox-harness.io/harness":"codex",
-            "sandbox-harness.io/provider-case":case_id,
-            "sandbox-harness.io/provider-run":run_id},
+        metadata={"sandbox-harness.io/provider-run":run_id,
+            "sandbox-harness.io/provider-case":case_id},
         ttl_seconds=min(600,settings.sandbox_timeout_seconds),idempotency_key=identity)
 
 

@@ -103,7 +103,50 @@ async def test_active_child_sandbox_is_preserved_only_while_job_is_nonterminal(t
         assert await store.active_job_sandbox_ids()=={'sandbox-child'}
         await store.transition_job(jobs[0].id,JobState.SUCCEEDED,
             expected_generation=attempt.generation,result={'ok':True})
+        assert await store.active_job_sandbox_ids()=={'sandbox-child'}
+        assert await store.pending_job_cleanup_ids()=={jobs[0].id}
+        cleanup=(await store.claim_job_cleanups('cleaner',30))[0]
+        await store.finish_job_cleanup(cleanup['cleanup_id'],'cleaner',succeeded=True)
         assert await store.active_job_sandbox_ids()==set()
+        assert await store.pending_job_cleanup_ids()==set()
+    finally:await store.close()
+
+
+async def test_child_sandbox_allocation_is_durable_before_runtime_acceptance(tmp_path):
+    store=await make_store(tmp_path)
+    try:
+        _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id='a'*32,
+            origin_turn_id='b'*32,idempotency_key='provisional-sandbox-group',jobs=[request('child')]))
+        first=await store.claim_job(jobs[0].id,'worker-1','node',30)
+        await store.mark_job_submission_started(jobs[0].id,'worker-1',first.generation)
+        await store.record_job_submission_allocation(jobs[0].id,first.generation,
+            external_execution_id='child-execution',receipt={'sandbox_id':'sandbox-provisional'})
+        assert await store.active_job_sandbox_ids()=={'sandbox-provisional'}
+        await store.release_job_lease(jobs[0].id,'worker-1',first.generation)
+        second=await store.claim_job(jobs[0].id,'worker-2','node',30)
+        unresolved=await store.unresolved_job_submission(jobs[0].id,second.generation)
+        assert unresolved=={'generation':first.generation,
+            'external_execution_id':'child-execution',
+            'acceptance_receipt':{'sandbox_id':'sandbox-provisional'}}
+        await store.resolve_job_submission_absent(jobs[0].id,'worker-2',second.generation,
+            first.generation)
+        assert await store.unresolved_job_submission(jobs[0].id,second.generation) is None
+    finally:await store.close()
+
+
+async def test_terminal_unknown_job_keeps_provisional_sandbox_until_cleanup(tmp_path):
+    store=await make_store(tmp_path)
+    try:
+        _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id='a'*32,
+            origin_turn_id='b'*32,idempotency_key='provisional-cleanup-group',jobs=[request('child')]))
+        attempt=await store.claim_job(jobs[0].id,'worker','node',30)
+        await store.mark_job_submission_started(jobs[0].id,'worker',attempt.generation)
+        await store.record_job_submission_allocation(jobs[0].id,attempt.generation,
+            external_execution_id='child-execution',receipt={'sandbox_id':'sandbox-provisional'})
+        await store.transition_job(jobs[0].id,JobState.UNKNOWN,
+            expected_generation=attempt.generation,result={'error_code':'submission_outcome_unknown'})
+        assert await store.pending_job_cleanup_ids()=={jobs[0].id}
+        assert await store.active_job_sandbox_ids()=={'sandbox-provisional'}
     finally:await store.close()
 
 

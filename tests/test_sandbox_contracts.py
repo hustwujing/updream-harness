@@ -8,6 +8,7 @@ from sandbox_harness.sandbox_contracts import (
     SandboxCapacityUnavailable,
     SandboxCreateOutcomeUnknown,
     SandboxCreateRequest,
+    SandboxCapabilities,
     SandboxEndpoint,
     SandboxEndpointUnavailable,
     SandboxProfile,
@@ -76,3 +77,10 @@ def test_provider_errors_publish_uniform_action_metadata(kind,retryable):
     error=kind("failure",provider="opensandbox",request_id="request-1")
     assert error.provider=="opensandbox" and error.request_id=="request-1"
     assert error.retryable is retryable and error.code
+
+
+def test_primary_runtime_allows_immutable_provider_metadata():
+    capabilities=SandboxCapabilities(metadata_update=False,metadata_filter=True,
+        arbitrary_ports=True,ttl_renewal=True,idempotent_create=True,
+        authenticated_runtime_http=True)
+    capabilities.require_primary_runtime()

@@ -9,6 +9,7 @@ from sandbox_harness.domain import Harness
 from sandbox_harness.sandbox import (FakeSandboxBackend,OpenSandboxBackend,
     SandboxCapacityUnavailable,SandboxNotFound,SandboxProfileUnavailable)
 from sandbox_harness.pool import SandboxPool
+from sandbox_harness.sandbox_contracts import SandboxUpdate
 
 
 class SlowCreateBackend(FakeSandboxBackend):
@@ -34,8 +35,8 @@ async def test_fake_backend_scopes_turn_lookup_to_namespace():
     )
     second.items[sandbox.id] = sandbox
 
-    assert await first.find_by_turn("same-turn") == [sandbox]
-    assert await second.find_by_turn("same-turn") == []
+    assert await first.find({"sandbox-harness.io/turn":"same-turn"}) == [sandbox]
+    assert await second.find({"sandbox-harness.io/turn":"same-turn"}) == []
 
 
 async def test_opensandbox_lookup_sends_namespace_and_rejects_unscoped_rows():
@@ -61,11 +62,13 @@ async def test_opensandbox_lookup_sends_namespace_and_rejects_unscoped_rows():
         transport=httpx.MockTransport(respond),
     )
     try:
-        assert await backend.find_by_turn("same-turn") == []
-        assert requests[0].url.params["metadata"] == (
-            "sandbox-harness.io/namespace=sandbox-harness&"
-            "sandbox-harness.io/turn=same-turn"
-        )
+        assert await backend.find({"sandbox-harness.io/turn":"same-turn"}) == []
+        assert set(requests[0].url.params["metadata"].split("&"))=={
+            "sandbox-harness.io/namespace=sandbox-harness",
+            "sandbox-harness.io/turn=same-turn"}
+        assert await backend.find({
+            "sandbox-harness.io/namespace":"another-product"})==[]
+        assert len(requests)==1
     finally:
         await backend.client.aclose()
 
@@ -90,11 +93,11 @@ async def test_opensandbox_turn_inventory_classifies_failed_and_ready_matches_in
     await backend.client.aclose();backend.client=httpx.AsyncClient(
         base_url='http://opensandbox',transport=httpx.MockTransport(respond))
     try:
-        matches=await backend.find_by_turn('turn')
+        matches=await backend.find({'sandbox-harness.io/turn':'turn'})
         assert [(value.id,value.health_state) for value in matches]==[
             ('failed','failed'),('healthy','ready')]
         rows.reverse()
-        matches=await backend.find_by_turn('turn')
+        matches=await backend.find({'sandbox-harness.io/turn':'turn'})
         assert [(value.id,value.health_state) for value in matches]==[
             ('healthy','ready'),('failed','failed')]
     finally:await backend.client.aclose()
@@ -133,7 +136,7 @@ async def test_opensandbox_turn_inventory_keeps_health_timeout_and_other_ready_m
     await backend.client.aclose();backend.client=httpx.AsyncClient(
         base_url='http://opensandbox',transport=httpx.MockTransport(respond))
     try:
-        matches=await backend.find_by_turn('turn')
+        matches=await backend.find({'sandbox-harness.io/turn':'turn'})
         assert [(value.id,value.health_state) for value in matches]==[
             ('timeout','unhealthy'),('ready','ready')]
     finally:await backend.client.aclose()
@@ -156,37 +159,16 @@ async def test_namespace_scan_skips_sandbox_deleted_between_list_and_detail():
         await backend.client.aclose()
 
 
-async def test_warm_sandbox_binding_persists_turn_metadata():
-    backend = FakeSandboxBackend()
-    sandbox = await backend.create(
-        Harness.CLAUDE,
-        "image@sha256:" + "0" * 64,
-        {
-            "sandbox-harness.io/pool": "warm",
-            "sandbox-harness.io/turn": "warm-one",
-            "sandbox-harness.io/harness": "claude",
-        },
-        {},
-    )
-
-    await backend.bind(sandbox, "thread-one", "turn-one")
-
-    assert sandbox.metadata.get("sandbox-harness.io/pool") is None
-    assert sandbox.metadata["sandbox-harness.io/thread"] == "thread-one"
-    assert await backend.find_by_turn("turn-one") == [sandbox]
-    assert backend.renewed == [sandbox.id]
-
-
-async def test_opensandbox_binding_renews_expiration_for_full_turn_ttl():
+async def test_opensandbox_ttl_renew_does_not_mutate_ownership_metadata():
     requests = []
     def respond(request: httpx.Request):
         requests.append(request)
-        if request.url.path.endswith("/metadata"):
-            return httpx.Response(200, json={})
+        if request.url.path=="/v1/sandboxes/sandbox-one":
+            return httpx.Response(200,json={"id":"sandbox-one","metadata":{
+                "sandbox-harness.io/namespace":"sandbox-harness",
+                "sandbox-harness.io/harness":"codex"},"status":{"state":"running"}})
         if request.url.path.endswith("/renew-expiration"):
             return httpx.Response(200, json={"expiresAt": json.loads(request.content)["expiresAt"]})
-        if request.url.path.endswith("/endpoints/8080"):
-            return httpx.Response(200,json={"endpoint":"http://runtime-refreshed"})
         return httpx.Response(404)
     backend = OpenSandboxBackend("http://opensandbox", "", 3600, "sandbox-harness")
     await backend.client.aclose(); backend.client = httpx.AsyncClient(
@@ -194,13 +176,11 @@ async def test_opensandbox_binding_renews_expiration_for_full_turn_ttl():
     sandbox = __import__('sandbox_harness.sandbox', fromlist=['Sandbox']).Sandbox(
         id="sandbox-one", harness=Harness.CODEX, image="image", runtime_url="http://runtime", metadata={})
     try:
-        await backend.bind(sandbox, "thread-one", "turn-one")
+        await backend.update(sandbox,SandboxUpdate(ttl_seconds=3600))
         assert [request.url.path for request in requests] == [
-            "/v1/sandboxes/sandbox-one/metadata",
-            "/v1/sandboxes/sandbox-one/renew-expiration",
-            "/v1/sandboxes/sandbox-one/endpoints/8080",
-        ]
-        assert sandbox.runtime_url=="http://runtime-refreshed"
+            "/v1/sandboxes/sandbox-one",
+            "/v1/sandboxes/sandbox-one/renew-expiration"]
+        assert sandbox.metadata=={}
         assert sandbox.expires_at_monotonic > time.monotonic() + 3500
     finally:
         await backend.client.aclose()
@@ -210,6 +190,10 @@ async def test_opensandbox_refreshes_runtime_endpoint_before_proxy_url_expires()
     requests=[]
     def respond(request:httpx.Request):
         requests.append(request)
+        if request.url.path=='/v1/sandboxes/sandbox-one':
+            return httpx.Response(200,json={'id':'sandbox-one','metadata':{
+                'sandbox-harness.io/namespace':'sandbox-harness',
+                'sandbox-harness.io/harness':'codex'},'status':{'state':'running'}})
         if request.url.path.endswith('/endpoints/8080'):
             return httpx.Response(200,json={'endpoint':'http://runtime-new'})
         return httpx.Response(500)
@@ -222,6 +206,7 @@ async def test_opensandbox_refreshes_runtime_endpoint_before_proxy_url_expires()
     try:
         await backend.renew(sandbox)
         assert [request.url.path for request in requests]==[
+            '/v1/sandboxes/sandbox-one',
             '/v1/sandboxes/sandbox-one/endpoints/8080']
         assert sandbox.runtime_url=='http://runtime-new'
         assert sandbox.runtime_endpoint_refresh_at_monotonic>time.monotonic()+50
@@ -238,7 +223,10 @@ async def test_create_scopes_sandbox_for_the_shared_internal_network():
         if request.url.path.endswith("/endpoints/8080"):
             return httpx.Response(200, json={"endpoint": "127.0.0.1:28090/proxy/8080"})
         if request.method == "GET":
-            return httpx.Response(200, json={"id": "sandbox-one", "status": {"state": "Running"}})
+            return httpx.Response(200, json={"id": "sandbox-one",
+                "metadata":{"sandbox-harness.io/namespace":"sandbox-harness",
+                    "sandbox-harness.io/harness":"codex"},
+                "status": {"state": "Running"}})
         return httpx.Response(202, json={
             "id": "sandbox-one",
         })
@@ -433,12 +421,6 @@ async def test_deleting_thread_discards_its_retained_sandbox():
     await pool.discard_thread("delete-thread")
     assert sandbox.id not in backend.items
     assert "delete-thread" not in pool._attached and "delete-thread" not in pool._expiry
-    orphan = await backend.create(Harness.CODEX, "", {
-        "sandbox-harness.io/thread":"orphan-thread", "sandbox-harness.io/turn":"done",
-        "sandbox-harness.io/harness":"codex",
-    }, {})
-    await pool.discard_thread("orphan-thread")
-    assert orphan.id not in backend.items
     await pool.close()
 
 
@@ -628,7 +610,7 @@ async def test_namespace_sweep_includes_failed_sandboxes_and_exact_turn_lookup()
     await backend.client.aclose();backend.client=httpx.AsyncClient(base_url='http://sandbox',transport=httpx.MockTransport(respond))
     try:
         assert [s.id for s in await backend.list_namespace()]==['broken']
-        assert await backend.find_by_turn('expected-turn')==[]
+        assert await backend.find({'sandbox-harness.io/turn':'expected-turn'})==[]
     finally:await backend.client.aclose()
 
 

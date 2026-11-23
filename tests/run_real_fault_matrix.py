@@ -44,9 +44,9 @@ async def main():
   settings=load_settings();backend=OpenSandboxBackend(settings.opensandbox_url,settings.opensandbox_api_key,
    settings.sandbox_timeout_seconds,settings.namespace,settings.gateway_url,settings.gateway_proxy_port)
   try:
-   matches=await backend.find_by_turn(turn["id"])
-   if len(matches)!=1:raise AssertionError("Expected one Sandbox")
-   sandbox_id=matches[0].id;await backend.delete(matches[0])
+   sandbox_id=str(current.get("sandbox_id") or "")
+   if not sandbox_id:raise AssertionError("Turn has no durable Sandbox ID")
+   sandbox=await backend.get(sandbox_id);await backend.delete(sandbox)
   finally:await backend.client.aclose()
   final=await wait(client,turn["id"])
   if final["state"]!="FAILED" or final["error_code"]=="":raise AssertionError(json.dumps(final))

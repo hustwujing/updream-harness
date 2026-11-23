@@ -159,10 +159,8 @@ class RuntimeClient:
             "runtime_profile_id":runtime_profile_id,"skill_ids":skill_ids or [],
             "skill_digests":skill_digests or {},"child_mode":child_mode,
             "delegation_depth":delegation_depth,
-            "thread_id":logical_thread_id or sandbox.thread_id or sandbox.metadata.get(
-                "sandbox-harness.io/thread", ""),
-            "turn_id":logical_turn_id or sandbox.turn_id or sandbox.metadata.get(
-                "sandbox-harness.io/turn", ""),"sandbox_id":sandbox.id}
+            "thread_id":logical_thread_id or sandbox.thread_id,
+            "turn_id":logical_turn_id or sandbox.turn_id,"sandbox_id":sandbox.id}
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()}, timeout=20,
             trust_env=False, transport=self.transport) as client:
             if code_digest:

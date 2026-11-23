@@ -13,6 +13,20 @@ def test_opensandbox_environment_contract(monkeypatch):
     assert settings.opensandbox_api_key == "secret-key"
 
 
+def test_aliyun_sandbox_environment_contract(monkeypatch):
+    monkeypatch.setenv("SANDBOX_HARNESS_BACKEND", "aliyun")
+    monkeypatch.setenv("SANDBOX_HARNESS_ALIYUN_SANDBOX_API_KEY", "e2b_test")
+    monkeypatch.setenv("SANDBOX_HARNESS_ALIYUN_SANDBOX_API_URL", "https://api.sandbox.test")
+    monkeypatch.setenv("SANDBOX_HARNESS_ALIYUN_SANDBOX_DOMAIN", "sandbox.test")
+
+    settings=Settings(_env_file=None)
+
+    assert settings.backend=="aliyun"
+    assert settings.aliyun_sandbox_api_key=="e2b_test"
+    assert settings.aliyun_sandbox_api_url=="https://api.sandbox.test"
+    assert settings.aliyun_sandbox_domain=="sandbox.test"
+
+
 def test_public_proxy_policy_lists_load_from_json_environment(monkeypatch):
     monkeypatch.setenv("SANDBOX_HARNESS_PUBLIC_PROXY_ALLOWLIST", '["example.com","*.example.net"]')
     monkeypatch.setenv("SANDBOX_HARNESS_PUBLIC_PROXY_DENYLIST", '["blocked.example.com","203.0.113.0/24"]')

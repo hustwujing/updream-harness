@@ -40,8 +40,9 @@ async def main():
     sandbox=None;started=time.monotonic()
     try:
         sandbox=await backend.create(Harness.CLAUDE,settings.image_for('claude'),{
-            'sandbox-harness.io/namespace':namespace,'sandbox-harness.io/turn':identity,
-            'sandbox-harness.io/harness':'claude'}, {'HARNESS_COMMAND_JSON':json.dumps({'claude':['python','-c',FIXTURE]})})
+            'sandbox-harness.io/idempotency-key':identity},
+            {'HARNESS_COMMAND_JSON':json.dumps({'claude':['python','-c',FIXTURE]})})
+        sandbox.thread_id='runtime-boundaries';sandbox.turn_id=identity
         await RuntimeClient().inject(sandbox,capability_token='synthetic-fixture-no-provider-access',
             gateway_url=settings.gateway_url,proxy_url=settings.gateway_url.rsplit(':',1)[0]+':'+str(settings.gateway_proxy_port),
             harness='claude',model='synthetic')

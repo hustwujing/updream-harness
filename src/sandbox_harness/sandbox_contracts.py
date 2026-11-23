@@ -172,7 +172,9 @@ class SandboxCapabilities:
     authenticated_runtime_http:bool
 
     def require_primary_runtime(self)->None:
-        missing=[name for name,value in vars(self).items() if not value]
+        required=("metadata_filter","arbitrary_ports","ttl_renewal","idempotent_create",
+            "authenticated_runtime_http")
+        missing=[name for name in required if not getattr(self,name)]
         if missing:raise ValueError("sandbox_provider_missing_capabilities:"+",".join(missing))
 
 

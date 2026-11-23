@@ -28,7 +28,7 @@ async def test_child_recovery_retries_transient_runtime_proxy_status(monkeypatch
         image='runtime@sha256:'+digest,runtime_url='http://runtime',metadata={},health_state='ready')
 
     class Inventory:
-        async def find_by_turn(self,identity):return [sandbox]
+        async def get(self,identity):assert identity==sandbox.id;return sandbox
 
     class Pool:
         backend=Inventory()
@@ -48,7 +48,8 @@ async def test_child_recovery_retries_transient_runtime_proxy_status(monkeypatch
         store=SimpleNamespace(),objects=SimpleNamespace(),
         settings=Settings(backend='fake',data_root=tmp_path),token_factory=lambda *args:None)
     backend._ensure_collector=lambda *args:None
-    context=SimpleNamespace(job=SimpleNamespace(id=job_id))
+    context=SimpleNamespace(job=SimpleNamespace(id=job_id),
+        previous_acceptance_receipt={'sandbox_id':sandbox.id})
     reservation=SimpleNamespace(id='reservation',job_generation=1,harness='claude',
         image_digest=digest,node_id='node',node_generation=1,runtime_profile_id='profile',gpu_ids=())
 
@@ -79,7 +80,7 @@ async def test_child_recovery_recreates_sandbox_interrupted_before_runtime_activ
         image='runtime@sha256:'+digest,runtime_url='http://runtime',metadata={},health_state='ready')
 
     class Inventory:
-        async def find_by_turn(self,identity):return [sandbox]
+        async def get(self,identity):assert identity==sandbox.id;return sandbox
 
     class Pool:
         backend=Inventory();released=[]
@@ -92,7 +93,8 @@ async def test_child_recovery_recreates_sandbox_interrupted_before_runtime_activ
     backend=OpenSandboxChildBackend(pool=Pool(),runtime=Runtime(),store=SimpleNamespace(),
         objects=SimpleNamespace(),settings=Settings(backend='fake',data_root=tmp_path),
         token_factory=lambda *args:None)
-    context=SimpleNamespace(job=SimpleNamespace(id=job_id))
+    context=SimpleNamespace(job=SimpleNamespace(id=job_id),
+        previous_acceptance_receipt={'sandbox_id':sandbox.id})
     reservation=SimpleNamespace(id='reservation',job_generation=1,harness='claude',
         image_digest=digest,node_id='node',node_generation=1,runtime_profile_id='profile',gpu_ids=())
 

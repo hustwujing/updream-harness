@@ -142,7 +142,7 @@ class SandboxInspector:
 
     async def _active_sandbox(self, thread_id: str) -> Sandbox | None:
         for sandbox in self.broker.active_sandboxes.values():
-            if sandbox.thread_id == thread_id or sandbox.metadata.get("sandbox-harness.io/thread") == thread_id:
+            if sandbox.thread_id == thread_id:
                 return sandbox
         return await self.pool.get_attached(thread_id)
 
@@ -641,8 +641,13 @@ class SandboxInspector:
         except SandboxNotFound as exc:
             await self.store.revoke_sandbox_port_grant(grant_id,owner_id)
             raise KeyError("sandbox_port_preview_expired") from exc
-        if (sandbox.thread_id!=grant["thread_id"] and
-                sandbox.metadata.get("sandbox-harness.io/thread")!=grant["thread_id"]):
+        attached=await self.pool.get_attached(grant["thread_id"])
+        control=await self.store.get_sandbox_control(grant["thread_id"],owner_id)
+        controlled=bool(control and control.get("state") in {"user_controlled","releasing"}
+            and control.get("sandbox_id")==grant["sandbox_id"])
+        attached_matches=bool(attached and attached.id==grant["sandbox_id"]
+            and attached.thread_id==grant["thread_id"])
+        if not attached_matches and not controlled:
             await self.store.revoke_sandbox_port_grant(grant_id,owner_id)
             raise KeyError("sandbox_port_preview_expired")
         endpoint, headers = await self.pool.backend.endpoint(sandbox, grant["port"])

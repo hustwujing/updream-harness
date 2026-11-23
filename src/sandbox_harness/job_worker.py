@@ -214,7 +214,11 @@ class JobWorker:
                 await self._finish_or_defer(adapter,context,external_id,status,continuous,deadline)
                 return
             if not accepted:
-                if await self.store.unresolved_job_submission(job.id,attempt.generation):
+                unresolved=await self.store.unresolved_job_submission(job.id,attempt.generation)
+                if unresolved:
+                    context=replace(context,
+                        previous_external_execution_id=unresolved["external_execution_id"],
+                        previous_acceptance_receipt=unresolved["acceptance_receipt"])
                     recovery=await self._before_deadline(adapter.recover_submission(context),deadline)
                     if recovery.submission is None and not recovery.safe_to_retry:
                         await self.store.transition_job(job.id,JobState.UNKNOWN,
@@ -222,6 +226,9 @@ class JobWorker:
                                 "error_code":"submission_outcome_unknown_after_worker_loss"},
                                 side_effect_state='unknown'))
                         return
+                    if recovery.safe_to_retry:
+                        await self.store.resolve_job_submission_absent(job.id,self.worker_id,
+                            attempt.generation,unresolved["generation"])
                     submission=recovery.submission
                 else:submission=None
                 if submission is None:

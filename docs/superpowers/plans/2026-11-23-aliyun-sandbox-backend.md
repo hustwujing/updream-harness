@@ -32,10 +32,21 @@ backend.
 
 1. Add explicit Aliyun API URL/domain/key configuration.
 2. Add the pinned E2B SDK dependency and refresh the lock file.
-3. Construct Aliyun only when selected and retain the primary capability gate.
+3. Construct Aliyun only when selected and retain all mandatory capability gates.
 4. Verify Fake and OpenSandbox construction remains unchanged.
 
-## Task 4: Verify the regression boundary
+## Task 4: Add immutable-metadata Pool behavior
+
+**Files:** `src/sandbox_harness/sandbox_contracts.py`, `src/sandbox_harness/pool.py`,
+`tests/test_sandbox_contracts.py`, `tests/test_sandbox_factory.py`
+
+1. Make metadata mutation an optional capability rather than a primary gate.
+2. Claim application warm instances by durable ID without provider metadata mutation.
+3. Reuse an attached immutable-metadata Sandbox for the same Thread by renewing
+   TTL and updating platform state.
+4. Prove OpenSandbox mutable-metadata reuse remains unchanged.
+
+## Task 5: Verify the regression boundary
 
 **Files:** all touched files
 

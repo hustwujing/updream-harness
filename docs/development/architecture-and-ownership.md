@@ -14,7 +14,9 @@ the summary.
 | `store.py` | SQLAlchemy tables, inline schema upgrades, transactions, event/item persistence and Redis notification integration |
 | `broker.py` | Turn scheduling, leases, recovery, Runtime orchestration, checkpoint/artifact publication and cleanup |
 | `pool.py` | Pristine warm pool, Thread-attached sandboxes, capacity and deletion retry ownership |
-| `sandbox.py` | OpenSandbox HTTP adapter, metadata reconciliation and fake backend |
+| `sandbox_contracts.py` / `sandbox_factory.py` | provider-neutral lifecycle, capability gate and configured backend construction |
+| `sandbox_opensandbox.py` / `sandbox_aliyun.py` | provider adapters; provider metadata is limited to namespace, allocation reconciliation and profile inventory |
+| `sandbox.py` | fake backend and compatibility exports |
 | `runtime.py` | Typed host client for the in-sandbox Runtime API and reconnecting event streams |
 | `objects.py` | Content-addressed local and S3/BOSS storage with size/hash validation |
 | `site_bundle.py` / `site_worker.py` | bounded static-site packages, durable deployment Jobs and atomic immutable version activation |

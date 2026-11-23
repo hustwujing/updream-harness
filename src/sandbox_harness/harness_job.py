@@ -278,10 +278,22 @@ class SandboxChildBackend:
             raise ValueError('child_input_exceeds_reserved_disk')
         sandbox=await self.pool.acquire(thread_id=self._thread_id(context.job.id),turn_id=context.job.id,
             harness=harness,environment={},image=image)
-        token,claims=await self.token_factory(context,reservation,sandbox.id)
-        paused=await self.store.get_pause_participant(context.job.thread_id,
-            'child_harness',context.job.id)
-        restoring=bool(paused and paused.checkpoint_ref and paused.state.value=='RESUMED')
+        try:
+            execution_id=context.job.id+':'+str(context.generation)
+            allocation={"sandbox_id":sandbox.id,"reservation_id":reservation.id,
+                "node_id":reservation.node_id,"node_generation":reservation.node_generation}
+            await self.store.record_job_submission_allocation(context.job.id,context.generation,
+                external_execution_id=execution_id,receipt=allocation)
+            token,claims=await self.token_factory(context,reservation,sandbox.id)
+            allocation["capability_nonce"]=claims.nonce
+            await self.store.record_job_submission_allocation(context.job.id,context.generation,
+                external_execution_id=execution_id,receipt=allocation)
+            paused=await self.store.get_pause_participant(context.job.thread_id,
+                'child_harness',context.job.id)
+            restoring=bool(paused and paused.checkpoint_ref and paused.state.value=='RESUMED')
+        except BaseException:
+            await self.pool.release(sandbox,keep_attached=False)
+            raise
         try:
             await self.runtime.inject(sandbox,capability_token=token,gateway_url=self.settings.gateway_url,
                 proxy_url=self.settings.public_proxy_url,harness=harness.value,
@@ -313,7 +325,6 @@ class SandboxChildBackend:
                 await self.runtime.put_project_file_stream(sandbox,
                     f"assets/inputs/{item.artifact_role}-{artifact.id}",chunks(),
                     size=artifact.size,mime=artifact.mime)
-            execution_id=context.job.id+':'+str(context.generation)
             message=HarnessJobAdapter.execution_prompt(context.request)
             if restoring:
                 message=('Continue the interrupted Job from its durable checkpoint. Preserve completed '
@@ -332,8 +343,11 @@ class SandboxChildBackend:
             raise
 
     async def recover_submission(self,context:JobExecutionContext,reservation)->SubmissionRecovery:
-        matches=await self.pool.backend.find_by_turn(context.job.id)
-        if not matches:return SubmissionRecovery(safe_to_retry=True)
+        matches=[];sandbox_id=str(context.previous_acceptance_receipt.get("sandbox_id") or "")
+        if sandbox_id:
+            try:matches=[await self.pool.backend.get(sandbox_id)]
+            except SandboxNotFound:pass
+        if not matches:return SubmissionRecovery()
         ready=[value for value in matches if value.health_state=="ready"
             and value.harness.value==reservation.harness
             and value.image.endswith("@sha256:"+reservation.image_digest)]
@@ -358,7 +372,8 @@ class SandboxChildBackend:
                 "node_id":reservation.node_id,"node_generation":reservation.node_generation,
                 "runtime_profile_id":reservation.runtime_profile_id,
                 "image_digest":reservation.image_digest,"gpu_ids":list(reservation.gpu_ids),
-                "sandbox_id":sandbox.id,"capability_nonce":"",
+                "sandbox_id":sandbox.id,"capability_nonce":str(
+                    context.previous_acceptance_receipt.get("capability_nonce") or ""),
                 "runtime_acceptance":{"accepted":True,"created":False,"recovered":True,
                     "execution_id":execution_id}}))
 
@@ -542,14 +557,6 @@ class SandboxChildBackend:
             try:sandbox=await self._sandbox(context,receipt)
             except RuntimeError as exc:
                 if str(exc)!='child_sandbox_unavailable':raise
-        else:
-            matches=[value for value in await self.pool.backend.list_namespace()
-                if value.turn_id==context.job.id or value.metadata.get(
-                    'sandbox-harness.io/turn')==context.job.id]
-            for match in matches:
-                adopted=await self.pool.adopt(match,thread_id=self._thread_id(context.job.id),
-                    turn_id=context.job.id)
-                await self.pool.release(adopted,keep_attached=False)
         collector=self.collectors.pop(context.job.id,None)
         if collector:
             try:await asyncio.wait_for(asyncio.shield(collector),timeout=5)

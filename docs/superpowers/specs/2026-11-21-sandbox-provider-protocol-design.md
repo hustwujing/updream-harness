@@ -42,7 +42,7 @@ mounts and auth mode. It supports list/get/update metadata and timeout, stop,
 connect and authenticated arbitrary-port hosts.
 
 The common product boundary is therefore a profile-based sandbox lease with
-explicit idempotency, metadata, TTL and endpoint resolution. Provider-native
+explicit idempotency, immutable ownership labels, TTL and endpoint resolution. Provider-native
 command, code and filesystem clients are optional accelerators, not the
 platform protocol.
 
@@ -114,9 +114,10 @@ Required operations:
 - `aclose()`
 
 The backend exposes immutable `provider` and `capabilities`. Primary Harness
-execution requires metadata update, exact metadata filtering, arbitrary ports,
+execution requires exact metadata filtering, arbitrary ports,
 TTL renewal, idempotent create, authenticated Runtime HTTP and client shutdown.
-Startup fails if any are absent; there is no silent fallback. Metadata queries
+Metadata update is optional and never carries current business ownership.
+Startup fails if any required capability is absent; there is no silent fallback. Metadata queries
 are exact AND matches within one namespace. A patch value of `None` removes the
 key. Providers validate at most 64 metadata entries, 128 characters per key and
 512 characters per value before sending a request.
@@ -155,14 +156,15 @@ is adopted and multiple matches raise a duplicate-invariant failure.
 
 ## Recovery And Idempotency
 
-The platform continues recording sandbox IDs on durable Turns and Jobs. Normal
-recovery calls `get` with that durable ID first. Metadata search is used only
-when create outcome is unknown, when an old record lacks an ID, and during
-bounded startup orphan reconciliation. Duplicate matches are never selected by
-sort order. Provider metadata is defense-in-depth, not the only source of
-ownership. `idempotency_key` is always explicit: OpenSandbox maps it to the
-request ID and turn metadata, Tencent maps it to `ClientToken`, and future E2B
-adapters map it to supported metadata plus list reconciliation.
+The platform records sandbox IDs on durable Turns and Jobs before Runtime work.
+Recovery, cancellation, authorization and cleanup call `get` with that exact
+durable ID and never infer business ownership from provider metadata. Metadata
+search is used only inside create-outcome reconciliation, keyed by the immutable
+allocation/idempotency identity. Namespace metadata bounds orphan inventory so
+cleanup cannot touch another product. `idempotency_key` is always explicit:
+OpenSandbox maps it to the request ID and allocation metadata, Tencent maps it
+to `ClientToken`, and E2B adapters map it to immutable metadata plus list
+reconciliation.
 
 This phase keeps one configured provider for the complete deployment. A release
 must reject provider changes while any Turn, Job or sandbox control is
@@ -180,9 +182,9 @@ pre-accept failure that can be blindly replayed.
 managed warm pool is an implementation detail behind `create`; it is not
 represented by a second application pool abstraction.
 
-Pool binding calls `update` to remove the warm marker, add thread/turn metadata
-and renew TTL. Runtime endpoint refresh is separate from TTL renewal even when
-one provider call can satisfy both.
+Pool binding persists the exact Sandbox ID, sets local Thread/Turn ownership and
+renews TTL. It never changes provider metadata. Runtime endpoint refresh is
+separate from TTL renewal even when one provider call can satisfy both.
 
 `RuntimeClient` still speaks the existing signed HTTP protocol. It resolves a
 fresh endpoint before each operation and keeps request replay semantics

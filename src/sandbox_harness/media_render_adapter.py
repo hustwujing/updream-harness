@@ -165,7 +165,7 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
                 if str(exc)!='operation_sandbox_unavailable':raise
         else:
             matches=[value for value in await self.pool.backend.list_namespace()
-                if value.turn_id==context.job.id or value.metadata.get('sandbox-harness.io/turn')==context.job.id]
+                if value.turn_id==context.job.id]
             for match in matches:
                 adopted=await self.pool.adopt(match,thread_id=self._thread_id(context.job.id),turn_id=context.job.id)
                 await self.pool.release(adopted,keep_attached=False)

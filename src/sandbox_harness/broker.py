@@ -141,26 +141,27 @@ class Broker:
     async def start(self) -> None:
         await self.reconcile()
         try:
-            await self.cleanup_startup_orphans(delete_stale_warm=True)
+            await self.cleanup_startup_orphans()
         except Exception:
             logger.exception("Startup orphan reconciliation failed")
         self.recovery_task = asyncio.create_task(self._recovery_loop(), name="turn-recovery-loop")
         self.reaper_task = asyncio.create_task(self._reaper_loop(), name="sandbox-orphan-reaper")
 
-    async def cleanup_startup_orphans(self, *, delete_stale_warm: bool = False) -> None:
+    async def cleanup_startup_orphans(self) -> None:
         await self.pool.retry_deletions()
-        live_turns = await self.store.nonterminal_turn_ids()
-        live_jobs = await self.store.nonterminal_job_ids()
         active_ids = ({sandbox.id for sandbox in self.active_sandboxes.values()}
-            | await self.pool.managed_sandbox_ids() | await self.store.active_sandbox_control_ids()
+            | await self.pool.managed_sandbox_ids() | await self.store.nonterminal_turn_sandbox_ids()
+            | await self.store.active_sandbox_control_ids()
             | await self.store.active_job_sandbox_ids())
         for sandbox in await self.pool.backend.list_namespace():
-            turn_id = sandbox.metadata.get("sandbox-harness.io/turn", "")
-            if turn_id.startswith("warm-") and not delete_stale_warm:
-                continue
-            if sandbox.id not in active_ids and turn_id not in live_turns and turn_id not in live_jobs:
-                event("sandbox.orphan.delete",level=logging.WARNING,sandbox_id=sandbox.id,turn_id=turn_id)
+            if sandbox.id not in active_ids:
+                event("sandbox.orphan.delete",level=logging.WARNING,sandbox_id=sandbox.id)
                 await self.pool.backend.delete(sandbox)
+
+    async def _turn_inventory(self,turn)->list:
+        if not turn.sandbox_id:return []
+        try:return [await self.pool.backend.get(turn.sandbox_id)]
+        except SandboxNotFound:return []
 
     def _revoke_headers(self, turn, sandbox_id="") -> dict:
         return {**carrier(),"X-Sandbox-Harness-Control":self.settings.gateway_control_key,
@@ -269,7 +270,7 @@ class Broker:
                     except Exception as exc:
                         await self.store.append_event(turn.id, EventKind.WARNING, {
                             "code": "recovery_capability_revoke_failed", "detail": type(exc).__name__})
-                for sandbox in await self.pool.backend.find_by_turn(turn.id):
+                for sandbox in await self._turn_inventory(claimed):
                     await self.pool.retire(sandbox)
                 target = TurnState(claimed.pending_final_state)
                 await self.store.append_event(turn.id, EventKind.WARNING, {"code": "turn_cleanup_recovered",
@@ -296,7 +297,7 @@ class Broker:
                     self._schedule(next_turn.id)
                 return
             if claimed.state in {TurnState.RESTORING, TurnState.STARTING}:
-                for sandbox in await self.pool.backend.find_by_turn(turn.id):
+                for sandbox in await self._turn_inventory(claimed):
                     await self.pool.retire(sandbox)
                 await self.store.append_event(turn.id, EventKind.WARNING, {
                     "code": "turn_recovered_before_harness_start", "generation": claimed.recovery_generation})
@@ -312,13 +313,7 @@ class Broker:
                                 durable,claimed.runtime_execution_id) is not None):
                             candidates=[durable]
                 if durable_missing:
-                    matches=sorted(await self.pool.backend.find_by_turn(turn.id),
-                        key=lambda value:value.id)
-                    for match in matches:
-                        if match.health_state != "ready":continue
-                        if await self.runtime.execution_status(match,claimed.runtime_execution_id) is not None:
-                            candidates.append(match)
-                    if len(candidates)>1:raise RuntimeError("recoverable_sandbox_ambiguous")
+                    matches=[]
                 if candidates:
                     selected=candidates[0]
                     for duplicate in matches:
@@ -792,8 +787,7 @@ class Broker:
                     "primary_harness", turn.id, control.generation)
                     if control.state.value == "PAUSING" else None)
                 if participant and participant.state.value == "REQUESTED":
-                    matches = sorted(await self.pool.backend.find_by_turn(turn.id),
-                        key=lambda value:value.id)
+                    matches = await self._turn_inventory(turn)
                     ready = [value for value in matches if value.health_state == "ready"]
                     if ready:
                         sandbox = await self.pool.adopt(ready[0], thread_id=thread.id,
@@ -804,8 +798,7 @@ class Broker:
                         extra_sandboxes = matches
                     raise asyncio.CancelledError()
                 if turn.cancel_requested:
-                    matches = sorted(await self.pool.backend.find_by_turn(turn.id),
-                        key=lambda value:value.id)
+                    matches = await self._turn_inventory(turn)
                     ready = [value for value in matches if value.health_state == "ready"]
                     if ready:
                         sandbox = await self.pool.adopt(ready[0], thread_id=thread.id,
@@ -830,15 +823,7 @@ class Broker:
                                     durable,turn.runtime_execution_id)
                                 if status is not None:candidates.append((durable,status))
                     if durable_missing:
-                        matches=sorted(await self.pool.backend.find_by_turn(turn.id),
-                            key=lambda value:value.id)
-                        for match in matches:
-                            if match.health_state != "ready":continue
-                            status=await self.runtime.execution_status(
-                                match,turn.runtime_execution_id)
-                            if status is not None:candidates.append((match,status))
-                        if len(candidates)>1:
-                            raise RuntimeError("recoverable_sandbox_ambiguous")
+                        matches=[]
                     if not candidates:
                         raise RuntimeError("recoverable_sandbox_not_found")
                     selected,status = candidates[0]

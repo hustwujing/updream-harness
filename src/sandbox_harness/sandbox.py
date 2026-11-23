@@ -12,6 +12,7 @@ from .sandbox_contracts import (
     SandboxProfileUnavailable,SandboxProviderUnavailable,SandboxRateLimited,SandboxScope,
     SandboxState,SandboxUpdate)
 from .sandbox_opensandbox import OpenSandboxBackend
+from .sandbox_aliyun import AliyunSandboxBackend
 
 
 class FakeSandboxBackend:
@@ -37,12 +38,14 @@ class FakeSandboxBackend:
                      metadata:Mapping[str,str]|None=None,
                      environment:Mapping[str,str]|None=None)->Sandbox:
         if isinstance(request,Harness):
-            values=dict(metadata or {});key=str(values.get("sandbox-harness.io/turn") or "legacy")[:64]
+            values=dict(metadata or {});key=str(values.get(
+                "sandbox-harness.io/idempotency-key") or identifier())[:64]
             request=SandboxCreateRequest(harness=request,profile=self.legacy_profile(request,image or ""),
                 environment=environment or {},metadata=values,ttl_seconds=3600,
                 idempotency_key=key)
         values={**request.metadata,"sandbox-harness.io/namespace":self.namespace,
-            "sandbox-harness.io/idempotency-key":request.idempotency_key}
+            "sandbox-harness.io/idempotency-key":request.idempotency_key,
+            "sandbox-harness.io/harness":request.harness.value}
         sandbox=Sandbox(id=identifier(),provider=self.provider,harness=request.harness,
             profile=request.profile,metadata=values,state=SandboxState.READY,
             expires_at=datetime.now(timezone.utc)+timedelta(seconds=request.ttl_seconds),
@@ -57,8 +60,6 @@ class FakeSandboxBackend:
 
     async def list(self,scope:SandboxScope)->list[Sandbox]:
         return list(self.items.values()) if scope.namespace==self.namespace else []
-    async def find_by_turn(self,turn_id:str)->list[Sandbox]:
-        return await self.find({"sandbox-harness.io/turn":turn_id})
     async def list_namespace(self)->list[Sandbox]:return await self.list(SandboxScope(self.namespace))
 
     async def get(self,sandbox_id:str)->Sandbox:
@@ -82,12 +83,6 @@ class FakeSandboxBackend:
             sandbox.expires_at=datetime.now(timezone.utc)+timedelta(seconds=update.ttl_seconds)
         return sandbox
 
-    @observed("sandbox.bind")
-    async def bind(self,sandbox:Sandbox,thread_id:str,turn_id:str)->None:
-        await self.update(sandbox,SandboxUpdate(metadata={"sandbox-harness.io/pool":None,
-            "sandbox-harness.io/thread":thread_id,"sandbox-harness.io/turn":turn_id}))
-        await self.renew(sandbox,force=True)
-
     async def renew(self,sandbox:Sandbox,*,force:bool=False)->Sandbox:
         if sandbox.id not in self.items:raise SandboxNotFound(
             "Fake backend no longer has sandbox "+sandbox.id,provider=self.provider)
@@ -100,7 +95,7 @@ class FakeSandboxBackend:
     async def aclose(self)->None:return None
 
 
-__all__=["FakeSandboxBackend","OpenSandboxBackend","Sandbox","SandboxBackend",
+__all__=["AliyunSandboxBackend","FakeSandboxBackend","OpenSandboxBackend","Sandbox","SandboxBackend",
     "SandboxNotFound","SandboxCapacityUnavailable","SandboxCreateOutcomeUnknown",
     "SandboxRateLimited","SandboxAuthenticationFailed","SandboxProfileUnavailable",
     "SandboxEndpointUnavailable","SandboxProviderUnavailable"]

@@ -7,6 +7,7 @@ from sandbox_harness.config import Settings
 from sandbox_harness.domain import Harness,RuntimeResult
 from sandbox_harness.capability import CapabilityCodec
 from sandbox_harness.sandbox import OpenSandboxBackend
+from sandbox_harness.sandbox_contracts import SandboxUpdate
 from sandbox_harness.runtime import RuntimeClient
 from sandbox_harness.observability import configure,operation,telemetry,carrier
 
@@ -22,12 +23,12 @@ async def main():
     sandbox=None;started=time.monotonic();turns=[uuid.uuid4().hex,uuid.uuid4().hex];thread_id=uuid.uuid4().hex
     try:
         sandbox=await backend.create(Harness.CLAUDE,settings.image_for('claude'),{
-            'sandbox-harness.io/namespace':namespace,'sandbox-harness.io/turn':turns[0],
-            'sandbox-harness.io/thread':thread_id,'sandbox-harness.io/harness':'claude'},
+            'sandbox-harness.io/idempotency-key':identity},
             {'HARNESS_COMMAND_JSON':json.dumps({'claude':['python','-c',FIXTURE]})})
         client=RuntimeClient()
         for turn_id in turns:
-            await backend.bind(sandbox,thread_id,turn_id)
+            await backend.update(sandbox,SandboxUpdate(ttl_seconds=300))
+            sandbox.thread_id=thread_id;sandbox.turn_id=turn_id;sandbox.warm=False
             with operation('test.reused_turn',thread_id=thread_id,turn_id=turn_id,sandbox_id=sandbox.id):
                 token,claims=CapabilityCodec(settings.gateway_signing_key).issue(thread_id=thread_id,turn_id=turn_id,
                     sandbox_id=sandbox.id,harness=Harness.CLAUDE,model='synthetic',routes=['/v1/telemetry'],

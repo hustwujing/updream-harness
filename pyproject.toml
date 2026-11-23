@@ -13,6 +13,7 @@ dependencies = [
   "boto3>=1.35,<2",
   "cryptography>=50,<51",
   "defusedxml>=0.7,<1",
+  "e2b==2.31.0",
   "fastapi>=0.115,<1",
   "httpx>=0.28,<1",
   "jsonschema>=4.23,<5",

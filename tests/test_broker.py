@@ -54,13 +54,46 @@ async def test_orphan_reaper_keeps_provisioning_job_sandbox():
     async def retry():return None
     async def empty():return set()
     pool.retry_deletions=retry;pool.managed_sandbox_ids=empty
-    store=SimpleNamespace(nonterminal_turn_ids=empty,active_sandbox_control_ids=empty,
+    store=SimpleNamespace(nonterminal_turn_sandbox_ids=empty,
+        active_sandbox_control_ids=empty,
         active_job_sandbox_ids=empty,nonterminal_job_ids=lambda:None)
     async def live_jobs():return {'job-live'}
-    store.nonterminal_job_ids=live_jobs
+    async def job_sandboxes():return {sandbox.id}
+    store.nonterminal_job_ids=live_jobs;store.active_job_sandbox_ids=job_sandboxes
     broker=SimpleNamespace(pool=pool,store=store,active_sandboxes={})
     await Broker.cleanup_startup_orphans(broker)
     assert backend.deleted==[]
+
+
+async def test_orphan_reaper_keeps_durable_turn_sandbox_when_provider_metadata_is_stale():
+    sandbox=SimpleNamespace(id="durable-sandbox",metadata={
+        "sandbox-harness.io/turn":"original-turn"})
+    class Backend:
+        deleted=[]
+        async def list_namespace(self):return [sandbox]
+        async def delete(self,value):self.deleted.append(value.id)
+    backend=Backend()
+    async def retry():return None
+    async def empty():return set()
+    async def active_sandbox():return {sandbox.id}
+    pool=SimpleNamespace(backend=backend,retry_deletions=retry,managed_sandbox_ids=empty)
+    store=SimpleNamespace(nonterminal_turn_sandbox_ids=active_sandbox,active_sandbox_control_ids=empty,
+        active_job_sandbox_ids=empty,nonterminal_job_ids=empty)
+    broker=SimpleNamespace(pool=pool,store=store,active_sandboxes={})
+    await Broker.cleanup_startup_orphans(broker)
+    assert backend.deleted==[]
+
+
+async def test_turn_inventory_uses_durable_id_when_provider_turn_metadata_is_stale():
+    sandbox=SimpleNamespace(id="durable-sandbox")
+    class Backend:
+        async def get(self,sandbox_id):
+            assert sandbox_id==sandbox.id
+            return sandbox
+    broker=Broker.__new__(Broker)
+    broker.pool=SimpleNamespace(backend=Backend())
+    rows=await broker._turn_inventory(SimpleNamespace(id="current-turn",sandbox_id=sandbox.id))
+    assert rows==[sandbox]
 
 
 async def test_runtime_diagnostics_are_incremental_and_report_counter_deltas(monkeypatch):
@@ -643,8 +676,8 @@ async def test_broker_reattaches_expired_running_turn_and_replays_runtime_journa
     class DurableIdBackend(FakeSandboxBackend):
         def __init__(self):super().__init__();self.get_calls=[]
         async def get(self,sandbox_id):self.get_calls.append(sandbox_id);return await super().get(sandbox_id)
-        async def find_by_turn(self,turn_id):
-            raise AssertionError("durable sandbox ID must be tried before metadata inventory")
+        async def find(self,metadata):
+            raise AssertionError("durable sandbox ID recovery must not query provider metadata")
     frozen_image="registry/runtime@sha256:"+"1"*64
     frozen_bundle="2"*64;frozen_code="3"*64
     frozen_resolver=SandboxProfileResolver(provider="fake",
@@ -917,20 +950,19 @@ async def test_cleanup_retry_retires_stale_same_pool_attachment_and_releases_cap
         reasoning_level='standard',title='Cleanup capacity'),profile,owner)
     turn,_,_=await store.create_turn(thread.id,TurnCreate(message='done',
         idempotency_key='cleanup-capacity-turn'),profile,owner)
-    # Insert the duplicate first so recovery hits its failing delete before the attached main Sandbox.
-    extra=await backend.create(Harness.CODEX,'',{'sandbox-harness.io/turn':turn.id,
-        'sandbox-harness.io/thread':thread.id,'sandbox-harness.io/harness':'codex'}, {})
     main=await pool.acquire(thread_id=thread.id,turn_id=turn.id,harness=Harness.CODEX,environment={})
     claim=await store.claim_turn(turn.id,'dead',30)
+    await store.set_turn_state(turn.id,TurnState.STARTING,sandbox_id=main.id,
+        lease_owner='dead',recovery_generation=claim.recovery_generation)
     await store.begin_turn_cleanup(turn.id,TurnState.COMPLETED,error_code='',error_detail='',
         owner='dead',generation=claim.recovery_generation)
     await store.release_turn_lease(turn.id,'dead',claim.recovery_generation)
-    backend.fail_id=extra.id
+    backend.fail_id=main.id
     broker=Broker(settings,store,objects,pool,Runtime(),catalog)
     try:
         await broker.reconcile()
         assert (await store.get_turn(turn.id)).state==TurnState.CLEANING
-        assert pool._attached[thread.id].id==main.id
+        assert main.id in await pool.managed_sandbox_ids()
         await broker.reconcile()
         assert (await store.get_turn(turn.id)).state==TurnState.COMPLETED
         assert not backend.items and not await pool.managed_sandbox_ids()

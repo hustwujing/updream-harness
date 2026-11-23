@@ -165,8 +165,7 @@ class SandboxPool:
                 identity="warm-"+identifier();profile=self.profile_resolver.resolve(
                     harness,self.images[harness])
                 sandbox=await self.backend.create(SandboxCreateRequest(harness=harness,profile=profile,
-                    metadata={"sandbox-harness.io/pool":"warm","sandbox-harness.io/turn":identity,
-                        "sandbox-harness.io/harness":harness.value},environment={},
+                    metadata={},environment={},
                     idempotency_key=identity,ttl_seconds=self.ttl_seconds))
                 sandbox.warm = True
                 async with self._lock:
@@ -186,6 +185,11 @@ class SandboxPool:
         task.add_done_callback(self._refill.discard)
         task.add_done_callback(lambda value: logger.exception("Warm sandbox refill failed", exc_info=value.exception())
             if not value.cancelled() and value.exception() else None)
+
+    async def _bind(self,sandbox:Sandbox,*,thread_id:str,turn_id:str)->Sandbox:
+        sandbox=await self.backend.update(sandbox,SandboxUpdate(ttl_seconds=self.ttl_seconds))
+        sandbox.warm=False;sandbox.thread_id=thread_id;sandbox.turn_id=turn_id
+        return sandbox
 
     async def _reserve_user_slot(self) -> None:
         while True:
@@ -237,9 +241,7 @@ class SandboxPool:
                 attached = None
             if attached:
                 try:
-                    await self.backend.update(attached,SandboxUpdate(metadata={
-                        "sandbox-harness.io/pool":None,"sandbox-harness.io/thread":thread_id,
-                        "sandbox-harness.io/turn":turn_id},ttl_seconds=self.ttl_seconds))
+                    await self._bind(attached,thread_id=thread_id,turn_id=turn_id)
                     async with self._lock:
                         expiry = self._expiry.pop(thread_id, None)
                         self._idle_since.pop(thread_id, None)
@@ -285,21 +287,23 @@ class SandboxPool:
                     # Pristine warm instances do not contain a user token. Runtime injection
                     # happens through its control endpoint after ownership is frozen.
                     try:
-                        await self.backend.update(sandbox,SandboxUpdate(metadata={
-                            "sandbox-harness.io/pool":None,"sandbox-harness.io/thread":thread_id,
-                            "sandbox-harness.io/turn":turn_id},ttl_seconds=self.ttl_seconds))
+                        await self._bind(sandbox,thread_id=thread_id,turn_id=turn_id)
                         sandbox.warm = False
                     except SandboxNotFound:
                         sandbox=await self.backend.create(SandboxCreateRequest(harness=harness,
-                            profile=desired_profile,metadata={"sandbox-harness.io/thread":thread_id,
-                                "sandbox-harness.io/turn":turn_id,
-                                "sandbox-harness.io/harness":harness.value},environment=environment,
+                            profile=desired_profile,metadata={},environment=environment,
                             ttl_seconds=self.ttl_seconds,idempotency_key=turn_id))
+                    except asyncio.CancelledError:
+                        cleanup=asyncio.create_task(self._delete_tracked(sandbox,user_slot=False))
+                        try:await asyncio.shield(cleanup)
+                        except asyncio.CancelledError:await cleanup
+                        raise
+                    except Exception:
+                        await self._delete_tracked(sandbox,user_slot=False)
+                        raise
                 else:
                     sandbox=await self.backend.create(SandboxCreateRequest(harness=harness,
-                        profile=desired_profile,metadata={"sandbox-harness.io/thread":thread_id,
-                            "sandbox-harness.io/turn":turn_id,
-                            "sandbox-harness.io/harness":harness.value},environment=environment,
+                        profile=desired_profile,metadata={},environment=environment,
                         ttl_seconds=self.ttl_seconds,idempotency_key=turn_id))
                 sandbox.thread_id = thread_id
                 sandbox.turn_id = turn_id
@@ -338,9 +342,7 @@ class SandboxPool:
                     return existing
             await self._reserve_user_slot()
             try:
-                await self.backend.update(sandbox,SandboxUpdate(metadata={
-                    "sandbox-harness.io/pool":None,"sandbox-harness.io/thread":thread_id,
-                    "sandbox-harness.io/turn":turn_id},ttl_seconds=self.ttl_seconds))
+                await self._bind(sandbox,thread_id=thread_id,turn_id=turn_id)
                 sandbox.thread_id = thread_id
                 sandbox.turn_id = turn_id
                 sandbox.warm = False
@@ -401,9 +403,6 @@ class SandboxPool:
             if sandbox:
                 await self._delete_tracked(sandbox)
                 return
-        for candidate in await self.backend.list_namespace():
-            if candidate.metadata.get("sandbox-harness.io/thread") == thread_id:
-                await self.backend.delete(candidate)
 
     async def _expire(self, thread_id: str, sandbox: Sandbox, seconds: int) -> None:
         try:

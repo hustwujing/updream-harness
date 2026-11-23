@@ -6,6 +6,7 @@ from .config import Settings
 from .domain import Harness
 from .sandbox import FakeSandboxBackend
 from .sandbox_contracts import SandboxBackend,SandboxProfile
+from .sandbox_aliyun import AliyunSandboxBackend
 from .sandbox_opensandbox import OpenSandboxBackend
 
 
@@ -32,6 +33,12 @@ def build_sandbox_backend(settings:Settings)->SandboxBackend:
         backend=OpenSandboxBackend(settings.opensandbox_url,settings.opensandbox_api_key,
             settings.sandbox_timeout_seconds,settings.namespace,settings.gateway_url,
             settings.gateway_proxy_port)
+        backend.capabilities.require_primary_runtime();return backend
+    if settings.backend=="aliyun":
+        backend=AliyunSandboxBackend(api_key=settings.aliyun_sandbox_api_key,
+            api_url=settings.aliyun_sandbox_api_url,domain=settings.aliyun_sandbox_domain,
+            timeout_seconds=settings.sandbox_timeout_seconds,namespace=settings.namespace,
+            request_timeout_seconds=settings.aliyun_sandbox_request_timeout_seconds)
         backend.capabilities.require_primary_runtime();return backend
     raise ValueError("unsupported_sandbox_backend:"+str(settings.backend))
 

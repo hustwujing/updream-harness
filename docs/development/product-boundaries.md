@@ -9,8 +9,9 @@ on the host or inside a Harness sandbox.
 
 The browser talks to the API. The API persists user-owned Threads and Turns and
 asks `Broker` to execute. `Broker` leases the active Turn, acquires or adopts an
-OpenSandbox instance, configures its Runtime and streams normalized Runtime
-events. The chosen native Harness decides how to perform the user's work.
+instance from the configured `SandboxBackend`, configures its Runtime and
+streams normalized Runtime events. The chosen native Harness decides how to
+perform the user's work.
 
 The host may make deterministic infrastructure decisions:
 
@@ -27,7 +28,7 @@ The host must not:
 - classify business intent or construct a task DAG;
 - rewrite a user's task into a host-owned plan;
 - judge media quality or approve a Harness result;
-- execute a task with a host model or shell when OpenSandbox is unavailable;
+- execute a task with a host model or shell when the Sandbox provider is unavailable;
 - put durable Provider, database, Redis or object-store credentials in a
   sandbox;
 - replay a Harness action whose external outcome is unknown.

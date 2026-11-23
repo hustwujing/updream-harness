@@ -248,7 +248,7 @@ async def test_child_submission_recovery_adopts_unique_runtime_execution(tmp_pat
         image='registry/office@sha256:'+digest,runtime_url='http://runtime',metadata={},
         health_state='ready')
     class Inventory:
-        async def find_by_turn(self,identity):assert identity==job_id;return [sandbox]
+        async def get(self,identity):assert identity==sandbox.id;return sandbox
     class Pool:
         backend=Inventory();released=[]
         async def adopt(self,value,**kwargs):assert value is sandbox;return sandbox
@@ -261,21 +261,25 @@ async def test_child_submission_recovery_adopts_unique_runtime_execution(tmp_pat
         objects=SimpleNamespace(),settings=Settings(backend='fake',data_root=tmp_path),
         token_factory=lambda *args:None)
     backend._ensure_collector=lambda *args:None
-    context=SimpleNamespace(job=SimpleNamespace(id=job_id))
+    context=SimpleNamespace(job=SimpleNamespace(id=job_id),
+        previous_acceptance_receipt={'sandbox_id':sandbox.id,'capability_nonce':'nonce-old'})
     reservation=SimpleNamespace(id='reservation',job_generation=1,harness='codex',
         image_digest=digest,node_id='node',node_generation=7,runtime_profile_id='office',gpu_ids=())
     recovery=await backend.recover_submission(context,reservation)
     assert recovery.submission.external_execution_id==job_id+':1'
     assert recovery.submission.acceptance_receipt['sandbox_id']==sandbox.id
+    assert recovery.submission.acceptance_receipt['capability_nonce']=='nonce-old'
     assert recovery.submission.acceptance_receipt['runtime_acceptance']['recovered'] is True
     assert Pool.released==[]
 
 
-async def test_child_submission_recovery_retries_only_when_absence_is_proven(tmp_path):
+async def test_child_submission_recovery_does_not_replay_when_recorded_sandbox_is_missing(tmp_path):
     digest='b'*64;job_id='d'*32
     class Inventory:
-        rows=[]
-        async def find_by_turn(self,identity):return self.rows
+        row=None
+        async def get(self,identity):
+            if self.row is None:raise SandboxNotFound('gone')
+            return self.row
     class Pool:
         backend=Inventory();released=[]
         async def adopt(self,value,**kwargs):return value
@@ -285,20 +289,17 @@ async def test_child_submission_recovery_retries_only_when_absence_is_proven(tmp
     backend=OpenSandboxChildBackend(pool=Pool(),runtime=Runtime(),store=SimpleNamespace(),
         objects=SimpleNamespace(),settings=Settings(backend='fake',data_root=tmp_path),
         token_factory=lambda *args:None)
-    context=SimpleNamespace(job=SimpleNamespace(id=job_id))
+    context=SimpleNamespace(job=SimpleNamespace(id=job_id),
+        previous_acceptance_receipt={'sandbox_id':'recorded-sandbox'})
     reservation=SimpleNamespace(id='reservation',job_generation=1,harness='codex',
         image_digest=digest,node_id='node',node_generation=7,runtime_profile_id='office',gpu_ids=())
-    assert (await backend.recover_submission(context,reservation)).safe_to_retry is True
+    assert (await backend.recover_submission(context,reservation)).safe_to_retry is False
     sandbox=Sandbox(id='sandbox-no-execution',harness=Harness.CODEX,
         image='registry/office@sha256:'+digest,runtime_url='http://runtime',metadata={},
         health_state='ready')
-    Pool.backend.rows=[sandbox]
+    Pool.backend.row=sandbox
     assert (await backend.recover_submission(context,reservation)).safe_to_retry is True
     assert Pool.released==[sandbox.id]
-    Pool.backend.rows=[sandbox,Sandbox(id='duplicate',harness=Harness.CODEX,
-        image=sandbox.image,runtime_url='http://runtime',metadata={},health_state='ready')]
-    ambiguous=await backend.recover_submission(context,reservation)
-    assert ambiguous.submission is None and not ambiguous.safe_to_retry
 
 
 async def test_failed_child_result_does_not_reopen_missing_sandbox(tmp_path):
@@ -345,8 +346,11 @@ async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(
     artifact=SimpleNamespace(id="a"*32,object_ref="sha256:"+"b"*64,
         size=sum(map(len,chunks)),mime="application/octet-stream")
     class Store:
+        allocations=[]
         async def get_artifact(self,*args):return artifact
         async def get_pause_participant(self,*args):return None
+        async def record_job_submission_allocation(self,*args,**kwargs):
+            self.allocations.append(kwargs["receipt"].copy())
     class Objects:
         def get(self,*args,**kwargs):raise AssertionError("full object buffering is forbidden")
         def iter_bytes(self,*args,**kwargs):yield from chunks
@@ -374,11 +378,17 @@ async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(
         origin_turn_id="e"*32),
         request=frozen,generation=1)
     reservation=SimpleNamespace(harness="codex",image_ref=image,image_digest=digest,
-        disk_mb=516,runtime_profile_id="reviewer-readonly")
+        disk_mb=516,runtime_profile_id="reviewer-readonly",id="reservation",
+        node_id="node",node_generation=1)
     execution,_=await backend.start(context,reservation)
     assert execution.startswith("c"*32) and Runtime.sizes==[len(value) for value in chunks]
     assert backend.runtime.injected['logical_thread_id']=='d'*32
     assert backend.runtime.injected['logical_turn_id']=='e'*32
+    assert backend.store.allocations==[
+        {"sandbox_id":sandbox.id,"reservation_id":"reservation","node_id":"node",
+            "node_generation":1},
+        {"sandbox_id":sandbox.id,"reservation_id":"reservation","node_id":"node",
+            "node_generation":1,"capability_nonce":"nonce"}]
 
     backend.pool.acquired=0
     with pytest.raises(ValueError,match="reserved_disk"):

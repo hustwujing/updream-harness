@@ -90,6 +90,10 @@ async def test_opensandbox_endpoint_cache_refreshes_after_deadline():
         if http_request.url.path.endswith("/endpoints/8080"):
             endpoint_requests+=1
             return httpx.Response(200,json={"endpoint":f"http://runtime-{endpoint_requests}.local"})
+        if http_request.url.path=="/v1/sandboxes/sandbox-1":
+            return httpx.Response(200,json={"id":"sandbox-1","metadata":{
+                "sandbox-harness.io/namespace":"namespace",
+                "sandbox-harness.io/harness":"codex"},"status":{"state":"running"}})
         raise AssertionError(str(http_request.url))
     backend=OpenSandboxBackend("http://opensandbox","",300,"namespace",
         transport=httpx.MockTransport(respond))

@@ -18,9 +18,13 @@ class Settings(BaseSettings):
     api_bind_port: int = Field(default=24766, ge=1024, le=65535)
     database_url: str = "sqlite+aiosqlite:///.data/platform.db"
     namespace: str = Field(default="sandbox-harness-parallel", pattern=r"^[a-z0-9][a-z0-9-]{1,62}$")
-    backend: Literal["opensandbox", "fake"] = "opensandbox"
+    backend: Literal["opensandbox", "aliyun", "fake"] = "opensandbox"
     opensandbox_url: str = "http://127.0.0.1:28090"
     opensandbox_api_key: str = ""
+    aliyun_sandbox_api_url: str = "https://api.cn-shanghai.sandbox.aliyuncs.com"
+    aliyun_sandbox_domain: str = "cn-shanghai.sandbox.aliyuncs.com"
+    aliyun_sandbox_api_key: str = ""
+    aliyun_sandbox_request_timeout_seconds: float = Field(default=60, ge=1, le=300)
     redis_url: str = "redis://127.0.0.1:6379/0"
     redis_prefix: str = "sandbox-harness-parallel:"
     job_catalog_path: Path = Path("deploy/job-catalog.example.json")

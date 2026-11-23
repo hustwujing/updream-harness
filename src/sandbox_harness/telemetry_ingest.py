@@ -90,8 +90,8 @@ def decode_otlp(signal,data,claims):
 def import_snapshot(telemetry,snapshot,sandbox):
     """Fallback before deletion; incoming data is still sandbox-reported/untrusted."""
     from types import SimpleNamespace
-    claims=SimpleNamespace(turn_id=sandbox.turn_id or sandbox.metadata.get('sandbox-harness.io/turn',''),
-        thread_id=sandbox.thread_id or sandbox.metadata.get('sandbox-harness.io/thread',''),sandbox_id=sandbox.id)
+    claims=SimpleNamespace(turn_id=sandbox.turn_id,thread_id=sandbox.thread_id,
+        sandbox_id=sandbox.id)
     count=0
     for row in snapshot.get('records',[])[:500]:
         try:

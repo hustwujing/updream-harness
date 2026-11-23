@@ -9,12 +9,12 @@ claims made by documentation.
 ## Product Boundary
 
 - Every user message is executed by the selected Codex, Claude or DeepSeek
-  Harness inside OpenSandbox. The host does not plan, review or reinterpret the
-  task.
+  Harness inside the configured SandboxBackend. The host does not plan, review
+  or reinterpret the task.
 - The host owns browser identity, Thread and Turn serialization, leases,
   sandbox lifecycle, short-lived capabilities, event transport, checkpoints,
   artifacts and hard resource limits.
-- OpenSandbox failure never falls back to a host model or local Agent.
+- Sandbox provider failure never falls back to a host model or local Agent.
 - Sandboxes receive no long-lived model, Provider, database, Redis or object
   storage credential.
 - Do not import source, database models, deployment scripts, runtime bundles or
