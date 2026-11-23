@@ -161,7 +161,7 @@ def managed_project_path(value: str, *, upload: bool = False) -> str:
 def components(settings: Settings):
     store = Store(settings.database_url, settings.redis_url, settings.redis_prefix)
     objects = object_store(settings)
-    backend=sandbox_factory.build_sandbox_backend(settings)
+    backend=sandbox_factory.build_sandbox_registry(settings)
     profile_resolver=sandbox_factory.build_profile_resolver(settings,backend)
     images = {harness: settings.image_for(harness.value) for harness in Harness}
     targets = {

@@ -6,8 +6,10 @@ from sandbox_harness.domain import Harness
 from sandbox_harness.pool import SandboxPool
 from sandbox_harness.runtime import RuntimeClient
 from sandbox_harness.sandbox import AliyunSandboxBackend,FakeSandboxBackend,OpenSandboxBackend
-from sandbox_harness.sandbox_contracts import SandboxCapabilities,SandboxProviderUnavailable
-from sandbox_harness.sandbox_factory import SandboxProfileResolver,build_sandbox_backend
+from sandbox_harness.sandbox_contracts import (SandboxCapabilities,SandboxCreateRequest,
+    SandboxProviderUnavailable)
+from sandbox_harness.sandbox_factory import (SandboxBackendRegistry,SandboxProfileResolver,
+    build_sandbox_backend)
 
 
 def test_backend_factory_is_the_single_provider_construction_boundary(tmp_path):
@@ -30,6 +32,25 @@ def test_profile_resolver_freezes_provider_ref_and_runtime_contract():
     changed=resolver.resolve(Harness.CODEX,"registry/two@sha256:"+"4"*64)
     assert first.compatibility_key==same.compatibility_key
     assert first.compatibility_key!=changed.compatibility_key
+
+
+async def test_backend_registry_dispatches_durable_handles_to_their_provider():
+    class OtherBackend(FakeSandboxBackend):provider="other"
+    fake=FakeSandboxBackend(namespace="product")
+    other=OtherBackend(namespace="product")
+    registry=SandboxBackendRegistry([fake,other],"fake")
+    resolver=SandboxProfileResolver(provider="other",runtime_contract="runtime/v1",
+        runtime_bundle_digest="1"*64,runtime_code_bundle_digest="2"*64)
+    sandbox=await other.create(SandboxCreateRequest(harness=Harness.CODEX,
+        profile=resolver.resolve(Harness.CODEX,"other-image"),environment={},ttl_seconds=300,
+        allocation_id="other-allocation"))
+    assert await registry.get(sandbox.handle) is sandbox
+    with pytest.raises(TypeError,match="handle_required"):
+        await registry.get(sandbox.id)
+    with pytest.raises(RuntimeError,match="active_work"):
+        registry.set_active("other",active_handles=1)
+    await registry.delete(sandbox)
+    assert sandbox.id not in other.items
 
 
 async def test_pool_claims_sandbox_through_generic_update_not_provider_bind():

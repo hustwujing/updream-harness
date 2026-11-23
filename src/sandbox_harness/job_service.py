@@ -53,7 +53,7 @@ def profile_resolver(settings: Settings) -> ProfileResolver:
 
 
 def sandbox_pool(settings: Settings) -> SandboxPool:
-    backend=sandbox_factory.build_sandbox_backend(settings)
+    backend=sandbox_factory.build_sandbox_registry(settings)
     profiles=sandbox_factory.build_profile_resolver(settings,backend)
     return SandboxPool(backend,{harness:settings.image_for(harness.value) for harness in Harness},
         {harness:0 for harness in Harness},max_sandboxes=settings.max_sandboxes,

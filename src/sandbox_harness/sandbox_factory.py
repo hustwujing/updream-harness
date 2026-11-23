@@ -6,6 +6,8 @@ from .config import Settings
 from .domain import Harness
 from .sandbox import FakeSandboxBackend
 from .sandbox_contracts import SandboxBackend,SandboxProfile
+from .sandbox_contracts import (Sandbox,SandboxCreateRequest,SandboxEndpoint,SandboxHandle,
+    SandboxRuntimeRoute,SandboxScope)
 from .sandbox_aliyun import AliyunSandboxBackend
 from .sandbox_opensandbox import OpenSandboxBackend
 
@@ -27,6 +29,66 @@ class SandboxProfileResolver:
             runtime_code_bundle_digest=self.runtime_code_bundle_digest or "legacy")
 
 
+class SandboxBackendRegistry:
+    def __init__(self,backends:list[SandboxBackend],active_provider:str):
+        self.backends={backend.provider:backend for backend in backends}
+        if len(self.backends)!=len(backends):raise ValueError("duplicate_sandbox_provider")
+        if active_provider not in self.backends:raise ValueError("active_sandbox_provider_missing")
+        namespaces={getattr(backend,"namespace","") for backend in backends}
+        if len(namespaces)!=1:raise ValueError("sandbox_provider_namespace_mismatch")
+        self.active_provider=active_provider;self.namespace=namespaces.pop()
+
+    @property
+    def active(self)->SandboxBackend:return self.backends[self.active_provider]
+    @property
+    def provider(self)->str:return self.active_provider
+    @property
+    def capabilities(self):return self.active.capabilities
+
+    def backend_for(self,handle:SandboxHandle)->SandboxBackend:
+        try:return self.backends[handle.provider]
+        except KeyError as exc:raise ValueError(
+            "sandbox_provider_not_registered:"+handle.provider) from exc
+
+    def set_active(self,provider:str,*,active_handles:int=0)->None:
+        if active_handles:raise RuntimeError("sandbox_provider_switch_has_active_work")
+        if provider not in self.backends:raise ValueError("active_sandbox_provider_missing")
+        self.active_provider=provider
+
+    async def create(self,request:SandboxCreateRequest)->Sandbox:
+        if request.profile.provider!=self.active_provider:
+            raise ValueError("sandbox_create_provider_not_active")
+        return await self.active.create(request)
+
+    async def get(self,handle:SandboxHandle)->Sandbox:
+        if not isinstance(handle,SandboxHandle):raise TypeError("sandbox_handle_required")
+        return await self.backend_for(handle).get(handle)
+
+    async def reconcile_create(self,scope:SandboxScope,allocation_id:str)->Sandbox|None:
+        return await self.active.reconcile_create(scope,allocation_id)
+
+    async def list_owned(self,scope:SandboxScope)->list[Sandbox]:
+        rows=[]
+        for backend in self.backends.values():rows.extend(await backend.list_owned(scope))
+        return rows
+
+    async def renew(self,sandbox:Sandbox,*,force:bool=False)->Sandbox:
+        return await self.backend_for(sandbox.handle).renew(sandbox,force=force)
+
+    async def delete(self,sandbox:Sandbox)->None:
+        await self.backend_for(sandbox.handle).delete(sandbox)
+
+    async def endpoint(self,sandbox:Sandbox,port:int,*,force_refresh:bool=False)->SandboxEndpoint:
+        return await self.backend_for(sandbox.handle).endpoint(
+            sandbox,port,force_refresh=force_refresh)
+
+    def runtime_route(self,sandbox:Sandbox)->SandboxRuntimeRoute:
+        return self.backend_for(sandbox.handle).runtime_route(sandbox)
+
+    async def aclose(self)->None:
+        for backend in self.backends.values():await backend.aclose()
+
+
 def build_sandbox_backend(settings:Settings)->SandboxBackend:
     if settings.backend=="fake":return FakeSandboxBackend(namespace=settings.namespace)
     if settings.backend=="opensandbox":
@@ -41,6 +103,11 @@ def build_sandbox_backend(settings:Settings)->SandboxBackend:
             request_timeout_seconds=settings.aliyun_sandbox_request_timeout_seconds)
         backend.capabilities.require_primary_runtime();return backend
     raise ValueError("unsupported_sandbox_backend:"+str(settings.backend))
+
+
+def build_sandbox_registry(settings:Settings)->SandboxBackendRegistry:
+    backend=build_sandbox_backend(settings)
+    return SandboxBackendRegistry([backend],backend.provider)
 
 
 def build_profile_resolver(settings:Settings,backend:SandboxBackend)->SandboxProfileResolver:

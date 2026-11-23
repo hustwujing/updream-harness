@@ -86,7 +86,7 @@ class SandboxPool:
             if sandbox.health_state != "ready":
                 continue
             try:
-                await asyncio.wait_for(self.backend.get(sandbox.id),timeout=5)
+                await asyncio.wait_for(self.backend.get(sandbox.handle),timeout=5)
                 available=True
             except SandboxNotFound:
                 try:await self.retire(sandbox)
