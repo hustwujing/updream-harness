@@ -1,4 +1,5 @@
 import asyncio
+import json
 import pytest
 from sandbox_harness.broker import Broker
 from sandbox_harness.catalog import HarnessCatalog
@@ -60,6 +61,7 @@ async def test_cancel_survives_broker_restart_without_replaying_harness(tmp_path
         claim=await store.claim_turn(first.id,old.instance_id,30)
         sandbox=await pool.acquire(thread_id=first.thread_id,turn_id=first.id,harness=first.harness,environment={})
         await store.set_turn_state(first.id,TurnState.RUNNING,sandbox_id=sandbox.id,
+            sandbox_handle_json=json.dumps(sandbox.handle.to_mapping()),
             lease_owner=old.instance_id,recovery_generation=claim.recovery_generation)
         await store.request_turn_cancel(first.id)
         await store.release_turn_lease(first.id,old.instance_id,claim.recovery_generation)
@@ -89,6 +91,7 @@ async def test_cancel_restart_uses_exact_id_and_orphan_reaper_deletes_unowned_sa
         main=await old_pool.acquire(thread_id=first.thread_id,turn_id=first.id,
             harness=first.harness,environment={})
         await store.set_turn_state(first.id,TurnState.RUNNING,sandbox_id=main.id,
+            sandbox_handle_json=json.dumps(main.handle.to_mapping()),
             lease_owner=old.instance_id,recovery_generation=claim.recovery_generation)
         duplicate=await backend.create(first.harness,'',{
             'sandbox-harness.io/thread':first.thread_id,
