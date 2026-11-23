@@ -4,6 +4,7 @@ from .observability import observed, event, enrich, carrier, add_link, telemetry
 
 import asyncio
 import hashlib
+import json
 import logging
 import mimetypes
 from pathlib import PurePosixPath
@@ -23,6 +24,7 @@ from .pool import SandboxPool
 from .runtime import RuntimeClient, RuntimeStreamInterrupted
 from .sandbox import SandboxNotFound
 from .sandbox_factory import SandboxProfileResolver
+from .sandbox_contracts import SandboxHandle
 from .store import Store
 from .site_bundle import build_site_archive_from_paths, normalize_site_slug
 
@@ -160,8 +162,22 @@ class Broker:
 
     async def _turn_inventory(self,turn)->list:
         if not turn.sandbox_id:return []
-        try:return [await self.pool.backend.get(turn.sandbox_id)]
+        handle=self._turn_handle(turn)
+        try:return [await self.pool.backend.get(handle)]
         except SandboxNotFound:return []
+
+    @staticmethod
+    def _turn_handle(turn)->SandboxHandle:
+        if not turn.sandbox_handle_json:
+            raise RuntimeError("nonterminal_turn_sandbox_handle_missing")
+        try:return SandboxHandle.from_mapping(json.loads(turn.sandbox_handle_json))
+        except (TypeError,ValueError) as exc:
+            raise RuntimeError("nonterminal_turn_sandbox_handle_invalid") from exc
+
+    @staticmethod
+    def _handle_json(sandbox)->str:
+        if sandbox.handle is None:raise RuntimeError("allocated_sandbox_handle_missing")
+        return json.dumps(sandbox.handle.to_mapping(),sort_keys=True,separators=(",",":"))
 
     def _revoke_headers(self, turn, sandbox_id="") -> dict:
         return {**carrier(),"X-Sandbox-Harness-Control":self.settings.gateway_control_key,
@@ -305,7 +321,7 @@ class Broker:
             if claimed.state in {TurnState.RUNNING, TurnState.AWAITING_USER, TurnState.DRAINING_INPUTS, TurnState.CHECKPOINTING} and claimed.runtime_execution_id:
                 matches=[];candidates=[];durable_missing=not bool(claimed.sandbox_id)
                 if claimed.sandbox_id:
-                    try:durable=await self.pool.backend.get(claimed.sandbox_id)
+                    try:durable=await self.pool.backend.get(self._turn_handle(claimed))
                     except SandboxNotFound:durable_missing=True
                     else:
                         matches=[durable]
@@ -815,7 +831,7 @@ class Broker:
                 if recovering:
                     matches=[];candidates=[];durable_missing=not bool(turn.sandbox_id)
                     if turn.sandbox_id:
-                        try:durable=await self.pool.backend.get(turn.sandbox_id)
+                        try:durable=await self.pool.backend.get(self._turn_handle(turn))
                         except SandboxNotFound:durable_missing=True
                         else:
                             if durable.health_state=="ready":
@@ -877,7 +893,8 @@ class Broker:
                     await self.store.set_turn_capability(
                         turn.id, claims.nonce, self.instance_id, generation,
                     )
-                    await self._state(turn.id, TurnState.STARTING, sandbox_id=sandbox.id)
+                    await self._state(turn.id, TurnState.STARTING, sandbox_id=sandbox.id,
+                        sandbox_handle_json=self._handle_json(sandbox))
                     primary_skills = sorted(skill.id for skill in self.catalog.profile_resolver.skills.values()
                         if turn.harness.value in skill.supported_harnesses) if self.catalog.profile_resolver else []
                     await self.runtime.inject(
@@ -912,7 +929,8 @@ class Broker:
                     await self.runtime.reset_project_files(sandbox)
                     await self._materialize_project_files(sandbox, project_files)
                     await self._materialize_attachments(sandbox, turn.attachments)
-                    await self._state(turn.id, TurnState.RUNNING, sandbox_id=sandbox.id)
+                    await self._state(turn.id, TurnState.RUNNING, sandbox_id=sandbox.id,
+                        sandbox_handle_json=self._handle_json(sandbox))
                 enrich(sandbox_id=sandbox.id,image_digest=sandbox.image.rsplit("@",1)[-1])
                 self.active_sandboxes[turn.id] = sandbox
                 message = turn.runtime_message or turn.message

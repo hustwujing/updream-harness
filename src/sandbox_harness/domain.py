@@ -286,6 +286,7 @@ class TurnView(BaseModel):
     internal: bool = False
     state: TurnState
     sandbox_id: str = ""
+    sandbox_handle_json: str = Field(default="", exclude=True)
     error_code: str = ""
     error_detail: str = ""
     lease_owner: str = ""

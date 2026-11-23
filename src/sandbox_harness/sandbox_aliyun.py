@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+import hashlib
 import time
 from typing import Any, Mapping, Protocol
 import weakref
@@ -34,6 +35,7 @@ from .sandbox_contracts import (
 _PROFILE_ID_KEY = "sandbox-harness.io/profile"
 _PROFILE_COMPATIBILITY_KEY = "sandbox-harness.io/profile-key"
 _PROFILE_PROVIDER_REF_KEY="sandbox-harness.io/provider-ref"
+_PROFILE_REVISION_KEY="sandbox-harness.io/profile-revision"
 
 
 class _Paginator(Protocol):
@@ -129,6 +131,7 @@ class AliyunSandboxBackend:
             _PROFILE_ID_KEY: profile.profile_id,
             _PROFILE_COMPATIBILITY_KEY: profile.compatibility_key,
             _PROFILE_PROVIDER_REF_KEY:profile.provider_ref,
+            _PROFILE_REVISION_KEY:hashlib.sha256(profile.revision.encode()).hexdigest()[:63],
         }
 
     @staticmethod
@@ -421,7 +424,24 @@ class AliyunSandboxBackend:
                 "Aliyun provider mismatch",provider=self.provider)
             sandbox_id=handle.sandbox_id
         else:sandbox_id=handle
-        sandbox = self._sandbox(await self._owned_info(sandbox_id))
+        info=await self._owned_info(sandbox_id)
+        if isinstance(handle,SandboxHandle):
+            metadata=dict(getattr(info,"metadata",{}) or {})
+            expected={"sandbox-harness.io/idempotency-key":handle.allocation_id,
+                _PROFILE_COMPATIBILITY_KEY:handle.profile_key,
+                _PROFILE_REVISION_KEY:hashlib.sha256(handle.revision.encode()).hexdigest()[:63]}
+            if any(metadata.get(key)!=value for key,value in expected.items()):
+                raise SandboxProfileUnavailable("Aliyun sandbox handle fence mismatch",
+                    provider=self.provider)
+            provider_ref=str(metadata.get(_PROFILE_PROVIDER_REF_KEY)
+                or getattr(info,"template_id","") or "provider-recovered")
+            self._profiles[sandbox_id]=SandboxProfile(
+                profile_id=str(metadata.get(_PROFILE_ID_KEY) or "provider-recovered"),
+                revision=handle.revision,provider=self.provider,provider_ref=provider_ref,
+                runtime_contract="sandbox-harness-runtime/v1",
+                runtime_bundle_digest="provider-recovered",
+                runtime_code_bundle_digest="provider-recovered",compatibility_key=handle.profile_key)
+        sandbox = self._sandbox(info)
         return await self._ready(sandbox)
 
     async def _renew_ttl(self,sandbox:Sandbox,ttl_seconds:int)->Sandbox:

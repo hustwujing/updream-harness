@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import json
 from datetime import timedelta
 from pathlib import Path
 import httpx
@@ -14,7 +15,7 @@ from sandbox_harness.objects import ObjectStore
 from sandbox_harness.pool import SandboxPool
 from sandbox_harness.runtime import RuntimeStreamInterrupted, StagedRuntimeObject
 from sandbox_harness.sandbox import FakeSandboxBackend
-from sandbox_harness.sandbox_contracts import SandboxCreateRequest
+from sandbox_harness.sandbox_contracts import SandboxCreateRequest,SandboxHandle
 from sandbox_harness.sandbox_factory import SandboxProfileResolver
 from sandbox_harness.store import Store
 
@@ -41,6 +42,10 @@ class Runtime:
         "size":6,"sha256":hashlib.sha256(b"result").hexdigest()}]
     async def artifact(self, sandbox, path, *, maximum): return self.stage(b"result")
     async def cancel(self, sandbox): return {"cancelled": True, "native_thread_id": "native-1"}
+
+
+def sandbox_handle_json(sandbox):
+    return json.dumps(sandbox.handle.to_mapping(),sort_keys=True,separators=(",",":"))
 
 
 async def test_orphan_reaper_keeps_provisioning_job_sandbox():
@@ -87,14 +92,24 @@ async def test_orphan_reaper_keeps_durable_turn_sandbox_when_provider_metadata_i
 
 async def test_turn_inventory_uses_durable_id_when_provider_turn_metadata_is_stale():
     sandbox=SimpleNamespace(id="durable-sandbox")
+    handle=SandboxHandle(provider="fake",sandbox_id=sandbox.id,allocation_id="current-turn",
+        profile_key="a"*63,revision="revision-1")
     class Backend:
-        async def get(self,sandbox_id):
-            assert sandbox_id==sandbox.id
+        async def get(self,value):
+            assert value==handle
             return sandbox
     broker=Broker.__new__(Broker)
     broker.pool=SimpleNamespace(backend=Backend())
-    rows=await broker._turn_inventory(SimpleNamespace(id="current-turn",sandbox_id=sandbox.id))
+    rows=await broker._turn_inventory(SimpleNamespace(id="current-turn",sandbox_id=sandbox.id,
+        sandbox_handle_json=json.dumps(handle.to_mapping())))
     assert rows==[sandbox]
+
+
+async def test_turn_inventory_rejects_nonterminal_sandbox_without_handle():
+    broker=Broker.__new__(Broker);broker.pool=SimpleNamespace(backend=SimpleNamespace())
+    with pytest.raises(RuntimeError,match="handle_missing"):
+        await broker._turn_inventory(SimpleNamespace(id="current-turn",sandbox_id="sandbox" ,
+            sandbox_handle_json=""))
 
 
 async def test_runtime_diagnostics_are_incremental_and_report_counter_deltas(monkeypatch):
@@ -441,7 +456,8 @@ async def test_broker_restart_finishes_committed_pause_without_resuming_business
         "sandbox-harness.io/harness": Harness.CODEX.value,
     }, {})
     await store.set_turn_state(turn.id, TurnState.RUNNING, sandbox_id=sandbox.id,
-        lease_owner="dead-broker", recovery_generation=claimed.recovery_generation)
+        sandbox_handle_json=sandbox_handle_json(sandbox),lease_owner="dead-broker",
+        recovery_generation=claimed.recovery_generation)
     control = await store.request_thread_pause(thread.id, owner)
     await store.release_turn_lease(turn.id, "dead-broker", claimed.recovery_generation)
     broker = Broker(settings, store, objects, pool, runtime, catalog)
@@ -704,7 +720,10 @@ async def test_broker_reattaches_expired_running_turn_and_replays_runtime_journa
         profile=frozen_resolver.resolve(Harness.CLAUDE,frozen_image),environment={},
         ttl_seconds=3600,allocation_id=turn.id))
     await store.set_turn_state(turn.id, TurnState.RUNNING, sandbox_id=sandbox.id,
-        lease_owner="dead-broker", recovery_generation=old.recovery_generation)
+        sandbox_handle_json=sandbox_handle_json(sandbox),lease_owner="dead-broker",
+        recovery_generation=old.recovery_generation)
+    persisted=await store.get_turn(turn.id)
+    assert SandboxHandle.from_mapping(json.loads(persisted.sandbox_handle_json))==sandbox.handle
     await store.release_turn_lease(turn.id, "dead-broker", old.recovery_generation)
     broker = Broker(settings, store, objects, pool, RecoverableRuntime(), catalog)
     try:
@@ -719,7 +738,7 @@ async def test_broker_reattaches_expired_running_turn_and_replays_runtime_journa
         assert "recovered" in [item.summary for item in await store.items_after(thread.id)]
         assert any(event.payload.get("code") == "turn_runtime_reattached"
             for event in await store.events_after(turn.id, 0))
-        assert backend.get_calls and set(backend.get_calls)=={sandbox.id}
+        assert backend.get_calls and {value.sandbox_id for value in backend.get_calls}=={sandbox.id}
         assert sandbox.id not in backend.items
     finally:
         await broker.close(); await pool.close(); await store.close()
@@ -742,7 +761,8 @@ async def test_recovery_waits_for_transient_runtime_health_then_reattaches(tmp_p
         'sandbox-harness.io/thread':thread.id,'sandbox-harness.io/harness':'codex'}, {})
     sandbox.health_state='unhealthy';sandbox.health_error='runtime_health_unavailable'
     await store.set_turn_state(turn.id,TurnState.RUNNING,sandbox_id=sandbox.id,
-        lease_owner='dead',recovery_generation=old.recovery_generation)
+        sandbox_handle_json=sandbox_handle_json(sandbox),lease_owner='dead',
+        recovery_generation=old.recovery_generation)
     await store.release_turn_lease(turn.id,'dead',old.recovery_generation)
     broker=Broker(settings,store,objects,pool,RecoverableRuntime(),catalog)
     try:
@@ -793,7 +813,8 @@ async def test_reconciliation_lease_loss_cancels_stalled_external_work_before_ta
     sandbox=await backend.create(Harness.CODEX,'',{'sandbox-harness.io/turn':turn.id,
         'sandbox-harness.io/thread':thread.id,'sandbox-harness.io/harness':'codex'}, {})
     await store.set_turn_state(turn.id,TurnState.RUNNING,sandbox_id=sandbox.id,
-        lease_owner='dead',recovery_generation=seed_claim.recovery_generation)
+        sandbox_handle_json=sandbox_handle_json(sandbox),lease_owner='dead',
+        recovery_generation=seed_claim.recovery_generation)
     await store.release_turn_lease(turn.id,'dead',seed_claim.recovery_generation)
     old=Broker(settings,store,objects,old_pool,RecoverableRuntime(),catalog)
     new=Broker(settings,store,objects,new_pool,RecoverableRuntime(),catalog)
@@ -838,7 +859,8 @@ async def test_graceful_shutdown_releases_stalled_reconciliation_lease_immediate
     sandbox=await backend.create(Harness.CODEX,'',{'sandbox-harness.io/turn':turn.id,
         'sandbox-harness.io/thread':thread.id,'sandbox-harness.io/harness':'codex'}, {})
     await store.set_turn_state(turn.id,TurnState.RUNNING,sandbox_id=sandbox.id,
-        lease_owner='dead',recovery_generation=seed_claim.recovery_generation)
+        sandbox_handle_json=sandbox_handle_json(sandbox),lease_owner='dead',
+        recovery_generation=seed_claim.recovery_generation)
     await store.release_turn_lease(turn.id,'dead',seed_claim.recovery_generation)
     old=Broker(settings,store,objects,old_pool,RecoverableRuntime(),catalog)
     new=Broker(settings,store,objects,new_pool,RecoverableRuntime(),catalog)
@@ -952,7 +974,8 @@ async def test_cleanup_retry_retires_stale_same_pool_attachment_and_releases_cap
     main=await pool.acquire(thread_id=thread.id,turn_id=turn.id,harness=Harness.CODEX,environment={})
     claim=await store.claim_turn(turn.id,'dead',30)
     await store.set_turn_state(turn.id,TurnState.STARTING,sandbox_id=main.id,
-        lease_owner='dead',recovery_generation=claim.recovery_generation)
+        sandbox_handle_json=sandbox_handle_json(main),lease_owner='dead',
+        recovery_generation=claim.recovery_generation)
     await store.begin_turn_cleanup(turn.id,TurnState.COMPLETED,error_code='',error_detail='',
         owner='dead',generation=claim.recovery_generation)
     await store.release_turn_lease(turn.id,'dead',claim.recovery_generation)
@@ -987,7 +1010,8 @@ async def test_broker_does_not_replay_turn_when_runtime_execution_is_lost(tmp_pa
     sandbox = await backend.create(Harness.CLAUDE, "", {"sandbox-harness.io/turn":turn.id,
         "sandbox-harness.io/thread":thread.id, "sandbox-harness.io/harness":"claude"}, {})
     await store.set_turn_state(turn.id, TurnState.RUNNING, sandbox_id=sandbox.id,
-        lease_owner="dead", recovery_generation=old.recovery_generation)
+        sandbox_handle_json=sandbox_handle_json(sandbox),lease_owner="dead",
+        recovery_generation=old.recovery_generation)
     await store.release_turn_lease(turn.id, "dead", old.recovery_generation)
     broker = Broker(settings, store, objects, pool, MissingExecutionRuntime(), catalog)
     try:

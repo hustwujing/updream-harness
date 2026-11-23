@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -315,6 +316,20 @@ async def test_aliyun_repeated_create_adopts_same_allocation_without_replay():
         first=await value.create(creation());second=await value.create(creation())
         assert first.id==second.id and len(client.create_calls)==1
         await value.delete(first)
+    finally:
+        await value.aclose()
+
+
+@pytest.mark.asyncio
+async def test_aliyun_get_rejects_mismatched_durable_handle():
+    client=FakeAliyunClient();value=backend(client,httpx.MockTransport(health_transport))
+    try:
+        sandbox=await value.create(creation())
+        value._profiles.clear()
+        with pytest.raises(SandboxProfileUnavailable,match="handle fence"):
+            await value.get(replace(sandbox.handle,allocation_id="different-allocation"))
+        recovered=await value.get(sandbox.handle)
+        assert recovered.handle==sandbox.handle
     finally:
         await value.aclose()
 

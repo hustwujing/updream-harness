@@ -86,6 +86,9 @@ class FakeSandboxBackend:
         value=self.items.get(sandbox_id)
         if not value:raise SandboxNotFound("Fake backend no longer has sandbox "+sandbox_id,
             provider=self.provider)
+        if isinstance(handle,SandboxHandle) and value.handle!=handle:
+            raise SandboxProfileUnavailable("Fake sandbox handle fence mismatch",
+                provider=self.provider)
         return value
 
     async def endpoint(self,sandbox:Sandbox,port:int,*,force_refresh:bool=False)->SandboxEndpoint:

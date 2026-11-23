@@ -131,6 +131,7 @@ class TurnRow(Base):
     internal: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     state: Mapped[str] = mapped_column(String(24), index=True)
     sandbox_id: Mapped[str] = mapped_column(String(200), default="")
+    sandbox_handle_json: Mapped[str] = mapped_column(Text, default="", server_default="")
     error_code: Mapped[str] = mapped_column(String(100), default="")
     error_detail: Mapped[str] = mapped_column(Text, default="")
     lease_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
@@ -1035,6 +1036,15 @@ class Store:
                 await connection.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"),
                     {"lock_id": SCHEMA_INITIALIZATION_LOCK_ID})
             await connection.run_sync(Base.metadata.create_all)
+            turn_columns=await connection.run_sync(lambda value:{column["name"] for column in
+                sqlalchemy_inspect(value).get_columns("turns")})
+            if "sandbox_handle_json" not in turn_columns:
+                suffix=" IF NOT EXISTS" if connection.dialect.name=="postgresql" else ""
+                try:await connection.execute(text(
+                    f"ALTER TABLE turns ADD COLUMN{suffix} sandbox_handle_json TEXT NOT NULL DEFAULT ''"))
+                except OperationalError as exc:
+                    if (connection.dialect.name!="sqlite" or
+                            "duplicate column name: sandbox_handle_json" not in str(exc).lower()):raise
             artifact_columns = await connection.run_sync(lambda value: {
                 column["name"] for column in sqlalchemy_inspect(value).get_columns("artifacts")})
             if "partial" not in artifact_columns:
@@ -4717,7 +4727,10 @@ class Store:
         return self.turn_view(row)
 
     @observed("db.turn.state")
-    async def set_turn_state(self, turn_id: str, state: TurnState, *, sandbox_id: str | None = None, error_code: str = "", error_detail: str = "", lease_owner: str | None = None, recovery_generation: int | None = None) -> TurnView:
+    async def set_turn_state(self, turn_id: str, state: TurnState, *, sandbox_id: str | None = None,
+                             sandbox_handle_json: str | None = None, error_code: str = "",
+                             error_detail: str = "", lease_owner: str | None = None,
+                             recovery_generation: int | None = None) -> TurnView:
         async with self.connections.begin() as db:
             row = await db.get(TurnRow, turn_id, with_for_update=True)
             if not row:
@@ -4730,6 +4743,15 @@ class Store:
             row.state = state.value
             if sandbox_id is not None:
                 row.sandbox_id = sandbox_id
+                if not sandbox_id and sandbox_handle_json is None:row.sandbox_handle_json=""
+            if sandbox_handle_json is not None:
+                if sandbox_id is not None and sandbox_id:
+                    try:handle=json.loads(sandbox_handle_json)
+                    except (TypeError,ValueError) as exc:raise ValueError(
+                        "sandbox_handle_json_invalid") from exc
+                    if handle.get("sandbox_id")!=sandbox_id:
+                        raise ValueError("sandbox_handle_id_mismatch")
+                row.sandbox_handle_json=sandbox_handle_json
             row.error_code = error_code
             row.error_detail = error_detail[:4000]
             if state in TERMINAL:

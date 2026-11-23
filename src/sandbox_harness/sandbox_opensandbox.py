@@ -21,6 +21,7 @@ from .sandbox_contracts import (
 
 _PROFILE_ID_KEY="sandbox-harness.io/profile"
 _PROFILE_COMPATIBILITY_KEY="sandbox-harness.io/profile-key"
+_PROFILE_REVISION_KEY="sandbox-harness.io/profile-revision"
 
 
 class OpenSandboxBackend:
@@ -65,7 +66,8 @@ class OpenSandboxBackend:
         identity=profile.profile_id[:63].strip("-_.")
         if not identity or any(value not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_." for value in identity):
             identity="profile-"+profile.compatibility_key[:40]
-        return {_PROFILE_ID_KEY:identity,_PROFILE_COMPATIBILITY_KEY:profile.compatibility_key}
+        return {_PROFILE_ID_KEY:identity,_PROFILE_COMPATIBILITY_KEY:profile.compatibility_key,
+            _PROFILE_REVISION_KEY:hashlib.sha256(profile.revision.encode()).hexdigest()[:63]}
 
     @staticmethod
     def _request_id(allocation_id:str)->str:
@@ -276,6 +278,20 @@ class OpenSandboxBackend:
             sandbox_id=handle.sandbox_id
         else:sandbox_id=handle
         row=await self._owned_row(sandbox_id);metadata=row.get("metadata") or {}
+        if isinstance(handle,SandboxHandle):
+            expected={"sandbox-harness.io/idempotency-key":handle.allocation_id,
+                _PROFILE_COMPATIBILITY_KEY:handle.profile_key,
+                _PROFILE_REVISION_KEY:hashlib.sha256(handle.revision.encode()).hexdigest()[:63]}
+            if any(metadata.get(key)!=value for key,value in expected.items()):
+                raise SandboxProfileUnavailable("OpenSandbox handle fence mismatch",
+                    provider=self.provider)
+            image=(row.get("image") or {}).get("uri","")
+            self._profiles[sandbox_id]=SandboxProfile(
+                profile_id=str(metadata.get(_PROFILE_ID_KEY) or "provider-recovered"),
+                revision=handle.revision,provider=self.provider,provider_ref=image or "provider-recovered",
+                runtime_contract="sandbox-harness-runtime/v1",
+                runtime_bundle_digest="provider-recovered",
+                runtime_code_bundle_digest="provider-recovered",compatibility_key=handle.profile_key)
         harness=Harness(metadata.get("sandbox-harness.io/harness","codex"))
         return await self._ready(self._sandbox(row,harness,(row.get("image") or {}).get("uri",""),metadata))
 

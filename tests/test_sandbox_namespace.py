@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 import json
 import time
 
@@ -46,6 +47,15 @@ async def test_fake_backend_rejects_profile_conflict_for_same_allocation():
     await backend.create(first)
     with pytest.raises(SandboxProfileUnavailable,match="allocation"):
         await backend.create(conflict)
+
+
+async def test_fake_backend_get_rejects_mismatched_durable_handle():
+    backend=FakeSandboxBackend(namespace="test")
+    sandbox=await backend.create(SandboxCreateRequest(harness=Harness.CODEX,
+        profile=backend.legacy_profile(Harness.CODEX,"image-a"),environment={},
+        ttl_seconds=300,allocation_id="allocation-1"))
+    with pytest.raises(SandboxProfileUnavailable,match="handle fence"):
+        await backend.get(replace(sandbox.handle,allocation_id="different"))
 
 
 async def test_fake_backend_scopes_turn_lookup_to_namespace():
