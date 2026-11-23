@@ -85,6 +85,18 @@ def test_release_derives_primary_runtime_images_from_signed_catalog(tmp_path):
     assert all("primary-" in value and "@sha256:" in value for value in images.values())
 
 
+def test_release_accepts_template_refs_for_aliyun_primary_release(tmp_path):
+    catalog,_=complete_signed_catalog(tmp_path);value=json.loads(catalog.read_text())
+    primary=next(row for row in value['runtime_dependency_profiles']
+        if row['id']=='primary-full-cpu')
+    primary['provider_releases']['aliyun']={harness:{'ref':'template-'+harness,
+        'revision':'build-1','artifact_digest':release['artifact_digest']}
+        for harness,release in primary['provider_releases']['opensandbox'].items()}
+    catalog.write_text(json.dumps(value,sort_keys=True,separators=(",",":"))+"\n")
+    images=release_module().primary_runtime_images(catalog,'aliyun')
+    assert images=={harness:'template-'+harness for harness in ('codex','claude','deepseek')}
+
+
 def test_release_rebuilds_and_hashes_exact_frontend(tmp_path,monkeypatch):
     module=release_module();web=tmp_path/"web";dist=web/"dist";dist.mkdir(parents=True)
     (dist/"index.html").write_text("stale")

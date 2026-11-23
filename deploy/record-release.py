@@ -54,12 +54,15 @@ def primary_runtime_images(catalog: Path,provider:str='opensandbox') -> dict[str
     profiles={profile.get('id'):profile for profile in value.get('runtime_dependency_profiles',[])}
     primary=profiles.get('primary-full-cpu')
     if not primary:raise ValueError('Profile Catalog has no primary-full-cpu Runtime Profile')
-    references={key:value['ref'] for key,value in
-        primary.get('provider_releases',{}).get(provider,{}).items()}
+    releases=primary.get('provider_releases',{}).get(provider,{})
     required={'codex','claude','deepseek'}
-    if set(references)!=required or any('@sha256:' not in references[harness] for harness in required):
-        raise ValueError('Primary Runtime image matrix is incomplete')
-    return references
+    if set(releases)!=required or any(not releases[harness].get(field) for harness in required
+            for field in ('ref','revision','artifact_digest')):
+        raise ValueError('Primary Runtime release matrix is incomplete')
+    if provider=='opensandbox' and any(not releases[harness]['ref'].endswith(
+            '@sha256:'+releases[harness]['artifact_digest']) for harness in required):
+        raise ValueError('Primary Runtime image matrix is not digest-pinned')
+    return {key:value['ref'] for key,value in releases.items()}
 
 
 def ensure_release_clean(code_root: Path) -> None:
