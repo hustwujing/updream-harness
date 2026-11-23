@@ -111,15 +111,18 @@ async def test_media_render_adapter_collects_role_addressed_operation_outputs(tm
             async def artifact(self,sandbox,path,*,maximum):
                 data=outputs[path];target=tmp_path/('staged-'+path);target.write_bytes(data)
                 return StagedRuntimeObject(target,len(data),__import__('hashlib').sha256(data).hexdigest())
+        sandbox=Sandbox(id='sandbox',harness=Harness.CODEX,image='runtime@sha256:'+'d'*64,
+            runtime_url='http://runtime',metadata={})
         class Pool:
-            async def get_attached(self,*args):return SimpleNamespace(id='sandbox')
+            async def get_attached(self,*args):return sandbox
         class HoldScheduler:
             @__import__('contextlib').asynccontextmanager
             async def hold(self,*args):yield
         adapter=MediaRenderOperationAdapter(scheduler=HoldScheduler(),pool=Pool(),runtime=Runtime(),store=store,
             objects=objects,settings=Settings(backend='fake',data_root=tmp_path),token_factory=None)
         context=JobExecutionContext(job=job,request=request,generation=attempt.generation,
-            previous_acceptance_receipt={'sandbox_id':'sandbox','reservation_id':'reservation',
+            previous_acceptance_receipt={'sandbox_id':'sandbox',
+                'sandbox_handle':sandbox.handle.to_mapping(),'reservation_id':'reservation',
                 'node_id':'node','node_generation':1})
         result=await adapter.collect(context,'operation:'+job.id,AdapterStatus(True,JobState.SUCCEEDED,{
             'outputs':[{'role':'processed_audio','path':'processed.wav','mime':'audio/wav',

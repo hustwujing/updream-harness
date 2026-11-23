@@ -33,11 +33,10 @@ from .store import Store
 def resolved_node_profiles(resolver: ProfileResolver) -> tuple[NodeProfile, ...]:
     values=[]
     for profile in sorted(resolver.runtimes.values(),key=lambda row:row.id):
-        if set(profile.image_refs)!=set(profile.supported_harnesses):
-            raise ValueError("Runtime Profile image matrix is not complete")
         for harness in profile.supported_harnesses:
-            digest=profile.image_digests[harness];reference=profile.image_refs[harness]
-            if not reference.endswith("@sha256:"+digest):
+            release=profile.release(resolver.provider,harness)
+            digest=release.artifact_digest;reference=release.ref
+            if resolver.provider=="opensandbox" and not reference.endswith("@sha256:"+digest):
                 raise ValueError("Runtime Profile image is not digest-pinned")
             values.append(NodeProfile(runtime_profile_id=profile.id,harness=harness,
                 image_digest=digest,image_ref=reference,warm_slots=0))
@@ -49,7 +48,8 @@ def profile_resolver(settings: Settings) -> ProfileResolver:
     raw=settings.profile_catalog_path.read_text()
     manifest=json.loads((Path(__file__).resolve().parents[2]/"runtime/skills/manifest.json").read_text())
     return ProfileResolver.from_json(raw,expected_digest=(settings.profile_catalog_digest
-        or hashlib.sha256(raw.encode()).hexdigest()),skill_manifest=manifest)
+        or hashlib.sha256(raw.encode()).hexdigest()),skill_manifest=manifest,
+        provider="opensandbox" if settings.backend=="fake" else settings.backend)
 
 
 def sandbox_pool(settings: Settings) -> SandboxPool:
@@ -119,7 +119,10 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
         heartbeat_seconds=settings.job_node_heartbeat_seconds,
         cached_bundle_digests=tuple(value for value in (settings.runtime_bundle_digest,
             settings.runtime_code_bundle_digest) if value))
-    await store.initialize();await node.run_once()
+    await store.initialize()
+    validate=getattr(pool.backend,"validate_active_providers",None)
+    if validate:validate(await store.active_sandbox_providers())
+    await node.run_once()
     try:
         live_job_ids=await store.pending_job_cleanup_ids()
         released=await scheduler.reap_stale_reservations(

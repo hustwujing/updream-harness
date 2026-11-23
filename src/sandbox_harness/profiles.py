@@ -108,17 +108,21 @@ class ResolvedExecutionProfile:
     required_capability_ids: tuple[str, ...]
     network_origins: tuple[str, ...]
     handoff_required: bool
+    provider_release:ProviderRelease
 
 
 class ProfileResolver:
     def __init__(self, *, children: list[ChildExecutionProfile],
-                 runtimes: list[RuntimeDependencyProfile], skills: list[SkillDescriptor]):
+                 runtimes: list[RuntimeDependencyProfile], skills: list[SkillDescriptor],
+                 provider:str="opensandbox"):
         self.children = self._unique(children, "ChildExecutionProfile")
         self.runtimes = self._unique(runtimes, "RuntimeDependencyProfile")
         self.skills = self._unique(skills, "Skill")
+        self.provider=provider
 
     @classmethod
-    def from_json(cls, raw: str, *, expected_digest: str, skill_manifest: dict) -> "ProfileResolver":
+    def from_json(cls, raw: str, *, expected_digest: str, skill_manifest: dict,
+                  provider:str="opensandbox") -> "ProfileResolver":
         actual = hashlib.sha256(raw.encode()).hexdigest()
         if actual != expected_digest:
             raise ValueError("profile catalog digest mismatch")
@@ -135,7 +139,7 @@ class ProfileResolver:
             requires_gpu=bool(row.get("requires_gpu", False)),
         ) for row in skill_manifest["skills"]]
         return cls(children=list(payload.child_execution_profiles),
-            runtimes=list(payload.runtime_dependency_profiles), skills=skills)
+            runtimes=list(payload.runtime_dependency_profiles), skills=skills,provider=provider)
 
     @staticmethod
     def _unique(rows, label: str):
@@ -211,10 +215,12 @@ class ProfileResolver:
         )
         fallback_ids = set(child.fallback_profile_ids)
         candidates = [profile for profile in self.runtimes.values()
-            if profile.id not in fallback_ids and self._supports(profile, harness, combined)]
+            if profile.id not in fallback_ids and self.provider in profile.provider_releases
+            and self._supports(profile, harness, combined)]
         if not candidates and allow_fallback:
             candidates = [self.runtimes[profile_id] for profile_id in child.fallback_profile_ids
-                if profile_id in self.runtimes and self._supports(self.runtimes[profile_id], harness, combined)]
+                if profile_id in self.runtimes and self.provider in self.runtimes[profile_id].provider_releases
+                and self._supports(self.runtimes[profile_id], harness, combined)]
         if not candidates:
             raise ValueError("No RuntimeDependencyProfile satisfies frozen requirements")
         def score(profile: RuntimeDependencyProfile):
@@ -231,4 +237,5 @@ class ProfileResolver:
             skill_digests={skill.id: skill.digest for skill in sorted(selected, key=lambda row: row.id)},
             required_capability_ids=tuple(sorted(capabilities)), network_origins=tuple(sorted(network)),
             handoff_required=bool(current_runtime_profile_id and current_runtime_profile_id != runtime.id),
+            provider_release=runtime.release(self.provider,harness),
         )

@@ -52,9 +52,17 @@ class SandboxBackendRegistry:
         except KeyError as exc:raise ValueError(
             "sandbox_provider_not_registered:"+handle.provider) from exc
 
-    def set_active(self,provider:str,*,active_handles:int=0)->None:
-        if active_handles:raise RuntimeError("sandbox_provider_switch_has_active_work")
+    def validate_active_providers(self,providers:set[str])->None:
+        missing=providers-set(self.backends)
+        if missing:raise RuntimeError("sandbox_active_provider_not_registered:"+",".join(sorted(missing)))
+        if providers and providers!={self.active_provider}:
+            raise RuntimeError("sandbox_provider_switch_has_active_work")
+
+    def set_active(self,provider:str,*,active_providers:set[str]|None=None)->None:
+        self.validate_active_providers(active_providers or set())
         if provider not in self.backends:raise ValueError("active_sandbox_provider_missing")
+        if active_providers and provider not in active_providers:
+            raise RuntimeError("sandbox_provider_switch_has_active_work")
         self.active_provider=provider
 
     async def create(self,request:SandboxCreateRequest)->Sandbox:
@@ -99,6 +107,8 @@ def build_sandbox_backend(settings:Settings)->SandboxBackend:
             settings.gateway_proxy_port)
         backend.capabilities.require_primary_runtime();return backend
     if settings.backend=="aliyun":
+        if not settings.aliyun_sandbox_gateway_url or not settings.aliyun_sandbox_proxy_url:
+            raise ValueError("aliyun_sandbox_runtime_route_required")
         backend=AliyunSandboxBackend(api_key=settings.aliyun_sandbox_api_key,
             api_url=settings.aliyun_sandbox_api_url,domain=settings.aliyun_sandbox_domain,
             timeout_seconds=settings.sandbox_timeout_seconds,namespace=settings.namespace,

@@ -49,7 +49,9 @@ def sandbox_handle_json(sandbox):
 
 
 async def test_orphan_reaper_keeps_provisioning_job_sandbox():
-    sandbox=SimpleNamespace(id='sandbox-job',metadata={'sandbox-harness.io/turn':'job-live'})
+    sandbox=SimpleNamespace(id='sandbox-job',handle=SandboxHandle(provider='fake',
+        sandbox_id='sandbox-job',allocation_id='job-live',profile_key='a'*63,
+        revision='revision-1'),metadata={'sandbox-harness.io/turn':'job-live'})
     class Backend:
         deleted=[]
         async def delete(self,value):self.deleted.append(value.id)
@@ -58,20 +60,26 @@ async def test_orphan_reaper_keeps_provisioning_job_sandbox():
     async def retry():return None
     async def empty():return set()
     async def owned():return [sandbox]
-    pool.retry_deletions=retry;pool.managed_sandbox_ids=empty;pool.list_owned=owned
+    async def managed_keys():return set()
+    pool.retry_deletions=retry;pool.managed_sandbox_ids=empty;pool.managed_sandbox_keys=managed_keys
+    pool.sandbox_key=lambda value:(value.handle.provider,value.handle.sandbox_id);pool.list_owned=owned
     store=SimpleNamespace(nonterminal_turn_sandbox_ids=empty,
         active_sandbox_control_ids=empty,
         active_job_sandbox_ids=empty,nonterminal_job_ids=lambda:None)
     async def live_jobs():return {'job-live'}
     async def job_sandboxes():return {sandbox.id}
     store.nonterminal_job_ids=live_jobs;store.active_job_sandbox_ids=job_sandboxes
+    async def active_keys():return {('fake',sandbox.id)}
+    store.active_sandbox_keys=active_keys
     broker=SimpleNamespace(pool=pool,store=store,active_sandboxes={})
     await Broker.cleanup_startup_orphans(broker)
     assert backend.deleted==[]
 
 
 async def test_orphan_reaper_keeps_durable_turn_sandbox_when_provider_metadata_is_stale():
-    sandbox=SimpleNamespace(id="durable-sandbox",metadata={
+    sandbox=SimpleNamespace(id="durable-sandbox",handle=SandboxHandle(provider="fake",
+        sandbox_id="durable-sandbox",allocation_id="turn",profile_key="a"*63,
+        revision="revision-1"),metadata={
         "sandbox-harness.io/turn":"original-turn"})
     class Backend:
         deleted=[]
@@ -81,10 +89,13 @@ async def test_orphan_reaper_keeps_durable_turn_sandbox_when_provider_metadata_i
     async def empty():return set()
     async def active_sandbox():return {sandbox.id}
     async def owned():return [sandbox]
+    async def managed_keys():return set()
+    async def active_keys():return {("fake",sandbox.id)}
     pool=SimpleNamespace(backend=backend,retry_deletions=retry,managed_sandbox_ids=empty,
-        list_owned=owned)
+        managed_sandbox_keys=managed_keys,
+        sandbox_key=lambda value:(value.handle.provider,value.handle.sandbox_id),list_owned=owned)
     store=SimpleNamespace(nonterminal_turn_sandbox_ids=active_sandbox,active_sandbox_control_ids=empty,
-        active_job_sandbox_ids=empty,nonterminal_job_ids=empty)
+        active_job_sandbox_ids=empty,nonterminal_job_ids=empty,active_sandbox_keys=active_keys)
     broker=SimpleNamespace(pool=pool,store=store,active_sandboxes={})
     await Broker.cleanup_startup_orphans(broker)
     assert backend.deleted==[]
@@ -232,8 +243,8 @@ async def test_broker_close_preserves_sandbox_that_was_active_before_task_cancel
     broker.active_sandboxes["turn"] = sandbox
     try:
         preserve = await broker.close()
-        await pool.close(preserve_sandbox_ids=preserve)
-        assert preserve == {sandbox.id}
+        await pool.close(preserve_sandbox_keys=preserve)
+        assert preserve == {pool.sandbox_key(sandbox)}
         assert sandbox.id in backend.items
     finally:
         await backend.delete(sandbox)

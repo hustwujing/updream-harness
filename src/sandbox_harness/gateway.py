@@ -294,7 +294,8 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     skill_manifest=json.loads((Path(__file__).resolve().parents[2]/'runtime/skills/manifest.json').read_text())
     profile_resolver=ProfileResolver.from_json(profile_raw,
         expected_digest=(settings.profile_catalog_digest or hashlib.sha256(profile_raw.encode()).hexdigest()),
-        skill_manifest=skill_manifest)
+        skill_manifest=skill_manifest,
+        provider="opensandbox" if settings.backend=="fake" else settings.backend)
     objects = object_store(settings)
     artifact_gateway = ArtifactGateway(activity_store, objects,
         settings.data_root / "tmp" / "job-artifacts", maximum_bytes=settings.max_artifact_bytes)

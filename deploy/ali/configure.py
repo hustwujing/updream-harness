@@ -87,8 +87,6 @@ def build_environment(source:dict[str,str],*,token=lambda:secrets.token_urlsafe(
         "SANDBOX_HARNESS_GATEWAY_BIND_HOST":"172.31.0.1",
         "SANDBOX_HARNESS_GATEWAY_BIND_PORT":str(identity.PORTS["gateway"]),
         "SANDBOX_HARNESS_GATEWAY_PROXY_PORT":str(identity.PORTS["proxy"]),
-        "SANDBOX_HARNESS_ALIYUN_SANDBOX_GATEWAY_URL":f"http://10.194.49.8:{identity.PORTS['gateway']}",
-        "SANDBOX_HARNESS_ALIYUN_SANDBOX_PROXY_URL":f"http://10.194.49.8:{identity.PORTS['proxy']}",
         "SANDBOX_HARNESS_GATEWAY_SIGNING_KEY":gateway_secret,
         "SANDBOX_HARNESS_GATEWAY_CONTROL_KEY":control_secret,
         "SANDBOX_HARNESS_SESSION_SIGNING_KEY":session_secret,

@@ -253,9 +253,9 @@ class SandboxChildBackend:
         try:handle=SandboxHandle.from_mapping(receipt.get('sandbox_handle') or {})
         except ValueError as exc:raise RuntimeError('child_sandbox_handle_invalid') from exc
         cached=self.sessions.get(context.job.id)
-        if cached and cached.id==identity:return cached
+        if cached and cached.handle==handle:return cached
         attached=await self.pool.get_attached(self._thread_id(context.job.id))
-        if attached and attached.id==identity:
+        if attached and attached.handle==handle:
             self.sessions[context.job.id]=attached;return attached
         try:candidate=await self.pool.backend.get(handle)
         except SandboxNotFound as exc:raise RuntimeError('child_sandbox_unavailable') from exc

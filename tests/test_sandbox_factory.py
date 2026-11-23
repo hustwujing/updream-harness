@@ -6,7 +6,7 @@ from sandbox_harness.domain import Harness
 from sandbox_harness.pool import SandboxPool
 from sandbox_harness.runtime import RuntimeClient
 from sandbox_harness.sandbox import AliyunSandboxBackend,FakeSandboxBackend,OpenSandboxBackend
-from sandbox_harness.sandbox_contracts import (SandboxCapabilities,SandboxCreateRequest,
+from sandbox_harness.sandbox_contracts import (SandboxCapabilities,SandboxCreateRequest,SandboxHandle,
     SandboxProviderUnavailable)
 from sandbox_harness.sandbox_factory import (SandboxBackendRegistry,SandboxProfileResolver,
     build_sandbox_backend)
@@ -53,9 +53,25 @@ async def test_backend_registry_dispatches_durable_handles_to_their_provider():
     with pytest.raises(TypeError,match="handle_required"):
         await registry.get(sandbox.id)
     with pytest.raises(RuntimeError,match="active_work"):
-        registry.set_active("other",active_handles=1)
+        registry.set_active("other",active_providers={"fake"})
+    with pytest.raises(RuntimeError,match="not_registered"):
+        registry.validate_active_providers({"missing"})
     await registry.delete(sandbox)
     assert sandbox.id not in other.items
+
+
+def test_aliyun_factory_requires_an_explicit_verified_runtime_route(tmp_path):
+    with pytest.raises(ValueError,match="runtime_route_required"):
+        build_sandbox_backend(Settings(_env_file=None,backend="aliyun",data_root=tmp_path,
+            aliyun_sandbox_api_key="e2b_"+"1"*40))
+
+
+def test_pool_identity_includes_provider_for_same_native_id():
+    first=type("Value",(),{"handle":SandboxHandle(provider="fake",sandbox_id="same",
+        allocation_id="one",profile_key="a"*63,revision="one")})()
+    second=type("Value",(),{"handle":SandboxHandle(provider="other",sandbox_id="same",
+        allocation_id="two",profile_key="b"*63,revision="two")})()
+    assert SandboxPool.sandbox_key(first)!=SandboxPool.sandbox_key(second)
 
 
 async def test_pool_claims_sandbox_through_generic_update_not_provider_bind():

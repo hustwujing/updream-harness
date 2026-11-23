@@ -349,9 +349,7 @@ class AliyunSandboxBackend:
             existing=await self._reconcile_allocation(request.allocation_id)
             if existing:
                 self._require_compatible_allocation(existing,request.profile)
-                self._profiles[existing.id]=request.profile
-                self._allocations[request.allocation_id]=existing.id
-                return await self._ready(existing)
+                return await self._ready(self._apply_request_identity(existing,request))
             return await self._create_once(request)
 
     def _require_compatible_allocation(self,sandbox:Sandbox,profile:SandboxProfile)->None:
@@ -359,6 +357,14 @@ class AliyunSandboxBackend:
                 or sandbox.profile.provider_ref!=profile.provider_ref):
             raise SandboxProfileUnavailable(
                 "Aliyun idempotency key conflicts with another profile",provider=self.provider)
+
+    def _apply_request_identity(self,sandbox:Sandbox,request:SandboxCreateRequest)->Sandbox:
+        self._profiles[sandbox.id]=request.profile;sandbox.profile=request.profile
+        sandbox.handle=SandboxHandle(provider=self.provider,sandbox_id=sandbox.id,
+            allocation_id=request.allocation_id,profile_key=request.profile.compatibility_key,
+            revision=request.profile.revision)
+        self._allocations[request.allocation_id]=sandbox.id
+        return sandbox
 
     async def _reconcile_allocation(self,idempotency_key:str)->Sandbox|None:
         for attempt in range(self.reconciliation_attempts):
@@ -394,9 +400,7 @@ class AliyunSandboxBackend:
                     match=None
                 if match:
                     self._require_compatible_allocation(match,request.profile)
-                    self._profiles[match.id]=request.profile
-                    self._allocations[request.allocation_id]=match.id
-                    return await self._ready(match)
+                    return await self._ready(self._apply_request_identity(match,request))
                 if attempt<2:await asyncio.sleep(self.reconciliation_interval)
             raise SandboxCreateOutcomeUnknown("Aliyun sandbox create outcome is unknown",
                 provider=self.provider) from exc

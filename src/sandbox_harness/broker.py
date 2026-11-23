@@ -141,6 +141,8 @@ class Broker:
         }
 
     async def start(self) -> None:
+        validate=getattr(self.pool.backend,"validate_active_providers",None)
+        if validate:validate(await self.store.active_sandbox_providers())
         await self.reconcile()
         try:
             await self.cleanup_startup_orphans()
@@ -151,12 +153,10 @@ class Broker:
 
     async def cleanup_startup_orphans(self) -> None:
         await self.pool.retry_deletions()
-        active_ids = ({sandbox.id for sandbox in self.active_sandboxes.values()}
-            | await self.pool.managed_sandbox_ids() | await self.store.nonterminal_turn_sandbox_ids()
-            | await self.store.active_sandbox_control_ids()
-            | await self.store.active_job_sandbox_ids())
+        active_keys=({self.pool.sandbox_key(sandbox) for sandbox in self.active_sandboxes.values()}
+            | await self.pool.managed_sandbox_keys() | await self.store.active_sandbox_keys())
         for sandbox in await self.pool.list_owned():
-            if sandbox.id not in active_ids:
+            if self.pool.sandbox_key(sandbox) not in active_keys:
                 event("sandbox.orphan.delete",level=logging.WARNING,sandbox_id=sandbox.id)
                 await self.pool.backend.delete(sandbox)
 
@@ -184,8 +184,9 @@ class Broker:
             "X-Updream-Turn-ID":turn.id,"X-Updream-Thread-ID":turn.thread_id,
             "X-Updream-Sandbox-ID":sandbox_id or turn.sandbox_id}
 
-    async def close(self) -> set[str]:
-        preserve_sandbox_ids = {sandbox.id for sandbox in self.active_sandboxes.values()}
+    async def close(self) -> set[tuple[str,str]]:
+        preserve_sandbox_keys={self.pool.sandbox_key(sandbox)
+            for sandbox in self.active_sandboxes.values()}
         self.closing = True
         if self.recovery_task:
             self.recovery_task.cancel()
@@ -208,7 +209,7 @@ class Broker:
         self.heartbeats.clear()
         for turn_id, generation in list(self.leases.items()):
             await self._release_turn_lease_safely(turn_id,generation)
-        return preserve_sandbox_ids
+        return preserve_sandbox_keys
 
     async def _recovery_loop(self) -> None:
         while True:

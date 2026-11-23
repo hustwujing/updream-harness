@@ -6,6 +6,7 @@ import pytest
 
 from sandbox_harness.profiles import (
     ChildExecutionProfile,
+    ProviderRelease,
     ProfileRequirements,
     ProfileResolver,
     RuntimeDependencyProfile,
@@ -98,6 +99,20 @@ def test_profile_fallback_must_be_explicitly_authorized():
     result = value.resolve("deepseek", "child-general", ("writing",),
         ProfileRequirements(commands=("node",)), allow_fallback=True)
     assert result.runtime_profile.id == "primary-full-cpu"
+
+
+def test_resolver_selects_the_active_provider_release():
+    original=resolver();base=original.runtimes["general-cpu"]
+    aliyun={harness:ProviderRelease(ref="template-"+harness,revision="build-1",
+        artifact_digest=release.artifact_digest)
+        for harness,release in base.provider_releases["opensandbox"].items()}
+    runtime=base.model_copy(update={"provider_releases":{
+        **base.provider_releases,"aliyun":aliyun}})
+    value=ProfileResolver(children=list(original.children.values()),runtimes=[runtime],
+        skills=list(original.skills.values()),provider="aliyun")
+    resolved=value.resolve("codex","child-general",("writing",),ProfileRequirements())
+    assert resolved.provider_release.ref=="template-codex"
+    assert resolved.provider_release.revision=="build-1"
 
 
 def test_example_profile_catalog_is_digest_verified_and_covers_initial_profiles():

@@ -242,7 +242,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     skill_manifest = json.loads((Path(__file__).resolve().parents[2] / "runtime/skills/manifest.json").read_text())
     profile_resolver = ProfileResolver.from_json(profile_catalog_raw,
         expected_digest=(settings.profile_catalog_digest or hashlib.sha256(profile_catalog_raw.encode()).hexdigest()),
-        skill_manifest=skill_manifest)
+        skill_manifest=skill_manifest,
+        provider="opensandbox" if settings.backend=="fake" else settings.backend)
     catalog.job_catalog = job_catalog
     catalog.profile_resolver = profile_resolver
     readiness=ExecutionReadiness.from_settings(settings,job_catalog)
@@ -413,9 +414,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         continuation_dispatcher.stop_event.set()
         await continuation_task
         await inspector.close()
-        preserve_sandbox_ids = await broker.close()
-        await pool.close(preserve_sandbox_ids=(preserve_sandbox_ids
-            | await store.active_sandbox_control_ids()))
+        preserve_sandbox_keys = await broker.close()
+        await pool.close(preserve_sandbox_keys=(preserve_sandbox_keys
+            | await store.active_sandbox_keys()))
         await pool.backend.aclose()
         await store.close()
 

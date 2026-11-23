@@ -394,7 +394,7 @@ async def test_concurrent_retire_merges_user_slot_and_releases_exactly_once():
     sandbox=await pool.acquire(thread_id='thread',turn_id='turn',harness=Harness.CODEX,environment={})
     first=asyncio.create_task(pool.retire(sandbox));await backend.entered.wait()
     second=asyncio.create_task(pool.retire(sandbox));await asyncio.sleep(.01)
-    assert pool._retiring[sandbox.id][1] is True
+    assert pool._retiring[pool.sandbox_key(sandbox)][1] is True
     backend.release.set();await asyncio.gather(first,second)
     assert not await pool.managed_sandbox_ids()
     replacement=await asyncio.wait_for(pool.acquire(thread_id='other',turn_id='other',
@@ -413,7 +413,7 @@ async def test_cancelled_retire_keeps_slot_bit_for_idempotent_retry():
     sandbox=await pool.acquire(thread_id='thread',turn_id='turn',harness=Harness.CODEX,environment={})
     task=asyncio.create_task(pool.retire(sandbox));await backend.entered.wait();task.cancel()
     await asyncio.gather(task,return_exceptions=True)
-    assert pool._retiring[sandbox.id][1] is True
+    assert pool._retiring[pool.sandbox_key(sandbox)][1] is True
     backend.block=False;await pool.retry_deletions()
     replacement=await asyncio.wait_for(pool.acquire(thread_id='other',turn_id='other',
         harness=Harness.CODEX,environment={}),1)

@@ -29,12 +29,14 @@ def publish_profile_catalog(source: Path, destination_root: Path, public_key: Pa
     if not profiles:raise ValueError('Profile Catalog has no Runtime Profiles')
     for profile in profiles:
         harnesses=set(profile.get('supported_harnesses',[]))
-        releases=profile.get('provider_releases',{}).get('opensandbox',{})
-        if not harnesses or set(releases)!=harnesses:
-            raise ValueError('Profile Catalog image matrix is incomplete')
-        if any(not releases[harness]['ref'].endswith(
-                '@sha256:'+releases[harness]['artifact_digest']) for harness in harnesses):
-            raise ValueError('Profile Catalog image matrix is not digest-pinned')
+        providers=profile.get('provider_releases',{})
+        if not harnesses or not providers:raise ValueError('Profile Catalog release matrix is incomplete')
+        for provider,releases in providers.items():
+            if set(releases)!=harnesses:
+                raise ValueError('Profile Catalog release matrix is incomplete')
+            if provider=='opensandbox' and any(not releases[harness]['ref'].endswith(
+                    '@sha256:'+releases[harness]['artifact_digest']) for harness in harnesses):
+                raise ValueError('Profile Catalog image matrix is not digest-pinned')
     signature=source.with_suffix(source.suffix+'.sig')
     if not signature.is_file():raise ValueError('Profile Catalog signature is unavailable')
     subprocess.run(['openssl','pkeyutl','-verify','-pubin','-inkey',str(public_key),'-rawin',

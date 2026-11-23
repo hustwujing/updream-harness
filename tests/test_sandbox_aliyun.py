@@ -232,6 +232,10 @@ async def test_aliyun_reconciles_accepted_create_error_without_replaying():
     try:
         sandbox = await value.create(creation())
         assert sandbox.id == "sandbox-1"
+        assert sandbox.handle.revision==creation().profile.revision
+        assert sandbox.handle.profile_key==creation().profile.compatibility_key
+        value._profiles.clear()
+        assert (await value.get(sandbox.handle)).handle==sandbox.handle
         assert len(client.create_calls) == 1
     finally:
         await value.aclose()

@@ -203,7 +203,14 @@ class OpenSandboxBackend:
                         "OpenSandbox create reconciliation is unavailable",
                         provider=self.provider,request_id=reconciliation_error.request_id) from exc
                 ready=[value for value in matches if value.state==SandboxState.READY]
-                if len(ready)==1:return ready[0]
+                if len(ready)==1:
+                    recovered=ready[0];self._profiles[recovered.id]=request.profile
+                    recovered.profile=request.profile
+                    recovered.handle=SandboxHandle(provider=self.provider,sandbox_id=recovered.id,
+                        allocation_id=request.allocation_id,
+                        profile_key=request.profile.compatibility_key,
+                        revision=request.profile.revision)
+                    return recovered
                 if len(matches)>1:raise SandboxCreateOutcomeUnknown(
                     "Duplicate sandboxes found for one create request",provider=self.provider) from exc
                 if attempt<19:await asyncio.sleep(.25)

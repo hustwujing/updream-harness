@@ -39,8 +39,8 @@ class SandboxPool:
         self._creating: dict[Harness, int] = defaultdict(int)
         self._refill: set[asyncio.Task] = set()
         self._closed = False
-        self._retiring: dict[str, tuple[Sandbox, bool]] = {}
-        self._deleting: set[str] = set()
+        self._retiring: dict[tuple[str,str], tuple[Sandbox, bool]] = {}
+        self._deleting: set[tuple[str,str]] = set()
         self._lock = asyncio.Lock()
         self._thread_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._thread_lock_users: dict[str, int] = defaultdict(int)
@@ -66,9 +66,19 @@ class SandboxPool:
 
     async def managed_sandbox_ids(self) -> set[str]:
         async with self._lock:
-            return set(self._retiring) | {sandbox.id for sandbox in self._attached.values()} | {
+            return {sandbox.id for sandbox,_ in self._retiring.values()} | {
+            sandbox.id for sandbox in self._attached.values()} | {
             sandbox.id for rows in self._warm.values() for sandbox in rows
             }
+
+    @staticmethod
+    def sandbox_key(sandbox:Sandbox)->tuple[str,str]:
+        return sandbox.handle.provider,sandbox.handle.sandbox_id
+
+    async def managed_sandbox_keys(self)->set[tuple[str,str]]:
+        async with self._lock:
+            return set(self._retiring) | {self.sandbox_key(value) for value in self._attached.values()} | {
+                self.sandbox_key(value) for rows in self._warm.values() for value in rows}
 
     async def list_owned(self)->list[Sandbox]:
         return await self.backend.list_owned(SandboxScope(self.backend.namespace))
@@ -96,26 +106,27 @@ class SandboxPool:
         return available
 
     async def retire(self, sandbox: Sandbox) -> None:
+        key=self.sandbox_key(sandbox)
         expiry = None
         user_slot = False
         delete_owner = False
         async with self._lock:
             attached = next((thread_id for thread_id,value in self._attached.items()
-                if value.id == sandbox.id), None)
+                if self.sandbox_key(value)==key), None)
             if attached is not None:
                 self._attached.pop(attached, None)
                 self._idle_since.pop(attached, None)
                 expiry = self._expiry.pop(attached, None)
                 user_slot = True
             for harness,rows in self._warm.items():
-                self._warm[harness]=[value for value in rows if value.id!=sandbox.id]
-            existing = self._retiring.get(sandbox.id)
+                self._warm[harness]=[value for value in rows if self.sandbox_key(value)!=key]
+            existing = self._retiring.get(key)
             if existing:
                 user_slot = user_slot or existing[1]
                 sandbox = existing[0]
-            self._retiring[sandbox.id]=(sandbox,user_slot)
-            if sandbox.id not in self._deleting:
-                self._deleting.add(sandbox.id);delete_owner=True
+            self._retiring[key]=(sandbox,user_slot)
+            if key not in self._deleting:
+                self._deleting.add(key);delete_owner=True
         if expiry:
             expiry.cancel()
         if delete_owner:
@@ -127,30 +138,32 @@ class SandboxPool:
 
     @observed("sandbox.delete_tracked")
     async def _delete_tracked(self, sandbox: Sandbox, *, user_slot: bool = True) -> None:
+        key=self.sandbox_key(sandbox)
         delete_owner=False
         async with self._lock:
-            existing=self._retiring.get(sandbox.id)
-            self._retiring[sandbox.id]=(existing[0] if existing else sandbox,
+            existing=self._retiring.get(key)
+            self._retiring[key]=(existing[0] if existing else sandbox,
                 user_slot or bool(existing and existing[1]))
-            if sandbox.id not in self._deleting:
-                self._deleting.add(sandbox.id);delete_owner=True
+            if key not in self._deleting:
+                self._deleting.add(key);delete_owner=True
         if delete_owner:
             await self._perform_tracked_delete(sandbox)
 
     async def _perform_tracked_delete(self,sandbox:Sandbox)->None:
+        key=self.sandbox_key(sandbox)
         try:
             try:
                 await self.backend.delete(sandbox)
             except SandboxNotFound:
                 pass
             async with self._lock:
-                retired = self._retiring.pop(sandbox.id, None)
+                retired = self._retiring.pop(key, None)
             if retired and retired[1]:
                 self._user_slots.release()
                 self._capacity_changed.set()
         finally:
             async with self._lock:
-                self._deleting.discard(sandbox.id)
+                self._deleting.discard(key)
 
     async def retry_deletions(self) -> None:
         async with self._lock:
@@ -426,8 +439,10 @@ class SandboxPool:
         except Exception:
             event("sandbox.expiry.delete_failed",level=logging.ERROR,sandbox_id=sandbox.id)
 
-    async def close(self, *, preserve_sandbox_ids: set[str] | None = None) -> None:
+    async def close(self, *, preserve_sandbox_ids: set[str] | None = None,
+                    preserve_sandbox_keys:set[tuple[str,str]]|None=None) -> None:
         preserve_sandbox_ids = preserve_sandbox_ids or set()
+        preserve_sandbox_keys=preserve_sandbox_keys or set()
         async with self._lock:
             self._closed = True
             self._capacity_changed.set()
@@ -448,7 +463,8 @@ class SandboxPool:
         if refill:
             await asyncio.gather(*refill, return_exceptions=True)
         for sandbox in values:
-            if sandbox.id not in preserve_sandbox_ids:
+            if (sandbox.id not in preserve_sandbox_ids
+                    and self.sandbox_key(sandbox) not in preserve_sandbox_keys):
                 try:
                     await self._delete_tracked(sandbox, user_slot=not sandbox.warm)
                 except Exception:

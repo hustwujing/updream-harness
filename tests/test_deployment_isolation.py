@@ -157,7 +157,7 @@ def test_configure_local_rejects_unsafe_dynamic_credential_names():
 def test_release_requires_complete_signed_profile_catalog_under_data2():
     source=(ROOT/"deploy/record-release.py").read_text()
     assert "publish_profile_catalog" in source
-    assert "Profile Catalog image matrix is incomplete" in source
+    assert "Profile Catalog release matrix is incomplete" in source
     assert "openssl','pkeyutl','-verify" in source
     assert "root/'.data'/'profile-catalogs'" in source
     assert "SANDBOX_HARNESS_PROFILE_CATALOG_PATH" in source

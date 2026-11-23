@@ -111,6 +111,10 @@ async def test_opensandbox_endpoint_cache_refreshes_after_deadline():
 @pytest.mark.asyncio
 async def test_opensandbox_unknown_create_waits_for_delayed_inventory_without_replay():
     creation=request();post_calls=0;list_calls=0
+    recovered_metadata={**OpenSandboxBackend._profile_metadata(creation.profile),
+        "sandbox-harness.io/namespace":"test-namespace",
+        "sandbox-harness.io/idempotency-key":creation.allocation_id,
+        "sandbox-harness.io/harness":"codex"}
     async def respond(http_request:httpx.Request):
         nonlocal post_calls,list_calls
         path=http_request.url.path
@@ -119,15 +123,10 @@ async def test_opensandbox_unknown_create_waits_for_delayed_inventory_without_re
         if http_request.method=="GET" and path=="/v1/sandboxes":
             list_calls+=1
             if list_calls==1:return httpx.Response(200,json={"items":[]})
-            metadata={"sandbox-harness.io/namespace":"test-namespace",
-                "sandbox-harness.io/idempotency-key":creation.allocation_id,
-                "sandbox-harness.io/harness":"codex"}
-            return httpx.Response(200,json={"items":[{"id":"delayed","metadata":metadata,
+            return httpx.Response(200,json={"items":[{"id":"delayed","metadata":recovered_metadata,
                 "image":{"uri":creation.profile.provider_ref}}]})
         if path=="/v1/sandboxes/delayed":return httpx.Response(200,json={"id":"delayed",
-            "metadata":{"sandbox-harness.io/namespace":"test-namespace",
-                "sandbox-harness.io/idempotency-key":creation.allocation_id,
-                "sandbox-harness.io/harness":"codex"},"image":{"uri":creation.profile.provider_ref},
+            "metadata":recovered_metadata,"image":{"uri":creation.profile.provider_ref},
             "status":{"state":"running"}})
         if path.endswith("/endpoints/8080"):return httpx.Response(200,json={"endpoint":"http://runtime"})
         if http_request.url.host=="runtime":return httpx.Response(200,json={"status":"ok"})
@@ -136,6 +135,12 @@ async def test_opensandbox_unknown_create_waits_for_delayed_inventory_without_re
         transport=httpx.MockTransport(respond))
     sandbox=await backend.create(creation)
     assert sandbox.id=="delayed" and post_calls==1 and list_calls==2
+    assert sandbox.handle.revision==creation.profile.revision
+    assert sandbox.handle.profile_key==creation.profile.compatibility_key
+    restarted=OpenSandboxBackend("http://opensandbox","",300,"test-namespace",
+        transport=httpx.MockTransport(respond))
+    assert (await restarted.get(sandbox.handle)).handle==sandbox.handle
+    await restarted.aclose()
     await backend.aclose()
 
 

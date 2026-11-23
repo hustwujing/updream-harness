@@ -125,7 +125,8 @@ class JobCoordinator:
                     if descriptor.runtime_harness not in runtime.supported_harnesses:
                         raise ValueError('Operation Runtime Harness is unavailable')
                     resources.update({'harness':descriptor.runtime_harness,
-                        'image_digest':runtime.image_digests[descriptor.runtime_harness],
+                        'image_digest':runtime.release(self.profile_resolver.provider,
+                            descriptor.runtime_harness).artifact_digest,
                         'delegation_depth':1})
                     updates={'runtime_profile_id':runtime.id,'child_profile_id':'operation-controlled'}
                 jobs.append(JobRequest.model_validate({**request.model_dump(),
@@ -154,7 +155,8 @@ class JobCoordinator:
                     network_origins=request.network_origins,
                     requires_gpu=bool(resources.get("requires_gpu",False))),allow_fallback=True)
             sanitized={key:int(resources[key]) for key in ("cpu","memory_mb","disk_mb") if key in resources}
-            sanitized.update({"harness":harness,"image_digest":resolved.runtime_profile.image_digests[harness],
+            sanitized.update({"harness":harness,
+                "image_digest":resolved.provider_release.artifact_digest,
                 "delegation_depth":1,"required_bundle_digests":list(resources.get("required_bundle_digests",())),
                 "required_capability_ids":list(dict.fromkeys((*resolved.required_capability_ids,
                     *resources.get('required_capability_ids',())))),

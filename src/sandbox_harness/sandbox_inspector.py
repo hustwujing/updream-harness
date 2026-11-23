@@ -154,11 +154,11 @@ class SandboxInspector:
         if control["state"]=="user_controlled" and control["expires_at"]<=now():
             return None,control
         try:
+            handle=SandboxHandle.from_mapping(control["sandbox_handle"])
             sandbox = await self.pool.get_attached(thread_id)
-            if sandbox and sandbox.id == control["sandbox_id"]:
+            if sandbox and sandbox.handle==handle:
                 return sandbox, control
-            sandbox = await self.pool.backend.get(SandboxHandle.from_mapping(
-                control["sandbox_handle"]))
+            sandbox = await self.pool.backend.get(handle)
             sandbox.thread_id = thread_id; sandbox.turn_id = "inspect-" + thread_id
             return sandbox, control
         except (SandboxNotFound, RuntimeError, httpx.HTTPError):
@@ -476,11 +476,11 @@ class SandboxInspector:
             if not raw:
                 return {"released": True, "checkpointed": False}
             thread = await self._thread(thread_id, owner_id)
+            handle=SandboxHandle.from_mapping(raw["sandbox_handle"])
             sandbox = await self.pool.get_attached(thread_id)
-            if not sandbox or sandbox.id != raw["sandbox_id"]:
+            if not sandbox or sandbox.handle!=handle:
                 try:
-                    candidate = await self.pool.backend.get(SandboxHandle.from_mapping(
-                        raw["sandbox_handle"]))
+                    candidate = await self.pool.backend.get(handle)
                     candidate.thread_id = thread_id; candidate.turn_id = "inspect-" + thread_id
                     sandbox = await self.pool.adopt(candidate, thread_id=thread_id,
                         turn_id="inspect-" + thread_id)
