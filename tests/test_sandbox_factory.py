@@ -74,6 +74,21 @@ def test_pool_identity_includes_provider_for_same_native_id():
     assert SandboxPool.sandbox_key(first)!=SandboxPool.sandbox_key(second)
 
 
+async def test_pool_adopt_rejects_same_native_id_from_another_provider():
+    backend=FakeSandboxBackend();pool=SandboxPool(backend,{h:"image" for h in Harness},
+        {h:0 for h in Harness})
+    first=await pool.acquire(thread_id="thread",turn_id="one",harness=Harness.CODEX,
+        environment={})
+    other_profile=SandboxProfileResolver(provider="other",runtime_contract="runtime/v1",
+        runtime_bundle_digest="1"*64,runtime_code_bundle_digest="2"*64).resolve(
+            Harness.CODEX,"image")
+    other=type(first)(id=first.id,provider="other",harness=Harness.CODEX,
+        profile=other_profile,metadata={"sandbox-harness.io/idempotency-key":"other"})
+    with pytest.raises(RuntimeError,match="another sandbox"):
+        await pool.adopt(other,thread_id="thread",turn_id="two",expected_profile=other_profile)
+    await pool.release(first,keep_attached=False);await pool.close()
+
+
 async def test_pool_claims_sandbox_through_generic_update_not_provider_bind():
     backend=FakeSandboxBackend()
     async def forbidden(*args,**kwargs):raise AssertionError("provider bind must not be called")

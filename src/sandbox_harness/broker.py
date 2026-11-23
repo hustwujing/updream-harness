@@ -473,7 +473,7 @@ class Broker:
             value.reasoning_level or thread.reasoning_level)
         turn, created, start_now = await self.store.create_turn(thread_id, value, resolved, thread.owner_id,
             traceparent=carrier().get("traceparent", ""), network_access=network_access, internal=internal,
-            runtime_image_digest=self.settings.image_for(resolved.harness.value),
+            runtime_image_digest=self.pool.images[resolved.harness],
             runtime_code_bundle_digest=self.settings.runtime_code_bundle_digest,
             runtime_bundle_digest=self.settings.runtime_bundle_digest)
         if created and not internal:

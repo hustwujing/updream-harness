@@ -104,6 +104,7 @@ def _materialize_controlled(source:Path,digest:str,force:bool)->Path:
 
 def materialize(source_env:Path,target_env:Path,*,promote_images:bool=False,force:bool=False)->dict[str,str]:
     source=configure.parse_environment(source_env);target=configure.parse_environment(target_env)
+    provider=target.get("SANDBOX_HARNESS_BACKEND","opensandbox")
     job_digest=source["SANDBOX_HARNESS_JOB_CATALOG_DIGEST"]
     profile_digest=source["SANDBOX_HARNESS_PROFILE_CATALOG_DIGEST"]
     runtime_digest=source["SANDBOX_HARNESS_RUNTIME_BUNDLE_DIGEST"]
@@ -114,7 +115,7 @@ def materialize(source_env:Path,target_env:Path,*,promote_images:bool=False,forc
     profile_source=Path(source["SANDBOX_HARNESS_PROFILE_CATALOG_PATH"])
     if digest_bytes(profile_source.read_bytes())!=profile_digest:raise ValueError("digest_mismatch:profile_catalog")
     original=json.loads(profile_source.read_text());rewritten=rewrite_profile_catalog(original)
-    if promote_images:
+    if promote_images and provider=="opensandbox":
         original_profiles={row["id"]:row for row in original["runtime_dependency_profiles"]}
         for profile in rewritten["runtime_dependency_profiles"]:
             source_profile=original_profiles[profile["id"]]
@@ -129,7 +130,9 @@ def materialize(source_env:Path,target_env:Path,*,promote_images:bool=False,forc
     _copy_bundle(Path(source["SANDBOX_HARNESS_RUNTIME_CODE_BUNDLE_DIR"]),DATA_ROOT/"runtime-code-bundles",code_digest)
     _materialize_controlled(Path(source["SANDBOX_HARNESS_CONTROLLED_RUNTIME_ROOT"]),controlled_digest,force)
     primary=next(row for row in rewritten["runtime_dependency_profiles"] if row["id"]=="primary-full-cpu")
-    primary_releases=primary["provider_releases"]["opensandbox"]
+    primary_releases=primary["provider_releases"].get(provider,{})
+    if set(primary_releases)!={"codex","claude","deepseek"}:
+        raise ValueError("primary_provider_release_matrix_incomplete")
     target.update({
         "SANDBOX_HARNESS_JOB_CATALOG_PATH":str(job_target),
         "SANDBOX_HARNESS_JOB_CATALOG_DIGEST":job_digest,

@@ -356,7 +356,7 @@ class SandboxPool:
                     raise RuntimeError("sandbox_pool_closed")
                 existing = self._attached.get(thread_id)
                 if existing:
-                    if existing.id != sandbox.id:
+                    if self.sandbox_key(existing)!=self.sandbox_key(sandbox):
                         raise RuntimeError("Thread already owns another sandbox")
                     return existing
             await self._reserve_user_slot()

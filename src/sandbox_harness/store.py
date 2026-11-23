@@ -29,6 +29,7 @@ from .job_contracts import (
     JobState, JobView, JobRequest, TERMINAL_JOB_STATES, BudgetAccountView, BudgetLedgerView,
     BudgetReservationView, JobArtifactOutput, OutputDisposition,
 )
+from .sandbox_contracts import SandboxHandle
 
 
 class Base(DeclarativeBase):
@@ -4130,51 +4131,45 @@ class Store:
             if isinstance(identity,str) and identity:result.add(identity)
         return result
 
-    async def active_sandbox_providers(self)->set[str]:
+    async def active_sandbox_handles(self)->list[SandboxHandle]:
         terminal=[state.value for state in TERMINAL]
         async with self.connections() as db:
-            encoded=list((await db.execute(select(TurnRow.sandbox_handle_json).where(
-                TurnRow.state.not_in(terminal),TurnRow.sandbox_handle_json!=""))).scalars().all())
-            encoded.extend((await db.execute(select(SandboxControlRow.sandbox_handle_json).where(
-                SandboxControlRow.state.in_(["user_controlled","releasing"])))).scalars().all())
-            encoded.extend((await db.execute(select(JobAttemptRow.acceptance_receipt_json).join(
+            direct=list((await db.execute(select(TurnRow.sandbox_id,TurnRow.sandbox_handle_json).where(
+                TurnRow.state.not_in(terminal),TurnRow.sandbox_id!=""))).all())
+            direct.extend((await db.execute(select(SandboxControlRow.sandbox_id,
+                SandboxControlRow.sandbox_handle_json).where(
+                SandboxControlRow.state.in_(["user_controlled","releasing"])))).all())
+            receipts=list((await db.execute(select(JobAttemptRow.acceptance_receipt_json).join(
                 JobRow,JobRow.id==JobAttemptRow.job_id).where(
                 JobRow.state.not_in([state.value for state in TERMINAL_JOB_STATES]),
                 JobAttemptRow.acceptance_receipt_json!="{}"))).scalars().all())
-            encoded.extend((await db.execute(select(JobCleanupRow.acceptance_receipt_json).where(
+            receipts.extend((await db.execute(select(JobCleanupRow.acceptance_receipt_json).where(
                 JobCleanupRow.state!="completed"))).scalars().all())
-        providers=set()
-        for value in encoded:
+        result=[]
+        for sandbox_id,encoded in direct:
             try:
-                payload=json.loads(value);handle=(payload.get("sandbox_handle")
-                    if "sandbox_handle" in payload else payload)
-                provider=handle.get("provider","")
-            except (AttributeError,TypeError,ValueError):continue
-            if provider:providers.add(provider)
-        return providers
+                handle=SandboxHandle.from_mapping(json.loads(encoded))
+            except (TypeError,ValueError) as exc:raise RuntimeError(
+                "active_sandbox_handle_missing_or_invalid") from exc
+            if handle.sandbox_id!=sandbox_id:raise RuntimeError("active_sandbox_handle_id_mismatch")
+            result.append(handle)
+        for encoded in receipts:
+            try:
+                payload=json.loads(encoded);sandbox_id=payload.get("sandbox_id","")
+                if not sandbox_id:continue
+                handle=SandboxHandle.from_mapping(payload.get("sandbox_handle") or {})
+            except (AttributeError,TypeError,ValueError) as exc:raise RuntimeError(
+                "active_sandbox_handle_missing_or_invalid") from exc
+            if handle.sandbox_id!=sandbox_id:raise RuntimeError("active_sandbox_handle_id_mismatch")
+            result.append(handle)
+        return result
+
+    async def active_sandbox_providers(self)->set[str]:
+        return {handle.provider for handle in await self.active_sandbox_handles()}
 
     async def active_sandbox_keys(self)->set[tuple[str,str]]:
-        terminal=[state.value for state in TERMINAL]
-        async with self.connections() as db:
-            encoded=list((await db.execute(select(TurnRow.sandbox_handle_json).where(
-                TurnRow.state.not_in(terminal),TurnRow.sandbox_handle_json!=""))).scalars().all())
-            encoded.extend((await db.execute(select(SandboxControlRow.sandbox_handle_json).where(
-                SandboxControlRow.state.in_(["user_controlled","releasing"])))).scalars().all())
-            encoded.extend((await db.execute(select(JobAttemptRow.acceptance_receipt_json).join(
-                JobRow,JobRow.id==JobAttemptRow.job_id).where(
-                JobRow.state.not_in([state.value for state in TERMINAL_JOB_STATES]),
-                JobAttemptRow.acceptance_receipt_json!="{}"))).scalars().all())
-            encoded.extend((await db.execute(select(JobCleanupRow.acceptance_receipt_json).where(
-                JobCleanupRow.state!="completed"))).scalars().all())
-        result=set()
-        for value in encoded:
-            try:
-                payload=json.loads(value);handle=(payload.get("sandbox_handle")
-                    if "sandbox_handle" in payload else payload)
-                key=(handle.get("provider",""),handle.get("sandbox_id",""))
-            except (AttributeError,TypeError,ValueError):continue
-            if all(key):result.add(key)
-        return result
+        return {(handle.provider,handle.sandbox_id)
+            for handle in await self.active_sandbox_handles()}
 
     async def pending_job_cleanup_ids(self)->set[str]:
         async with self.connections() as db:

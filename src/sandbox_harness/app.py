@@ -162,8 +162,9 @@ def components(settings: Settings):
     store = Store(settings.database_url, settings.redis_url, settings.redis_prefix)
     objects = object_store(settings)
     backend=sandbox_factory.build_sandbox_registry(settings)
-    profile_resolver=sandbox_factory.build_profile_resolver(settings,backend)
-    images = {harness: settings.image_for(harness.value) for harness in Harness}
+    releases=sandbox_factory.primary_provider_releases(settings,backend.provider)
+    profile_resolver=sandbox_factory.build_profile_resolver(settings,backend,releases)
+    images = {harness: releases[harness].ref for harness in Harness}
     targets = {
         Harness.CODEX: settings.warm_pool_codex,
         Harness.CLAUDE: settings.warm_pool_claude,

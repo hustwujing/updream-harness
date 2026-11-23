@@ -49,13 +49,13 @@ def publish_profile_catalog(source: Path, destination_root: Path, public_key: Pa
     return target,digest,signature_digest
 
 
-def primary_runtime_images(catalog: Path) -> dict[str,str]:
+def primary_runtime_images(catalog: Path,provider:str='opensandbox') -> dict[str,str]:
     value=json.loads(catalog.read_bytes())
     profiles={profile.get('id'):profile for profile in value.get('runtime_dependency_profiles',[])}
     primary=profiles.get('primary-full-cpu')
     if not primary:raise ValueError('Profile Catalog has no primary-full-cpu Runtime Profile')
     references={key:value['ref'] for key,value in
-        primary.get('provider_releases',{}).get('opensandbox',{}).items()}
+        primary.get('provider_releases',{}).get(provider,{}).items()}
     required={'codex','claude','deepseek'}
     if set(references)!=required or any('@sha256:' not in references[harness] for harness in required):
         raise ValueError('Primary Runtime image matrix is incomplete')
@@ -131,7 +131,9 @@ def main():
     profile_source=args.profile_catalog or Path(configured.get('SANDBOX_HARNESS_PROFILE_CATALOG_PATH',''))
     profile_catalog_path,profile_catalog_digest,profile_signature_digest=publish_profile_catalog(
         profile_source,root/'.data'/'profile-catalogs',code_root/'runtime'/'bundle_public_key.pem')
-    images=primary_runtime_images(profile_catalog_path)
+    provider=configured.get('SANDBOX_HARNESS_BACKEND','opensandbox')
+    if provider=='fake':provider='opensandbox'
+    images=primary_runtime_images(profile_catalog_path,provider)
     for key,value in {'SANDBOX_HARNESS_RELEASE':revision[:12],
             'SANDBOX_HARNESS_WEB_DIST_DIGEST':web_dist_digest,'PYTHONPATH':str(code_root/'src'),
             'SANDBOX_HARNESS_RUNTIME_BUNDLE_DIR':str(bundle_dir),

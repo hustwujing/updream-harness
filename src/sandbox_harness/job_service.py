@@ -54,8 +54,9 @@ def profile_resolver(settings: Settings) -> ProfileResolver:
 
 def sandbox_pool(settings: Settings) -> SandboxPool:
     backend=sandbox_factory.build_sandbox_registry(settings)
-    profiles=sandbox_factory.build_profile_resolver(settings,backend)
-    return SandboxPool(backend,{harness:settings.image_for(harness.value) for harness in Harness},
+    releases=sandbox_factory.primary_provider_releases(settings,backend.provider)
+    profiles=sandbox_factory.build_profile_resolver(settings,backend,releases)
+    return SandboxPool(backend,{harness:releases[harness].ref for harness in Harness},
         {harness:0 for harness in Harness},max_sandboxes=settings.max_sandboxes,
         profile_resolver=profiles,ttl_seconds=settings.sandbox_timeout_seconds)
 
@@ -147,8 +148,8 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
         node.stop_event.set();worker.stop_event.set();stop.set()
         await asyncio.gather(node_task,worker_task,return_exceptions=True)
         stop_task.cancel();await asyncio.gather(stop_task,return_exceptions=True)
-        preserved={value.id for value in child_backend.sessions.values()}
-        await pool.close(preserve_sandbox_ids=preserved)
+        preserved={pool.sandbox_key(value) for value in child_backend.sessions.values()}
+        await pool.close(preserve_sandbox_keys=preserved)
         await pool.backend.aclose()
         await store.close()
 

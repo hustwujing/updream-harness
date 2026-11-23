@@ -484,18 +484,13 @@ class SandboxInspector:
                     candidate.thread_id = thread_id; candidate.turn_id = "inspect-" + thread_id
                     sandbox = await self.pool.adopt(candidate, thread_id=thread_id,
                         turn_id="inspect-" + thread_id)
-                except (SandboxNotFound, RuntimeError, httpx.HTTPError):
+                except SandboxNotFound:
                     sandbox = None
-                    try:
-                        for candidate in await self.pool.list_owned():
-                            if candidate.id == raw["sandbox_id"]:
-                                await self.pool.backend.delete(candidate)
-                                break
-                    except Exception as exc:
-                        event("sandbox.control.broken_delete_failed", level=40,
-                            thread_id=thread_id, sandbox_id=raw["sandbox_id"],
-                            exception_type=type(exc).__name__)
-                        raise RuntimeError("sandbox_release_cleanup_pending") from exc
+                except (RuntimeError,httpx.HTTPError) as exc:
+                    event("sandbox.control.handle_lookup_failed",level=40,
+                        thread_id=thread_id,sandbox_id=raw["sandbox_id"],
+                        exception_type=type(exc).__name__)
+                    raise RuntimeError("sandbox_release_cleanup_pending") from exc
             action=raw.get("release_action") or managed_action or ("preserve_work" if expired else "")
             changes=None
             if sandbox and raw["state"]!="releasing":

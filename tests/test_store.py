@@ -9,6 +9,20 @@ from sandbox_harness.store import MediaJobRow, Store, ThreadRow, TurnRow, valid_
 import pytest
 
 
+async def test_active_sandbox_gate_rejects_legacy_nonterminal_row_without_handle(tmp_path):
+    store=Store("sqlite+aiosqlite:///"+str(tmp_path/"legacy-handle.db"));await store.initialize()
+    try:
+        profile=HarnessCatalog().resolve("codex","gpt-5.6","standard");owner="a"*64
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level="standard",title="Legacy handle"),profile,owner)
+        turn,_,_=await store.create_turn(thread.id,TurnCreate(message="run",
+            idempotency_key="legacy-handle"),profile,owner)
+        await store.set_turn_state(turn.id,TurnState.RUNNING,sandbox_id="legacy-sandbox")
+        with pytest.raises(RuntimeError,match="handle_missing_or_invalid"):
+            await store.active_sandbox_providers()
+    finally:await store.close()
+
+
 async def test_concurrent_upload_registration_is_database_idempotent(tmp_path):
     store=Store("sqlite+aiosqlite:///"+str(tmp_path/"uploads.db"));await store.initialize()
     try:

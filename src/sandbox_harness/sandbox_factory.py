@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass,field
+import hashlib
+import json
+from typing import Mapping
 
 from .config import Settings
 from .domain import Harness
@@ -10,6 +13,7 @@ from .sandbox_contracts import (Sandbox,SandboxCreateRequest,SandboxEndpoint,San
     SandboxRuntimeRoute,SandboxScope)
 from .sandbox_aliyun import AliyunSandboxBackend
 from .sandbox_opensandbox import OpenSandboxBackend
+from .profiles import ProfileCatalogPayload,ProviderRelease
 
 
 @dataclass(frozen=True)
@@ -18,10 +22,13 @@ class SandboxProfileResolver:
     runtime_contract:str
     runtime_bundle_digest:str
     runtime_code_bundle_digest:str
+    releases:Mapping[Harness,ProviderRelease]=field(default_factory=dict)
 
     def resolve(self,harness:Harness,provider_ref:str,*,profile_id:str|None=None,
                 revision:str|None=None)->SandboxProfile:
         provider_ref=provider_ref or f"{self.provider}:default:{harness.value}"
+        release=self.releases.get(harness)
+        if release and provider_ref==release.ref:revision=revision or release.revision
         if revision is None and "@sha256:" in provider_ref:
             revision="sha256:"+provider_ref.rsplit("@sha256:",1)[1]
         return SandboxProfile(profile_id=profile_id or f"primary-{harness.value}",
@@ -124,8 +131,25 @@ def build_sandbox_registry(settings:Settings)->SandboxBackendRegistry:
     return SandboxBackendRegistry([backend],backend.provider)
 
 
-def build_profile_resolver(settings:Settings,backend:SandboxBackend)->SandboxProfileResolver:
+def primary_provider_releases(settings:Settings,provider:str)->dict[Harness,ProviderRelease]:
+    selected="opensandbox" if provider=="fake" else provider
+    raw=settings.profile_catalog_path.read_text();actual=hashlib.sha256(raw.encode()).hexdigest()
+    if settings.profile_catalog_digest and actual!=settings.profile_catalog_digest:
+        raise ValueError("profile catalog digest mismatch")
+    payload=ProfileCatalogPayload.model_validate(json.loads(raw))
+    try:profile=next(value for value in payload.runtime_dependency_profiles
+        if value.id=="primary-full-cpu")
+    except StopIteration as exc:raise ValueError("primary sandbox profile unavailable") from exc
+    releases=profile.provider_releases.get(selected,{})
+    if set(releases)!={harness.value for harness in Harness}:
+        raise ValueError("primary provider release matrix is incomplete")
+    return {Harness(harness):release for harness,release in releases.items()}
+
+
+def build_profile_resolver(settings:Settings,backend:SandboxBackend,
+                           releases:Mapping[Harness,ProviderRelease]|None=None)->SandboxProfileResolver:
     return SandboxProfileResolver(provider=backend.provider,
         runtime_contract="sandbox-harness-runtime/v1",
         runtime_bundle_digest=settings.runtime_bundle_digest,
-        runtime_code_bundle_digest=settings.runtime_code_bundle_digest)
+        runtime_code_bundle_digest=settings.runtime_code_bundle_digest,
+        releases=releases or {})
