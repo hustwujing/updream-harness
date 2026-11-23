@@ -18,6 +18,7 @@ from .capability import CapabilityCodec
 from .domain import TERMINAL, identifier, now
 from .observability import event
 from .sandbox import Sandbox, SandboxNotFound
+from .sandbox_contracts import SandboxHandle
 from .objects import object_chunks
 
 
@@ -156,7 +157,8 @@ class SandboxInspector:
             sandbox = await self.pool.get_attached(thread_id)
             if sandbox and sandbox.id == control["sandbox_id"]:
                 return sandbox, control
-            sandbox = await self.pool.backend.get(control["sandbox_id"])
+            sandbox = await self.pool.backend.get(SandboxHandle.from_mapping(
+                control["sandbox_handle"]))
             sandbox.thread_id = thread_id; sandbox.turn_id = "inspect-" + thread_id
             return sandbox, control
         except (SandboxNotFound, RuntimeError, httpx.HTTPError):
@@ -445,7 +447,8 @@ class SandboxInspector:
                 else:
                     await self._materialize_managed(thread, sandbox)
                 control = await self.store.begin_sandbox_control(thread_id, owner_id, sandbox.id,
-                    claims.nonce, now() + timedelta(seconds=self.settings.sandbox_control_ttl_seconds))
+                    sandbox.handle.to_mapping(),claims.nonce,
+                    now() + timedelta(seconds=self.settings.sandbox_control_ttl_seconds))
             except Exception:
                 await self.pool.release(sandbox, keep_attached=False)
                 raise
@@ -475,7 +478,8 @@ class SandboxInspector:
             sandbox = await self.pool.get_attached(thread_id)
             if not sandbox or sandbox.id != raw["sandbox_id"]:
                 try:
-                    candidate = await self.pool.backend.get(raw["sandbox_id"])
+                    candidate = await self.pool.backend.get(SandboxHandle.from_mapping(
+                        raw["sandbox_handle"]))
                     candidate.thread_id = thread_id; candidate.turn_id = "inspect-" + thread_id
                     sandbox = await self.pool.adopt(candidate, thread_id=thread_id,
                         turn_id="inspect-" + thread_id)
@@ -606,7 +610,8 @@ class SandboxInspector:
                 or control["sandbox_id"] != value["sandbox_id"]
                 or control["pty_session_id"] != value["pty_session_id"]):
             raise ValueError("terminal_session_not_active")
-        sandbox = await self.pool.backend.get(value["sandbox_id"])
+        sandbox = await self.pool.backend.get(SandboxHandle.from_mapping(
+            control["sandbox_handle"]))
         endpoint, headers = await self.pool.backend.endpoint(sandbox, EXECD_PORT)
         ws_url = ("wss://" if endpoint.startswith("https://") else "ws://") + endpoint.split("://", 1)[1]
         ws_url = urljoin(ws_url.rstrip("/") + "/", f"pty/{value['pty_session_id']}/ws")
@@ -628,7 +633,8 @@ class SandboxInspector:
         if port not in {int(item["port"]) for item in detected.get("items", [])}:
             raise ValueError("sandbox_port_not_listening")
         value = await self.store.create_sandbox_port_grant(thread_id, owner_id,
-            sandbox.id, port, now() + timedelta(seconds=self.settings.sandbox_port_grant_ttl_seconds))
+            sandbox.id,sandbox.handle.to_mapping(),port,
+            now() + timedelta(seconds=self.settings.sandbox_port_grant_ttl_seconds))
         await self.store.add_sandbox_audit(thread_id, owner_id, sandbox.id,
             "port.preview_created", {"port": port})
         return value
@@ -637,7 +643,8 @@ class SandboxInspector:
         grant = await self.store.get_sandbox_port_grant(grant_id, owner_id)
         if not grant:
             raise KeyError("sandbox_port_grant_not_found")
-        try:sandbox = await self.pool.backend.get(grant["sandbox_id"])
+        try:sandbox = await self.pool.backend.get(SandboxHandle.from_mapping(
+            grant["sandbox_handle"]))
         except SandboxNotFound as exc:
             await self.store.revoke_sandbox_port_grant(grant_id,owner_id)
             raise KeyError("sandbox_port_preview_expired") from exc

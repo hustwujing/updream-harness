@@ -16,6 +16,15 @@ from sandbox_harness.runtime import StagedRuntimeObject
 from sandbox_harness.store import Store
 
 
+def sandbox_receipt(sandbox,**extra):
+    return {"sandbox_id":sandbox.id,"sandbox_handle":sandbox.handle.to_mapping(),**extra}
+
+
+def missing_receipt(identity):
+    return {"sandbox_id":identity,"sandbox_handle":{"provider":"fake","sandbox_id":identity,
+        "allocation_id":"job-allocation","profile_key":"a"*63,"revision":"revision-1"}}
+
+
 class Backend:
     def __init__(self,status):self.next_status=status;self.started=[];self.cancelled=[];self.cleaned=[];self.collected=[]
     async def start(self,context,reservation):
@@ -160,8 +169,8 @@ async def test_opensandbox_child_collects_output_into_atomic_delivery(tmp_path):
     backend.sessions[job.id]=sandbox
     try:
         result=await backend.collect(JobExecutionContext(job=job,request=frozen,generation=attempt.generation,
-            previous_acceptance_receipt={'sandbox_id':sandbox.id}),'execution',
-            AdapterStatus(True,JobState.SUCCEEDED,{'summary':'done'}),{'sandbox_id':sandbox.id})
+            previous_acceptance_receipt=sandbox_receipt(sandbox)),'execution',
+            AdapterStatus(True,JobState.SUCCEEDED,{'summary':'done'}),sandbox_receipt(sandbox))
         assert result['collections'][0]['state']=='published'
         artifacts=await store.list_job_artifacts(job.id)
         assert len(artifacts)==1 and artifacts[0].output_disposition==OutputDisposition.DELIVERY
@@ -187,8 +196,8 @@ async def test_opensandbox_child_cannot_succeed_without_required_artifact(tmp_pa
         await store.append_job_activity(job.id,1,'text_delta',{'text':'缺少受控图片能力'})
         with pytest.raises(RuntimeError,match='required_child_output_missing') as raised:
             await backend.collect(JobExecutionContext(job=job,request=frozen,generation=0,
-                previous_acceptance_receipt={'sandbox_id':sandbox.id}),'execution',
-                AdapterStatus(True,JobState.SUCCEEDED,{}),{'sandbox_id':sandbox.id})
+                previous_acceptance_receipt=sandbox_receipt(sandbox)),'execution',
+                AdapterStatus(True,JobState.SUCCEEDED,{}),sandbox_receipt(sandbox))
         assert raised.value.result['child_summary']=='缺少受控图片能力'
     finally:await store.close()
 
@@ -209,8 +218,8 @@ async def test_text_only_child_result_returns_persisted_summary(tmp_path):
         await store.append_job_activity(job.id,1,'text_delta',{'text':'第一条结论。'})
         await store.append_job_activity(job.id,2,'text_delta',{'text':'第二条结论。'})
         result=await backend.collect(JobExecutionContext(job=job,request=frozen,generation=0,
-            previous_acceptance_receipt={'sandbox_id':sandbox.id}),'execution',
-            AdapterStatus(True,JobState.SUCCEEDED,{'status':'completed'}),{'sandbox_id':sandbox.id})
+            previous_acceptance_receipt=sandbox_receipt(sandbox)),'execution',
+            AdapterStatus(True,JobState.SUCCEEDED,{'status':'completed'}),sandbox_receipt(sandbox))
         assert result['child_summary']=='第一条结论。第二条结论。'
     finally:await store.close()
 
@@ -227,7 +236,7 @@ async def test_missing_child_sandbox_is_terminal_not_an_infinite_pending_status(
         settings=Settings(backend='fake',data_root=tmp_path),token_factory=lambda *args:None)
     backend.sessions['job-lost']=sandbox
     context=SimpleNamespace(job=SimpleNamespace(id='job-lost'))
-    value=await backend.status(context,'execution',{'sandbox_id':sandbox.id})
+    value=await backend.status(context,'execution',sandbox_receipt(sandbox))
     assert value.terminal and value.state==JobState.FAILED
     assert value.result['error_code']=='child_sandbox_lost'
 
@@ -238,7 +247,7 @@ async def test_missing_child_sandbox_is_terminal_not_an_infinite_pending_status(
     uncached=OpenSandboxChildBackend(pool=Pool(),runtime=Runtime(),store=SimpleNamespace(),
         objects=SimpleNamespace(),settings=Settings(backend='fake',data_root=tmp_path),
         token_factory=lambda *args:None)
-    value=await uncached.status(context,'execution',{'sandbox_id':sandbox.id})
+    value=await uncached.status(context,'execution',sandbox_receipt(sandbox))
     assert value.terminal and value.result['error_code']=='child_sandbox_lost'
 
 
@@ -248,7 +257,7 @@ async def test_child_submission_recovery_adopts_unique_runtime_execution(tmp_pat
         image='registry/office@sha256:'+digest,runtime_url='http://runtime',metadata={},
         health_state='ready')
     class Inventory:
-        async def get(self,identity):assert identity==sandbox.id;return sandbox
+        async def get(self,handle):assert handle==sandbox.handle;return sandbox
     class Pool:
         backend=Inventory();released=[]
         async def adopt(self,value,**kwargs):assert value is sandbox;return sandbox
@@ -262,7 +271,7 @@ async def test_child_submission_recovery_adopts_unique_runtime_execution(tmp_pat
         token_factory=lambda *args:None)
     backend._ensure_collector=lambda *args:None
     context=SimpleNamespace(job=SimpleNamespace(id=job_id),
-        previous_acceptance_receipt={'sandbox_id':sandbox.id,'capability_nonce':'nonce-old'})
+        previous_acceptance_receipt=sandbox_receipt(sandbox,capability_nonce='nonce-old'))
     reservation=SimpleNamespace(id='reservation',job_generation=1,harness='codex',
         image_digest=digest,node_id='node',node_generation=7,runtime_profile_id='office',gpu_ids=())
     recovery=await backend.recover_submission(context,reservation)
@@ -290,7 +299,7 @@ async def test_child_submission_recovery_does_not_replay_when_recorded_sandbox_i
         objects=SimpleNamespace(),settings=Settings(backend='fake',data_root=tmp_path),
         token_factory=lambda *args:None)
     context=SimpleNamespace(job=SimpleNamespace(id=job_id),
-        previous_acceptance_receipt={'sandbox_id':'recorded-sandbox'})
+        previous_acceptance_receipt=missing_receipt('recorded-sandbox'))
     reservation=SimpleNamespace(id='reservation',job_generation=1,harness='codex',
         image_digest=digest,node_id='node',node_generation=7,runtime_profile_id='office',gpu_ids=())
     assert (await backend.recover_submission(context,reservation)).safe_to_retry is False
@@ -298,6 +307,7 @@ async def test_child_submission_recovery_does_not_replay_when_recorded_sandbox_i
         image='registry/office@sha256:'+digest,runtime_url='http://runtime',metadata={},
         health_state='ready')
     Pool.backend.row=sandbox
+    context.previous_acceptance_receipt=sandbox_receipt(sandbox)
     assert (await backend.recover_submission(context,reservation)).safe_to_retry is True
     assert Pool.released==[sandbox.id]
 
@@ -333,7 +343,7 @@ async def test_child_resumes_same_native_session_with_nested_group_results(tmp_p
         token_factory=lambda *args:None);backend.sessions['j'*32]=sandbox
     context=SimpleNamespace(job=SimpleNamespace(id='j'*32),generation=1,
         request=request(parameters={'objective':'continue','harness':'codex','reasoning_effort':'high'}))
-    status=await backend.status(context,'initial-execution',{'sandbox_id':sandbox.id})
+    status=await backend.status(context,'initial-execution',sandbox_receipt(sandbox))
     assert not status.terminal and runtime.started[0]['native_thread_id']=='native-child'
     assert store.marked[0][1]=='j'*32+':1:group:'+'g'*32
 
@@ -385,9 +395,11 @@ async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(
     assert backend.runtime.injected['logical_thread_id']=='d'*32
     assert backend.runtime.injected['logical_turn_id']=='e'*32
     assert backend.store.allocations==[
-        {"sandbox_id":sandbox.id,"reservation_id":"reservation","node_id":"node",
+        {"sandbox_id":sandbox.id,"sandbox_handle":sandbox.handle.to_mapping(),
+            "reservation_id":"reservation","node_id":"node",
             "node_generation":1},
-        {"sandbox_id":sandbox.id,"reservation_id":"reservation","node_id":"node",
+        {"sandbox_id":sandbox.id,"sandbox_handle":sandbox.handle.to_mapping(),
+            "reservation_id":"reservation","node_id":"node",
             "node_generation":1,"capability_nonce":"nonce"}]
 
     backend.pool.acquired=0

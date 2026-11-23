@@ -100,7 +100,9 @@ async def test_registration_rejects_active_job_pending_upload_and_live_takeover(
             object_key='pending-key',public_url='https://example.invalid/pending',
             expires_at=now()+timedelta(minutes=5))
     async def live_control(store,thread,turn,source):
-        await store.begin_sandbox_control(thread.id,source,'sandbox-live','nonce',
+        await store.begin_sandbox_control(thread.id,source,'sandbox-live',{
+            'provider':'fake','sandbox_id':'sandbox-live','allocation_id':'control',
+            'profile_key':'a'*63,'revision':'revision-1'},'nonce',
             now()+timedelta(minutes=5))
     await scenario('active-job',active_job)
     await scenario('pending-upload',pending_upload)

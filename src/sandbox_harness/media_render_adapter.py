@@ -164,9 +164,8 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
             except RuntimeError as exc:
                 if str(exc)!='operation_sandbox_unavailable':raise
         else:
-            matches=[value for value in await self.pool.list_owned()
-                if value.turn_id==context.job.id]
-            for match in matches:
+            match=await self.pool.reconcile_create(context.job.id)
+            for match in ([match] if match else []):
                 adopted=await self.pool.adopt(match,thread_id=self._thread_id(context.job.id),turn_id=context.job.id)
                 await self.pool.release(adopted,keep_attached=False)
         reservation_id=str(receipt['reservation_id']);node_id=str(receipt['node_id']);generation=int(receipt['node_generation'])

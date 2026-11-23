@@ -325,7 +325,9 @@ async def test_user_sandbox_control_blocks_turn_archive_and_delete(tmp_path):
         owner="a"*64;profile=catalog.resolve("codex","gpt-5.6","standard")
         thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
             reasoning_level="standard",title="Controlled"),profile,owner)
-        await store.begin_sandbox_control(thread.id,owner,"sandbox-control","nonce",
+        await store.begin_sandbox_control(thread.id,owner,"sandbox-control",{
+            "provider":"fake","sandbox_id":"sandbox-control","allocation_id":"control",
+            "profile_key":"a"*63,"revision":"revision-1"},"nonce",
             now()+timedelta(hours=1))
         with pytest.raises(RuntimeError,match="sandbox_takeover_active"):
             await broker.submit(thread.id,TurnCreate(message="new",idempotency_key="blocked-turn"))

@@ -18,6 +18,11 @@ from sandbox_harness.runtime import StagedRuntimeObject
 from sandbox_runtime import app as runtime_app
 
 
+def handle(identity):
+    return {"provider":"fake","sandbox_id":identity,"allocation_id":"allocation-"+identity,
+        "profile_key":"a"*63,"revision":"revision-1"}
+
+
 @pytest.mark.asyncio
 async def test_sandbox_control_is_owner_scoped_and_blocks_active_turn(tmp_path):
     store = Store("sqlite+aiosqlite:///" + str(tmp_path / "control.db")); await store.initialize()
@@ -28,16 +33,17 @@ async def test_sandbox_control_is_owner_scoped_and_blocks_active_turn(tmp_path):
         turn, _, _ = await store.create_turn(thread.id,
             TurnCreate(message="run", idempotency_key="sandbox-control-turn"), profile, owner)
         with pytest.raises(RuntimeError, match="active_turn"):
-            await store.begin_sandbox_control(thread.id, owner, "sandbox-one", "nonce",
+            await store.begin_sandbox_control(thread.id, owner, "sandbox-one",handle("sandbox-one"),"nonce",
                 now() + timedelta(hours=1))
         await store.set_turn_state(turn.id, TurnState.COMPLETED)
-        control = await store.begin_sandbox_control(thread.id, owner, "sandbox-one", "nonce",
+        control = await store.begin_sandbox_control(thread.id, owner, "sandbox-one",handle("sandbox-one"),"nonce",
             now() + timedelta(hours=1))
         assert control["state"] == "user_controlled" and control["generation"] == 1
         assert await store.active_sandbox_control_ids() == {"sandbox-one"}
         control = await store.set_sandbox_terminal(thread.id, owner, "sandbox-one", "pty-one")
         assert control["pty_session_id"] == "pty-one"
-        grant = await store.create_sandbox_port_grant(thread.id, owner, "sandbox-one", 3000,
+        grant = await store.create_sandbox_port_grant(thread.id, owner, "sandbox-one",
+            handle("sandbox-one"),3000,
             now() + timedelta(minutes=10))
         assert await store.get_sandbox_port_grant(grant["id"], "b" * 64) is None
         assert (await store.get_sandbox_port_grant(grant["id"], owner))["port"] == 3000
@@ -422,7 +428,8 @@ async def test_port_grant_rejects_reused_sandbox_and_revokes_grant(tmp_path):
     try:
         sandbox=await pool.acquire(thread_id=thread.id,turn_id="inspect-"+thread.id,
             harness=Harness.CODEX,environment={})
-        grant=await store.create_sandbox_port_grant(thread.id,owner,sandbox.id,3000,
+        grant=await store.create_sandbox_port_grant(thread.id,owner,sandbox.id,
+            sandbox.handle.to_mapping(),3000,
             now()+timedelta(minutes=5))
         sandbox.thread_id="other-thread";sandbox.metadata["sandbox-harness.io/thread"]="other-thread"
         with pytest.raises(KeyError,match="preview_expired"):

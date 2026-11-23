@@ -73,6 +73,10 @@ class SandboxPool:
     async def list_owned(self)->list[Sandbox]:
         return await self.backend.list_owned(SandboxScope(self.backend.namespace))
 
+    async def reconcile_create(self,allocation_id:str)->Sandbox|None:
+        return await self.backend.reconcile_create(
+            SandboxScope(self.backend.namespace),allocation_id)
+
     async def execution_available(self) -> bool:
         async with self._lock:
             values=list(self._attached.values())+[sandbox for rows in self._warm.values()

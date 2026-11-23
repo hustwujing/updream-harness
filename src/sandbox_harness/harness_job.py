@@ -15,6 +15,7 @@ from .job_contracts import JobState
 from .artifact_gateway import ArtifactEmission,ArtifactGateway
 from .scheduler import ResourceRequest, Scheduler
 from .sandbox import SandboxCapacityUnavailable,SandboxNotFound,SandboxRateLimited
+from .sandbox_contracts import SandboxHandle
 from .objects import object_chunks
 
 
@@ -249,12 +250,14 @@ class SandboxChildBackend:
 
     async def _sandbox(self,context:JobExecutionContext,receipt:dict):
         identity=str(receipt.get('sandbox_id',''))
+        try:handle=SandboxHandle.from_mapping(receipt.get('sandbox_handle') or {})
+        except ValueError as exc:raise RuntimeError('child_sandbox_handle_invalid') from exc
         cached=self.sessions.get(context.job.id)
         if cached and cached.id==identity:return cached
         attached=await self.pool.get_attached(self._thread_id(context.job.id))
         if attached and attached.id==identity:
             self.sessions[context.job.id]=attached;return attached
-        try:candidate=await self.pool.backend.get(identity)
+        try:candidate=await self.pool.backend.get(handle)
         except SandboxNotFound as exc:raise RuntimeError('child_sandbox_unavailable') from exc
         adopted=await self.pool.adopt(candidate,thread_id=self._thread_id(context.job.id),turn_id=context.job.id)
         self.sessions[context.job.id]=adopted;return adopted
@@ -280,7 +283,8 @@ class SandboxChildBackend:
             harness=harness,environment={},image=image)
         try:
             execution_id=context.job.id+':'+str(context.generation)
-            allocation={"sandbox_id":sandbox.id,"reservation_id":reservation.id,
+            allocation={"sandbox_id":sandbox.id,"sandbox_handle":sandbox.handle.to_mapping(),
+                "reservation_id":reservation.id,
                 "node_id":reservation.node_id,"node_generation":reservation.node_generation}
             await self.store.record_job_submission_allocation(context.job.id,context.generation,
                 external_execution_id=execution_id,receipt=allocation)
@@ -336,17 +340,18 @@ class SandboxChildBackend:
                 execution_id=execution_id,input_id=context.job.id)
             self.sessions[context.job.id]=sandbox
             self._ensure_collector(context,sandbox,execution_id)
-            return execution_id,{'sandbox_id':sandbox.id,'capability_nonce':claims.nonce,
+            return execution_id,{'sandbox_id':sandbox.id,
+                'sandbox_handle':sandbox.handle.to_mapping(),'capability_nonce':claims.nonce,
                 'runtime_acceptance':accepted}
         except BaseException:
             await self.pool.release(sandbox,keep_attached=False)
             raise
 
     async def recover_submission(self,context:JobExecutionContext,reservation)->SubmissionRecovery:
-        matches=[];sandbox_id=str(context.previous_acceptance_receipt.get("sandbox_id") or "")
-        if sandbox_id:
-            try:matches=[await self.pool.backend.get(sandbox_id)]
-            except SandboxNotFound:pass
+        matches=[];raw=context.previous_acceptance_receipt.get("sandbox_handle") or {}
+        if raw:
+            try:matches=[await self.pool.backend.get(SandboxHandle.from_mapping(raw))]
+            except (SandboxNotFound,ValueError):pass
         if not matches:return SubmissionRecovery()
         ready=[value for value in matches if value.health_state=="ready"
             and value.harness.value==reservation.harness
@@ -372,7 +377,8 @@ class SandboxChildBackend:
                 "node_id":reservation.node_id,"node_generation":reservation.node_generation,
                 "runtime_profile_id":reservation.runtime_profile_id,
                 "image_digest":reservation.image_digest,"gpu_ids":list(reservation.gpu_ids),
-                "sandbox_id":sandbox.id,"capability_nonce":str(
+                "sandbox_id":sandbox.id,"sandbox_handle":sandbox.handle.to_mapping(),
+                "capability_nonce":str(
                     context.previous_acceptance_receipt.get("capability_nonce") or ""),
                 "runtime_acceptance":{"accepted":True,"created":False,"recovered":True,
                     "execution_id":execution_id}}))

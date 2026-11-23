@@ -563,6 +563,7 @@ class SandboxControlRow(Base):
     thread_id: Mapped[str] = mapped_column(String(32), primary_key=True)
     owner_id: Mapped[str] = mapped_column(String(64), index=True)
     sandbox_id: Mapped[str] = mapped_column(String(200), index=True)
+    sandbox_handle_json: Mapped[str] = mapped_column(Text, default="", server_default="")
     state: Mapped[str] = mapped_column(String(24), index=True)
     generation: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     capability_nonce: Mapped[str] = mapped_column(String(64), default="", server_default="")
@@ -580,6 +581,7 @@ class SandboxPortGrantRow(Base):
     thread_id: Mapped[str] = mapped_column(String(32), index=True)
     owner_id: Mapped[str] = mapped_column(String(64), index=True)
     sandbox_id: Mapped[str] = mapped_column(String(200), index=True)
+    sandbox_handle_json: Mapped[str] = mapped_column(Text, default="", server_default="")
     port: Mapped[int] = mapped_column(Integer)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     revoked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
@@ -1100,6 +1102,16 @@ class Store:
                     except OperationalError as exc:
                         if (connection.dialect.name!="sqlite" or
                                 f"duplicate column name: {column}" not in str(exc).lower()):raise
+            for table in ("sandbox_controls","sandbox_port_grants"):
+                columns=await connection.run_sync(lambda value,table=table:{column["name"] for column in
+                    sqlalchemy_inspect(value).get_columns(table)})
+                if "sandbox_handle_json" not in columns:
+                    suffix=" IF NOT EXISTS" if connection.dialect.name=="postgresql" else ""
+                    try:await connection.execute(text(
+                        f"ALTER TABLE {table} ADD COLUMN{suffix} sandbox_handle_json TEXT NOT NULL DEFAULT ''"))
+                    except OperationalError as exc:
+                        if (connection.dialect.name!="sqlite" or
+                                "duplicate column name: sandbox_handle_json" not in str(exc).lower()):raise
             await connection.execute(text("""
                 INSERT INTO turn_order (turn_id, thread_id, sequence, created_at)
                 SELECT t.id, t.thread_id, MIN(i.sequence), t.created_at
@@ -3977,6 +3989,7 @@ class Store:
     @staticmethod
     def sandbox_control_view(row: SandboxControlRow) -> dict:
         return {"thread_id": row.thread_id, "sandbox_id": row.sandbox_id, "state": row.state,
+            "sandbox_handle":json.loads(row.sandbox_handle_json),
             "generation": row.generation, "pty_session_id": row.pty_session_id,
             "release_phase":row.release_phase,"release_action":row.release_action,
             "expires_at": utc_datetime(row.expires_at), "created_at": row.created_at,
@@ -3997,7 +4010,10 @@ class Store:
                 SandboxControlRow.owner_id == owner_id))).scalar_one_or_none() or ""
 
     async def begin_sandbox_control(self, thread_id: str, owner_id: str, sandbox_id: str,
-                                    capability_nonce: str, expires_at: datetime) -> dict:
+                                    sandbox_handle:dict[str,str],capability_nonce: str,
+                                    expires_at: datetime) -> dict:
+        handle_json=canonical_json(sandbox_handle)
+        if sandbox_handle.get("sandbox_id")!=sandbox_id:raise ValueError("sandbox_handle_id_mismatch")
         async with self.connections.begin() as db:
             thread = (await db.execute(select(ThreadRow).where(ThreadRow.id == thread_id,
                 ThreadRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
@@ -4012,15 +4028,19 @@ class Store:
             if row and row.state == "user_controlled" and utc_datetime(row.expires_at) > timestamp:
                 if row.sandbox_id != sandbox_id:
                     raise RuntimeError("sandbox_control_conflict")
+                if row.sandbox_handle_json!=handle_json:
+                    raise RuntimeError("sandbox_control_handle_conflict")
                 row.expires_at = expires_at; row.updated_at = timestamp
             elif row:
                 row.owner_id = owner_id; row.sandbox_id = sandbox_id; row.state = "user_controlled"
+                row.sandbox_handle_json=handle_json
                 row.generation += 1; row.capability_nonce = capability_nonce; row.pty_session_id = ""
                 row.release_phase="";row.release_action=""
                 row.expires_at = expires_at; row.created_at = timestamp; row.updated_at = timestamp
             else:
                 row = SandboxControlRow(thread_id=thread_id, owner_id=owner_id,
-                    sandbox_id=sandbox_id, state="user_controlled", generation=1,
+                    sandbox_id=sandbox_id,sandbox_handle_json=handle_json,
+                    state="user_controlled", generation=1,
                     capability_nonce=capability_nonce, expires_at=expires_at,
                     created_at=timestamp, updated_at=timestamp)
                 db.add(row)
@@ -4161,10 +4181,12 @@ class Store:
             "created_at": row.created_at} for row in rows]
 
     async def create_sandbox_port_grant(self, thread_id: str, owner_id: str,
-                                        sandbox_id: str, port: int,
+                                        sandbox_id: str,sandbox_handle:dict[str,str],port: int,
                                         expires_at: datetime) -> dict:
+        if sandbox_handle.get("sandbox_id")!=sandbox_id:raise ValueError("sandbox_handle_id_mismatch")
         row = SandboxPortGrantRow(id=identifier(), thread_id=thread_id, owner_id=owner_id,
-            sandbox_id=sandbox_id, port=port, expires_at=expires_at,
+            sandbox_id=sandbox_id,sandbox_handle_json=canonical_json(sandbox_handle),
+            port=port, expires_at=expires_at,
             revoked=False, created_at=now())
         async with self.connections.begin() as db:
             thread = (await db.execute(select(ThreadRow.id).where(ThreadRow.id == thread_id,
@@ -4173,6 +4195,7 @@ class Store:
                 raise KeyError("thread_not_found")
             db.add(row)
         return {"id": row.id, "thread_id": thread_id, "sandbox_id": sandbox_id,
+            "sandbox_handle":sandbox_handle,
             "port": port, "expires_at": expires_at}
 
     async def get_sandbox_port_grant(self, grant_id: str, owner_id: str) -> dict | None:
@@ -4182,6 +4205,7 @@ class Store:
                 SandboxPortGrantRow.revoked == False,
                 SandboxPortGrantRow.expires_at > now()))).scalar_one_or_none()
         return ({"id": row.id, "thread_id": row.thread_id, "sandbox_id": row.sandbox_id,
+            "sandbox_handle":json.loads(row.sandbox_handle_json),
             "port": row.port, "expires_at": row.expires_at} if row else None)
 
     async def revoke_sandbox_port_grant(self, grant_id: str, owner_id: str) -> bool:
