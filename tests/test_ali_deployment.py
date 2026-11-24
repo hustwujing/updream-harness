@@ -162,6 +162,25 @@ def test_ali_bundle_materialization_is_idempotent_in_same_content_store(tmp_path
     assert (tmp_path/(digest+".sig")).read_bytes()==b"signature"
 
 
+def test_ali_controlled_runtime_force_does_not_delete_same_store_source(tmp_path,monkeypatch):
+    assets=load("ali_assets_same_controlled_store",ROOT/"deploy/ali/materialize-assets.py")
+    digest="a"*64
+    data_root=tmp_path/"data"
+    source=data_root/"controlled-runtime"/digest
+    source.mkdir(parents=True)
+    payload=source/"runtime.bin"
+    payload.write_bytes(b"runtime")
+    link=data_root/"provider-runtime"
+    link.symlink_to(Path("controlled-runtime")/digest)
+    monkeypatch.setattr(assets,"DATA_ROOT",data_root)
+
+    result=assets._materialize_controlled(link,digest,force=True)
+
+    assert result==source
+    assert payload.read_bytes()==b"runtime"
+    assert link.resolve()==source
+
+
 def test_aliyun_provider_release_overlay_is_complete_and_immutable():
     value=json.loads((ROOT/"deploy/ali/provider-releases.json").read_text())
     assert value["schema_version"]==1 and value["provider"]=="aliyun"
