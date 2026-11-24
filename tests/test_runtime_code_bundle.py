@@ -12,9 +12,21 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
 from sandbox_bootstrap import supervisor as bootstrap
+from sandbox_bootstrap import main as bootstrap_main
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_bootstrap_configures_runtime_console_observability(tmp_path,monkeypatch):
+    calls=[]
+    monkeypatch.setattr(bootstrap_main,'runtime_state_dir',lambda:tmp_path)
+    monkeypatch.setattr(bootstrap_main,'configure',lambda service,path:calls.append((service,Path(path))))
+    monkeypatch.setattr(bootstrap_main.uvicorn,'run',lambda *args,**kwargs:None)
+
+    bootstrap_main.run()
+
+    assert calls==[('runtime-bootstrap',tmp_path/'observability')]
 
 
 def test_runtime_state_dir_defaults_to_private_current_uid_temp_directory(tmp_path, monkeypatch):

@@ -1,4 +1,5 @@
 import asyncio
+import io
 import json
 import logging
 import os
@@ -15,6 +16,40 @@ from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTrace
 from sandbox_harness import observability as obs
 from sandbox_harness.log_query import query
 from sandbox_harness.telemetry_ingest import decode_otlp
+
+
+def test_runtime_console_json_handler_emits_safe_fixed_schema():
+    stream=io.StringIO()
+    handler=obs.runtime_console_handler('runtime',stream)
+    assert handler is not None
+    record=logging.LogRecord('updream.events',logging.WARNING,__file__,1,
+        'runtime.configured',(),None)
+    record.event_name='runtime.configured'
+    record.event_attributes={
+        'updream.sandbox_id':'sandbox-1','updream.thread_id':'thread-1',
+        'updream.turn_id':'turn-1','updream.job_id':'job-1',
+        'updream.execution_id':'execution-1','updream.state':'ready',
+        'password':'do-not-log','reason':'token=do-not-log',
+    }
+
+    handler.emit(record)
+
+    row=json.loads(stream.getvalue())
+    assert row['schema_version']==1
+    assert row['service']=='runtime' and row['event']=='runtime.configured'
+    assert row['level']=='WARNING' and row['timestamp'].endswith('+00:00')
+    assert {key:row[key] for key in ('sandbox_id','thread_id','turn_id','job_id','execution_id')}=={
+        'sandbox_id':'sandbox-1','thread_id':'thread-1','turn_id':'turn-1',
+        'job_id':'job-1','execution_id':'execution-1'}
+    assert row['state']=='ready' and row['reason']=='[REDACTED]'
+    assert 'password' not in row and 'do-not-log' not in stream.getvalue()
+
+
+def test_console_json_handler_is_limited_to_sandbox_runtime_processes():
+    assert obs.runtime_console_handler('runtime',io.StringIO()) is not None
+    assert obs.runtime_console_handler('runtime-bootstrap',io.StringIO()) is not None
+    assert obs.runtime_console_handler('api',io.StringIO()) is None
+    assert obs.runtime_console_handler('gateway',io.StringIO()) is None
 
 @pytest.fixture
 def telemetry(tmp_path,monkeypatch):

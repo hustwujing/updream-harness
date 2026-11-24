@@ -107,6 +107,7 @@ class Configure(BaseModel):
     thread_id: str = Field(default="",max_length=160)
     turn_id: str = Field(default="",max_length=160)
     sandbox_id: str = Field(default="",max_length=200)
+    job_id: str = Field(default="",max_length=160)
     capability_token: str = Field(min_length=20)
     gateway_url: str = Field(pattern=r"^https?://")
     harness: str = Field(pattern=r"^(codex|claude|deepseek)$")
@@ -1030,7 +1031,9 @@ def create_app() -> FastAPI:
     async def configure(value: Configure, request: Request = None):
         if value.runtime_bundle_digest and value.runtime_bundle_digest != app.state.runtime_bundle_digest:
             raise HTTPException(409, "Required Runtime Bundle is not active")
-        app.state.log_context={"thread_id":value.thread_id,"turn_id":value.turn_id,"sandbox_id":value.sandbox_id,"harness":value.harness,"model":value.model}
+        app.state.log_context={"thread_id":value.thread_id,"turn_id":value.turn_id,
+            "sandbox_id":value.sandbox_id,"job_id":value.job_id,
+            "harness":value.harness,"model":value.model}
         if request is not None:
             request.state.log_context.clear();request.state.log_context.update(app.state.log_context)
         enrich(**app.state.log_context)
@@ -1048,6 +1051,7 @@ def create_app() -> FastAPI:
         os.environ["HARNESS_THREAD_ID"] = value.thread_id
         os.environ["HARNESS_TURN_ID"] = value.turn_id
         os.environ["HARNESS_SANDBOX_ID"] = value.sandbox_id
+        os.environ["HARNESS_JOB_ID"] = value.job_id
         os.environ["HARNESS_RUNTIME_PROFILE_ID"] = value.runtime_profile_id
         os.environ["HARNESS_CHILD_MODE"] = "1" if value.child_mode else "0"
         app.state.harness = value.harness

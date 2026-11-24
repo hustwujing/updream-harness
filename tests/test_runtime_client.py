@@ -87,9 +87,11 @@ async def test_child_runtime_configuration_uses_logical_protocol_identity():
         metadata={},thread_id='child-job-'+'c'*32,turn_id='c'*32)
     await runtime.inject(sandbox,capability_token='x'*32,gateway_url='http://gateway:28600',
         proxy_url='http://proxy:28601',harness='claude',model='claude-opus-5-5',
-        child_mode=True,logical_thread_id='a'*32,logical_turn_id='b'*32)
+        child_mode=True,logical_thread_id='a'*32,logical_turn_id='b'*32,
+        logical_job_id='c'*32)
     payload=json.loads(requests[-1].content)
     assert payload['thread_id']=='a'*32 and payload['turn_id']=='b'*32
+    assert payload['job_id']=='c'*32
 
 
 async def test_runtime_configuration_installs_code_before_content_bundle(tmp_path):

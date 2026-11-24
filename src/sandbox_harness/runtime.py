@@ -147,7 +147,8 @@ class RuntimeClient:
                      runtime_code_bundle_digest: str = "", runtime_profile_id: str = "",
                      skill_ids: list[str] | None = None, skill_digests: dict[str, str] | None = None,
                      child_mode: bool = False, delegation_depth: int = 0,
-                     logical_thread_id: str = "", logical_turn_id: str = "") -> None:
+                     logical_thread_id: str = "", logical_turn_id: str = "",
+                     logical_job_id: str = "") -> None:
         await self._resolve_endpoint(sandbox)
         bundle_digest = runtime_bundle_digest or self.default_bundle_digest
         code_digest = runtime_code_bundle_digest or self.default_code_bundle_digest
@@ -161,7 +162,8 @@ class RuntimeClient:
             "skill_digests":skill_digests or {},"child_mode":child_mode,
             "delegation_depth":delegation_depth,
             "thread_id":logical_thread_id or sandbox.thread_id,
-            "turn_id":logical_turn_id or sandbox.turn_id,"sandbox_id":sandbox.id}
+            "turn_id":logical_turn_id or sandbox.turn_id,"sandbox_id":sandbox.id,
+            "job_id":logical_job_id}
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()}, timeout=20,
             trust_env=False, transport=self.transport) as client:
             if code_digest:

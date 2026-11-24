@@ -323,7 +323,8 @@ class SandboxChildBackend:
                 skill_digests=dict(context.request.parameters.get('skill_digests',{})),
                 defer_skill_install=restoring,child_mode=True,delegation_depth=1,
                 logical_thread_id=context.job.thread_id,
-                logical_turn_id=context.job.origin_turn_id)
+                logical_turn_id=context.job.origin_turn_id,
+                logical_job_id=context.job.id)
             if restoring:
                 archive_size=await asyncio.to_thread(self.objects.size,paused.checkpoint_ref,
                     maximum=self.settings.max_checkpoint_bytes)

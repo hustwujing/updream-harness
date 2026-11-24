@@ -66,6 +66,7 @@ def test_runtime_configuration_freezes_turn_harness_and_model(tmp_path, monkeypa
             "thread_id":"a"*32,
             "turn_id":"b"*32,
             "sandbox_id":"sandbox-runtime-1",
+            "job_id":"c"*32,
             "capability_token": "x" * 32,
             "gateway_url": "http://gateway:28600",
             "harness": "deepseek",
@@ -81,6 +82,8 @@ def test_runtime_configuration_freezes_turn_harness_and_model(tmp_path, monkeypa
     assert runtime_app.os.environ["HARNESS_THREAD_ID"] == "a"*32
     assert runtime_app.os.environ["HARNESS_TURN_ID"] == "b"*32
     assert runtime_app.os.environ["HARNESS_SANDBOX_ID"] == "sandbox-runtime-1"
+    assert runtime_app.os.environ["HARNESS_JOB_ID"] == "c"*32
+    assert app.state.log_context["job_id"] == "c"*32
     assert runtime_app.os.environ["HARNESS_RUNTIME_PROFILE_ID"] == "primary-full-cpu"
     assert runtime_app.os.environ["HARNESS_CHILD_MODE"] == "0"
     assert runtime_app.os.environ["HOME"] == str(tmp_path / "workspace" / "state" / "home")

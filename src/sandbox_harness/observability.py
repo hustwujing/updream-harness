@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import queue
 import re
+import sys
 import threading
 import time
 import traceback
@@ -275,6 +276,34 @@ class StructuredHandler(logging.Handler):
         self.telemetry.logger.emit(LogRecord(timestamp=int(record.created*1e9),severity_text=record.levelname,
             severity_number=severity,body=describe(name),event_name=name,attributes=attributes))
 
+
+class ConsoleJsonHandler(logging.Handler):
+    """Provider-neutral stdout events for sandbox platform log collectors."""
+    def __init__(self,service,stream=None):
+        super().__init__();self.service=service;self.stream=stream or sys.stdout
+    def emit(self,record):
+        try:
+            name=getattr(record,'event_name','diagnostic.'+record.name.replace('_','-').lower())
+            if not EVENT.fullmatch(name):name='diagnostic.library'
+            attributes=sanitize(getattr(record,'event_attributes',_CONTEXT.get()))
+            identities={key:attributes.get('updream.'+key,'')
+                for key in ('sandbox_id','thread_id','turn_id','job_id','execution_id')}
+            row={'schema_version':1,
+                'timestamp':datetime.fromtimestamp(record.created,timezone.utc).isoformat(),
+                'level':record.levelname,'event':name,'service':self.service,**identities}
+            reserved=set(row)
+            row.update({key.removeprefix('updream.'):value for key,value in attributes.items()
+                if key.removeprefix('updream.') not in reserved})
+            self.stream.write(json.dumps(row,ensure_ascii=False,separators=(',',':'))+'\n')
+            self.stream.flush()
+        except Exception:
+            # Observability must never make the Runtime unavailable.
+            return
+
+
+def runtime_console_handler(service,stream=None):
+    return ConsoleJsonHandler(service,stream) if service in {'runtime','runtime-bootstrap'} else None
+
 class Telemetry:
     def __init__(self,service,root,*,queue_size=8192,max_bytes=2*1024**3,days=7,release='unknown'):
         if not 1<=queue_size<=65536 or max_bytes<1024 or not 1<=days<=3650:raise ValueError('invalid_telemetry_limits')
@@ -290,6 +319,7 @@ class Telemetry:
         self.logs=LoggerProvider(resource=self.resource,shutdown_on_exit=False)
         processor=Processor(self);self.provider.add_span_processor(processor);self.logs.add_log_record_processor(processor)
         self.logger=self.logs.get_logger('updream-harness');self.handler=StructuredHandler(self)
+        self.console_handler=None
         self.worker=threading.Thread(target=self._work,name='telemetry-writer',daemon=True);self.worker.start()
     def increment(self,key,count=1):
         with self.guard:self.stats[key]=self.stats.get(key,0)+count
@@ -390,6 +420,7 @@ class Telemetry:
         if self.stopping:return
         self.flush(5);self.stopping=True;self.worker.join(5)
         logging.getLogger().removeHandler(self.handler)
+        if self.console_handler:logging.getLogger().removeHandler(self.console_handler)
         self.logs.shutdown();self.provider.shutdown()
 
 
@@ -409,7 +440,10 @@ def configure(service,root):
         max_bytes=int(os.getenv('SANDBOX_HARNESS_LOG_MAX_BYTES',str(16*1024**2 if service=='runtime' else 2*1024**3))),
         days=int(os.getenv('SANDBOX_HARNESS_LOG_RETENTION_DAYS','7')),release=release)
     _PROVIDER=_TELEMETRY.provider
-    root_logger=logging.getLogger();root_logger.handlers=[_TELEMETRY.handler]
+    root_logger=logging.getLogger();handlers=[_TELEMETRY.handler]
+    _TELEMETRY.console_handler=runtime_console_handler(service)
+    if _TELEMETRY.console_handler:handlers.append(_TELEMETRY.console_handler)
+    root_logger.handlers=handlers
     root_logger.setLevel(os.getenv('SANDBOX_HARNESS_LOG_LEVEL','INFO').upper())
     for name in ('uvicorn','uvicorn.error','uvicorn.access'):
         log=logging.getLogger(name);log.handlers=[];log.propagate=True

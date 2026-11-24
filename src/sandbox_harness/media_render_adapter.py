@@ -92,7 +92,7 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
                 runtime_bundle_digest=self.settings.runtime_bundle_digest,
                 runtime_code_bundle_digest=self.settings.runtime_code_bundle_digest,
                 runtime_profile_id=reservation.runtime_profile_id,skill_ids=[],skill_digests={},
-                child_mode=True,delegation_depth=1)
+                child_mode=True,delegation_depth=1,logical_job_id=context.job.id)
             inputs={}
             for item in context.request.input_artifacts:
                 artifact=await self.store.get_artifact(item.artifact_id)
