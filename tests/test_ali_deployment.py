@@ -198,6 +198,21 @@ def test_ali_materializer_propagates_release_identity_into_independent_checkout(
     }
 
 
+def test_ali_materializer_atomic_environment_replace_preserves_owner_and_mode(tmp_path):
+    assets=load("ali_assets_environment_identity",ROOT/"deploy/ali/materialize-assets.py")
+    target=tmp_path/"platform.env"
+    target.write_text("OLD=value\n")
+    target.chmod(0o640)
+    before=target.stat()
+
+    assets.atomic_write_environment(target,"NEW=value\n")
+
+    after=target.stat()
+    assert target.read_text()=="NEW=value\n"
+    assert (after.st_uid,after.st_gid)==(before.st_uid,before.st_gid)
+    assert stat.S_IMODE(after.st_mode)==0o640
+
+
 def test_aliyun_provider_release_overlay_is_complete_and_immutable():
     value=json.loads((ROOT/"deploy/ali/provider-releases.json").read_text())
     assert value["schema_version"]==1 and value["provider"]=="aliyun"

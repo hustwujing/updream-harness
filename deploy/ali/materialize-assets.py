@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 
 import httpx
@@ -39,6 +40,18 @@ def release_identity(source:dict[str,str])->dict[str,str]:
         "SANDBOX_HARNESS_WEB_DIST_DIGEST":source["SANDBOX_HARNESS_WEB_DIST_DIGEST"],
         "PYTHONPATH":str(ROOT/"src"),
     }
+
+
+def atomic_write_environment(target:Path,raw:str)->None:
+    info=target.stat() if target.exists() else None
+    temporary=target.with_suffix(".tmp")
+    temporary.write_text(raw)
+    if info:
+        temporary.chmod(stat.S_IMODE(info.st_mode))
+        os.chown(temporary,info.st_uid,info.st_gid)
+    else:
+        temporary.chmod(0o600)
+    temporary.replace(target)
 
 
 def verified_copy(source:Path,target:Path,digest:str)->None:
@@ -189,8 +202,7 @@ def materialize(source_env:Path,target_env:Path,*,promote_images:bool=False,forc
     raw=configure.render_environment(target)
     source_mutable=str(ROOT.with_name("sandbox-harness-platform-parallel")/".data")
     if source_mutable in raw:raise ValueError("mutable_source_path_leak")
-    temporary=target_env.with_suffix(".tmp");temporary.write_text(raw);temporary.chmod(0o600)
-    temporary.replace(target_env);os.chmod(target_env,0o600)
+    atomic_write_environment(target_env,raw)
     return target
 
 
