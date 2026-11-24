@@ -149,6 +149,19 @@ def test_ali_asset_materializer_owns_all_runtime_paths():
     assert "copy_function=os.link" in source
 
 
+def test_ali_bundle_materialization_is_idempotent_in_same_content_store(tmp_path):
+    assets=load("ali_assets_same_store",ROOT/"deploy/ali/materialize-assets.py")
+    data=b"runtime-bundle"
+    digest=__import__("hashlib").sha256(data).hexdigest()
+    (tmp_path/(digest+".tar")).write_bytes(data)
+    (tmp_path/(digest+".sig")).write_bytes(b"signature")
+
+    assets._copy_bundle(tmp_path,tmp_path,digest)
+
+    assert (tmp_path/(digest+".tar")).read_bytes()==data
+    assert (tmp_path/(digest+".sig")).read_bytes()==b"signature"
+
+
 def test_aliyun_provider_release_overlay_is_complete_and_immutable():
     value=json.loads((ROOT/"deploy/ali/provider-releases.json").read_text())
     assert value["schema_version"]==1 and value["provider"]=="aliyun"

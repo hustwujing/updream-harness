@@ -111,7 +111,8 @@ def _copy_bundle(source_dir:Path,target_dir:Path,digest:str)->None:
     signature=source_dir/(digest+".sig")
     if not signature.is_file():raise ValueError("missing_bundle_signature")
     target=(target_dir/(digest+".sig"));target.parent.mkdir(parents=True,exist_ok=True)
-    shutil.copyfile(signature,target);target.chmod(0o644)
+    if signature.resolve()!=target.resolve():shutil.copyfile(signature,target)
+    target.chmod(0o644)
 
 
 def _materialize_controlled(source:Path,digest:str,force:bool)->Path:
