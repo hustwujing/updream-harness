@@ -4630,6 +4630,17 @@ class Store:
                     return False
                 if TurnState(turn.state) in TERMINAL and status not in {"applied", "failed"}:
                     return False
+                if status == "applied":
+                    for attachment in json.loads(row.attachments_json):
+                        path="input/inbox/"+attachment["name"]
+                        existing_artifact=(await db.execute(select(ArtifactRow).where(
+                            ArtifactRow.turn_id==turn_id,ArtifactRow.path==path,
+                            ArtifactRow.sha256==attachment["sha256"]))).scalar_one_or_none()
+                        if existing_artifact is None:
+                            db.add(ArtifactRow(id=identifier(),turn_id=turn_id,path=path,
+                                sha256=attachment["sha256"],size=attachment["size"],
+                                mime=attachment["mime"],object_ref=attachment["object_ref"],
+                                created_at=now()))
                 row.status = status
                 row.updated_at = now()
                 if delivery_mode:
@@ -5397,12 +5408,19 @@ class Store:
             if owner_id is not None:query=query.where(ThreadRow.owner_id==owner_id)
             snapshots=(await db.execute(query.order_by(TurnProjectFileRow.path))).scalars().all()
             artifacts=(await db.execute(select(ArtifactRow).where(ArtifactRow.turn_id==turn_id,
-                ArtifactRow.path.like("input/%")))).scalars().all()
+                ArtifactRow.path.like("input/%")).order_by(
+                    ArtifactRow.created_at,ArtifactRow.id))).scalars().all()
         by_path={row.path.removeprefix("input/"):row for row in artifacts}
-        return [{"artifact":Artifact.model_validate({key:getattr(by_path[row.path],key)
+        values=[{"artifact":Artifact.model_validate({key:getattr(by_path[row.path],key)
                     for key in Artifact.model_fields}),"project_file_id":row.project_file_id,
                 "project_path":row.path,"source_type":row.source_type}
             for row in snapshots if row.path in by_path]
+        snapshot_paths={row.path for row in snapshots}
+        values.extend({"artifact":Artifact.model_validate({key:getattr(artifact,key)
+                for key in Artifact.model_fields}),"project_file_id":"",
+            "project_path":path,"source_type":"attachment"}
+            for path,artifact in by_path.items() if path not in snapshot_paths)
+        return values
 
     async def project_file_history(self, thread_id: str, path: str, owner_id: str) -> list[ProjectFile]:
         async with self.connections() as db:

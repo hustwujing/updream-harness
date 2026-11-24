@@ -215,13 +215,18 @@ async def test_thread_turn_items_and_idempotency(tmp_path):
         with pytest.raises(RuntimeError, match="idempotency_conflict"):
             await store.create_turn(thread.id,
                 TurnCreate(message="different", idempotency_key="idempotency-1"), profile, owner)
+        input_attachment=Attachment(name="replacement.png",object_ref="sha256:"+"4"*64,
+            sha256="4"*64,size=123,mime="image/png")
         appended, created = await store.create_turn_input(turn.id,
-            TurnInputCreate(message="follow up", idempotency_key="input-key-1"), owner)
+            TurnInputCreate(message="follow up", idempotency_key="input-key-1",
+                attachments=[input_attachment]), owner)
+        assert await store.turn_input_artifacts(turn.id,owner)==[]
         pending_item = (await store.items_after(thread.id))[1]
         assert pending_item.payload["input_status"] == "pending"
         assert pending_item.payload["delivery_mode"] == "pending"
         repeated, created_again = await store.create_turn_input(turn.id,
-            TurnInputCreate(message="follow up", idempotency_key="input-key-1"), owner)
+            TurnInputCreate(message="follow up", idempotency_key="input-key-1",
+                attachments=[input_attachment]), owner)
         assert created and not created_again and repeated.id == appended.id
         with pytest.raises(RuntimeError, match="idempotency_conflict"):
             await store.create_turn_input(turn.id,
@@ -234,6 +239,13 @@ async def test_thread_turn_items_and_idempotency(tmp_path):
         assert delivered_item.payload["input_status"] == "delivered"
         assert delivered_item.payload["delivery_mode"] == "native_stream"
         await store.set_input_status(claimed.id, "applied")
+        artifacts=await store.turn_input_artifacts(turn.id,owner)
+        assert len(artifacts)==1 and artifacts[0]["project_path"]=="inbox/replacement.png"
+        assert artifacts[0]["source_type"]=="attachment"
+        assert artifacts[0]["artifact"].sha256=="4"*64
+        identity=artifacts[0]["artifact"].id
+        assert await store.set_input_status(claimed.id,"applied") is True
+        assert [x["artifact"].id for x in await store.turn_input_artifacts(turn.id,owner)]==[identity]
         assert (await store.list_turn_inputs(turn.id))[0].status == "applied"
         applied_item = (await store.items_after(thread.id))[1]
         assert applied_item.status == "completed" and applied_item.payload["input_status"] == "applied"
