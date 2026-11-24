@@ -17,6 +17,46 @@ from sandbox_bootstrap import supervisor as bootstrap
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_runtime_state_dir_defaults_to_private_current_uid_temp_directory(tmp_path, monkeypatch):
+    temporary = tmp_path / "tmp"
+    temporary.mkdir()
+    monkeypatch.delenv("SANDBOX_RUNTIME_STATE_DIR", raising=False)
+    monkeypatch.setenv("TMPDIR", str(temporary))
+
+    state = bootstrap.runtime_state_dir()
+
+    assert state == temporary / f"sandbox-harness-runtime-{os.geteuid()}"
+    assert state.is_dir()
+    assert state.stat().st_mode & 0o777 == 0o700
+
+
+def test_runtime_state_dir_honors_explicit_writable_directory(tmp_path, monkeypatch):
+    configured = tmp_path / "configured-runtime-state"
+    monkeypatch.setenv("SANDBOX_RUNTIME_STATE_DIR", str(configured))
+
+    state = bootstrap.runtime_state_dir()
+
+    assert state == configured
+    assert state.is_dir()
+    assert state.stat().st_mode & 0o777 == 0o700
+
+
+def test_runtime_cli_dispatch_uses_configured_state_directory(tmp_path):
+    state = tmp_path / "state"
+    command = state / "code-releases/current/bin/sandbox-media"
+    command.parent.mkdir(parents=True)
+    command.write_text("#!/bin/sh\necho configured-runtime-state\n")
+    command.chmod(0o755)
+    launcher = tmp_path / "sandbox-media"
+    launcher.symlink_to(ROOT / "runtime/runtime_cli_dispatch.sh")
+
+    result = subprocess.run(["/bin/sh", str(launcher)], capture_output=True, text=True,
+        env={**os.environ, "SANDBOX_RUNTIME_STATE_DIR": str(state)})
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "configured-runtime-state"
+
+
 def build(tmp_path: Path) -> tuple[bytes, bytes, str, Path]:
     key = Ed25519PrivateKey.generate(); private = tmp_path / "private.pem"; public = tmp_path / "public.pem"
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -32,7 +72,7 @@ def build(tmp_path: Path) -> tuple[bytes, bytes, str, Path]:
 
 def test_code_bundle_is_signed_content_addressed_and_contains_cli_modules(tmp_path, monkeypatch):
     data, signature, digest, public = build(tmp_path)
-    monkeypatch.setattr(bootstrap, "RUN", tmp_path / "run")
+    monkeypatch.setenv("SANDBOX_RUNTIME_STATE_DIR", str(tmp_path / "run"))
     monkeypatch.setattr(bootstrap, "PUBLIC_KEY", public)
     monkeypatch.setattr(bootstrap, "DEPENDENCY_LOCK", ROOT / "runtime/requirements-runtime.txt")
     bootstrap.verify_signature(data, signature)
@@ -50,7 +90,7 @@ def test_code_bundle_is_signed_content_addressed_and_contains_cli_modules(tmp_pa
 
 def test_bootstrap_rejects_bad_signature_then_starts_and_proxies_runtime(tmp_path, monkeypatch):
     data, signature, digest, public = build(tmp_path)
-    monkeypatch.setattr(bootstrap, "RUN", tmp_path / "run")
+    monkeypatch.setenv("SANDBOX_RUNTIME_STATE_DIR", str(tmp_path / "run"))
     monkeypatch.setattr(bootstrap, "PUBLIC_KEY", public)
     monkeypatch.setattr(bootstrap, "DEPENDENCY_LOCK", ROOT / "runtime/requirements-runtime.txt")
     app = bootstrap.create_app()

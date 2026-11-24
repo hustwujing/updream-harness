@@ -20,7 +20,6 @@ import httpx
 from starlette.background import BackgroundTask
 
 
-RUN = Path("/run/harness")
 PUBLIC_KEY = Path("/opt/bootstrap/bundle_public_key.pem")
 DEPENDENCY_LOCK = Path("/opt/bootstrap/requirements-runtime.txt")
 CHILD_PORT = 18080
@@ -31,6 +30,24 @@ CLI_MODULES = {"sandbox-media": "sandbox_runtime.media_cli", "sandbox-site": "sa
     "sandbox-background": "sandbox_runtime.background_cli", "sandbox-interact": "sandbox_runtime.interaction_cli",
     "sandbox-job":"sandbox_runtime.job_cli","sandbox-artifact":"sandbox_runtime.artifact_cli",
     "sandbox-review":"sandbox_runtime.review_cli","editppt": "editppt.cli"}
+
+
+def runtime_state_dir() -> Path:
+    configured = os.environ.get("SANDBOX_RUNTIME_STATE_DIR", "")
+    root = (Path(configured) if configured else
+        Path(os.environ.get("TMPDIR", "/tmp")) / f"sandbox-harness-runtime-{os.geteuid()}")
+    try:
+        if root.is_symlink():
+            raise RuntimeError("runtime_state_directory_unavailable")
+        root.mkdir(parents=True, mode=0o700, exist_ok=True)
+        info = root.stat()
+        if (not root.is_dir() or info.st_uid != os.geteuid()
+                or not os.access(root, os.W_OK | os.X_OK)):
+            raise RuntimeError("runtime_state_directory_unavailable")
+        root.chmod(0o700)
+    except OSError as exc:
+        raise RuntimeError("runtime_state_directory_unavailable") from exc
+    return root
 
 
 def verify_signature(data: bytes, signature: bytes) -> None:
@@ -47,7 +64,7 @@ def allowed_code_path(path: str) -> bool:
         and value.suffix == ".py")
 
 
-def activate_code_bundle(data: bytes, expected_digest: str) -> dict:
+def activate_code_bundle(data: bytes, expected_digest: str, *, state_dir: Path | None = None) -> dict:
     if len(data) > MAX_CODE_BUNDLE_BYTES: raise ValueError("runtime_code_bundle_too_large")
     digest = hashlib.sha256(data).hexdigest()
     if digest != expected_digest or len(expected_digest) != 64:
@@ -77,7 +94,8 @@ def activate_code_bundle(data: bytes, expected_digest: str) -> dict:
         row = declared[path]
         if row.get("size") != len(content) or row.get("sha256") != hashlib.sha256(content).hexdigest():
             raise ValueError("runtime_code_bundle_file_digest_mismatch")
-    root = RUN / "code-releases"; root.mkdir(parents=True, exist_ok=True)
+    root = (state_dir or runtime_state_dir()) / "code-releases"
+    root.mkdir(parents=True, exist_ok=True)
     target = root / digest
     if not target.exists():
         temporary = root / ("." + digest + ".tmp")
@@ -108,6 +126,7 @@ def activate_code_bundle(data: bytes, expected_digest: str) -> dict:
 
 class Supervisor:
     def __init__(self):
+        self.state_dir = runtime_state_dir()
         self.process: asyncio.subprocess.Process | None = None
         self.digest = ""; self.lock = asyncio.Lock(); self.monitor: asyncio.Task | None = None
         self.transitioning = False; self.closed = False
@@ -150,7 +169,8 @@ class Supervisor:
     async def _spawn(self, release: Path, digest: str) -> None:
         environment = {**os.environ, "PYTHONPATH": str(release / "site-packages"),
             "PATH": str(release / "bin") + ":" + os.environ.get("PATH", ""),
-            "SANDBOX_RUNTIME_PORT": str(CHILD_PORT), "SANDBOX_RUNTIME_CODE_DIGEST": digest}
+            "SANDBOX_RUNTIME_PORT": str(CHILD_PORT), "SANDBOX_RUNTIME_CODE_DIGEST": digest,
+            "SANDBOX_RUNTIME_STATE_DIR":str(self.state_dir)}
         process = await asyncio.create_subprocess_exec(sys.executable, "-m", "sandbox_runtime.main",
             env=environment, start_new_session=True)
         self.process = process
@@ -178,12 +198,13 @@ class Supervisor:
             if health and health.get("execution") == "running":
                 raise RuntimeError("runtime_execution_active")
             verify_signature(data, signature)
-            value = await asyncio.to_thread(activate_code_bundle, data, digest)
+            value = await asyncio.to_thread(activate_code_bundle, data, digest,
+                state_dir=self.state_dir)
             await self.start(Path(value["root"]), digest)
             return {**value, "reused": False}
 
     async def restore(self) -> None:
-        current = RUN / "code-releases/current"
+        current = self.state_dir / "code-releases/current"
         if current.is_symlink() and current.resolve().is_dir():
             await self.start(current.resolve(), current.resolve().name)
 
