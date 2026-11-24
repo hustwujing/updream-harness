@@ -3,6 +3,9 @@ import pwd
 import stat
 import sys
 from pathlib import Path
+import json
+
+import pytest
 
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -37,6 +40,9 @@ def test_ali_environment_regenerates_service_secrets_and_isolates_paths():
         "SANDBOX_HARNESS_UPSTREAM_CODEX_KEY":"shared-provider-key",
         "SANDBOX_HARNESS_MODEL_ROUTES_JSON":'[{"model":"test"}]',
         "SANDBOX_HARNESS_OPENSANDBOX_API_KEY":"shared-opensandbox-key",
+        "SANDBOX_HARNESS_ALIYUN_SANDBOX_API_KEY":"shared-aliyun-key",
+        "SANDBOX_HARNESS_ALIYUN_SANDBOX_API_URL":"https://api.cn-shanghai.sandbox.aliyuncs.com",
+        "SANDBOX_HARNESS_ALIYUN_SANDBOX_DOMAIN":"cn-shanghai.sandbox.aliyuncs.com",
         "SANDBOX_HARNESS_SESSION_SIGNING_KEY":"source-session-secret",
         "SANDBOX_HARNESS_GATEWAY_SIGNING_KEY":"source-gateway-secret",
         "SANDBOX_HARNESS_DATABASE_URL":"postgresql+asyncpg://source:secret@127.0.0.1:28432/source",
@@ -56,6 +62,8 @@ def test_ali_environment_regenerates_service_secrets_and_isolates_paths():
     assert values["SANDBOX_HARNESS_GATEWAY_SIGNING_KEY"]=="gateway-secret"
     assert values["SANDBOX_HARNESS_UPSTREAM_CODEX_KEY"]=="shared-provider-key"
     assert values["SANDBOX_HARNESS_OPENSANDBOX_API_KEY"]=="shared-opensandbox-key"
+    assert values["SANDBOX_HARNESS_ALIYUN_SANDBOX_API_KEY"]=="shared-aliyun-key"
+    assert values["SANDBOX_HARNESS_ALIYUN_SANDBOX_API_URL"].startswith("https://api.cn-shanghai")
     assert values["SANDBOX_HARNESS_ALIYUN_SANDBOX_GATEWAY_URL"]=="http://10.194.49.8:29882"
     assert values["SANDBOX_HARNESS_ALIYUN_SANDBOX_PROXY_URL"]=="http://10.194.49.8:29883"
     assert "sandbox-harness-platform-parallel/.data" not in "\n".join(values.values())
@@ -139,6 +147,38 @@ def test_ali_asset_materializer_owns_all_runtime_paths():
     assert '[docker,"push",target_tag]' in source
     assert "client.put" not in source
     assert "copy_function=os.link" in source
+
+
+def test_aliyun_provider_release_overlay_is_complete_and_immutable():
+    value=json.loads((ROOT/"deploy/ali/provider-releases.json").read_text())
+    assert value["schema_version"]==1 and value["provider"]=="aliyun"
+    assert set(value["profiles"])=={
+        "primary-full-cpu","general-cpu","office","web-browser","data-analysis","media-cpu"}
+    for releases in value["profiles"].values():
+        assert set(releases)=={"codex","claude","deepseek"}
+        for release in releases.values():
+            assert len(release["ref"])==20
+            assert release["revision"].startswith("sha256:") and len(release["revision"])==71
+            assert len(release["artifact_digest"])==64
+
+
+def test_ali_materializer_merges_provider_releases_and_fences_artifacts():
+    assets=load("ali_assets_merge",ROOT/"deploy/ali/materialize-assets.py")
+    digests={"codex":"a"*64,"claude":"b"*64,"deepseek":"c"*64}
+    catalog={"schema_version":2,"runtime_dependency_profiles":[{
+        "id":"primary-full-cpu","supported_harnesses":list(digests),
+        "provider_releases":{"opensandbox":{harness:{"ref":f"image-{harness}",
+            "revision":"sha256:"+digest,"artifact_digest":digest}
+            for harness,digest in digests.items()}}}]}
+    overlay={"schema_version":1,"provider":"aliyun","profiles":{"primary-full-cpu":{
+        harness:{"ref":"t"*20,"revision":"sha256:"+digest,"artifact_digest":digest}
+        for harness,digest in digests.items()}}}
+    merged=assets.merge_provider_releases(catalog,overlay)
+    assert set(merged["runtime_dependency_profiles"][0]["provider_releases"])=={
+        "opensandbox","aliyun"}
+    overlay["profiles"]["primary-full-cpu"]["codex"]["artifact_digest"]="d"*64
+    with pytest.raises(ValueError,match="artifact_digest_mismatch"):
+        assets.merge_provider_releases(catalog,overlay)
 
 
 def test_ali_network_rule_is_disjoint_from_parallel_gateway():

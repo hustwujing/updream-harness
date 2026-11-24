@@ -58,6 +58,32 @@ def rewrite_profile_catalog(value:dict)->dict:
     return rewritten
 
 
+def merge_provider_releases(value:dict,overlay:dict)->dict:
+    rewritten=json.loads(json.dumps(value))
+    if overlay.get("schema_version")!=1 or overlay.get("provider")!="aliyun":
+        raise ValueError("invalid_provider_release_overlay")
+    profiles={row["id"]:row for row in rewritten.get("runtime_dependency_profiles",[])}
+    overlay_profiles=overlay.get("profiles",{})
+    if not profiles or set(overlay_profiles)!=set(profiles):
+        raise ValueError("provider_release_profile_matrix_incomplete")
+    for identity,profile in profiles.items():
+        harnesses=set(profile.get("supported_harnesses",[]))
+        releases=overlay_profiles[identity]
+        if not harnesses or set(releases)!=harnesses:
+            raise ValueError("provider_release_harness_matrix_incomplete")
+        opensandbox=profile.get("provider_releases",{}).get("opensandbox",{})
+        if set(opensandbox)!=harnesses:
+            raise ValueError("opensandbox_release_matrix_incomplete")
+        for harness,release in releases.items():
+            if (not release.get("ref") or not release.get("revision")
+                    or len(release.get("artifact_digest",""))!=64):
+                raise ValueError("provider_release_identity_invalid")
+            if release["artifact_digest"]!=opensandbox[harness].get("artifact_digest"):
+                raise ValueError("provider_release_artifact_digest_mismatch")
+        profile["provider_releases"]["aliyun"]=json.loads(json.dumps(releases))
+    return rewritten
+
+
 def promote_registry_manifest(source_ref:str,target_ref:str)->None:
     source_host_repo,source_digest=source_ref.split("@sha256:",1)
     target_host_repo,target_digest=target_ref.split("@sha256:",1)
@@ -115,6 +141,8 @@ def materialize(source_env:Path,target_env:Path,*,promote_images:bool=False,forc
     profile_source=Path(source["SANDBOX_HARNESS_PROFILE_CATALOG_PATH"])
     if digest_bytes(profile_source.read_bytes())!=profile_digest:raise ValueError("digest_mismatch:profile_catalog")
     original=json.loads(profile_source.read_text());rewritten=rewrite_profile_catalog(original)
+    overlay=json.loads((ROOT/"deploy/ali/provider-releases.json").read_text())
+    rewritten=merge_provider_releases(rewritten,overlay)
     if promote_images and provider=="opensandbox":
         original_profiles={row["id"]:row for row in original["runtime_dependency_profiles"]}
         for profile in rewritten["runtime_dependency_profiles"]:

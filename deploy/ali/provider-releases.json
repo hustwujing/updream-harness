@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "provider": "aliyun",
+  "profiles": {
+    "data-analysis": {
+      "claude": {"ref": "s26wz8fbks2gxlci6zet", "revision": "sha256:3ef787088672b1fdd2c259209161d648c75519bbb557b02ac4e0c3cbdce9beff", "artifact_digest": "e0b489e6b0b08643858cea31db913a7b204965d417f685f47c2af5684de4fccb"},
+      "codex": {"ref": "xz1ekkgjihsgmdyqyfq3", "revision": "sha256:4dfa04f83bb7f5b48bb1e23454e26b39408b379bf2627607ffd19953387f594c", "artifact_digest": "d695a1df043dfa2cfdefb4cd2da399671dcd5b5552554461669633aa7dc02b46"},
+      "deepseek": {"ref": "5o6ovbnyjuzlcd3kd2ii", "revision": "sha256:429c2ee8f1384c5626ca74c2b0f694377db667de2383cd1a94b9a97ad13fab17", "artifact_digest": "9da8705957169be9e486c1c178fa731919d1e5de1a305017fae7dd697115aa11"}
+    },
+    "general-cpu": {
+      "claude": {"ref": "e06qqss7xej87le1lot4", "revision": "sha256:6070161896367ca7947827fee3e3a290d1b7d396877ceb947902db01d8a5ef11", "artifact_digest": "7cbc140dd62eda7ede64eee9b548b676fcff40f3ad810a7480c8f13b037e1ebf"},
+      "codex": {"ref": "madzpbtzg5zeehvdi9au", "revision": "sha256:56eda5890c64be2881d54540f0515ea015ec0bfe98d4f6ff45ba3b3fd3f63ae0", "artifact_digest": "a8bf1c3477963f26af2b483b1d93f9e2123660a016a0c15e5eec788d1e5f8e6e"},
+      "deepseek": {"ref": "zvftgw8xlg80qavu9krg", "revision": "sha256:56c9d26c40019230381d1c1a4921ff10e5df9f3984dd62567cbb8acfa9895a09", "artifact_digest": "dacf656c65ca274a539e5451ee5e37cb6d4cd6b81280c70e1806aac8eb99f9dd"}
+    },
+    "media-cpu": {
+      "claude": {"ref": "pm3xihc8vm27apuucj94", "revision": "sha256:8e76ed9c849c8f3c4cfbf315c06d1a04bd8ab396364dde4b8e300aaa0e3e9ef7", "artifact_digest": "8a0eb3da659e96b7893dc3aa79ed3bf5c56533c69f53f186b7e5a658ddaf0d07"},
+      "codex": {"ref": "7eixgw9wgaukhnhznmi4", "revision": "sha256:ed1c753c0629a71687b062ce223d6f40b841aa1ee5cbd1924e32fd3227310317", "artifact_digest": "dae7d5f248282bc2916abc347e2ad08b1aa7aa7bd7c2c892b34ed5b828ff029b"},
+      "deepseek": {"ref": "a038vigqxva5g5zz3n4y", "revision": "sha256:1db21a22740e1f4bcd3bcc3f1a4057789b631721fdd6ceb27e3e9d8089785f5e", "artifact_digest": "d09ba0b9cd5109fb37025d9dbb154d23b1a671115717542e629b2a74f49a5953"}
+    },
+    "office": {
+      "claude": {"ref": "enmioos6fatcx59jl42w", "revision": "sha256:73181b588c306341b10bf0072f9ee048ecb55988d2cb78eb5045c6942306fa07", "artifact_digest": "0a9edc5e7a0c313853dd831bdf4ddd41a80a49fcfb1fbce8b9e770655d7cf451"},
+      "codex": {"ref": "ca5hkjm8djewy3m6sodp", "revision": "sha256:d11313f3ae7e3abe1657d56de53c299679057ad88cc463851d1cdc011f934e20", "artifact_digest": "2489107c86372271188df875060f0037305d9e712b23a9040578e6ba80830acc"},
+      "deepseek": {"ref": "hozf03bts6moq1cmuods", "revision": "sha256:6853a6ac4ad12d6d3117122db1030019f8e206ba0cece6612005e560aca51ca2", "artifact_digest": "68f62c73b147265e84e15599a1c5db33649d4f83a0908800b4120be2f4a40025"}
+    },
+    "primary-full-cpu": {
+      "claude": {"ref": "r3up6egwc374wtbbk873", "revision": "sha256:ca58e7eb4d736a50a0fd55578cd935cb402304ba13ca058f028f60806f8febd7", "artifact_digest": "e3dcac77474b240f78559e6a7d6a721708cc748e043865b1427f03700230867a"},
+      "codex": {"ref": "tf6ud6ouc1ynsmivnjkq", "revision": "sha256:f558f610ad4d6fab13f75e21584f744106704cba697c2a42f31e4500e9255fac", "artifact_digest": "dacf565d7c8caaef189f47eaf10b41b54f2e8c201a6c9f6f615d89ce2b96d86a"},
+      "deepseek": {"ref": "h33c5o4eyjkcw6a3rv9y", "revision": "sha256:e9868c11c1f689f5e31db5450e09592af4869d7ba75f386a07be07d905542459", "artifact_digest": "470ddc6c7a6b4b5258569f81eb9f384a4d79e1986d14e1d9edf611241fc61f54"}
+    },
+    "web-browser": {
+      "claude": {"ref": "ue6eqxr2fb84atgd5e58", "revision": "sha256:996b1d7a9e89c3d08fda24ffa3669dbccdcd3e208f2ea34adfb110d721414975", "artifact_digest": "cf2292be004552c829638082b0fd6c761048756e8e036fd6954c2c267dfe674c"},
+      "codex": {"ref": "22kz5d2irc6vlwa2s946", "revision": "sha256:a5625f71d379c0d398614ee43fd9bbb1f133f8e57ee88e8023a26b4afafa8fbc", "artifact_digest": "1eb8b9f7aad3b660edef20a233510f42ba6b0369c4241eb1d1fb6e969184df4b"},
+      "deepseek": {"ref": "v2fy5doxm7ptinxoplsg", "revision": "sha256:0075d3d03936d068aa605d135ae9ebac95bd421083e908b6f952830fe810dccd", "artifact_digest": "8d0249dff9bb31104939cd69da6bac8f93dc6eabb04874400c0dc7a9c622c4da"}
+    }
+  }
+}
