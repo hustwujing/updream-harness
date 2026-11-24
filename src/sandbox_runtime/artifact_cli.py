@@ -41,7 +41,8 @@ def main(argv: list[str] | None = None) -> int:
             with httpx.stream('GET',gateway+f'/v1/job-artifacts/{args.artifact_id}/content',
                     headers={'Authorization':'Bearer '+token_file.read_text().strip()},timeout=3600) as response:
                 if not response.is_success:
-                    print(response.text);return 1
+                    response.read()
+                    print(response.text[:2000]);return 1
                 raw_size=response.headers.get('content-length','')
                 digest=response.headers.get('x-updream-artifact-sha256','')
                 if not raw_size.isdigit() or len(digest)!=64:

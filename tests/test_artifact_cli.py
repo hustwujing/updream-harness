@@ -9,7 +9,12 @@ class Response:
         self.data=data;self.status_code=status;self.is_success=200<=status<300
         self.headers={"content-length":str(len(data) if declared_size is None else declared_size),
             "x-updream-artifact-sha256":digest or hashlib.sha256(data).hexdigest()}
-        self.text="not found" if status>=400 else ""
+        self._text="not found" if status>=400 else "";self.was_read=False
+    def read(self):self.was_read=True;return self.data
+    @property
+    def text(self):
+        if self.status_code>=400 and not self.was_read:raise RuntimeError("ResponseNotRead")
+        return self._text
     def iter_bytes(self):yield self.data[:3];yield self.data[3:]
 
 
@@ -53,8 +58,9 @@ def test_artifact_fetch_rejects_digest_mismatch(tmp_path,monkeypatch):
 
 def test_artifact_fetch_cleans_up_after_http_failure(tmp_path,monkeypatch):
     output=tmp_path/'result.bin';output.write_bytes(b'old')
-    environment(tmp_path,monkeypatch,Response(b'',status=404))
+    response=Response(b'',status=404);environment(tmp_path,monkeypatch,response)
     assert main(['fetch','--artifact-id','a'*32,'--output',str(output)])==1
+    assert response.was_read is True
     assert output.read_bytes()==b'old' and partials(output)==[]
 
 
