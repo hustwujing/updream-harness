@@ -108,7 +108,7 @@ class FakeRuntime:
         return self.terminals.pop(session_id,None) is not None
     async def terminal_endpoint(self,sandbox,session_id,*,since):
         self.terminal_calls.append(("endpoint",sandbox.id,session_id,since))
-        return f"ws://runtime/v1/pty/{session_id}/ws?since={since}",{"X-Runtime":"yes"}
+        return f"wss://runtime/v1/pty/{session_id}/ws?since={since}",{"X-Runtime":"yes"}
     async def project_file_manifest(self,sandbox):
         if self.legacy_manifest:
             request=httpx.Request("GET","http://runtime/v1/project-files/manifest")
@@ -183,13 +183,16 @@ async def test_inspector_restore_takeover_terminal_port_and_release(tmp_path, mo
         assert [call[0] for call in runtime.terminal_calls]==[
             "create","status","delete","create"]
         connections=[]
+        ssl_context=object()
+        monkeypatch.setattr(httpx,"create_ssl_context",lambda **kwargs:ssl_context)
         def connect(url,**kwargs):
             connections.append((url,kwargs));return "runtime-websocket"
         monkeypatch.setattr("sandbox_harness.sandbox_inspector.websocket_connect",connect)
         assert await inspector.terminal_connection(renewed["ticket"],owner,12)=="runtime-websocket"
         assert runtime.terminal_calls[-1]==("endpoint",sandbox.id,"pty-one",12)
-        assert connections[0][0]=="ws://runtime/v1/pty/pty-one/ws?since=12"
+        assert connections[0][0]=="wss://runtime/v1/pty/pty-one/ws?since=12"
         assert connections[0][1]["additional_headers"]=={"X-Runtime":"yes"}
+        assert connections[0][1]["ssl"] is ssl_context
         result=await inspector.release(thread.id,owner)
         assert result["released"] and result["checkpointed"] and result["managed_changes"]["count"]==0
         assert (await store.get_thread(thread.id,owner)).checkpoint_ref in objects.values

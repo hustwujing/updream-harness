@@ -605,9 +605,11 @@ class SandboxInspector:
             value["pty_session_id"], since=max(0, since))
         await self.store.touch_sandbox_control(value["thread_id"], owner_id,
             now() + timedelta(seconds=self.settings.sandbox_control_ttl_seconds))
+        tls = ({"ssl": httpx.create_ssl_context(trust_env=False)}
+            if ws_url.startswith("wss://") else {})
         return websocket_connect(ws_url, additional_headers=websocket_endpoint_headers(headers),
             max_size=64 * 1024 * 1024,
-            open_timeout=20, ping_interval=20, ping_timeout=20)
+            open_timeout=20, ping_interval=20, ping_timeout=20, **tls)
 
     async def create_port_grant(self, thread_id: str, owner_id: str, port: int) -> dict:
         await self.heartbeat(thread_id,owner_id)
