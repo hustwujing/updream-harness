@@ -74,6 +74,14 @@ async def test_fake_backend_scopes_turn_lookup_to_namespace():
     assert await second.reconcile_create(SandboxScope("second-product"),allocation) is None
 
 
+async def test_zero_warm_targets_are_available_for_on_demand_creation():
+    backend=FakeSandboxBackend()
+    pool=SandboxPool(backend,{harness:"" for harness in Harness},
+        {harness:0 for harness in Harness})
+    try:assert await pool.execution_available()
+    finally:await pool.close()
+
+
 async def test_opensandbox_lookup_sends_namespace_and_rejects_unscoped_rows():
     requests = []
 

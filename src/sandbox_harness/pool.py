@@ -91,6 +91,7 @@ class SandboxPool:
         async with self._lock:
             values=list(self._attached.values())+[sandbox for rows in self._warm.values()
                 for sandbox in rows]
+        if not values and sum(self.targets.values())==0:return True
         available=False
         for sandbox in values:
             if sandbox.health_state != "ready":
