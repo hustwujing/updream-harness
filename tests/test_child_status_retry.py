@@ -5,7 +5,7 @@ import pytest
 
 from sandbox_harness.config import Settings
 from sandbox_harness.domain import Harness
-from sandbox_harness.harness_job import OpenSandboxChildBackend
+from sandbox_harness.harness_job import SandboxChildBackend
 from sandbox_harness.sandbox import Sandbox
 
 
@@ -44,7 +44,7 @@ async def test_child_recovery_retries_transient_runtime_proxy_status(monkeypatch
 
     async def no_sleep(_):return None
     monkeypatch.setattr('sandbox_harness.harness_job.asyncio.sleep',no_sleep)
-    runtime=Runtime();backend=OpenSandboxChildBackend(pool=Pool(),runtime=runtime,
+    runtime=Runtime();backend=SandboxChildBackend(pool=Pool(),runtime=runtime,
         store=SimpleNamespace(),objects=SimpleNamespace(),
         settings=Settings(backend='fake',data_root=tmp_path),token_factory=lambda *args:None)
     backend._ensure_collector=lambda *args:None
@@ -61,7 +61,7 @@ async def test_child_recovery_retries_transient_runtime_proxy_status(monkeypatch
 
 
 async def test_child_status_does_not_retry_business_http_error(tmp_path):
-    backend=OpenSandboxChildBackend(pool=SimpleNamespace(),runtime=SimpleNamespace(),
+    backend=SandboxChildBackend(pool=SimpleNamespace(),runtime=SimpleNamespace(),
         store=SimpleNamespace(),objects=SimpleNamespace(),
         settings=Settings(backend='fake',data_root=tmp_path),token_factory=lambda *args:None)
 
@@ -91,7 +91,7 @@ async def test_child_recovery_recreates_sandbox_interrupted_before_runtime_activ
     class Runtime:
         async def execution_status(self,*args):raise bootstrap_failure()
 
-    backend=OpenSandboxChildBackend(pool=Pool(),runtime=Runtime(),store=SimpleNamespace(),
+    backend=SandboxChildBackend(pool=Pool(),runtime=Runtime(),store=SimpleNamespace(),
         objects=SimpleNamespace(),settings=Settings(backend='fake',data_root=tmp_path),
         token_factory=lambda *args:None)
     context=SimpleNamespace(job=SimpleNamespace(id=job_id),

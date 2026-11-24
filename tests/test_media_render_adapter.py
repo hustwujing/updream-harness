@@ -43,14 +43,15 @@ async def test_media_render_adapter_reserves_profile_injects_frozen_input_and_bi
     await scheduler.register_node(NodeInventory(node_id='node',generation=1,cpu_total=4,
         memory_mb_total=8192,disk_mb_total=10000,profiles=[{'runtime_profile_id':'media-cpu',
             'harness':'codex','image_digest':'d'*64,
-            'image_ref':'registry/media-cpu-codex@sha256:'+'d'*64}]))
+            'image_ref':'template-media-cpu-codex'}]))
     sandbox=Sandbox(id='sandbox-operation',harness=Harness.CODEX,
-        image='registry/media-cpu-codex@sha256:'+'d'*64,runtime_url='http://runtime',metadata={})
+        image='template-media-cpu-codex',runtime_url='http://runtime',metadata={})
     class Pool:
+        acquired={}
         backend=SimpleNamespace(list_namespace=lambda:None,
             runtime_route=lambda sandbox:SandboxRuntimeRoute(
                 "http://sandbox-gateway:29880","http://sandbox-proxy:29881"))
-        async def acquire(self,**kwargs):return sandbox
+        async def acquire(self,**kwargs):self.acquired=kwargs;return sandbox
         async def get_attached(self,*args):return sandbox
         async def release(self,*args,**kwargs):return None
         async def adopt(self,value,**kwargs):return value
@@ -67,8 +68,15 @@ async def test_media_render_adapter_reserves_profile_injects_frozen_input_and_bi
             return StagedRuntimeObject(target,len(result_data),__import__('hashlib').sha256(result_data).hexdigest())
     runtime=Runtime()
     async def token_factory(*args):return 'token',SimpleNamespace(nonce='nonce')
+    class Profiles:
+        def provider_release(self,*args,**kwargs):
+            assert args==('media-cpu','codex')
+            assert kwargs=={'provider_ref':'template-media-cpu-codex','artifact_digest':'d'*64}
+            return SimpleNamespace(ref='template-media-cpu-codex',revision='runtime-config-v2',
+                artifact_digest='d'*64)
     adapter=MediaRenderOperationAdapter(scheduler=scheduler,pool=Pool(),runtime=runtime,store=store,
-        objects=objects,settings=Settings(backend='fake',data_root=tmp_path),token_factory=token_factory)
+        objects=objects,settings=Settings(backend='fake',data_root=tmp_path),token_factory=token_factory,
+        profile_resolver=Profiles())
     context=JobExecutionContext(job=job,request=request,generation=attempt.generation)
     try:
         await store.mark_job_submission_started(job.id,"worker",attempt.generation)
@@ -76,6 +84,7 @@ async def test_media_render_adapter_reserves_profile_injects_frozen_input_and_bi
         assert submission.completed and runtime.rendered['input_path'].startswith('assets/inputs/source-')
         assert runtime.files[0][1]==source and runtime.injected['runtime_profile_id']=='media-cpu'
         assert runtime.injected['gateway_url']=='http://sandbox-gateway:29880'
+        assert adapter.pool.acquired['revision']=='runtime-config-v2'
         context=JobExecutionContext(job=job,request=request,generation=attempt.generation,
             previous_external_execution_id=submission.external_execution_id,
             previous_acceptance_receipt=submission.acceptance_receipt)

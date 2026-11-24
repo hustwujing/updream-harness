@@ -33,6 +33,7 @@ from .job_catalog import JobCatalog
 from .job_coordinator import JobCoordinator, JobGroupDraftUpdate
 from .job_contracts import JobGroupCreate
 from .profiles import ProfileResolver
+from .sandbox_factory import release_provider
 from .catalog import HarnessCatalog
 from .execution_readiness import ExecutionReadiness
 from .reviewer import ReviewSubmission,ReviewerCoordinator
@@ -295,7 +296,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     profile_resolver=ProfileResolver.from_json(profile_raw,
         expected_digest=(settings.profile_catalog_digest or hashlib.sha256(profile_raw.encode()).hexdigest()),
         skill_manifest=skill_manifest,
-        provider="opensandbox" if settings.backend=="fake" else settings.backend)
+        provider=release_provider(settings.backend))
     objects = object_store(settings)
     artifact_gateway = ArtifactGateway(activity_store, objects,
         settings.data_root / "tmp" / "job-artifacts", maximum_bytes=settings.max_artifact_bytes)

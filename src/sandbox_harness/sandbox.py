@@ -22,6 +22,8 @@ class FakeSandboxBackend:
         arbitrary_ports=True,ttl_renewal=True,authenticated_runtime_http=True,
         delete_convergence=True,pause_resume=False)
 
+    def validate_release(self,provider_ref:str,artifact_digest:str)->None:return None
+
     def __init__(self,runtime_url:str="http://fake-runtime",namespace:str="sandbox-harness",
                  gateway_url:str="http://127.0.0.1:29880",proxy_url:str="http://127.0.0.1:29881"):
         self.runtime_url=runtime_url;self.namespace=namespace
@@ -60,6 +62,9 @@ class FakeSandboxBackend:
             expires_at=datetime.now(timezone.utc)+timedelta(seconds=request.ttl_seconds),
             provider_details={"image":request.profile.provider_ref,"runtime_url":self.runtime_url,
                 "runtime_headers":{}})
+        sandbox.handle=SandboxHandle(provider=self.provider,sandbox_id=sandbox.id,
+            allocation_id=request.allocation_id,profile_key=request.profile.compatibility_key,
+            revision=request.profile.revision)
         self.items[sandbox.id]=sandbox;return sandbox
 
     async def _inventory(self,metadata:Mapping[str,str])->list[Sandbox]:

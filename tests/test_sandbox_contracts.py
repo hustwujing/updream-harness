@@ -17,6 +17,7 @@ from sandbox_harness.sandbox_contracts import (
     SandboxProviderUnavailable,
     SandboxRateLimited,
     SandboxRuntimeRoute,
+    Sandbox,
 )
 
 
@@ -91,6 +92,13 @@ def test_sandbox_handle_round_trips_provider_identity():
     with pytest.raises(ValueError,match="provider"):
         SandboxHandle(provider="Ali Yun",sandbox_id="sbx",allocation_id="turn",
             profile_key="a"*63,revision="v1")
+
+
+def test_sandbox_default_handle_does_not_depend_on_provider_metadata():
+    sandbox=Sandbox(id="sbx-1",provider="aliyun",harness=Harness.CODEX,profile=profile(
+        provider="aliyun",provider_ref="template-1",revision="build-1"),metadata={
+            "sandbox-harness.io/idempotency-key":"provider-tag-value"})
+    assert sandbox.handle.allocation_id=="sbx-1"
 
 
 def test_runtime_route_validates_sandbox_visible_origins():

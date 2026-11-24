@@ -17,6 +17,7 @@ from .scheduler import ResourceRequest, Scheduler
 from .sandbox import SandboxCapacityUnavailable,SandboxNotFound,SandboxRateLimited
 from .sandbox_contracts import SandboxHandle
 from .objects import object_chunks
+from .profiles import ProviderRelease
 
 
 async def staged_file_chunks(path: Path, chunk_size: int = 1024 * 1024):
@@ -238,15 +239,26 @@ class HarnessJobAdapter(BaseJobAdapter):
 
 class SandboxChildBackend:
     def __init__(self,*,pool,runtime,store,objects,settings,
-                 token_factory:Callable[[JobExecutionContext,Any,str],Awaitable[tuple[str,Any]]]):
+                 token_factory:Callable[[JobExecutionContext,Any,str],Awaitable[tuple[str,Any]]],
+                 profile_resolver=None):
         self.pool=pool;self.runtime=runtime;self.store=store;self.objects=objects
-        self.settings=settings;self.token_factory=token_factory;self.sessions={}
+        self.settings=settings;self.token_factory=token_factory;self.profile_resolver=profile_resolver
+        self.sessions={}
         self.collectors={}
         self.artifact_gateway=ArtifactGateway(store,objects,
             settings.data_root/'tmp'/'child-job-artifacts',maximum_bytes=settings.max_artifact_bytes)
 
     @staticmethod
     def _thread_id(job_id:str)->str:return 'child-job-'+job_id
+
+    def _provider_release(self,reservation,harness:Harness,*,provider_ref:str="")->ProviderRelease:
+        image=(getattr(reservation,"image_ref","") or provider_ref
+            or self.settings.image_for(harness.value))
+        if self.profile_resolver:
+            return self.profile_resolver.provider_release(reservation.runtime_profile_id,
+                harness.value,provider_ref=image,artifact_digest=reservation.image_digest)
+        return ProviderRelease(ref=image,revision=image,
+            artifact_digest=reservation.image_digest)
 
     async def _sandbox(self,context:JobExecutionContext,receipt:dict):
         identity=str(receipt.get('sandbox_id',''))
@@ -264,9 +276,7 @@ class SandboxChildBackend:
 
     async def start(self,context:JobExecutionContext,reservation)->tuple[str,dict[str,Any]]:
         harness=Harness(reservation.harness)
-        image=reservation.image_ref or self.settings.image_for(harness.value)
-        if not image.endswith('@sha256:'+reservation.image_digest):
-            raise RuntimeError('child_image_digest_mismatch')
+        release=self._provider_release(reservation,harness);image=release.ref
         if len(context.request.input_artifacts)>getattr(self.settings,'child_input_max_count',100):
             raise ValueError('child_input_count_exceeded')
         inputs=[];total_bytes=0
@@ -280,7 +290,8 @@ class SandboxChildBackend:
         if ((total_bytes+1024*1024-1)//(1024*1024)+512)>reservation.disk_mb:
             raise ValueError('child_input_exceeds_reserved_disk')
         sandbox=await self.pool.acquire(thread_id=self._thread_id(context.job.id),turn_id=context.job.id,
-            harness=harness,environment={},image=image)
+            harness=harness,environment={},image=image,
+            profile_id=reservation.runtime_profile_id,revision=release.revision)
         try:
             execution_id=context.job.id+':'+str(context.generation)
             allocation={"sandbox_id":sandbox.id,"sandbox_handle":sandbox.handle.to_mapping(),
@@ -349,14 +360,16 @@ class SandboxChildBackend:
             raise
 
     async def recover_submission(self,context:JobExecutionContext,reservation)->SubmissionRecovery:
+        harness=Harness(reservation.harness)
         matches=[];raw=context.previous_acceptance_receipt.get("sandbox_handle") or {}
         if raw:
             try:matches=[await self.pool.backend.get(SandboxHandle.from_mapping(raw))]
             except (SandboxNotFound,ValueError):pass
         if not matches:return SubmissionRecovery()
+        release=self._provider_release(reservation,harness,
+            provider_ref=matches[0].profile.provider_ref)
         ready=[value for value in matches if value.health_state=="ready"
-            and value.harness.value==reservation.harness
-            and value.handle.revision=="sha256:"+reservation.image_digest]
+            and value.harness==harness and value.handle.revision==release.revision]
         if len(matches)!=1 or len(ready)!=1:return SubmissionRecovery()
         sandbox=await self.pool.adopt(ready[0],thread_id=self._thread_id(context.job.id),
             turn_id=context.job.id)
@@ -583,4 +596,3 @@ class SandboxChildBackend:
 
 
 # Temporary import compatibility for external real-case scripts.
-OpenSandboxChildBackend=SandboxChildBackend

@@ -171,8 +171,6 @@ def observed(name, *, new_trace=False):
                 if hasattr(obj,'runtime_url'): fields['sandbox_id']=obj.id
                 elif hasattr(obj,'thread_id'): fields['turn_id']=obj.id
                 elif hasattr(obj,'process'):fields['execution_id']=obj.id
-            image=values.get('image') or getattr(obj,'image','')
-            if isinstance(image,str) and re.search(r'@sha256:[0-9a-f]{64}$',image):fields['image_digest']=image.rsplit('@',1)[-1]
             metadata = values.get('metadata') or {}
             for key in ('thread','turn'):
                 if metadata.get('sandbox-harness.io/'+key): fields[key+'_id']=metadata['sandbox-harness.io/'+key]

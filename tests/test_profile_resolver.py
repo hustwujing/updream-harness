@@ -59,7 +59,8 @@ def resolver() -> ProfileResolver:
             node_modules=("pptxgenjs",), dependency_capabilities=("image.generate",),
             network_origins=("images",), gpu=False, priority=100),
     ]
-    return ProfileResolver(children=children, runtimes=profiles, skills=skills)
+    return ProfileResolver(children=children, runtimes=profiles, skills=skills,
+        provider="opensandbox")
 
 
 def test_resolver_unions_skill_dependencies_and_selects_minimal_profile():
@@ -115,6 +116,25 @@ def test_resolver_selects_the_active_provider_release():
     assert resolved.provider_release.revision=="build-1"
 
 
+def test_provider_release_identity_does_not_require_an_oci_reference():
+    original=resolver();base=original.runtimes["general-cpu"]
+    release=ProviderRelease(ref="template-codex",revision="runtime-config-v2",
+        artifact_digest="c"*64)
+    runtime=base.model_copy(update={"provider_releases":{
+        **base.provider_releases,"aliyun":{"codex":release,
+            "claude":ProviderRelease(ref="template-claude",revision="runtime-config-v2",
+                artifact_digest="d"*64),
+            "deepseek":ProviderRelease(ref="template-deepseek",revision="runtime-config-v2",
+                artifact_digest="e"*64)}}})
+    value=ProfileResolver(children=list(original.children.values()),runtimes=[runtime],
+        skills=list(original.skills.values()),provider="aliyun")
+    assert value.provider_release("general-cpu","codex",provider_ref="template-codex",
+        artifact_digest="c"*64)==release
+    with pytest.raises(ValueError,match="identity mismatch"):
+        value.provider_release("general-cpu","codex",provider_ref="different-template",
+            artifact_digest="c"*64)
+
+
 def test_example_profile_catalog_is_digest_verified_and_covers_initial_profiles():
     raw=(ROOT/'deploy/profile-catalog.example.json').read_text()
     payload=json.loads(raw)
@@ -123,7 +143,8 @@ def test_example_profile_catalog_is_digest_verified_and_covers_initial_profiles(
         for row in payload['runtime_dependency_profiles'])
     digest=hashlib.sha256(raw.encode()).hexdigest()
     manifest=json.loads((ROOT/'runtime/skills/manifest.json').read_text())
-    value=ProfileResolver.from_json(raw,expected_digest=digest,skill_manifest=manifest)
+    value=ProfileResolver.from_json(raw,expected_digest=digest,skill_manifest=manifest,
+        provider="opensandbox")
     assert {'primary-full-cpu','general-cpu','media-cpu','office','web-browser','data-analysis'} <= set(value.runtimes)
     assert set(value.skills)=={row['id'] for row in manifest['skills']}
     capabilities={'image.generate','video.generate','video.edit','audio.generate',
@@ -135,14 +156,15 @@ def test_example_profile_catalog_is_digest_verified_and_covers_initial_profiles(
     media=value.resolve('claude','child-general',('media-processing',),ProfileRequirements())
     assert media.runtime_profile.id=='media-cpu'
     with pytest.raises(ValueError,match='profile catalog digest'):
-        ProfileResolver.from_json(raw,expected_digest='0'*64,skill_manifest=manifest)
+        ProfileResolver.from_json(raw,expected_digest='0'*64,skill_manifest=manifest,
+            provider="opensandbox")
 
 
 def test_every_skill_resolves_for_every_declared_harness():
     raw=(ROOT/'deploy/profile-catalog.example.json').read_text()
     manifest=json.loads((ROOT/'runtime/skills/manifest.json').read_text())
     value=ProfileResolver.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest(),
-        skill_manifest=manifest)
+        skill_manifest=manifest,provider="opensandbox")
     for skill in manifest['skills']:
         for harness in skill['supported_harnesses']:
             resolved=value.resolve(harness,'child-general',(skill['id'],),ProfileRequirements(),

@@ -98,6 +98,11 @@ class AliyunSandboxBackend:
         arbitrary_ports=True,ttl_renewal=True,authenticated_runtime_http=True,
         delete_convergence=True,pause_resume=True)
 
+    def validate_release(self,provider_ref:str,artifact_digest:str)->None:
+        if not provider_ref:
+            raise SandboxProfileUnavailable("Aliyun requires a template profile",
+                provider=self.provider)
+
     def __init__(self, *, api_key: str, api_url: str, domain: str,
                  timeout_seconds: int, namespace: str,
                  request_timeout_seconds: float = 60,
@@ -411,6 +416,7 @@ class AliyunSandboxBackend:
             profile=request.profile, metadata=metadata, state=SandboxState.PROVISIONING,
             expires_at=datetime.now(timezone.utc) + timedelta(seconds=request.ttl_seconds),
             provider_details={"template_id": request.profile.provider_ref})
+        sandbox=self._apply_request_identity(sandbox,request)
         try:
             return await self._ready(sandbox)
         except SandboxProviderError as exc:
@@ -442,6 +448,7 @@ class AliyunSandboxBackend:
                 runtime_bundle_digest="provider-recovered",
                 runtime_code_bundle_digest="provider-recovered",compatibility_key=handle.profile_key)
         sandbox = self._sandbox(info)
+        if isinstance(handle,SandboxHandle):sandbox.handle=handle
         return await self._ready(sandbox)
 
     async def _renew_ttl(self,sandbox:Sandbox,ttl_seconds:int)->Sandbox:

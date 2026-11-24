@@ -62,25 +62,12 @@ class RuntimeDependencyProfile(BaseModel):
         for provider,releases in self.provider_releases.items():
             if not provider or set(releases)!=set(self.supported_harnesses):
                 raise ValueError("provider release matrix must exactly cover supported_harnesses")
-            if provider=="opensandbox" and any(
-                    not release.ref.endswith("@sha256:"+release.artifact_digest)
-                    for release in releases.values()):
-                raise ValueError("OpenSandbox release must use a digest-pinned image")
         return self
 
     def release(self,provider:str,harness:str)->ProviderRelease:
         try:return self.provider_releases[provider][harness]
         except KeyError as exc:raise ValueError(
             f"provider release unavailable:{provider}:{harness}") from exc
-
-    @property
-    def image_digests(self)->dict[str,str]:
-        return {key:value.artifact_digest for key,value in self.provider_releases["opensandbox"].items()}
-
-    @property
-    def image_refs(self)->dict[str,str]:
-        return {key:value.ref for key,value in self.provider_releases["opensandbox"].items()}
-
 
 class ProfileRequirements(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -114,7 +101,7 @@ class ResolvedExecutionProfile:
 class ProfileResolver:
     def __init__(self, *, children: list[ChildExecutionProfile],
                  runtimes: list[RuntimeDependencyProfile], skills: list[SkillDescriptor],
-                 provider:str="opensandbox"):
+                 provider:str):
         self.children = self._unique(children, "ChildExecutionProfile")
         self.runtimes = self._unique(runtimes, "RuntimeDependencyProfile")
         self.skills = self._unique(skills, "Skill")
@@ -122,7 +109,7 @@ class ProfileResolver:
 
     @classmethod
     def from_json(cls, raw: str, *, expected_digest: str, skill_manifest: dict,
-                  provider:str="opensandbox") -> "ProfileResolver":
+                  provider:str) -> "ProfileResolver":
         actual = hashlib.sha256(raw.encode()).hexdigest()
         if actual != expected_digest:
             raise ValueError("profile catalog digest mismatch")
@@ -169,6 +156,17 @@ class ProfileResolver:
             "python_modules": tuple(sorted(set(profile.python_modules) - python_modules)),
             "node_modules": tuple(sorted(set(profile.node_modules) - node_modules)),
         }
+
+    def provider_release(self, runtime_profile_id: str, harness: str, *,
+                         provider_ref: str, artifact_digest: str) -> ProviderRelease:
+        try:
+            runtime = self.runtimes[runtime_profile_id]
+        except KeyError as exc:
+            raise ValueError("Runtime Profile release is unavailable") from exc
+        release = runtime.release(self.provider, harness)
+        if release.ref != provider_ref or release.artifact_digest != artifact_digest:
+            raise ValueError("provider release identity mismatch")
+        return release
 
     def resolve(self, harness: str, child_profile_id: str, skill_ids: tuple[str, ...],
                 requirements: ProfileRequirements, *, current_runtime_profile_id: str = "",

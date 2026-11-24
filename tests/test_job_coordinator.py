@@ -334,7 +334,7 @@ async def test_harness_infrastructure_fields_are_resolved_by_host_not_manager(tm
     root=Path(__file__).resolve().parents[1]
     raw=(root/'deploy/profile-catalog.example.json').read_text()
     resolver=ProfileResolver.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest(),
-        skill_manifest=json.loads((root/'runtime/skills/manifest.json').read_text()))
+        skill_manifest=json.loads((root/'runtime/skills/manifest.json').read_text()),provider="opensandbox")
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'harness-coordinator.db'));await store.initialize()
     coordinator=JobCoordinator(store,catalog(),profile_resolver=resolver)
     try:
@@ -368,7 +368,7 @@ async def test_harness_skill_metadata_freezes_required_capability_and_network(tm
     root=Path(__file__).resolve().parents[1]
     raw=(root/'deploy/profile-catalog.example.json').read_text()
     resolver=ProfileResolver.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest(),
-        skill_manifest=json.loads((root/'runtime/skills/manifest.json').read_text()))
+        skill_manifest=json.loads((root/'runtime/skills/manifest.json').read_text()),provider="opensandbox")
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'skill-capabilities.db'));await store.initialize()
     coordinator=JobCoordinator(store,catalog(),profile_resolver=resolver)
     try:
@@ -393,7 +393,7 @@ async def test_harness_missing_adapter_resolves_to_registered_child_adapter(tmp_
     root=Path(__file__).resolve().parents[1]
     raw=(root/'deploy/profile-catalog.example.json').read_text()
     resolver=ProfileResolver.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest(),
-        skill_manifest=json.loads((root/'runtime/skills/manifest.json').read_text()))
+        skill_manifest=json.loads((root/'runtime/skills/manifest.json').read_text()),provider="opensandbox")
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'harness-adapter.db'));await store.initialize()
     coordinator=JobCoordinator(store,catalog(),profile_resolver=resolver)
     try:
@@ -417,7 +417,7 @@ async def test_harness_descriptor_identity_is_frozen(tmp_path):
     root=Path(__file__).resolve().parents[1]
     raw=(root/'deploy/profile-catalog.example.json').read_text()
     resolver=ProfileResolver.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest(),
-        skill_manifest=json.loads((root/'runtime/skills/manifest.json').read_text()))
+        skill_manifest=json.loads((root/'runtime/skills/manifest.json').read_text()),provider="opensandbox")
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'harness-descriptor.db'));await store.initialize()
     coordinator=JobCoordinator(store,catalog(),profile_resolver=resolver)
     try:

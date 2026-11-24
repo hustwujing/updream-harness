@@ -52,7 +52,8 @@ async def setup(tmp_path):
     job_catalog=JobCatalog.from_json(job_raw,expected_digest=hashlib.sha256(job_raw.encode()).hexdigest())
     profile_raw=(ROOT/'deploy/profile-catalog.example.json').read_text()
     resolver=ProfileResolver.from_json(profile_raw,expected_digest=hashlib.sha256(profile_raw.encode()).hexdigest(),
-        skill_manifest=json.loads((ROOT/'runtime/skills/manifest.json').read_text()))
+        skill_manifest=json.loads((ROOT/'runtime/skills/manifest.json').read_text()),
+        provider="opensandbox")
     return store,thread,turn,artifacts,ReviewerCoordinator(JobCoordinator(store,job_catalog,
         profile_resolver=resolver))
 

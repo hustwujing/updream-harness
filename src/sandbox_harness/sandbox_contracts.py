@@ -180,16 +180,13 @@ class Sandbox:
     def __post_init__(self)->None:
         if self.profile is None:
             reference=self.image or "legacy"
-            revision=("sha256:"+reference.rsplit("@sha256:",1)[1]
-                if "@sha256:" in reference else reference)
-            self.profile=SandboxProfile(profile_id=f"legacy-{self.harness.value}",revision=revision,
+            self.profile=SandboxProfile(profile_id=f"legacy-{self.harness.value}",revision=reference,
                 provider=self.provider,provider_ref=reference,
                 runtime_contract="sandbox-harness-runtime/v1",runtime_bundle_digest="legacy",
                 runtime_code_bundle_digest="legacy")
         elif not self.image:self.image=self.profile.provider_ref
         if self.handle is None:
-            allocation=str(self.metadata.get("sandbox-harness.io/idempotency-key")
-                or self.turn_id or self.id)
+            allocation=str(self.turn_id or self.id)
             self.handle=SandboxHandle(provider=self.provider,sandbox_id=self.id,
                 allocation_id=allocation,profile_key=self.profile.compatibility_key,
                 revision=self.profile.revision)
@@ -253,6 +250,7 @@ class SandboxCreateOutcomeUnknown(SandboxProviderError):code="sandbox_create_out
 class SandboxBackend(Protocol):
     provider:str
     capabilities:SandboxCapabilities
+    def validate_release(self,provider_ref:str,artifact_digest:str)->None:...
     async def create(self,request:SandboxCreateRequest)->Sandbox:...
     async def get(self,handle:SandboxHandle)->Sandbox:...
     async def reconcile_create(self,scope:SandboxScope,allocation_id:str)->Sandbox|None:...

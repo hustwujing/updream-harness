@@ -1,7 +1,7 @@
 import pytest
 from types import SimpleNamespace
 
-from sandbox_harness.harness_job import HarnessJobAdapter,JobGrantFactory,OpenSandboxChildBackend
+from sandbox_harness.harness_job import HarnessJobAdapter,JobGrantFactory,SandboxChildBackend
 from sandbox_harness.job_adapters import AdapterStatus,JobExecutionContext,PreAcceptFailure
 from sandbox_harness.job_contracts import (JobGroupCreate,JobExpectedOutput,JobKind,JobRequest,
     JobState,OutputDisposition)
@@ -164,7 +164,7 @@ async def test_opensandbox_child_collects_output_into_atomic_delivery(tmp_path):
             assert path=='result.png';target=tmp_path/'staged-result.png';target.write_bytes(data)
             return StagedRuntimeObject(target,len(data),__import__('hashlib').sha256(data).hexdigest())
     sandbox=Sandbox(id='sandbox-1',harness=Harness.CODEX,image='image',runtime_url='http://runtime',metadata={})
-    backend=OpenSandboxChildBackend(pool=SimpleNamespace(),runtime=Runtime(),store=store,
+    backend=SandboxChildBackend(pool=SimpleNamespace(),runtime=Runtime(),store=store,
         objects=ObjectStore(tmp_path/'objects'),settings=Settings(backend='fake',data_root=tmp_path),
         token_factory=lambda *args:None)
     backend.sessions[job.id]=sandbox
@@ -190,7 +190,7 @@ async def test_opensandbox_child_cannot_succeed_without_required_artifact(tmp_pa
     class Runtime:
         async def artifacts(self,*args):return []
     sandbox=Sandbox(id='sandbox-1',harness=Harness.CODEX,image='image',runtime_url='http://runtime',metadata={})
-    backend=OpenSandboxChildBackend(pool=SimpleNamespace(),runtime=Runtime(),store=store,
+    backend=SandboxChildBackend(pool=SimpleNamespace(),runtime=Runtime(),store=store,
         objects=ObjectStore(tmp_path/'objects'),settings=Settings(backend='fake',data_root=tmp_path),
         token_factory=lambda *args:None);backend.sessions[job.id]=sandbox
     try:
@@ -212,7 +212,7 @@ async def test_text_only_child_result_returns_persisted_summary(tmp_path):
         async def artifacts(self,*args):return []
     sandbox=Sandbox(id='sandbox-text',harness=Harness.CODEX,image='image',
         runtime_url='http://runtime',metadata={})
-    backend=OpenSandboxChildBackend(pool=SimpleNamespace(),runtime=Runtime(),store=store,
+    backend=SandboxChildBackend(pool=SimpleNamespace(),runtime=Runtime(),store=store,
         objects=ObjectStore(tmp_path/'objects'),settings=Settings(backend='fake',data_root=tmp_path),
         token_factory=lambda *args:None);backend.sessions[job.id]=sandbox
     try:
@@ -232,7 +232,7 @@ async def test_missing_child_sandbox_is_terminal_not_an_infinite_pending_status(
         async def execution_status(self,*args):return None
     class Backend:
         async def get(self,*args):raise SandboxNotFound('gone')
-    backend=OpenSandboxChildBackend(pool=SimpleNamespace(backend=Backend()),runtime=Runtime(),
+    backend=SandboxChildBackend(pool=SimpleNamespace(backend=Backend()),runtime=Runtime(),
         store=SimpleNamespace(),objects=SimpleNamespace(),
         settings=Settings(backend='fake',data_root=tmp_path),token_factory=lambda *args:None)
     backend.sessions['job-lost']=sandbox
@@ -245,7 +245,7 @@ async def test_missing_child_sandbox_is_terminal_not_an_infinite_pending_status(
         async def get_attached(self,*args):return None
     async def missing(*args):raise SandboxNotFound('gone')
     Pool.backend=SimpleNamespace(get=missing)
-    uncached=OpenSandboxChildBackend(pool=Pool(),runtime=Runtime(),store=SimpleNamespace(),
+    uncached=SandboxChildBackend(pool=Pool(),runtime=Runtime(),store=SimpleNamespace(),
         objects=SimpleNamespace(),settings=Settings(backend='fake',data_root=tmp_path),
         token_factory=lambda *args:None)
     value=await uncached.status(context,'execution',sandbox_receipt(sandbox))
@@ -267,7 +267,7 @@ async def test_child_submission_recovery_adopts_unique_runtime_execution(tmp_pat
         async def execution_status(self,value,execution_id):
             assert value is sandbox and execution_id==job_id+':1'
             return {'result':None}
-    backend=OpenSandboxChildBackend(pool=Pool(),runtime=Runtime(),store=SimpleNamespace(),
+    backend=SandboxChildBackend(pool=Pool(),runtime=Runtime(),store=SimpleNamespace(),
         objects=SimpleNamespace(),settings=Settings(backend='fake',data_root=tmp_path),
         token_factory=lambda *args:None)
     backend._ensure_collector=lambda *args:None
@@ -296,7 +296,7 @@ async def test_child_submission_recovery_does_not_replay_when_recorded_sandbox_i
         async def release(self,value,**kwargs):self.released.append(value.id)
     class Runtime:
         async def execution_status(self,*args):return None
-    backend=OpenSandboxChildBackend(pool=Pool(),runtime=Runtime(),store=SimpleNamespace(),
+    backend=SandboxChildBackend(pool=Pool(),runtime=Runtime(),store=SimpleNamespace(),
         objects=SimpleNamespace(),settings=Settings(backend='fake',data_root=tmp_path),
         token_factory=lambda *args:None)
     context=SimpleNamespace(job=SimpleNamespace(id=job_id),
@@ -314,7 +314,7 @@ async def test_child_submission_recovery_does_not_replay_when_recorded_sandbox_i
 
 
 async def test_failed_child_result_does_not_reopen_missing_sandbox(tmp_path):
-    backend=OpenSandboxChildBackend(pool=SimpleNamespace(),runtime=SimpleNamespace(),
+    backend=SandboxChildBackend(pool=SimpleNamespace(),runtime=SimpleNamespace(),
         store=SimpleNamespace(),objects=SimpleNamespace(),
         settings=Settings(backend='fake',data_root=tmp_path),token_factory=lambda *args:None)
     result=await backend.collect(SimpleNamespace(), 'execution',
@@ -339,7 +339,7 @@ async def test_child_resumes_same_native_session_with_nested_group_results(tmp_p
         async def start_execution(self,*args,**kwargs):self.started.append(kwargs);return {'accepted':True}
         async def resume(self,*args,**kwargs):
             if False:yield None
-    store=Store();runtime=Runtime();backend=OpenSandboxChildBackend(pool=SimpleNamespace(),runtime=runtime,
+    store=Store();runtime=Runtime();backend=SandboxChildBackend(pool=SimpleNamespace(),runtime=runtime,
         store=store,objects=SimpleNamespace(),settings=Settings(backend='fake',data_root=tmp_path),
         token_factory=lambda *args:None);backend.sessions['j'*32]=sandbox
     context=SimpleNamespace(job=SimpleNamespace(id='j'*32),generation=1,
@@ -350,7 +350,7 @@ async def test_child_resumes_same_native_session_with_nested_group_results(tmp_p
 
 
 async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(tmp_path):
-    digest="a"*64;image="registry/reviewer@sha256:"+digest
+    digest="a"*64;image="template-reviewer"
     sandbox=Sandbox(id="sandbox-stream",harness=Harness.CODEX,image=image,
         runtime_url="http://runtime",metadata={})
     chunks=[b"x"*(1024*1024),b"y"*(1024*1024),b"z"*17]
@@ -366,10 +366,11 @@ async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(
         def get(self,*args,**kwargs):raise AssertionError("full object buffering is forbidden")
         def iter_bytes(self,*args,**kwargs):yield from chunks
     class Pool:
-        acquired=0
+        acquired=0;acquired_kwargs={}
         backend=SimpleNamespace(runtime_route=lambda sandbox:SandboxRuntimeRoute(
             "http://sandbox-gateway:29880","http://sandbox-proxy:29881"))
-        async def acquire(self,**kwargs):self.acquired+=1;return sandbox
+        async def acquire(self,**kwargs):
+            self.acquired+=1;self.acquired_kwargs=kwargs;return sandbox
         async def release(self,*args,**kwargs):pass
     class Runtime:
         sizes=[];injected={}
@@ -380,10 +381,16 @@ async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(
             assert seen==size and path.startswith("assets/inputs/")
         async def start_execution(self,*args,**kwargs):return {"accepted":True}
     async def token(*args):return "token",SimpleNamespace(nonce="nonce")
+    class Profiles:
+        def provider_release(self,*args,**kwargs):
+            assert args==("reviewer-readonly","codex")
+            assert kwargs=={"provider_ref":image,"artifact_digest":digest}
+            return SimpleNamespace(ref=image,revision="runtime-config-v2",artifact_digest=digest)
     settings=Settings(backend="fake",data_root=tmp_path,max_artifact_bytes=10*1024*1024,
         runtime_image_codex=image)
-    backend=OpenSandboxChildBackend(pool=Pool(),runtime=Runtime(),store=Store(),objects=Objects(),
-        settings=settings,token_factory=token);backend._ensure_collector=lambda *args:None
+    backend=SandboxChildBackend(pool=Pool(),runtime=Runtime(),store=Store(),objects=Objects(),
+        settings=settings,token_factory=token,profile_resolver=Profiles())
+    backend._ensure_collector=lambda *args:None
     input_value=__import__('sandbox_harness.job_contracts',fromlist=['JobArtifactInput']).JobArtifactInput(
         artifact_id=artifact.id,artifact_role="report")
     frozen=request().model_copy(update={"input_artifacts":(input_value,)})
@@ -398,6 +405,8 @@ async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(
     assert backend.runtime.injected['logical_thread_id']=='d'*32
     assert backend.runtime.injected['logical_turn_id']=='e'*32
     assert backend.runtime.injected['gateway_url']=='http://sandbox-gateway:29880'
+    assert backend.pool.acquired_kwargs['profile_id']=='reviewer-readonly'
+    assert backend.pool.acquired_kwargs['revision']=='runtime-config-v2'
     assert backend.store.allocations==[
         {"sandbox_id":sandbox.id,"sandbox_handle":sandbox.handle.to_mapping(),
             "reservation_id":"reservation","node_id":"node",

@@ -1,2 +1,1 @@
-"""Runtime daemon executed inside OpenSandbox."""
-
+"""Runtime daemon executed inside a configured SandboxBackend."""

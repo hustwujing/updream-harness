@@ -21,18 +21,19 @@ def test_job_service_entrypoint_configures_dedicated_telemetry():
     assert 'configure("job-worker",settings.data_root/"logs")' in source
 
 
-def runtime_profile(identity="general-cpu",reference=True):
+def runtime_profile(identity="general-cpu",reference=True,provider="opensandbox"):
     digests={"codex":"a"*64,"claude":"b"*64,"deepseek":"c"*64}
-    refs={harness:f"registry/{identity}-{harness}@sha256:{digest}"
-        for harness,digest in digests.items()} if reference else {}
+    refs=({harness:(f"registry/{identity}-{harness}@sha256:{digest}"
+        if provider=="opensandbox" else f"template-{identity}-{harness}")
+        for harness,digest in digests.items()} if reference else {})
     class RuntimeProfile(SimpleNamespace):
-        def release(self,provider,harness):
-            if provider!="opensandbox" or harness not in self.image_refs:
+        def release(self,selected,harness):
+            if selected!=self.provider or harness not in self.releases:
                 raise ValueError("provider release unavailable")
-            return SimpleNamespace(ref=self.image_refs[harness],
-                artifact_digest=self.image_digests[harness])
+            return self.releases[harness]
     return RuntimeProfile(id=identity,supported_harnesses=tuple(digests),
-        image_digests=digests,image_refs=refs)
+        provider=provider,releases={harness:SimpleNamespace(ref=ref,artifact_digest=digests[harness])
+            for harness,ref in refs.items()})
 
 
 def test_job_service_registers_every_digest_pinned_profile_harness_pair():
@@ -43,16 +44,16 @@ def test_job_service_registers_every_digest_pinned_profile_harness_pair():
     assert all(row.image_ref.endswith("@sha256:"+row.image_digest) for row in values)
 
 
-def test_job_service_refuses_unsigned_or_incomplete_image_matrix():
+def test_job_service_accepts_provider_opaque_refs_and_refuses_incomplete_matrix():
     with pytest.raises(ValueError,match="unavailable"):
         resolved_node_profiles(SimpleNamespace(runtimes={"general":runtime_profile(reference=False)},
             provider="opensandbox"))
-    value=runtime_profile();value.image_refs.pop("deepseek")
+    value=runtime_profile();value.releases.pop("deepseek")
     with pytest.raises(ValueError,match="unavailable"):
         resolved_node_profiles(SimpleNamespace(runtimes={"general":value},provider="opensandbox"))
-    value=runtime_profile();value.image_refs["deepseek"]="registry/unpinned:latest"
-    with pytest.raises(ValueError,match="digest-pinned"):
-        resolved_node_profiles(SimpleNamespace(runtimes={"general":value},provider="opensandbox"))
+    opaque=resolved_node_profiles(SimpleNamespace(runtimes={"general":runtime_profile(provider="aliyun")},
+        provider="aliyun"))
+    assert all(row.image_ref.startswith("template-") for row in opaque)
 
 
 async def test_job_service_registers_node_and_stops_without_deleting_shared_state(tmp_path):

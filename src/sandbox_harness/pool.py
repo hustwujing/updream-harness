@@ -238,10 +238,12 @@ class SandboxPool:
 
     @observed("sandbox.acquire")
     async def acquire(self, *, thread_id: str, turn_id: str, harness: Harness,
-                      environment: dict[str, str], image: str | None = None) -> Sandbox:
+                      environment: dict[str, str], image: str | None = None,
+                      profile_id: str | None = None, revision: str | None = None) -> Sandbox:
         async with self._thread_lock(thread_id):
             desired_image = image or self.images[harness]
-            desired_profile=self.profile_resolver.resolve(harness,desired_image)
+            desired_profile=self.profile_resolver.resolve(harness,desired_image,
+                profile_id=profile_id,revision=revision)
             slot_reserved = False
             async with self._lock:
                 if self._closed:

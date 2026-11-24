@@ -244,7 +244,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     profile_resolver = ProfileResolver.from_json(profile_catalog_raw,
         expected_digest=(settings.profile_catalog_digest or hashlib.sha256(profile_catalog_raw.encode()).hexdigest()),
         skill_manifest=skill_manifest,
-        provider="opensandbox" if settings.backend=="fake" else settings.backend)
+        provider=sandbox_factory.release_provider(settings.backend))
     catalog.job_catalog = job_catalog
     catalog.profile_resolver = profile_resolver
     readiness=ExecutionReadiness.from_settings(settings,job_catalog)

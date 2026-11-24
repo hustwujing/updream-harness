@@ -29,13 +29,15 @@ class SandboxProfileResolver:
         provider_ref=provider_ref or f"{self.provider}:default:{harness.value}"
         release=self.releases.get(harness)
         if release and provider_ref==release.ref:revision=revision or release.revision
-        if revision is None and "@sha256:" in provider_ref:
-            revision="sha256:"+provider_ref.rsplit("@sha256:",1)[1]
         return SandboxProfile(profile_id=profile_id or f"primary-{harness.value}",
             revision=revision or provider_ref,provider=self.provider,provider_ref=provider_ref,
             runtime_contract=self.runtime_contract,
             runtime_bundle_digest=self.runtime_bundle_digest or "legacy",
             runtime_code_bundle_digest=self.runtime_code_bundle_digest or "legacy")
+
+
+def release_provider(provider:str)->str:
+    return "opensandbox" if provider=="fake" else provider
 
 
 class SandboxBackendRegistry:
@@ -53,6 +55,9 @@ class SandboxBackendRegistry:
     def provider(self)->str:return self.active_provider
     @property
     def capabilities(self):return self.active.capabilities
+
+    def validate_release(self,provider_ref:str,artifact_digest:str)->None:
+        self.active.validate_release(provider_ref,artifact_digest)
 
     def backend_for(self,handle:SandboxHandle)->SandboxBackend:
         try:return self.backends[handle.provider]
@@ -132,7 +137,7 @@ def build_sandbox_registry(settings:Settings)->SandboxBackendRegistry:
 
 
 def primary_provider_releases(settings:Settings,provider:str)->dict[Harness,ProviderRelease]:
-    selected="opensandbox" if provider=="fake" else provider
+    selected=release_provider(provider)
     raw=settings.profile_catalog_path.read_text();actual=hashlib.sha256(raw.encode()).hexdigest()
     if settings.profile_catalog_digest and actual!=settings.profile_catalog_digest:
         raise ValueError("profile catalog digest mismatch")

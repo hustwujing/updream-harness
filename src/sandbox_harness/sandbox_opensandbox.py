@@ -30,6 +30,11 @@ class OpenSandboxBackend:
         arbitrary_ports=True,ttl_renewal=True,authenticated_runtime_http=True,
         delete_convergence=True,pause_resume=False)
 
+    def validate_release(self,provider_ref:str,artifact_digest:str)->None:
+        if not provider_ref.endswith("@sha256:"+artifact_digest):
+            raise SandboxProfileUnavailable("OpenSandbox requires a digest-pinned image",
+                provider=self.provider)
+
     def __init__(self,base_url:str,api_key:str,timeout_seconds:int,namespace:str,
                  gateway_url:str="http://172.31.0.1:29880",proxy_port:int=29881,
                  *,transport:httpx.AsyncBaseTransport|None=None):
@@ -165,9 +170,11 @@ class OpenSandboxBackend:
                      environment:Mapping[str,str]|None=None)->Sandbox:
         if isinstance(request,Harness):
             request=self._legacy_request(request,image or "",metadata or {},environment or {})
-        if request.profile.provider!=self.provider or "@sha256:" not in request.profile.provider_ref:
+        if request.profile.provider!=self.provider:
             raise SandboxProfileUnavailable("OpenSandbox requires an immutable image profile",
                 provider=self.provider)
+        digest=request.profile.provider_ref.rsplit("@sha256:",1)[-1]
+        self.validate_release(request.profile.provider_ref,digest)
         metadata={**self._profile_metadata(request.profile),
             "sandbox-harness.io/namespace":self.namespace,
             "sandbox-harness.io/idempotency-key":request.allocation_id,
@@ -184,6 +191,10 @@ class OpenSandboxBackend:
             self._raise_status(response,profile=True)
             sandbox=self._sandbox(response.json(),request.harness,request.profile.provider_ref,metadata)
             self._profiles[sandbox.id]=request.profile
+            sandbox.profile=request.profile
+            sandbox.handle=SandboxHandle(provider=self.provider,sandbox_id=sandbox.id,
+                allocation_id=request.allocation_id,profile_key=request.profile.compatibility_key,
+                revision=request.profile.revision)
             sandbox.expires_at=datetime.now(timezone.utc)+timedelta(seconds=request.ttl_seconds)
             sandbox.expires_at_monotonic=time.monotonic()+request.ttl_seconds
             try:return await self._ready(sandbox)
@@ -300,7 +311,9 @@ class OpenSandboxBackend:
                 runtime_bundle_digest="provider-recovered",
                 runtime_code_bundle_digest="provider-recovered",compatibility_key=handle.profile_key)
         harness=Harness(metadata.get("sandbox-harness.io/harness","codex"))
-        return await self._ready(self._sandbox(row,harness,(row.get("image") or {}).get("uri",""),metadata))
+        sandbox=self._sandbox(row,harness,(row.get("image") or {}).get("uri",""),metadata)
+        if isinstance(handle,SandboxHandle):sandbox.handle=handle
+        return await self._ready(sandbox)
 
     async def _renew_ttl(self,sandbox:Sandbox,ttl_seconds:int)->Sandbox:
         await self._owned_row(sandbox.id)

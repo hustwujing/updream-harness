@@ -38,7 +38,8 @@ async def environment(tmp_path):
     catalog=JobCatalog.from_json(catalog_raw,expected_digest=hashlib.sha256(catalog_raw.encode()).hexdigest())
     profile_raw=(ROOT/"deploy/profile-catalog.example.json").read_text()
     resolver=ProfileResolver.from_json(profile_raw,expected_digest=hashlib.sha256(profile_raw.encode()).hexdigest(),
-        skill_manifest=json.loads((ROOT/"runtime/skills/manifest.json").read_text()))
+        skill_manifest=json.loads((ROOT/"runtime/skills/manifest.json").read_text()),
+        provider="opensandbox")
     reviewer=ReviewerCoordinator(JobCoordinator(store,catalog,profile_resolver=resolver))
     return store,thread,turn,reviewer,ObjectStore(tmp_path/"objects")
 

@@ -13,17 +13,28 @@ from .job_adapters import (AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExe
     PreAcceptFailure)
 from .job_contracts import JobState
 from .sandbox_contracts import SandboxHandle
+from .profiles import ProviderRelease
 
 
 class MediaRenderOperationAdapter(BaseJobAdapter):
-    def __init__(self,*,scheduler,pool,runtime,store,objects,settings,token_factory):
+    def __init__(self,*,scheduler,pool,runtime,store,objects,settings,token_factory,
+                 profile_resolver=None):
         self.scheduler=scheduler;self.pool=pool;self.runtime=runtime;self.store=store
-        self.objects=objects;self.settings=settings;self.token_factory=token_factory;self.sessions={}
+        self.objects=objects;self.settings=settings;self.token_factory=token_factory
+        self.profile_resolver=profile_resolver;self.sessions={}
         self.artifacts=ArtifactGateway(store,objects,settings.data_root/'tmp'/'operation-job-artifacts',
             maximum_bytes=settings.max_artifact_bytes)
 
     @staticmethod
     def _thread_id(job_id):return 'operation-job-'+job_id
+
+    def _provider_release(self,reservation,harness:Harness)->ProviderRelease:
+        image=getattr(reservation,"image_ref","") or self.settings.image_for(harness.value)
+        if self.profile_resolver:
+            return self.profile_resolver.provider_release(reservation.runtime_profile_id,
+                harness.value,provider_ref=image,artifact_digest=reservation.image_digest)
+        return ProviderRelease(ref=image,revision=image,
+            artifact_digest=reservation.image_digest)
 
     @staticmethod
     def _controlled_validation_receipts(operation:str,recipe:dict,value:dict,
@@ -63,13 +74,12 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
                 raise PreAcceptFailure(str(exc),infrastructure=True,retry_after_seconds=1) from exc
             raise
         harness=Harness(reservation.harness)
-        image=reservation.image_ref or self.settings.image_for(harness.value)
-        if not image.endswith('@sha256:'+reservation.image_digest):
-            raise RuntimeError('operation_image_digest_mismatch')
+        release=self._provider_release(reservation,harness);image=release.ref
         sandbox=None;claims=None
         try:
             sandbox=await self.pool.acquire(thread_id=self._thread_id(context.job.id),turn_id=context.job.id,
-                harness=harness,environment={},image=image)
+                harness=harness,environment={},image=image,
+                profile_id=reservation.runtime_profile_id,revision=release.revision)
             allocation={'sandbox_id':sandbox.id,'sandbox_handle':sandbox.handle.to_mapping(),
                 'reservation_id':reservation.id,'node_id':reservation.node_id,
                 'node_generation':reservation.node_generation}

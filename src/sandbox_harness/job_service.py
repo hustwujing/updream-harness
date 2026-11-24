@@ -30,14 +30,13 @@ from .scheduler import NodeProfile, Scheduler
 from .store import Store
 
 
-def resolved_node_profiles(resolver: ProfileResolver) -> tuple[NodeProfile, ...]:
+def resolved_node_profiles(resolver: ProfileResolver, backend=None) -> tuple[NodeProfile, ...]:
     values=[]
     for profile in sorted(resolver.runtimes.values(),key=lambda row:row.id):
         for harness in profile.supported_harnesses:
             release=profile.release(resolver.provider,harness)
             digest=release.artifact_digest;reference=release.ref
-            if resolver.provider=="opensandbox" and not reference.endswith("@sha256:"+digest):
-                raise ValueError("Runtime Profile image is not digest-pinned")
+            if backend:backend.validate_release(reference,digest)
             values.append(NodeProfile(runtime_profile_id=profile.id,harness=harness,
                 image_digest=digest,image_ref=reference,warm_slots=0))
     if not values:raise ValueError("Runtime Profile image matrix is empty")
@@ -49,7 +48,7 @@ def profile_resolver(settings: Settings) -> ProfileResolver:
     manifest=json.loads((Path(__file__).resolve().parents[2]/"runtime/skills/manifest.json").read_text())
     return ProfileResolver.from_json(raw,expected_digest=(settings.profile_catalog_digest
         or hashlib.sha256(raw.encode()).hexdigest()),skill_manifest=manifest,
-        provider="opensandbox" if settings.backend=="fake" else settings.backend)
+        provider=sandbox_factory.release_provider(settings.backend))
 
 
 def sandbox_pool(settings: Settings) -> SandboxPool:
@@ -74,7 +73,7 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
     scheduler=Scheduler(store)
     resolver=profile_resolver(settings)
     child_backend=SandboxChildBackend(pool=pool,runtime=runtime,store=store,objects=objects,
-        settings=settings,token_factory=JobGrantFactory(settings))
+        settings=settings,token_factory=JobGrantFactory(settings),profile_resolver=resolver)
     harness_adapter=HarnessJobAdapter(scheduler,child_backend)
     media_catalog=MediaCatalog(settings.media_catalog_json,
         ark_assets_configured=bool(settings.ark_access_key and settings.ark_secret_key
@@ -82,7 +81,8 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
         tripo_configured=bool(settings.tripo_api_key))
     media_adapter=MediaProviderJobAdapter(settings,store,objects,media_catalog)
     render_adapter=MediaRenderOperationAdapter(scheduler=scheduler,pool=pool,runtime=runtime,
-        store=store,objects=objects,settings=settings,token_factory=JobGrantFactory(settings))
+        store=store,objects=objects,settings=settings,token_factory=JobGrantFactory(settings),
+        profile_resolver=resolver)
     decompose_adapter=ImageDecomposeAdapter(settings,store,objects)
     catalog_raw=settings.job_catalog_path.read_text()
     job_catalog=JobCatalog.from_json(catalog_raw,expected_digest=(settings.job_catalog_digest
@@ -111,7 +111,7 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
         "image.decompose":decompose_adapter},node_id=settings.job_node_id,
         concurrency=settings.job_worker_concurrency,lease_seconds=settings.job_lease_seconds,
         review_dispatcher=dispatch_policy_review)
-    profiles=resolved_node_profiles(resolver)
+    profiles=resolved_node_profiles(resolver,pool.backend)
     cpu_total=max(1,min(os.cpu_count() or 1,settings.job_node_cpu_limit))
     memory_total=max(128,min(int(os.sysconf("SC_PAGE_SIZE")*os.sysconf("SC_PHYS_PAGES")//(1024*1024)),
         settings.job_node_memory_mb_limit))
