@@ -40,9 +40,14 @@ contents are not stored in PostgreSQL, Redis or host logs.
 | Exited-session replacement | PASS | `tests/test_sandbox_inspector.py` |
 | Runtime endpoint/credential propagation | PASS | `tests/test_runtime_client.py`, `tests/test_sandbox_inspector.py` |
 | Focused regression | PASS | 31 passed |
-| Full regression | PASS | 1103 passed, 5 skipped |
-| Ali real PTY | PENDING | Requires new Runtime Code Bundle deployment |
-| P18 restore/takeover with terminal | PENDING | Runs after Ali real PTY probe |
+| Final focused regression | PASS | Provider, Inspector, Runtime, deployment and bootstrap suites passed |
+| Full regression | PASS | 1105 passed, 5 skipped |
+| Ali real PTY | PASS | Marker execution, exit and cleanup on release `2418b0012f43` |
+| Runtime reconnect replay | PASS | Disconnect and replay from byte offset zero |
+| P18 restore/takeover with terminal | PASS | Checkpoint restored and terminal remained usable |
+| AP01-AP05 | PASS | Current provider lifecycle report passed 5/5 |
+| Codex/Claude/DeepSeek smoke | PASS | A real Turn completed on every harness |
+| K01 | PASS | 7/7 parallel child harness cases, 576 seconds |
 
 ## Existing real-case baseline
 
@@ -55,3 +60,14 @@ contents are not stored in PostgreSQL, Redis or host logs.
 
 The old failure is the reason for this protocol change, not an Ali-specific
 branch. OpenSandbox, Ali and future providers will all use the same Runtime PTY.
+
+## Release and cleanup
+
+- Added WebSocket forwarding to the immutable bootstrap layer and published 18
+  matching OpenSandbox image digests plus 18 Ali templates.
+- Fixed provider-selected capability revoke routing and materialized Catalog
+  signing; the merged provider Catalog verifies with the release public key.
+- Deleted 72 superseded Ali templates and 90 superseded ACR tags after current
+  real-case acceptance.
+- Removed 85 obsolete local Ali image tags and test caches, reclaiming about
+  56.4 GB on `/data2`; no global Docker prune or shared-project deletion ran.
