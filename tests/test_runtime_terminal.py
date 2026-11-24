@@ -36,8 +36,9 @@ def test_runtime_pty_supports_input_replay_resize_and_delete(tmp_path,monkeypatc
                 output.extend(payload(socket.receive_bytes()))
                 if b"RUNTIME_PTY_OK" in output:break
             assert b"RUNTIME_PTY_OK" in output
-        with client.websocket_connect(f"/v1/pty/{session_id}/ws?since=0") as replay:
-            assert b"RUNTIME_PTY_OK" in payload(replay.receive_bytes())
+        for _ in range(5):
+            with client.websocket_connect(f"/v1/pty/{session_id}/ws?since=0") as replay:
+                assert b"RUNTIME_PTY_OK" in payload(replay.receive_bytes())
         status=client.get(f"/v1/pty/{session_id}")
         assert status.status_code==200 and status.json()["running"] is True
         deleted=client.delete(f"/v1/pty/{session_id}")

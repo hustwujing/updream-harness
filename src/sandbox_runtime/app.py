@@ -572,16 +572,27 @@ def create_app() -> FastAPI:
                             "code": "pty_message_invalid"})
         sender = asyncio.create_task(send_output(), name="pty-output-" + session_id)
         receiver = asyncio.create_task(receive_input(), name="pty-input-" + session_id)
-        done, pending = await asyncio.wait({sender, receiver},
-            return_when=asyncio.FIRST_COMPLETED)
-        for task in pending:
-            task.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
-        for task in done:
-            if not task.cancelled():
-                error = task.exception()
+        tasks = {sender, receiver}
+        try:
+            done, _ = await asyncio.wait(tasks,
+                return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                try:
+                    error = task.exception()
+                except asyncio.CancelledError:
+                    continue
                 if error and not isinstance(error, WebSocketDisconnect):
                     raise error
+        except (asyncio.CancelledError, WebSocketDisconnect):
+            pass
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            except asyncio.CancelledError:
+                pass
 
     async def terminate_group(process, *, grace: float = 2.0) -> None:
         # A shell may exit while its descendants still own stdout or mutate files.
