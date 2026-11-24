@@ -30,6 +30,15 @@ def test_runtime_user_is_named_and_keeps_stable_uid_contract():
     assert 'SANDBOX_HARNESS_SANDBOX_USERNAME:-updream' in build
 
 
+def test_runtime_workspace_remains_writable_when_provider_remaps_uid():
+    required = ("/workspace", "/workspace/project", "/workspace/state",
+        "/workspace/state/home", "/workspace/inbox", "/workspace/outputs", "/workspace/tmp")
+    expected = "chmod 1777 " + " ".join(required)
+    for dockerfile in ("runtime/bootstrap.Dockerfile", "runtime/base.Dockerfile"):
+        source = (ROOT / dockerfile).read_text()
+        assert expected in source
+
+
 def test_runtime_python_dependencies_are_a_stable_layer_before_application_source():
     source = (ROOT / "runtime/base.Dockerfile").read_text()
     requirements = ROOT / "runtime/requirements-runtime.txt"

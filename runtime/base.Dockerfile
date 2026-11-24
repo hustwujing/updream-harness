@@ -34,7 +34,8 @@ RUN python runtime/toolchain_probe.py --verify runtime/toolchain.lock.json && \
     useradd --uid 10001 --gid 10001 --home-dir /workspace/state/home --no-create-home \
       --shell /bin/bash "${SANDBOX_USERNAME}" && \
     mkdir -p /workspace/project /workspace/state/home /workspace/inbox /workspace/outputs /workspace/tmp /run/harness && \
-    chown -R 10001:10001 /workspace /run/harness
+    chown -R 10001:10001 /workspace /run/harness && \
+    chmod 1777 /workspace /workspace/project /workspace/state /workspace/state/home /workspace/inbox /workspace/outputs /workspace/tmp
 ENV USER=${SANDBOX_USERNAME}
 ENV LOGNAME=${SANDBOX_USERNAME}
 ENV PYTHONPATH=/opt/bootstrap

@@ -12,7 +12,8 @@ RUN sed -i -e "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}/debian|g" \
       --shell /bin/bash "${SANDBOX_USERNAME}" && \
     mkdir -p /opt/bootstrap /opt/platform /workspace/project /workspace/state/home \
       /workspace/inbox /workspace/outputs /workspace/tmp /run/harness && \
-    chown -R 10001:10001 /workspace /run/harness
+    chown -R 10001:10001 /workspace /run/harness && \
+    chmod 1777 /workspace /workspace/project /workspace/state /workspace/state/home /workspace/inbox /workspace/outputs /workspace/tmp
 COPY src/sandbox_bootstrap /opt/bootstrap/sandbox_bootstrap
 COPY runtime/bundle_public_key.pem /opt/bootstrap/bundle_public_key.pem
 COPY runtime/requirements-runtime.txt /opt/bootstrap/requirements-runtime.txt
