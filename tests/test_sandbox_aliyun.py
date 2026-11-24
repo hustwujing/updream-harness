@@ -184,6 +184,19 @@ async def test_aliyun_lifecycle_maps_template_metadata_ttl_endpoint_and_delete()
 
 
 @pytest.mark.asyncio
+async def test_aliyun_fresh_create_does_not_poll_inventory_before_submission():
+    client = FakeAliyunClient()
+    value = backend(client, httpx.MockTransport(health_transport))
+    try:
+        sandbox = await value.create(creation())
+        assert sandbox.id == "sandbox-1"
+        assert len(client.create_calls) == 1
+        assert client.list_calls == []
+    finally:
+        await value.aclose()
+
+
+@pytest.mark.asyncio
 async def test_aliyun_exhausts_pages_and_exactly_filters_provider_results():
     client = FakeAliyunClient()
     wanted = creation()

@@ -346,10 +346,6 @@ class AliyunSandboxBackend:
                 else:
                     self._require_compatible_allocation(existing,request.profile)
                     return existing
-            existing=await self._reconcile_allocation(request.allocation_id)
-            if existing:
-                self._require_compatible_allocation(existing,request.profile)
-                return await self._ready(self._apply_request_identity(existing,request))
             return await self._create_once(request)
 
     def _require_compatible_allocation(self,sandbox:Sandbox,profile:SandboxProfile)->None:
