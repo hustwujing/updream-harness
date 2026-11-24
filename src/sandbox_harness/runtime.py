@@ -3,6 +3,7 @@ from __future__ import annotations
 from .observability import observed, event, enrich, carrier, add_link, telemetry
 
 import asyncio
+import gzip
 import hashlib
 import json
 import logging
@@ -191,8 +192,12 @@ class RuntimeClient:
                 status = await client.get("/v1/runtime-bundle")
                 self._raise_for_status(sandbox,status)
                 if status.json().get("sha256") != bundle_digest:
+                    compressed = await asyncio.to_thread(
+                        gzip.compress, bundle, 6, mtime=0)
                     response = await client.put("/v1/runtime-bundle", params={"sha256": bundle_digest},
-                        content=bundle, headers={"Content-Type": "application/x-tar",
+                        content=compressed, headers={"Content-Type": "application/x-tar",
+                            "Content-Encoding": "gzip",
+                            "X-Uncompressed-Content-Length": str(len(bundle)),
                             "X-Runtime-Bundle-Signature": signature.hex()})
                     self._raise_for_status(sandbox,response)
             for attempt in range(8):

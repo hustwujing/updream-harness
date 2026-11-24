@@ -35,7 +35,8 @@ from sandbox_harness.observability import RequestLoggingMiddleware, observed, ev
 from .adapters import (command,control_interaction_response,control_user_message,normalize,
     normalize_error_code,streaming_user_message)
 from .instructions import RUNTIME_GUIDANCE, runtime_guidance
-from .runtime_bundle import MAX_BUNDLE_BYTES, activate_runtime_bundle, verify_runtime_bundle_signature
+from .runtime_bundle import (MAX_BUNDLE_BYTES,activate_runtime_bundle,
+    decode_runtime_bundle_transport,verify_runtime_bundle_signature)
 from .skills import clear_materialized_skills, materialize_skills
 from .state import runtime_state_dir
 
@@ -1009,10 +1010,12 @@ def create_app() -> FastAPI:
             raise HTTPException(400, "Invalid Runtime Bundle digest")
         if app.state.execution is not None and app.state.execution.result is None:
             raise HTTPException(409, "Cannot replace Runtime Bundle during an active execution")
-        data = await request.body()
-        if len(data) > MAX_BUNDLE_BYTES:
-            raise HTTPException(413, "Runtime Bundle too large")
+        encoded = await request.body()
         try:
+            data = decode_runtime_bundle_transport(encoded,
+                request.headers.get("content-encoding", ""))
+            if len(data) > MAX_BUNDLE_BYTES:
+                raise ValueError("runtime_bundle_too_large")
             signature = bytes.fromhex(request.headers.get("X-Runtime-Bundle-Signature", ""))
             verify_runtime_bundle_signature(data, signature)
             value = await asyncio.to_thread(activate_runtime_bundle, data, sha256, RUN)

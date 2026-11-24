@@ -1,4 +1,5 @@
 import hashlib
+import gzip
 import io
 import json
 from pathlib import Path
@@ -133,6 +134,23 @@ def test_runtime_bundle_endpoint_requires_active_digest_before_configuration(tmp
     assert configured.status_code == 200 and configured.json()["skills"]["skill_count"] == 0
 
 
+def test_runtime_bundle_endpoint_accepts_gzip_transport(tmp_path, monkeypatch):
+    data, signature, digest, public_path = built_bundle(tmp_path / "published")
+    monkeypatch.setenv("SANDBOX_RUNTIME_BUNDLE_PUBLIC_KEY", str(public_path))
+    monkeypatch.setattr(runtime_app, "RUN", tmp_path / "run")
+    monkeypatch.setattr(runtime_app, "WORKSPACE", tmp_path / "workspace")
+    monkeypatch.setattr(runtime_app, "OUTPUTS", tmp_path / "workspace/outputs")
+    app = runtime_app.create_app()
+    with TestClient(app) as client:
+        installed = client.put("/v1/runtime-bundle", params={"sha256": digest},
+            content=gzip.compress(data, compresslevel=6, mtime=0), headers={
+                "Content-Encoding": "gzip",
+                "X-Runtime-Bundle-Signature": signature.hex(),
+            })
+    assert installed.status_code == 200
+    assert installed.json()["sha256"] == digest
+
+
 @pytest.mark.asyncio
 async def test_host_injects_bundle_once_then_configures(tmp_path):
     data, signature, digest, _ = built_bundle(tmp_path / "published")
@@ -142,7 +160,8 @@ async def test_host_injects_bundle_once_then_configures(tmp_path):
         requests.append(request)
         if request.method == "GET": return httpx.Response(200, json={"sha256": active["digest"]})
         if request.method == "PUT":
-            assert hashlib.sha256(request.content).hexdigest() == digest
+            assert request.headers["content-encoding"] == "gzip"
+            assert hashlib.sha256(gzip.decompress(request.content)).hexdigest() == digest
             assert bytes.fromhex(request.headers["X-Runtime-Bundle-Signature"]) == signature
             active["digest"] = digest; return httpx.Response(200, json={"sha256": digest})
         return httpx.Response(200, json={"configured": True})

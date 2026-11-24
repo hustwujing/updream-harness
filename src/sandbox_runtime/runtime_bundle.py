@@ -7,6 +7,7 @@ import os
 from pathlib import Path, PurePosixPath
 import shutil
 import tarfile
+import zlib
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
@@ -15,6 +16,25 @@ from cryptography.hazmat.primitives import serialization
 MAX_BUNDLE_BYTES = 64 * 1024 * 1024
 MAX_BUNDLE_FILES = 10_000
 MAX_BUNDLE_FILE_BYTES = 8 * 1024 * 1024
+
+
+def decode_runtime_bundle_transport(data: bytes, content_encoding: str) -> bytes:
+    if not content_encoding:
+        return data
+    if content_encoding.lower().strip() != "gzip":
+        raise ValueError("runtime_bundle_content_encoding_unsupported")
+    if len(data) > MAX_BUNDLE_BYTES:
+        raise ValueError("runtime_bundle_too_large")
+    try:
+        decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        decoded = decoder.decompress(data, MAX_BUNDLE_BYTES + 1)
+    except zlib.error as exc:
+        raise ValueError("runtime_bundle_transport_invalid") from exc
+    if len(decoded) > MAX_BUNDLE_BYTES:
+        raise ValueError("runtime_bundle_too_large")
+    if not decoder.eof or decoder.unconsumed_tail or decoder.unused_data:
+        raise ValueError("runtime_bundle_transport_invalid")
+    return decoded
 
 
 def verify_runtime_bundle_signature(data: bytes, signature: bytes) -> None:
