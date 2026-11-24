@@ -1,6 +1,7 @@
 import importlib.util
 import pwd
 import stat
+import subprocess
 import sys
 from pathlib import Path
 import json
@@ -211,6 +212,25 @@ def test_ali_materializer_atomic_environment_replace_preserves_owner_and_mode(tm
     assert target.read_text()=="NEW=value\n"
     assert (after.st_uid,after.st_gid)==(before.st_uid,before.st_gid)
     assert stat.S_IMODE(after.st_mode)==0o640
+
+
+def test_ali_materializer_signs_rewritten_profile_catalog(tmp_path):
+    assets=load("ali_assets_catalog_signature",ROOT/"deploy/ali/materialize-assets.py")
+    private=tmp_path/"signing.pem";public=tmp_path/"public.pem"
+    subprocess.run(["openssl","genpkey","-algorithm","ED25519","-out",str(private)],check=True)
+    with public.open("wb") as stream:
+        subprocess.run(["openssl","pkey","-in",str(private),"-pubout"],
+            stdout=stream,check=True)
+    target=tmp_path/"profile-catalog.json";raw=b'{"schema_version":2}\n'
+
+    assets.write_signed_profile_catalog(target,raw,private,public)
+
+    assert target.read_bytes()==raw
+    signature=target.with_suffix(".json.sig")
+    assert signature.is_file() and signature.stat().st_size==64
+    subprocess.run(["openssl","pkeyutl","-verify","-pubin","-inkey",str(public),
+        "-rawin","-in",str(target),"-sigfile",str(signature)],check=True)
+    assert not list(tmp_path.glob("*.tmp"))
 
 
 def test_aliyun_provider_release_overlay_is_complete_and_immutable():

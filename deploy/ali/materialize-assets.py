@@ -62,6 +62,35 @@ def verified_copy(source:Path,target:Path,digest:str)->None:
     shutil.copyfile(source,temporary);temporary.chmod(0o644);temporary.replace(target)
 
 
+def write_signed_profile_catalog(target:Path,raw:bytes,signing_key:Path,
+                                 public_key:Path)->None:
+    if not signing_key.is_file() or not public_key.is_file():
+        raise ValueError("profile_catalog_signing_key_missing")
+    target.parent.mkdir(parents=True,exist_ok=True)
+    signature_target=target.with_suffix(target.suffix+".sig")
+    temporary=target.with_suffix(target.suffix+".tmp")
+    signature_temporary=signature_target.with_suffix(signature_target.suffix+".tmp")
+    temporary.unlink(missing_ok=True);signature_temporary.unlink(missing_ok=True)
+    try:
+        temporary.write_bytes(raw)
+        signature=subprocess.run(["openssl","pkeyutl","-sign","-rawin",
+            "-inkey",str(signing_key),"-in",str(temporary)],stdout=subprocess.PIPE,
+            check=True).stdout
+        signature_temporary.write_bytes(signature)
+        subprocess.run(["openssl","pkeyutl","-verify","-pubin","-inkey",
+            str(public_key),"-rawin","-in",str(temporary),"-sigfile",
+            str(signature_temporary)],check=True,stdout=subprocess.DEVNULL)
+        for staged,current in ((temporary,target),(signature_temporary,signature_target)):
+            if current.exists():
+                info=current.stat();staged.chmod(stat.S_IMODE(info.st_mode))
+                os.chown(staged,info.st_uid,info.st_gid)
+            else:
+                staged.chmod(0o644)
+        temporary.replace(target);signature_temporary.replace(signature_target)
+    finally:
+        temporary.unlink(missing_ok=True);signature_temporary.unlink(missing_ok=True)
+
+
 def rewrite_profile_catalog(value:dict)->dict:
     rewritten=json.loads(json.dumps(value))
     old_prefix="127.0.0.1:25001/sandbox-harness-parallel/"
@@ -176,7 +205,8 @@ def materialize(source_env:Path,target_env:Path,*,promote_images:bool=False,forc
                 promote_registry_manifest(source_releases[harness]["ref"],target["ref"])
     profile_raw=canonical_json(rewritten).encode();new_profile_digest=digest_bytes(profile_raw)
     profile_target=DATA_ROOT/"catalogs/profile-catalog.json"
-    profile_target.parent.mkdir(parents=True,exist_ok=True);profile_target.write_bytes(profile_raw);profile_target.chmod(0o644)
+    write_signed_profile_catalog(profile_target,profile_raw,
+        DATA_ROOT/"config/runtime-bundle-signing.pem",ROOT/"runtime/bundle_public_key.pem")
     _copy_bundle(Path(source["SANDBOX_HARNESS_RUNTIME_BUNDLE_DIR"]),DATA_ROOT/"runtime-bundles",runtime_digest)
     _copy_bundle(Path(source["SANDBOX_HARNESS_RUNTIME_CODE_BUNDLE_DIR"]),DATA_ROOT/"runtime-code-bundles",code_digest)
     _materialize_controlled(Path(source["SANDBOX_HARNESS_CONTROLLED_RUNTIME_ROOT"]),controlled_digest,force)
