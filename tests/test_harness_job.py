@@ -150,7 +150,7 @@ async def test_opensandbox_child_collects_output_into_atomic_delivery(tmp_path):
     turn,_,_=await store.create_turn(thread.id,TurnCreate(message='delegate',
         idempotency_key='delegate-output-turn'),profile,'owner')
     expected=JobExpectedOutput(artifact_role='images',output_disposition=OutputDisposition.DELIVERY,
-        min_items=1,max_items=1,mime_patterns=('image/png',))
+        min_items=1,max_items=1,mime_patterns=('image/png',),validators=('nonempty',))
     _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id=thread.id,
         origin_turn_id=turn.id,idempotency_key='collect-child-group',jobs=[request(expected_outputs=(expected,))]))
     attempt=(await store.claim_available_jobs('worker','node',60,limit=1,adapters={'child-harness'}))[0]

@@ -562,8 +562,19 @@ class SandboxChildBackend:
         collections=[]
         try:
             for role in sorted(contracts):
+                contract=contracts[role]
+                unsupported=set(contract.validators)-{'nonempty'}
+                if unsupported:
+                    raise ValueError('child_output_validator_unsupported:'+','.join(sorted(unsupported)))
+                role_outputs=[row for row in emitted if row['artifact_role']==role]
+                receipts=[]
+                if 'nonempty' in contract.validators:
+                    receipts.append({'validator':'nonempty',
+                        'status':'pass' if role_outputs and all(row['size']>0 for row in role_outputs) else 'fail',
+                        'artifact_digests':[row['sha256'] for row in role_outputs]})
                 collections.append(await self.store.finalize_job_artifact_collection(
-                    context.job.id,context.generation,role))
+                    context.job.id,context.generation,role,
+                    validation_receipts=receipts))
         except RuntimeError as exc:
             if str(exc)=='artifact_collection_cardinality_invalid':
                 raise ChildOutputContractError('required_child_output_missing',child_summary) from exc
