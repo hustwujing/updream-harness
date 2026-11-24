@@ -113,6 +113,57 @@ async def test_runtime_configuration_installs_code_before_content_bundle(tmp_pat
         ('GET','/v1/runtime-bundle'),('PUT','/v1/runtime-bundle'),('POST','/v1/configure')]
 
 
+async def test_runtime_configuration_retries_transient_code_bundle_upload(tmp_path,monkeypatch):
+    waits=[]
+    async def no_wait(seconds):waits.append(seconds)
+    monkeypatch.setattr('sandbox_harness.runtime.asyncio.sleep',no_wait)
+    code=b"code-bundle";digest=__import__('hashlib').sha256(code).hexdigest()
+    root=tmp_path/'code';root.mkdir();(root/(digest+'.tar')).write_bytes(code)
+    (root/(digest+'.sig')).write_bytes(b'signature')
+    requests=[];puts=0
+    def respond(request):
+        nonlocal puts
+        requests.append((request.method,request.url.path))
+        if request.method=='GET':return httpx.Response(200,json={'sha256':''})
+        if request.url.path=='/bootstrap/code-bundle':
+            puts+=1
+            if puts==1:return httpx.Response(503,text='runtime is starting')
+            return httpx.Response(200,json={'sha256':digest})
+        return httpx.Response(200,json={'configured':True})
+    runtime=RuntimeClient(code_bundle_dir=root,default_code_bundle_digest=digest,
+        transport=httpx.MockTransport(respond))
+    sandbox=Sandbox(id='s',harness=Harness.CODEX,image='i',runtime_url='http://runtime',metadata={})
+
+    await runtime.inject(sandbox,capability_token='x'*32,gateway_url='http://gateway:28600',
+        proxy_url='http://proxy:28601',harness='codex',model='gpt')
+
+    assert puts==2 and waits==[.25]
+    assert requests[-1]==('POST','/v1/configure')
+
+
+async def test_runtime_configuration_does_not_retry_deterministic_bundle_rejection(tmp_path,monkeypatch):
+    waits=[]
+    async def no_wait(seconds):waits.append(seconds)
+    monkeypatch.setattr('sandbox_harness.runtime.asyncio.sleep',no_wait)
+    code=b"code-bundle";digest=__import__('hashlib').sha256(code).hexdigest()
+    root=tmp_path/'code';root.mkdir();(root/(digest+'.tar')).write_bytes(code)
+    (root/(digest+'.sig')).write_bytes(b'signature')
+    puts=0
+    def respond(request):
+        nonlocal puts
+        if request.method=='GET':return httpx.Response(200,json={'sha256':''})
+        puts+=1;return httpx.Response(400,text='signature invalid')
+    runtime=RuntimeClient(code_bundle_dir=root,default_code_bundle_digest=digest,
+        transport=httpx.MockTransport(respond))
+    sandbox=Sandbox(id='s',harness=Harness.CODEX,image='i',runtime_url='http://runtime',metadata={})
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await runtime.inject(sandbox,capability_token='x'*32,gateway_url='http://gateway:28600',
+            proxy_url='http://proxy:28601',harness='codex',model='gpt')
+
+    assert puts==1 and waits==[]
+
+
 async def test_runtime_client_ignores_transport_heartbeats():
     def respond(request: httpx.Request):
         return httpx.Response(200, text='{"type":"heartbeat"}\n{"type":"result","runtime_sequence":2,"result":{"status":"completed","native_thread_id":"native","input_ids":["initial"]}}\n')

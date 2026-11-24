@@ -97,6 +97,17 @@ class RuntimeClient:
             self._endpoint_refresh.add(sandbox.id)
         response.raise_for_status()
 
+    async def _put_with_startup_retry(self,client:httpx.AsyncClient,path:str,**kwargs)->httpx.Response:
+        retryable={429,502,503,504}
+        for attempt in range(8):
+            try:
+                response=await client.put(path,**kwargs)
+                if response.status_code not in retryable or attempt==7:return response
+            except (httpx.TimeoutException,httpx.TransportError):
+                if attempt==7:raise
+            await asyncio.sleep(.25*(attempt+1))
+        raise RuntimeError("unreachable")
+
     async def _download(self, sandbox: Sandbox, path: str, *, maximum: int,
                         error_code: str, params: dict | None = None) -> StagedRuntimeObject:
         await self._resolve_endpoint(sandbox)
@@ -178,7 +189,7 @@ class RuntimeClient:
                 status = await client.get("/bootstrap/code-bundle")
                 self._raise_for_status(sandbox,status)
                 if status.json().get("sha256") != code_digest:
-                    response = await client.put("/bootstrap/code-bundle", params={"sha256": code_digest},
+                    response = await self._put_with_startup_retry(client,"/bootstrap/code-bundle", params={"sha256": code_digest},
                         content=code, headers={"Content-Type": "application/x-tar",
                             "X-Runtime-Bundle-Signature": signature.hex()})
                     self._raise_for_status(sandbox,response)
@@ -196,7 +207,7 @@ class RuntimeClient:
                 if status.json().get("sha256") != bundle_digest:
                     compressed = await asyncio.to_thread(
                         gzip.compress, bundle, 6, mtime=0)
-                    response = await client.put("/v1/runtime-bundle", params={"sha256": bundle_digest},
+                    response = await self._put_with_startup_retry(client,"/v1/runtime-bundle", params={"sha256": bundle_digest},
                         content=compressed, headers={"Content-Type": "application/x-tar",
                             "Content-Encoding": "gzip",
                             "X-Uncompressed-Content-Length": str(len(bundle)),
