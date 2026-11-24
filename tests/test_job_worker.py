@@ -7,6 +7,7 @@ from sandbox_harness.job_contracts import JobGroupCreate, JobKind, JobRequest, J
 from sandbox_harness.job_worker import JobWorker
 from sandbox_harness.store import JobAttemptRow,Store
 from sqlalchemy import select
+import httpx
 
 
 class FakeAdapter(BaseJobAdapter):
@@ -264,6 +265,28 @@ async def test_one_job_exception_does_not_crash_service_worker(tmp_path):
         assert result['error_code']=='external_status_unavailable'
         assert result['failed_phase']=='status' and result['side_effect_state']=='unknown'
         assert result['retryable'] and result['retry_class']=='reconcile_only'
+    finally:await store.close()
+
+
+async def test_transient_status_transport_error_preserves_execution_for_reconcile(tmp_path):
+    store,_,job=await setup(tmp_path,request(kind=JobKind.HARNESS))
+    adapter=FakeAdapter([AdapterSubmission('external-1',{'accepted':True})],[
+        httpx.ConnectError('runtime endpoint temporarily unavailable'),
+        AdapterStatus(True,JobState.SUCCEEDED,{'done':True})])
+    worker=JobWorker(store,{'fake':adapter},node_id='node',concurrency=1,
+        worker_id='worker',poll_seconds=.01)
+    try:
+        assert await worker.run_once()==1
+        waiting=await store.get_job(job.id)
+        assert waiting.state==JobState.WAITING_EXTERNAL
+        assert adapter.submit_calls==1 and adapter.status_calls==1 and adapter.cleanup_calls==0
+
+        assert await worker.run_once()==1
+        completed=await store.get_job(job.id)
+        assert completed.state==JobState.SUCCEEDED
+        assert adapter.submit_calls==1 and adapter.status_calls==2 and adapter.cleanup_calls==1
+        accepted=await store.latest_job_acceptance(job.id)
+        assert accepted.external_execution_id=='external-1'
     finally:await store.close()
 
 

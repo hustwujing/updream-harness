@@ -5,6 +5,8 @@ import uuid
 from dataclasses import replace
 from datetime import datetime,timezone
 
+import httpx
+
 from .job_adapters import (
     AdapterStatus, ExternalJobFailure, JobAdapter, JobExecutionContext, PreAcceptFailure,
     SubmissionOutcomeUnknown,
@@ -12,6 +14,9 @@ from .job_adapters import (
 from .job_contracts import JobKind, JobState, TERMINAL_JOB_STATES
 from .job_errors import normalize_job_error
 from .observability import event,sanitize
+from .sandbox_contracts import (
+    SandboxEndpointUnavailable, SandboxProviderUnavailable, SandboxRateLimited,
+)
 
 
 class JobDeadlineExceeded(TimeoutError):
@@ -142,6 +147,12 @@ class JobWorker:
                 else adapter.status(context,external_id))
             return await self._before_deadline(operation,deadline)
         except (ExternalJobFailure,JobDeadlineExceeded):raise
+        except (httpx.TimeoutException,httpx.TransportError,
+                SandboxEndpointUnavailable,SandboxProviderUnavailable,
+                SandboxRateLimited) as exc:
+            event('job.adapter.status_retry',level=30,job_id=context.job.id,
+                generation=context.generation,exc=exc)
+            return AdapterStatus(False)
         except Exception as exc:
             event('job.adapter.status_failed',level=40,job_id=context.job.id,
                 generation=context.generation,exception_type=type(exc).__name__,exc=exc)
