@@ -19,7 +19,8 @@ MIME_ALIASES = {
     "audio/x-wav": "audio/wav",
     "image/jpg": "image/jpeg",
     "text/x-markdown": "text/markdown",
-    "text/x-sh": "text/plain",
+    "text/x-sh": "text/x-shellscript",
+    "application/x-sh": "text/x-shellscript",
     "application/x-pdf": "application/pdf",
     "application/x-gzip": "application/gzip",
     "application/x-tar": "application/gzip",
@@ -78,7 +79,9 @@ class MimeRegistry:
                     except (json.JSONDecodeError,ValueError):is_json=False
                     try:root=ElementTree.fromstring(text)
                     except (ElementTree.ParseError,ValueError):root=None
-                    detected=("model/obj" if normalized=="model/obj" and re.search(
+                    detected=("text/x-shellscript" if normalized=="text/x-shellscript" and re.match(
+                        r"^#![^\n]*(?:/|\b)(?:ba|da|k|z)?sh(?:\s|$)",text) else
+                        "model/obj" if normalized=="model/obj" and re.search(
                         r"(?m)^\s*(?:v|f)\s+",text) else
                         "model/gltf+json" if normalized=="model/gltf+json" and is_json
                             and isinstance(json.loads(text),dict) and isinstance(json.loads(text).get("asset"),dict) else
@@ -94,10 +97,11 @@ class MimeRegistry:
             return normalized
         return detected
 
-    @staticmethod
-    def matches(mime: str, patterns: tuple[str, ...]) -> bool:
-        return not patterns or any(pattern == mime or (
-            pattern.endswith("/*") and mime.startswith(pattern[:-1])) for pattern in patterns)
+    @classmethod
+    def matches(cls, mime: str, patterns: tuple[str, ...]) -> bool:
+        actual=cls.normalize(mime)
+        return not patterns or any(cls.normalize(pattern) == actual or (
+            pattern.endswith("/*") and actual.startswith(pattern[:-1].lower())) for pattern in patterns)
 
 
 @dataclass(frozen=True)
