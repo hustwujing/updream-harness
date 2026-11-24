@@ -7,14 +7,15 @@ terminal, port preview, takeover, release or inspector recovery.
 
 ## Ownership and data flow
 
-The browser never receives an OpenSandbox endpoint, API key or Execd token.
-`SandboxInspector` owner-checks the Thread and relays to the Runtime or Execd:
+The browser never receives a provider endpoint or provider credential.
+`SandboxInspector` owner-checks the Thread and relays through the provider-neutral
+Runtime contract:
 
 ```text
 Browser -> owner-scoped API/WebSocket -> SandboxInspector
         -> Runtime /v1/inspect/*       -> safe live inspection
-        -> Execd PTY WebSocket         -> terminal relay
-        -> OpenSandbox port endpoint   -> private preview relay
+        -> Runtime /v1/pty/*           -> terminal relay and bounded replay
+        -> provider port endpoint      -> private preview relay
 ```
 
 The logical Thread workspace remains authoritative. A live Sandbox is an
@@ -43,7 +44,7 @@ API memory.
   usage is a content scan; `disk_total=0` with `disk_limited=false` means no
   Sandbox disk resource limit is configured and must not be rendered as zero
   capacity or a filesystem sentinel total.
-- Ports below 1024 and Runtime, Execd, Gateway and proxy ports are never
+- Ports below 1024 and Runtime, provider-management, Gateway and proxy ports are never
   previewable. A grant is owner-, Thread-, Sandbox- and expiry-bound. Every
   proxy resolution revalidates the Sandbox's current Thread metadata; browser
   close/unmount revokes the grant.
@@ -70,7 +71,7 @@ the previous checkpoint with `checkpointed=false`.
 
 `sandbox_controls` survives API failure. Startup orphan reconciliation protects
 all unfinished controls, including expired rows; the Inspector expiry loop then
-checkpoints/releases them. Execd owns bounded PTY replay by byte offset, so
+checkpoints/releases them. Runtime owns bounded PTY replay by byte offset, so
 terminal output is not duplicated into PostgreSQL or Redis.
 
 Control uses an idle lease. Authenticated Workbench status/file/process/port
@@ -94,12 +95,12 @@ success state and clears warnings after successful convergence.
 
 - Owner isolation and schema lifecycle for controls, grants and audit events.
 - Runtime path/symlink boundaries and managed-file write rejection.
-- Terminal ticket tamper/expiry and Execd replay after browser/API disconnect.
+- Terminal ticket tamper/expiry and Runtime replay after browser/API disconnect.
 - Active-Turn cancellation before takeover; Turn submission blocked during
   control; release checkpoint and broken-Runtime convergence.
 - Private port ownership, blocked ports, HTTP assets and WebSocket forwarding.
 - Desktop/mobile browser layout with no overflow or page errors.
-- Real OpenSandbox restore, PTY, process, metrics, port preview and API SIGKILL.
+- Real provider restore, PTY, process, metrics, port preview and API SIGKILL.
 - Managed-file modified/missing/untracked detection and every release decision.
 - ProjectFile replacement during an active Turn cannot change its frozen input
   snapshot; an empty snapshot remains frozen after later uploads.

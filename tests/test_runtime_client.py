@@ -61,6 +61,39 @@ async def test_runtime_auth_failure_forces_endpoint_refresh_on_next_operation():
     assert backend.refresh==[False,True]
 
 
+async def test_runtime_terminal_protocol_uses_runtime_endpoint():
+    class Backend:
+        def __init__(self): self.ports=[]
+        async def endpoint(self,sandbox,port,*,force_refresh=False):
+            self.ports.append(port)
+            return SandboxEndpoint("https://runtime.example/base",
+                {"OPEN-SANDBOX-API-KEY":"secret"})
+    requests=[]
+    def respond(request):
+        requests.append(request)
+        if request.method=="POST":
+            return httpx.Response(200,json={"session_id":"pty-one"})
+        if request.method=="GET":
+            return httpx.Response(200,json={"session_id":"pty-one","running":True})
+        return httpx.Response(200,json={"deleted":True})
+    backend=Backend();runtime=RuntimeClient(backend=backend,
+        transport=httpx.MockTransport(respond))
+    sandbox=Sandbox(id="sandbox",harness=Harness.CODEX,image="image",
+        runtime_url="",metadata={})
+
+    assert (await runtime.create_terminal(sandbox,cwd="/workspace/project",
+        command="/bin/bash"))["session_id"]=="pty-one"
+    assert (await runtime.terminal_status(sandbox,"pty-one"))["running"] is True
+    assert await runtime.delete_terminal(sandbox,"pty-one") is True
+    ws_url,headers=await runtime.terminal_endpoint(sandbox,"pty-one",since=17)
+
+    assert backend.ports==[8080,8080,8080,8080]
+    assert [request.url.path for request in requests]==[
+        "/base/v1/pty","/base/v1/pty/pty-one","/base/v1/pty/pty-one"]
+    assert ws_url=="wss://runtime.example/base/v1/pty/pty-one/ws?since=17"
+    assert headers["OPEN-SANDBOX-API-KEY"]=="secret"
+
+
 async def test_runtime_configuration_retries_transient_proxy_startup_errors():
     requests = []
 

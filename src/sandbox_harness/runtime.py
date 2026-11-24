@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from urllib.parse import urljoin
 
 import httpx
 
@@ -448,6 +449,50 @@ class RuntimeClient:
 
     async def inspect_ports(self, sandbox: Sandbox) -> dict:
         return await self._inspect_json(sandbox, "/v1/inspect/ports")
+
+    async def create_terminal(self, sandbox: Sandbox, *, cwd: str,
+                              command: str) -> dict:
+        await self._resolve_endpoint(sandbox)
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url,
+                headers={**sandbox.runtime_headers, **carrier()}, timeout=20,
+                trust_env=False, transport=self.transport) as client:
+            response = await client.post("/v1/pty",
+                json={"cwd": cwd, "command": command})
+            self._raise_for_status(sandbox, response)
+            return response.json()
+
+    async def terminal_status(self, sandbox: Sandbox,
+                              session_id: str) -> dict | None:
+        await self._resolve_endpoint(sandbox)
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url,
+                headers={**sandbox.runtime_headers, **carrier()}, timeout=20,
+                trust_env=False, transport=self.transport) as client:
+            response = await client.get(f"/v1/pty/{session_id}")
+            if response.status_code == 404:
+                return None
+            self._raise_for_status(sandbox, response)
+            return response.json()
+
+    async def delete_terminal(self, sandbox: Sandbox, session_id: str) -> bool:
+        await self._resolve_endpoint(sandbox)
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url,
+                headers={**sandbox.runtime_headers, **carrier()}, timeout=20,
+                trust_env=False, transport=self.transport) as client:
+            response = await client.delete(f"/v1/pty/{session_id}")
+            if response.status_code == 404:
+                return False
+            self._raise_for_status(sandbox, response)
+            return True
+
+    async def terminal_endpoint(self, sandbox: Sandbox, session_id: str, *,
+                                since: int) -> tuple[str, dict[str, str]]:
+        await self._resolve_endpoint(sandbox)
+        endpoint = sandbox.runtime_url
+        websocket_base = ("wss://" if endpoint.startswith("https://") else "ws://")
+        websocket_base += endpoint.split("://", 1)[1]
+        url = urljoin(websocket_base.rstrip("/") + "/",
+            f"v1/pty/{session_id}/ws")
+        return url + "?since=" + str(max(0, since)), dict(sandbox.runtime_headers)
 
     async def inspect_file(self, sandbox: Sandbox, path: str) -> tuple[bytes, str]:
         await self._resolve_endpoint(sandbox)

@@ -79,6 +79,7 @@ class FakeRuntime:
     def __init__(self):
         self.files = {"project/readme.txt": "hello"}; self.injected = 0; self.fail_checkpoint=False
         self.manifest={"items":[],"truncated":False};self.preserved=[];self.materialized=[];self.legacy_manifest=False
+        self.terminals={};self.terminal_calls=[]
     async def restore(self, sandbox, archive, *, size):
         self.restored=b''.join([chunk async for chunk in archive])
     async def reset_project_files(self, sandbox): self.materialized=[]
@@ -95,6 +96,19 @@ class FakeRuntime:
     async def inspect_processes(self, sandbox): return {"items":[{"pid":42,"name":"server"}]}
     async def stop_inspect_process(self, sandbox, pid): return {"pid":pid,"stopped":True}
     async def inspect_ports(self, sandbox): return {"items":[{"port":3000,"pid":42,"process":"server"}]}
+    async def create_terminal(self,sandbox,*,cwd,command):
+        self.terminal_calls.append(("create",sandbox.id,cwd,command))
+        self.terminals["pty-one"]={"session_id":"pty-one","running":True}
+        return self.terminals["pty-one"]
+    async def terminal_status(self,sandbox,session_id):
+        self.terminal_calls.append(("status",sandbox.id,session_id))
+        return self.terminals.get(session_id)
+    async def delete_terminal(self,sandbox,session_id):
+        self.terminal_calls.append(("delete",sandbox.id,session_id))
+        return self.terminals.pop(session_id,None) is not None
+    async def terminal_endpoint(self,sandbox,session_id,*,since):
+        self.terminal_calls.append(("endpoint",sandbox.id,session_id,since))
+        return f"ws://runtime/v1/pty/{session_id}/ws?since={since}",{"X-Runtime":"yes"}
     async def project_file_manifest(self,sandbox):
         if self.legacy_manifest:
             request=httpx.Request("GET","http://runtime/v1/project-files/manifest")
@@ -159,15 +173,23 @@ async def test_inspector_restore_takeover_terminal_port_and_release(tmp_path, mo
         assert (await inspector.stop_process(thread.id,owner,42))["stopped"]
         grant=await inspector.create_port_grant(thread.id,owner,3000)
         assert grant["port"]==3000
-        async def execd(endpoint,headers,method,path,**kwargs):
-            request=httpx.Request(method,endpoint+path)
-            if method=="POST": return httpx.Response(201,json={"session_id":"pty-one"},request=request)
-            return httpx.Response(200,json={"running":True,"output_offset":0},request=request)
-        monkeypatch.setattr(inspector,"_execd_request",execd)
         monkeypatch.setattr(inspector,"_revoke",lambda *args,**kwargs: __import__('asyncio').sleep(0))
-        monkeypatch.setattr(inspector,"delete_terminal",lambda *args,**kwargs: __import__('asyncio').sleep(0))
         ticket=await inspector.terminal_ticket(thread.id,owner)
         assert inspector.tickets.verify(ticket["ticket"])["pty_session_id"]=="pty-one"
+        assert runtime.terminal_calls[0][0]=="create"
+        runtime.terminals["pty-one"]["running"]=False
+        renewed=await inspector.terminal_ticket(thread.id,owner)
+        assert inspector.tickets.verify(renewed["ticket"])["pty_session_id"]=="pty-one"
+        assert [call[0] for call in runtime.terminal_calls]==[
+            "create","status","delete","create"]
+        connections=[]
+        def connect(url,**kwargs):
+            connections.append((url,kwargs));return "runtime-websocket"
+        monkeypatch.setattr("sandbox_harness.sandbox_inspector.websocket_connect",connect)
+        assert await inspector.terminal_connection(renewed["ticket"],owner,12)=="runtime-websocket"
+        assert runtime.terminal_calls[-1]==("endpoint",sandbox.id,"pty-one",12)
+        assert connections[0][0]=="ws://runtime/v1/pty/pty-one/ws?since=12"
+        assert connections[0][1]["additional_headers"]=={"X-Runtime":"yes"}
         result=await inspector.release(thread.id,owner)
         assert result["released"] and result["checkpointed"] and result["managed_changes"]["count"]==0
         assert (await store.get_thread(thread.id,owner)).checkpoint_ref in objects.values

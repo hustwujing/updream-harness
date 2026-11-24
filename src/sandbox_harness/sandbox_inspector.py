@@ -9,7 +9,6 @@ import json
 import mimetypes
 import time
 from typing import Any
-from urllib.parse import urljoin
 
 import httpx
 from websockets.asyncio.client import connect as websocket_connect
@@ -561,18 +560,17 @@ class SandboxInspector:
         sandbox, control = await self._controlled_sandbox(thread_id, owner_id)
         if not sandbox or not control or control["state"] != "user_controlled":
             raise RuntimeError("sandbox_takeover_required")
-        endpoint, headers = await self.pool.backend.endpoint(sandbox, EXECD_PORT)
         session_id = control.get("pty_session_id") or ""
         if session_id:
-            status = await self._execd_request(endpoint, headers, "GET", f"/pty/{session_id}")
-            if status.status_code == 404:
+            status = await self.runtime.terminal_status(sandbox, session_id)
+            if status is None or not status.get("running"):
+                if status is not None:
+                    await self.runtime.delete_terminal(sandbox, session_id)
                 session_id = ""
-            else:
-                status.raise_for_status()
         if not session_id:
-            response = await self._execd_request(endpoint, headers, "POST", "/pty",
-                json={"cwd": "/workspace/project", "command": "/bin/bash"})
-            response.raise_for_status(); session_id = str(response.json().get("session_id") or "")
+            response = await self.runtime.create_terminal(sandbox,
+                cwd="/workspace/project", command="/bin/bash")
+            session_id = str(response.get("session_id") or "")
             if not session_id:
                 raise RuntimeError("terminal_session_missing")
             await self.store.set_sandbox_terminal(thread_id, owner_id, sandbox.id, session_id)
@@ -585,17 +583,8 @@ class SandboxInspector:
         return {"ticket": ticket, "session_id": session_id,
             "expires_in": self.settings.sandbox_terminal_ticket_seconds}
 
-    async def _execd_request(self, endpoint: str, headers: dict[str, str], method: str,
-                             path: str, **kwargs) -> httpx.Response:
-        async with httpx.AsyncClient(base_url=endpoint, headers=headers,
-            timeout=20, trust_env=False) as client:
-            return await client.request(method, path, **kwargs)
-
     async def delete_terminal(self, sandbox: Sandbox, session_id: str) -> None:
-        endpoint, headers = await self.pool.backend.endpoint(sandbox, EXECD_PORT)
-        response = await self._execd_request(endpoint, headers, "DELETE", f"/pty/{session_id}")
-        if response.status_code not in {200, 404}:
-            response.raise_for_status()
+        await self.runtime.delete_terminal(sandbox, session_id)
 
     async def terminal_connection(self, ticket: str, owner_id: str, since: int):
         value = self.tickets.verify(ticket)
@@ -608,10 +597,8 @@ class SandboxInspector:
             raise ValueError("terminal_session_not_active")
         sandbox = await self.pool.backend.get(SandboxHandle.from_mapping(
             control["sandbox_handle"]))
-        endpoint, headers = await self.pool.backend.endpoint(sandbox, EXECD_PORT)
-        ws_url = ("wss://" if endpoint.startswith("https://") else "ws://") + endpoint.split("://", 1)[1]
-        ws_url = urljoin(ws_url.rstrip("/") + "/", f"pty/{value['pty_session_id']}/ws")
-        ws_url += "?takeover=1&since=" + str(max(0, since))
+        ws_url, headers = await self.runtime.terminal_endpoint(sandbox,
+            value["pty_session_id"], since=max(0, since))
         await self.store.touch_sandbox_control(value["thread_id"], owner_id,
             now() + timedelta(seconds=self.settings.sandbox_control_ttl_seconds))
         return websocket_connect(ws_url, additional_headers=websocket_endpoint_headers(headers),

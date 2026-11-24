@@ -26,7 +26,7 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -37,6 +37,7 @@ from .adapters import (command,control_interaction_response,control_user_message
 from .instructions import RUNTIME_GUIDANCE, runtime_guidance
 from .runtime_bundle import (MAX_BUNDLE_BYTES,activate_runtime_bundle,
     decode_runtime_bundle_transport,verify_runtime_bundle_signature)
+from .pty_service import PtyManager
 from .skills import clear_materialized_skills, materialize_skills
 from .state import runtime_state_dir
 
@@ -123,6 +124,11 @@ class Configure(BaseModel):
     child_mode: bool = False
     delegation_depth: int = Field(default=0, ge=0, le=4)
     background_job_max_seconds: float = Field(default=3600, ge=1, le=86400)
+
+
+class PtyCreate(BaseModel):
+    cwd: str = Field(min_length=1, max_length=1000)
+    command: str = Field(pattern=r"^/bin/(?:ba)?sh$")
 
 
 class MediaRenderOperation(BaseModel):
@@ -451,6 +457,7 @@ def create_app() -> FastAPI:
     app.state.delegation_depth = 0
     app.state.stream_heartbeat_seconds = 15.0
     app.state.background_job_max_seconds = 3600.0
+    app.state.pty = PtyManager(WORKSPACE)
     jobs_root = WORKSPACE / "state" / "background-jobs"
     jobs_root.mkdir(parents=True, exist_ok=True)
     def load_jobs() -> None:
@@ -498,6 +505,83 @@ def create_app() -> FastAPI:
     for name in (*PERSISTENT, "inbox", "outputs", "tmp"):
         (WORKSPACE / name).mkdir(parents=True, exist_ok=True)
     RUN.mkdir(parents=True, exist_ok=True)
+
+    @app.on_event("shutdown")
+    async def close_pty_sessions():
+        await app.state.pty.close()
+
+    @app.post("/v1/pty")
+    async def create_pty(value: PtyCreate):
+        try:
+            session = await app.state.pty.create(value.cwd, value.command)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"session_id": session.id}
+
+    @app.get("/v1/pty/{session_id}")
+    async def get_pty(session_id: str):
+        session = app.state.pty.get(session_id)
+        if not session:
+            raise HTTPException(404, "pty_session_not_found")
+        return {"session_id": session.id, "running": session.running,
+            "exit_code": session.exit_code, "offset": session.next_offset,
+            "retained_from": session.base_offset}
+
+    @app.delete("/v1/pty/{session_id}")
+    async def delete_pty(session_id: str):
+        if not await app.state.pty.delete(session_id):
+            raise HTTPException(404, "pty_session_not_found")
+        return {"session_id": session_id, "deleted": True}
+
+    @app.websocket("/v1/pty/{session_id}/ws")
+    async def pty_websocket(websocket: WebSocket, session_id: str, since: int = 0):
+        session = app.state.pty.get(session_id)
+        if not session:
+            await websocket.close(code=4404)
+            return
+        await websocket.accept()
+        async def send_output():
+            cursor = max(0, since)
+            while True:
+                offset, data, running, exit_code = await session.read_after(cursor)
+                if data:
+                    await websocket.send_bytes(b"\x03" + offset.to_bytes(
+                        8, "big", signed=True) + data)
+                    cursor = offset + len(data)
+                if not running and cursor >= session.next_offset:
+                    await websocket.send_json({"type": "exit",
+                        "exit_code": exit_code, "offset": cursor})
+                    return
+        async def receive_input():
+            while True:
+                message = await websocket.receive()
+                if message["type"] == "websocket.disconnect":
+                    return
+                data = message.get("bytes")
+                if data is not None and data[:1] == b"\x00":
+                    await session.write(data[1:])
+                    continue
+                text = message.get("text")
+                if text is not None:
+                    try:
+                        value = json.loads(text)
+                        if value.get("type") == "resize":
+                            session.resize(int(value["cols"]), int(value["rows"]))
+                    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                        await websocket.send_json({"type": "error",
+                            "code": "pty_message_invalid"})
+        sender = asyncio.create_task(send_output(), name="pty-output-" + session_id)
+        receiver = asyncio.create_task(receive_input(), name="pty-input-" + session_id)
+        done, pending = await asyncio.wait({sender, receiver},
+            return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        for task in done:
+            if not task.cancelled():
+                error = task.exception()
+                if error and not isinstance(error, WebSocketDisconnect):
+                    raise error
 
     async def terminate_group(process, *, grace: float = 2.0) -> None:
         # A shell may exit while its descendants still own stdout or mutate files.
