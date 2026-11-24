@@ -1,12 +1,11 @@
 import uvicorn
 
-from sandbox_harness.observability import configure
+from .observability import configure_bootstrap_logging
 from .supervisor import create_app
-from .supervisor import runtime_state_dir
 
 
 def run() -> None:
-    configure("runtime-bootstrap",str(runtime_state_dir()/"observability"))
+    configure_bootstrap_logging("runtime-bootstrap")
     uvicorn.run(create_app(), host="0.0.0.0", port=8080, log_config=None, access_log=False)
 
 

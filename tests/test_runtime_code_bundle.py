@@ -20,13 +20,43 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_bootstrap_configures_runtime_console_observability(tmp_path,monkeypatch):
     calls=[]
-    monkeypatch.setattr(bootstrap_main,'runtime_state_dir',lambda:tmp_path)
-    monkeypatch.setattr(bootstrap_main,'configure',lambda service,path:calls.append((service,Path(path))))
+    monkeypatch.setattr(bootstrap_main,'configure_bootstrap_logging',
+        lambda service:calls.append(service))
     monkeypatch.setattr(bootstrap_main.uvicorn,'run',lambda *args,**kwargs:None)
 
     bootstrap_main.run()
 
-    assert calls==[('runtime-bootstrap',tmp_path/'observability')]
+    assert calls==['runtime-bootstrap']
+
+
+def test_bootstrap_import_does_not_require_runtime_code_bundle():
+    code="""
+import builtins
+original=builtins.__import__
+def guarded(name,*args,**kwargs):
+    if name == 'sandbox_harness' or name.startswith('sandbox_harness.'):
+        raise ModuleNotFoundError(name)
+    return original(name,*args,**kwargs)
+builtins.__import__=guarded
+import sandbox_bootstrap.main
+"""
+    result=subprocess.run([sys.executable,'-c',code],capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+
+
+def test_bootstrap_logging_emits_fixed_payload_free_schema():
+    import io
+    from sandbox_bootstrap.observability import configure_bootstrap_logging
+    stream=io.StringIO()
+
+    configure_bootstrap_logging('runtime-bootstrap',stream=stream)
+
+    row=json.loads(stream.getvalue())
+    assert row['schema_version']==1 and row['service']=='runtime-bootstrap'
+    assert row['event']=='service.started' and row['level']=='INFO'
+    assert row['timestamp'].endswith('+00:00')
+    assert {key:row[key] for key in ('sandbox_id','thread_id','turn_id','job_id','execution_id')}=={
+        'sandbox_id':'','thread_id':'','turn_id':'','job_id':'','execution_id':''}
 
 
 def test_runtime_state_dir_defaults_to_private_current_uid_temp_directory(tmp_path, monkeypatch):
