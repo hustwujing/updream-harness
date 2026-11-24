@@ -59,6 +59,20 @@ def test_bootstrap_logging_emits_fixed_payload_free_schema():
         'sandbox_id':'','thread_id':'','turn_id':'','job_id':'','execution_id':''}
 
 
+def test_bootstrap_emits_ready_once_after_health_is_observable(tmp_path,monkeypatch):
+    monkeypatch.setenv("SANDBOX_RUNTIME_STATE_DIR",str(tmp_path/"run"))
+    calls=[]
+    monkeypatch.setattr(bootstrap,"bootstrap_event",
+        lambda event,**fields:calls.append((event,fields)))
+    app=bootstrap.create_app()
+
+    with TestClient(app) as client:
+        assert client.get("/health").status_code==200
+        assert client.get("/health").status_code==200
+
+    assert calls==[("service.ready",{"service":"runtime-bootstrap"})]
+
+
 def test_runtime_state_dir_defaults_to_private_current_uid_temp_directory(tmp_path, monkeypatch):
     temporary = tmp_path / "tmp"
     temporary.mkdir()

@@ -19,6 +19,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 import httpx
 from starlette.background import BackgroundTask
 
+from .observability import bootstrap_event
+
 
 PUBLIC_KEY = Path("/opt/bootstrap/bundle_public_key.pem")
 DEPENDENCY_LOCK = Path("/opt/bootstrap/requirements-runtime.txt")
@@ -215,9 +217,13 @@ def create_app() -> FastAPI:
     async def lifespan(_: FastAPI):
         await supervisor.restore(); yield; await supervisor.close()
     app = FastAPI(lifespan=lifespan)
+    app.state.ready_logged = False
 
     @app.get("/health")
     async def health():
+        if not app.state.ready_logged:
+            app.state.ready_logged = True
+            bootstrap_event("service.ready", service="runtime-bootstrap")
         child = await supervisor.child_health()
         return ({**child, "runtime_code_bundle_digest": supervisor.digest} if child else
             {"status": "bootstrap", "runtime_code_bundle_digest": supervisor.digest})
