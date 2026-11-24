@@ -458,11 +458,12 @@ class SandboxInspector:
             event("sandbox.control.started", thread_id=thread_id, sandbox_id=sandbox.id)
             return control
 
-    async def _revoke(self, nonce: str, thread_id: str, sandbox_id: str) -> None:
+    async def _revoke(self, nonce: str, thread_id: str, sandbox_id: str,
+                      gateway_url: str) -> None:
         if not nonce:
             return
         async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
-            response = await client.post(self.settings.gateway_url.rstrip("/") + "/internal/revoke/" + nonce,
+            response = await client.post(gateway_url.rstrip("/") + "/internal/revoke/" + nonce,
                 headers={"X-Sandbox-Harness-Control": self.settings.gateway_control_key,
                     "X-Updream-Turn-ID": thread_id, "X-Updream-Thread-ID": thread_id,
                     "X-Updream-Sandbox-ID": sandbox_id})
@@ -476,6 +477,9 @@ class SandboxInspector:
                 return {"released": True, "checkpointed": False}
             thread = await self._thread(thread_id, owner_id)
             handle=SandboxHandle.from_mapping(raw["sandbox_handle"])
+            route_sandbox=Sandbox(id=handle.sandbox_id,harness=thread.harness,
+                metadata={},provider=handle.provider,handle=handle,image=handle.revision)
+            gateway_url=self.pool.backend.runtime_route(route_sandbox).gateway_url
             sandbox = await self.pool.get_attached(thread_id)
             if not sandbox or sandbox.handle!=handle:
                 try:
@@ -542,7 +546,7 @@ class SandboxInspector:
                     "checkpoint_unavailable","checkpointed");phase="checkpointed"
             if phase=="checkpointed":
                 nonce=await self.store.sandbox_control_nonce(thread_id,owner_id)
-                await self._revoke(nonce,thread_id,control["sandbox_id"])
+                await self._revoke(nonce,thread_id,control["sandbox_id"],gateway_url)
                 control=await self.store.advance_sandbox_release_phase(thread_id,owner_id,
                     "checkpointed","revoked");phase="revoked"
             await self.store.add_sandbox_audit(thread_id, owner_id, control["sandbox_id"],

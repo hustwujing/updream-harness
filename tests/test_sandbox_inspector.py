@@ -427,9 +427,9 @@ async def test_checkpoint_transport_failure_stays_retryable_and_retains_sandbox(
 
 async def test_missing_sandbox_requires_explicit_checkpoint_loss_confirmation(tmp_path,monkeypatch):
     store,pool,runtime,objects,inspector,owner,thread=await review17_environment(tmp_path,"checkpoint-missing")
-    revokes=0
+    revokes=0;revoke_routes=[]
     async def revoke(*args):
-        nonlocal revokes;revokes+=1
+        nonlocal revokes;revokes+=1;revoke_routes.append(args[-1])
     monkeypatch.setattr(inspector,"_revoke",revoke)
     try:
         control=await inspector.takeover(thread.id,owner,network_access="restricted")
@@ -442,6 +442,7 @@ async def test_missing_sandbox_requires_explicit_checkpoint_loss_confirmation(tm
             allow_checkpoint_loss=True)
         assert result["checkpointed"] is False and result["checkpoint_unavailable"] is True
         assert revokes==1 and await store.get_sandbox_control(thread.id,owner) is None
+        assert revoke_routes==[pool.backend.runtime_route(sandbox).gateway_url]
     finally:await pool.close();await store.close()
 
 
