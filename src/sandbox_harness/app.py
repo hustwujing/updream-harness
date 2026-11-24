@@ -1602,7 +1602,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return
         except Exception as exc:
             event("sandbox.terminal.relay_failed", level=logging.WARNING,
-                thread_id=thread_id, exception_type=type(exc).__name__)
+                thread_id=thread_id, exc=exc)
             with suppress(Exception):
                 await websocket.close(code=1011)
 

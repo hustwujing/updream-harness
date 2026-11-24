@@ -14,10 +14,11 @@ import tarfile
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 import httpx
 from starlette.background import BackgroundTask
+from websockets.asyncio.client import connect as websocket_connect
 
 from .observability import bootstrap_event
 
@@ -32,6 +33,11 @@ CLI_MODULES = {"sandbox-media": "sandbox_runtime.media_cli", "sandbox-site": "sa
     "sandbox-background": "sandbox_runtime.background_cli", "sandbox-interact": "sandbox_runtime.interaction_cli",
     "sandbox-job":"sandbox_runtime.job_cli","sandbox-artifact":"sandbox_runtime.artifact_cli",
     "sandbox-review":"sandbox_runtime.review_cli","editppt": "editppt.cli"}
+WEBSOCKET_HOP_HEADERS = {
+    "connection", "host", "upgrade", "proxy-connection", "keep-alive",
+    "transfer-encoding", "sec-websocket-key", "sec-websocket-version",
+    "sec-websocket-extensions", "sec-websocket-protocol",
+}
 
 
 def runtime_state_dir() -> Path:
@@ -244,6 +250,61 @@ def create_app() -> FastAPI:
             raise HTTPException(409, str(exc))
         except (ValueError, TypeError) as exc:
             raise HTTPException(400, str(exc))
+
+    @app.websocket("/{path:path}")
+    async def proxy_websocket(websocket: WebSocket, path: str):
+        if not await supervisor.child_health():
+            await websocket.close(code=1013)
+            return
+        headers = {key: value for key, value in websocket.headers.items()
+            if key.lower() not in WEBSOCKET_HOP_HEADERS}
+        query = str(websocket.query_params)
+        target = f"ws://127.0.0.1:{CHILD_PORT}/{path}"
+        if query:
+            target += "?" + query
+        try:
+            async with websocket_connect(target, additional_headers=headers,
+                    proxy=None, max_size=64 * 1024 * 1024) as upstream:
+                await websocket.accept()
+                async def to_browser():
+                    async for message in upstream:
+                        if isinstance(message, bytes):
+                            await websocket.send_bytes(message)
+                        else:
+                            await websocket.send_text(message)
+                async def to_runtime():
+                    while True:
+                        message = await websocket.receive()
+                        if message["type"] == "websocket.disconnect":
+                            return
+                        if message.get("bytes") is not None:
+                            await upstream.send(message["bytes"])
+                        elif message.get("text") is not None:
+                            await upstream.send(message["text"])
+                tasks = {asyncio.create_task(to_browser()),
+                    asyncio.create_task(to_runtime())}
+                try:
+                    done, _ = await asyncio.wait(tasks,
+                        return_when=asyncio.FIRST_COMPLETED)
+                    for task in done:
+                        try:
+                            error = task.exception()
+                        except asyncio.CancelledError:
+                            continue
+                        if error and not isinstance(error, WebSocketDisconnect):
+                            raise error
+                finally:
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    try:
+                        await asyncio.gather(*tasks, return_exceptions=True)
+                    except asyncio.CancelledError:
+                        pass
+        except WebSocketDisconnect:
+            return
+        except Exception:
+            await websocket.close(code=1011)
 
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
     async def proxy(path: str, request: Request):

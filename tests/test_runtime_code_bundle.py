@@ -10,6 +10,7 @@ import time
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
+from fastapi.routing import APIWebSocketRoute
 
 from sandbox_bootstrap import supervisor as bootstrap
 from sandbox_bootstrap import main as bootstrap_main
@@ -71,6 +72,46 @@ def test_bootstrap_emits_ready_once_after_health_is_observable(tmp_path,monkeypa
         assert client.get("/health").status_code==200
 
     assert calls==[("service.ready",{"service":"runtime-bootstrap"})]
+
+
+async def test_bootstrap_relays_runtime_websocket_to_child(monkeypatch):
+    app=bootstrap.create_app()
+    async def healthy():return {"status":"ok"}
+    monkeypatch.setattr(app.state.supervisor,"child_health",healthy)
+    calls=[]
+    class Upstream:
+        sent=[]
+        def __aiter__(self):return self
+        async def __anext__(self):
+            if getattr(self,"done",False):raise StopAsyncIteration
+            self.done=True;return b"runtime-output"
+        async def send(self,value):self.sent.append(value)
+    upstream=Upstream()
+    class Connection:
+        async def __aenter__(self):return upstream
+        async def __aexit__(self,*args):return False
+    def connect(url,**kwargs):calls.append((url,kwargs));return Connection()
+    monkeypatch.setattr(bootstrap,"websocket_connect",connect)
+    class Browser:
+        headers={"x-runtime-auth":"token","connection":"upgrade",
+            "sec-websocket-key":"secret"}
+        query_params="since=7"
+        accepted=False;outputs=[]
+        async def accept(self):self.accepted=True
+        async def receive(self):return {"type":"websocket.disconnect"}
+        async def send_bytes(self,value):self.outputs.append(value)
+        async def send_text(self,value):self.outputs.append(value)
+        async def close(self,code):self.close_code=code
+    browser=Browser()
+    route=next(item for item in app.routes
+        if isinstance(item,APIWebSocketRoute) and item.path=="/{path:path}")
+
+    await route.endpoint(browser,"v1/pty/session/ws")
+
+    assert browser.accepted and browser.outputs==[b"runtime-output"]
+    assert calls[0][0]=="ws://127.0.0.1:18080/v1/pty/session/ws?since=7"
+    assert calls[0][1]["additional_headers"]=={"x-runtime-auth":"token"}
+    assert calls[0][1]["proxy"] is None
 
 
 def test_runtime_state_dir_defaults_to_private_current_uid_temp_directory(tmp_path, monkeypatch):
