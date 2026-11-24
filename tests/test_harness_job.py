@@ -261,7 +261,9 @@ async def test_child_submission_recovery_adopts_unique_runtime_execution(tmp_pat
         async def get(self,handle):assert handle==sandbox.handle;return sandbox
     class Pool:
         backend=Inventory();released=[]
-        async def adopt(self,value,**kwargs):assert value is sandbox;return sandbox
+        async def adopt(self,value,**kwargs):
+            assert value is sandbox and kwargs['expected_profile'] is sandbox.profile
+            return sandbox
         async def release(self,value,**kwargs):self.released.append(value.id)
     class Runtime:
         async def execution_status(self,value,execution_id):
@@ -281,6 +283,30 @@ async def test_child_submission_recovery_adopts_unique_runtime_execution(tmp_pat
     assert recovery.submission.acceptance_receipt['capability_nonce']=='nonce-old'
     assert recovery.submission.acceptance_receipt['runtime_acceptance']['recovered'] is True
     assert Pool.released==[]
+
+
+async def test_child_status_adopts_the_profile_frozen_in_the_persisted_handle(tmp_path):
+    job_id='e'*32
+    sandbox=Sandbox(id='sandbox-status-recovered',harness=Harness.CODEX,
+        image='registry/office@sha256:'+'b'*64,runtime_url='http://runtime',metadata={})
+    class Inventory:
+        async def get(self,handle):assert handle==sandbox.handle;return sandbox
+    class Pool:
+        backend=Inventory();adopted_profile=None
+        async def get_attached(self,*args):return None
+        async def adopt(self,value,**kwargs):
+            self.adopted_profile=kwargs.get('expected_profile');return value
+    class Runtime:
+        async def execution_status(self,value,execution_id):
+            assert value is sandbox and execution_id=='execution';return {'result':None}
+    pool=Pool();backend=SandboxChildBackend(pool=pool,runtime=Runtime(),store=SimpleNamespace(),
+        objects=SimpleNamespace(),settings=Settings(backend='fake',data_root=tmp_path),
+        token_factory=lambda *args:None)
+    backend._ensure_collector=lambda *args:None
+    context=SimpleNamespace(job=SimpleNamespace(id=job_id))
+    status=await backend.status(context,'execution',sandbox_receipt(sandbox))
+    assert not status.terminal
+    assert pool.adopted_profile is sandbox.profile
 
 
 async def test_child_submission_recovery_does_not_replay_when_recorded_sandbox_is_missing(tmp_path):

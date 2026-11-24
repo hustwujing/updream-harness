@@ -76,6 +76,20 @@ def test_parallel_protocol_runner_never_fakes_unimplemented_success():
     assert '"--model",args.model' in campaign
 
 
+def test_real_protocol_service_controls_are_deployment_configurable():
+    campaign=(ROOT/'tests/run_real_campaign.py').read_text()
+    inherited=(ROOT/'tests/run_real_inherited_protocol.py').read_text()
+    protocol=(ROOT/'tests/run_real_parallel_protocol.py').read_text()
+    for option in ('--job-worker-unit','--api-unit'):
+        assert option in campaign
+        assert option in inherited
+        assert option in protocol
+    assert "service_unit(args,'job_worker')" in protocol
+    assert "service_unit(args,'api')" in protocol
+    assert "'sandbox-harness-parallel-job-worker.service'" not in protocol
+    assert "'sandbox-harness-parallel-api.service'" not in protocol
+
+
 def test_dynamic_resize_case_grades_the_post_intervention_contract():
     catalog=__import__('json').loads((ROOT/'tests/real_cases/cases.json').read_text())
     case=next(row for row in catalog['cases'] if row['id']=='R02')

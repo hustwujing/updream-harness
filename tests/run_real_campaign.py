@@ -482,7 +482,8 @@ async def protocol_case(case,args,running):
         str(ROOT/"tests/run_real_parallel_protocol.py"),"--base-url",args.base_url,
         "--case",case["id"],"--report",str(report),"--harness",args.harness,
         "--model",args.model,"--reasoning",args.reasoning,"--timeout",str(args.timeout),
-        "--intervention-delay",str(args.intervention_delay))
+        "--intervention-delay",str(args.intervention_delay),
+        "--job-worker-unit",args.job_worker_unit,"--api-unit",args.api_unit)
     running[case["id"]]["state"]="PROTOCOL_RUNNING"
     try:return_code=await asyncio.wait_for(process.wait(),args.timeout)
     except asyncio.TimeoutError:process.kill();await process.wait();raise TimeoutError("protocol_timeout")
@@ -498,7 +499,8 @@ async def inherited_protocol_case(case,args,running):
     process=await asyncio.create_subprocess_exec(str(ROOT/".venv/bin/python"),
         str(ROOT/"tests/run_real_inherited_protocol.py"),"--base-url",args.base_url,
         "--case",case["id"],"--report",str(report),"--harness",args.harness,
-        "--model",args.model,"--reasoning",args.reasoning)
+        "--model",args.model,"--reasoning",args.reasoning,
+        "--job-worker-unit",args.job_worker_unit,"--api-unit",args.api_unit)
     running[case["id"]]["state"]="INHERITED_PROTOCOL_RUNNING"
     try:return_code=await asyncio.wait_for(process.wait(),args.timeout)
     except asyncio.TimeoutError:process.kill();await process.wait();raise TimeoutError("inherited_protocol_timeout")
@@ -551,7 +553,12 @@ async def main():
     parser.add_argument("--concurrency",type=int,default=8);parser.add_argument("--timeout",type=int,default=7200)
     parser.add_argument("--progress-interval",type=int,default=120);parser.add_argument("--intervention-delay",type=int,default=10)
     parser.add_argument("--harness",default="codex");parser.add_argument("--model",default="gpt-5.6-sol")
-    parser.add_argument("--reasoning",default="deep");args=parser.parse_args()
+    parser.add_argument("--reasoning",default="deep")
+    parser.add_argument("--job-worker-unit",default=(
+        os.environ.get("SANDBOX_HARNESS_JOB_WORKER_UNIT") or
+        "sandbox-harness-parallel-job-worker.service"))
+    parser.add_argument("--api-unit",default=(os.environ.get("SANDBOX_HARNESS_API_UNIT") or
+        "sandbox-harness-parallel-api.service"));args=parser.parse_args()
     catalog=json.loads(args.catalog.read_text());explicit=set(args.case)|set(args.affected_case)
     configured_root=Path(catalog.get('asset_root') or ROOT/'tests/real_cases/assets')
     args.asset_root=(configured_root if configured_root.is_absolute()

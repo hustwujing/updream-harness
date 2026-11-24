@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -154,7 +155,12 @@ async def main():
     parser.add_argument('--report',type=Path,required=True)
     parser.add_argument('--harness',default='claude');parser.add_argument('--model',default='claude-opus-5-5')
     parser.add_argument('--reasoning',default='deep');parser.add_argument('--timeout',type=int,default=7200)
-    parser.add_argument('--intervention-delay',type=int,default=10);args=parser.parse_args();value={}
+    parser.add_argument('--intervention-delay',type=int,default=10)
+    parser.add_argument('--job-worker-unit',default=(
+        os.environ.get('SANDBOX_HARNESS_JOB_WORKER_UNIT') or
+        'sandbox-harness-parallel-job-worker.service'))
+    parser.add_argument('--api-unit',default=(os.environ.get('SANDBOX_HARNESS_API_UNIT') or
+        'sandbox-harness-parallel-api.service'));args=parser.parse_args();value={}
     configured_root=Path(json.loads((ROOT/'tests/real_cases/cases.json').read_text()).get(
         'asset_root') or ROOT/'tests/real_cases/assets')
     args.asset_root=(configured_root if configured_root.is_absolute()

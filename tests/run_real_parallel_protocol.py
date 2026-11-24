@@ -26,6 +26,12 @@ PROTOCOL_LOCK=ROOT/'.data/tmp/real-protocol.lock'
 SERIAL_CASES={'P13','P19','P21','P27'}
 
 
+def service_unit(args,role:str)->str:
+    configured=(getattr(args,f'{role}_unit','') or
+        os.environ.get(f"SANDBOX_HARNESS_{role.upper()}_UNIT",''))
+    return configured or f"sandbox-harness-parallel-{role.replace('_','-')}.service"
+
+
 def validate_skill_product_archive(data:bytes)->dict:
     if not data or len(data)>32*1024*1024:raise AssertionError('skill product archive size invalid')
     files=[];total=0
@@ -1050,10 +1056,10 @@ async def case_p13(client,args):
         await asyncio.sleep(.1)
     else:raise TimeoutError('job_never_accepted')
     await asyncio.to_thread(subprocess.run,['systemctl','kill','--kill-who=main','--signal=KILL',
-        'sandbox-harness-parallel-job-worker.service'],check=True)
+        service_unit(args,'job_worker')],check=True)
     for _ in range(100):
         state=(await asyncio.to_thread(subprocess.run,['systemctl','is-active',
-            'sandbox-harness-parallel-job-worker.service'],capture_output=True,text=True)).stdout.strip()
+            service_unit(args,'job_worker')],capture_output=True,text=True)).stdout.strip()
         if state=='active':break
         await asyncio.sleep(.1)
     completed=await wait_job(client,job['id'],300)
@@ -1201,7 +1207,7 @@ async def case_p19(client,args):
         await emit(0)
         if await store.current_project_files(thread['id'],owner):raise AssertionError('partial delivery visible')
         await asyncio.to_thread(subprocess.run,['systemctl','restart',
-            'sandbox-harness-parallel-job-worker.service'],check=True)
+            service_unit(args,'job_worker')],check=True)
         await emit(1);result=await store.finalize_job_artifact_collection(
             jobs[0].id,attempt.generation,'parts')
         await store.transition_job(jobs[0].id,JobState.SUCCEEDED,
@@ -1242,11 +1248,11 @@ async def case_p21(client,args):
         await asyncio.sleep(.25)
     else:raise TimeoutError('pause_agents_never_started:'+json.dumps(states))
     await asyncio.to_thread(subprocess.run,['systemctl','stop',
-        'sandbox-harness-parallel-job-worker.service'],check=True)
+        service_unit(args,'job_worker')],check=True)
     paused=require(await client.post(f"api/threads/{thread['id']}/pause")).json()
     if paused['state'] not in {'PAUSING','PAUSED'}:raise AssertionError('pause_not_accepted')
     await asyncio.to_thread(subprocess.run,['systemctl','restart',
-        'sandbox-harness-parallel-api.service'],check=True)
+        service_unit(args,'api')],check=True)
     for _ in range(200):
         try:
             if (await client.get('api/session')).status_code==200:break
@@ -1254,7 +1260,7 @@ async def case_p21(client,args):
         await asyncio.sleep(.1)
     else:raise TimeoutError('api_restart_timeout')
     await asyncio.to_thread(subprocess.run,['systemctl','start',
-        'sandbox-harness-parallel-job-worker.service'],check=True)
+        service_unit(args,'job_worker')],check=True)
     deadline=time.monotonic()+240
     while time.monotonic()<deadline:
         control=require(await client.get(f"api/threads/{thread['id']}/pause")).json()
@@ -1564,7 +1570,7 @@ async def case_p27(client,args):
         await asyncio.sleep(.25)
     else:raise TimeoutError('mixed_jobs_never_reached_inflight_state:'+json.dumps(states))
     await asyncio.to_thread(subprocess.run,['systemctl','restart',
-        'sandbox-harness-parallel-job-worker.service'],check=True)
+        service_unit(args,'job_worker')],check=True)
     completed=await wait_jobs(client,committed['jobs'],args.timeout)
     _,continuations=await wait_continuations(client,thread['id'],maximum=1)
     settings=load_platform_settings()
@@ -1607,6 +1613,8 @@ async def main():
     parser.add_argument('--model',default='gpt-5.6-sol');parser.add_argument('--reasoning',default='deep')
     parser.add_argument('--timeout',type=float,default=1200)
     parser.add_argument('--intervention-delay',type=float,default=0)
+    parser.add_argument('--job-worker-unit',default=os.environ.get('SANDBOX_HARNESS_JOB_WORKER_UNIT',''))
+    parser.add_argument('--api-unit',default=os.environ.get('SANDBOX_HARNESS_API_UNIT',''))
     args=parser.parse_args();value={}
     try:
         handler=HANDLERS.get(args.case)

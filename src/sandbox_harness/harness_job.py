@@ -271,7 +271,8 @@ class SandboxChildBackend:
             self.sessions[context.job.id]=attached;return attached
         try:candidate=await self.pool.backend.get(handle)
         except SandboxNotFound as exc:raise RuntimeError('child_sandbox_unavailable') from exc
-        adopted=await self.pool.adopt(candidate,thread_id=self._thread_id(context.job.id),turn_id=context.job.id)
+        adopted=await self.pool.adopt(candidate,thread_id=self._thread_id(context.job.id),
+            turn_id=context.job.id,expected_profile=candidate.profile)
         self.sessions[context.job.id]=adopted;return adopted
 
     async def start(self,context:JobExecutionContext,reservation)->tuple[str,dict[str,Any]]:
@@ -373,7 +374,7 @@ class SandboxChildBackend:
             and value.harness==harness and value.handle.revision==release.revision]
         if len(matches)!=1 or len(ready)!=1:return SubmissionRecovery()
         sandbox=await self.pool.adopt(ready[0],thread_id=self._thread_id(context.job.id),
-            turn_id=context.job.id)
+            turn_id=context.job.id,expected_profile=ready[0].profile)
         execution_id=context.job.id+":"+str(reservation.job_generation)
         try:value=await self._execution_status(sandbox,execution_id)
         except httpx.HTTPStatusError as exc:
