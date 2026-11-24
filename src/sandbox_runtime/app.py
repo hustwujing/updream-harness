@@ -37,6 +37,7 @@ from .adapters import (command,control_interaction_response,control_user_message
 from .instructions import RUNTIME_GUIDANCE, runtime_guidance
 from .runtime_bundle import MAX_BUNDLE_BYTES, activate_runtime_bundle, verify_runtime_bundle_signature
 from .skills import clear_materialized_skills, materialize_skills
+from .state import runtime_state_dir
 
 
 WORKSPACE = Path("/workspace")
@@ -49,7 +50,7 @@ INSPECT_ROOTS = {
 }
 INSPECT_TEXT_LIMIT = 2 * 1024 * 1024
 INSPECT_INTERNAL_PORTS = {8080, 18080, 29880, 29881, 44772}
-RUN = Path("/run/harness")
+RUN = runtime_state_dir()
 OUTPUT_BATCH_MARKER = RUN / "output-batch"
 HARNESS_JSONL_LIMIT = 16 * 1024 * 1024
 RUNTIME_EVENT_JOURNAL_LIMIT = 256 * 1024 * 1024

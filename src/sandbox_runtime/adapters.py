@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .instructions import runtime_instructions
+from .state import capability_token_file
 
 
 STABLE_ERROR_CODE=re.compile(r"^[a-z][a-z0-9_.-]{0,159}$")
@@ -45,7 +46,7 @@ class HarnessCommand:
 
 def command(harness: str, model: str, native_thread_id: str = "") -> HarnessCommand:
     gateway = os.environ["HARNESS_GATEWAY_URL"].rstrip("/")
-    token_file = os.environ.get("HARNESS_CAPABILITY_TOKEN_FILE", "/run/harness/capability-token")
+    token_file = str(capability_token_file())
     capability_token = Path(token_file).read_text().strip()
     preload = "--require=/usr/local/lib/sandbox-playwright-proxy.cjs"
     node_options = " ".join(filter(None, [os.environ.get("NODE_OPTIONS", ""), preload]))

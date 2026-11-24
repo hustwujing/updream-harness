@@ -9,6 +9,7 @@ import uuid
 import httpx
 
 from sandbox_harness.site_bundle import build_site_archive, normalize_site_slug
+from .state import capability_token_file
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -23,11 +24,10 @@ def main(argv: list[str] | None = None) -> int:
     status.add_argument("--job-id", required=True)
     args = parser.parse_args(argv)
     base = os.environ.get("HARNESS_GATEWAY_URL", "").rstrip("/")
-    token_file = os.environ.get("HARNESS_CAPABILITY_TOKEN_FILE", "/run/harness/capability-token")
     if not base:
         print(json.dumps({"error":"HARNESS_GATEWAY_URL is not configured"}, ensure_ascii=False))
         return 2
-    token = Path(token_file).read_text(encoding="utf-8").strip()
+    token = capability_token_file().read_text(encoding="utf-8").strip()
     headers = {"Authorization":"Bearer " + token}
     if args.command == "status":
         response = httpx.get(base + f"/v1/sites/jobs/{args.job_id}", headers=headers, timeout=20)

@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from sandbox_harness.domain import MediaDraftCreate
 from sandbox_harness.media_catalog import MediaCatalog
+from .state import capability_token_file
 
 
 def validation_message(error: ValidationError) -> str:
@@ -87,11 +88,10 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             parser.error("invalid media parameters: " + str(exc))
     base = os.environ.get("HARNESS_GATEWAY_URL", "").rstrip("/")
-    token_file = os.environ.get("HARNESS_CAPABILITY_TOKEN_FILE", "/run/harness/capability-token")
     if not base:
         print(json.dumps({"error": "HARNESS_GATEWAY_URL is not configured"}), ensure_ascii=False)
         return 2
-    token = open(token_file, encoding="utf-8").read().strip()
+    token = capability_token_file().read_text(encoding="utf-8").strip()
     if args.command == "catalog":
         response = httpx.get(base + "/v1/media/catalog", headers={"Authorization": "Bearer " + token},
             params={"kind": args.kind} if args.kind else None, timeout=20)

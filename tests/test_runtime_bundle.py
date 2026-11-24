@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tarfile
+import os
 
 import httpx
 from fastapi.testclient import TestClient
@@ -22,6 +23,28 @@ from sandbox_runtime.skills import bundle_root
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_runtime_app_uses_configured_state_directory(tmp_path):
+    configured = tmp_path / "runtime-state"
+    result = subprocess.run([sys.executable, "-c",
+        "from sandbox_runtime.app import RUN; print(RUN)"], capture_output=True, text=True,
+        env={**os.environ, "SANDBOX_RUNTIME_STATE_DIR": str(configured)})
+    assert result.returncode == 0
+    assert result.stdout.strip() == str(configured)
+
+
+def test_runtime_main_places_observability_under_configured_state_directory(tmp_path, monkeypatch):
+    from sandbox_runtime import main as runtime_main
+    configured = tmp_path / "runtime-state"
+    calls = []
+    monkeypatch.setenv("SANDBOX_RUNTIME_STATE_DIR", str(configured))
+    monkeypatch.setattr(runtime_main, "configure", lambda service, path: calls.append((service, path)))
+    monkeypatch.setattr(runtime_main.uvicorn, "run", lambda *args, **kwargs: None)
+
+    runtime_main.run()
+
+    assert calls == [("runtime", str(configured / "observability"))]
 
 
 def signing_key(tmp_path: Path) -> tuple[Path, Path]:

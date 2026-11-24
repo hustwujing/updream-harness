@@ -9,6 +9,8 @@ import uuid
 
 import httpx
 
+from .state import capability_token_file
+
 
 def main(argv: list[str] | None = None) -> int:
     parser=argparse.ArgumentParser(prog='sandbox-artifact')
@@ -30,8 +32,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({'error':'Artifact output must have an existing parent directory'}))
             return 2
         gateway=os.environ.get('HARNESS_GATEWAY_URL','').rstrip('/')
-        token_file=Path(os.environ.get('HARNESS_CAPABILITY_TOKEN_FILE',
-            '/run/harness/capability-token'))
+        token_file=capability_token_file()
         if not gateway or not token_file.is_file():
             print(json.dumps({'error':'Harness Gateway capability is not configured'}))
             return 2

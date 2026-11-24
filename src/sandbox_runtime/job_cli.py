@@ -12,6 +12,7 @@ import httpx
 from pydantic import BaseModel,ConfigDict,Field,model_validator
 
 from sandbox_harness.job_contracts import JobGroupCreate
+from .state import capability_token_file
 
 
 def _json_value(raw: str):
@@ -198,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
             "to retrieve a reviewed Child Artifact"}))
         return 2
     base = os.environ.get("HARNESS_GATEWAY_URL", "").rstrip("/")
-    token_file = Path(os.environ.get("HARNESS_CAPABILITY_TOKEN_FILE", "/run/harness/capability-token"))
+    token_file = capability_token_file()
     if not base or not token_file.is_file():
         print(json.dumps({"error": "Harness Gateway capability is not configured"}))
         return 2

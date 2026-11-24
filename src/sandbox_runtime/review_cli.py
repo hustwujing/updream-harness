@@ -7,6 +7,8 @@ from pathlib import Path
 
 import httpx
 
+from .state import capability_token_file
+
 
 def main(argv: list[str] | None = None) -> int:
     parser=argparse.ArgumentParser(prog="sandbox-review")
@@ -19,7 +21,7 @@ def main(argv: list[str] | None = None) -> int:
     value.setdefault("harness",os.environ.get("HARNESS_KIND",""))
     value.setdefault("model",os.environ.get("HARNESS_MODEL",""))
     base=os.environ.get("HARNESS_GATEWAY_URL","").rstrip("/")
-    token=Path(os.environ.get("HARNESS_CAPABILITY_TOKEN_FILE","/run/harness/capability-token"))
+    token=capability_token_file()
     if not base or not token.is_file():
         print(json.dumps({"error":"Harness Gateway capability is not configured"}));return 2
     response=httpx.post(base+"/v1/reviews",headers={"Authorization":"Bearer "+token.read_text().strip()},
