@@ -35,9 +35,15 @@ if ! systemctl is-active --quiet sandbox-harness-parallel-ali-network.service; t
     "$root/deploy/ali/network-rule.sh" install
 fi
 
-start_transient sandbox-harness-parallel-ali-gateway sandbox-harness \
-  "$root/deploy/ali/run-service.sh" gateway
+systemctl stop sandbox-harness-parallel-ali-gateway.service 2>/dev/null || true
+start_transient sandbox-harness-parallel-ali-gateway-opensandbox sandbox-harness \
+  "$root/deploy/ali/run-service.sh" gateway-opensandbox
 wait_port 172.31.0.1 29882
+wait_port 172.31.0.1 29883
+start_transient sandbox-harness-parallel-ali-gateway-aliyun sandbox-harness \
+  "$root/deploy/ali/run-service.sh" gateway-aliyun
+wait_port 10.194.49.8 29882
+wait_port 10.194.49.8 29883
 if [[ ! -f "$root/.data/services/image-layered/service/app.py" ]]; then
   "$root/deploy/ali/materialize-image-decompose.sh"
 fi

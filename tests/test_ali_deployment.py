@@ -154,12 +154,14 @@ def test_ali_transient_service_graph_is_complete_and_root_partition_free():
     status=(ROOT/"deploy/ali/status.sh").read_text()
     runner=(ROOT/"deploy/ali/run-service.sh").read_text()
     combined=start+stop+status+runner
-    for service in ("postgresql","network","gateway","image-decompose","job-worker","controlled-worker",
+    for service in ("postgresql","network","gateway-opensandbox","gateway-aliyun",
+                    "image-decompose","job-worker","controlled-worker",
                     "media-worker","site-worker","api"):
         assert f"sandbox-harness-parallel-ali-{service}" in combined
     assert "systemd-run" in start and "--collect" in start
-    assert start.index("ali-postgresql")<start.index("ali-network")<start.index("ali-gateway")
-    assert start.index("ali-gateway")<start.index("ali-job-worker")<start.index("ali-api")
+    assert start.index("ali-postgresql")<start.index("ali-network")<start.index("ali-gateway-opensandbox")
+    assert start.index("ali-gateway-opensandbox")<start.index("ali-gateway-aliyun")
+    assert start.index("ali-gateway-aliyun")<start.index("ali-job-worker")<start.index("ali-api")
     assert "/etc/systemd" not in combined
     assert "systemctl enable" not in combined
     assert "/data2/wujing03/sandbox-harness-platform-parallel-ali" in combined
@@ -187,6 +189,9 @@ def test_ali_service_runner_uses_only_ali_environment_and_logs():
     assert "/data/wujing03/media-foundation-core" not in source
     assert 'export PYTHONPATH="$service_root:${PYTHONPATH:-}"' in source
     assert "unexpected_project_root" in source
+    assert 'gateway-opensandbox)' in source and 'SANDBOX_HARNESS_GATEWAY_BIND_HOST="172.31.0.1"' in source
+    assert 'gateway-aliyun)' in source and 'SANDBOX_HARNESS_GATEWAY_BIND_HOST="10.194.49.8"' in source
+    assert "0.0.0.0" not in source
 
 
 def test_ali_image_builder_uses_only_ali_checkout_and_namespaces():
@@ -199,6 +204,22 @@ def test_ali_image_builder_uses_only_ali_checkout_and_namespaces():
 
 def test_ali_transient_runner_passes_service_argument_separately():
     source=(ROOT/"deploy/ali/start.sh").read_text()
-    assert '"$root/deploy/ali/run-service.sh" gateway' in source
+    assert '"$root/deploy/ali/run-service.sh" gateway-opensandbox' in source
+    assert '"$root/deploy/ali/run-service.sh" gateway-aliyun' in source
     assert '"$root/deploy/ali/run-service.sh" job-worker' in source
     assert '"$root/deploy/ali/run-service.sh gateway"' not in source
+
+
+def test_ali_gateway_lifecycle_uses_two_exact_provider_hosts():
+    start=(ROOT/"deploy/ali/start.sh").read_text()
+    stop=(ROOT/"deploy/ali/stop.sh").read_text()
+    status=(ROOT/"deploy/ali/status.sh").read_text()
+    for provider,host in (("opensandbox","172.31.0.1"),("aliyun","10.194.49.8")):
+        unit=f"sandbox-harness-parallel-ali-gateway-{provider}"
+        assert unit in start and unit in stop and unit in status
+        assert f"wait_port {host} 29882" in start
+        assert f"wait_port {host} 29883" in start
+        assert host in status
+    assert "start_transient sandbox-harness-parallel-ali-gateway sandbox-harness" not in start
+    assert "systemctl stop sandbox-harness-parallel-ali-gateway.service" in start
+    assert "0.0.0.0" not in start+stop+status

@@ -23,7 +23,16 @@ export PLAYWRIGHT_BROWSERS_PATH="$root/.data/playwright-browsers"
 
 case "$component" in
   api) command=("$root/.venv/bin/sandbox-harness-parallel-api") ;;
-  gateway) command=("$root/.venv/bin/sandbox-harness-parallel-gateway") ;;
+  gateway-opensandbox)
+    export SANDBOX_HARNESS_GATEWAY_BIND_HOST="172.31.0.1"
+    export SANDBOX_HARNESS_GATEWAY_URL="http://172.31.0.1:${SANDBOX_HARNESS_GATEWAY_BIND_PORT}"
+    command=("$root/.venv/bin/sandbox-harness-parallel-gateway")
+    ;;
+  gateway-aliyun)
+    export SANDBOX_HARNESS_GATEWAY_BIND_HOST="10.194.49.8"
+    export SANDBOX_HARNESS_GATEWAY_URL="http://10.194.49.8:${SANDBOX_HARNESS_GATEWAY_BIND_PORT}"
+    command=("$root/.venv/bin/sandbox-harness-parallel-gateway")
+    ;;
   image-decompose)
     service_root="$root/.data/services/image-layered"
     [[ -f "$service_root/service/app.py" ]] || { echo "image decompose service is not materialized" >&2; exit 1; }

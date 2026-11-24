@@ -11,6 +11,8 @@ stop_units=(
   sandbox-harness-parallel-ali-controlled-worker
   sandbox-harness-parallel-ali-job-worker
   sandbox-harness-parallel-ali-image-decompose
+  sandbox-harness-parallel-ali-gateway-aliyun
+  sandbox-harness-parallel-ali-gateway-opensandbox
   sandbox-harness-parallel-ali-gateway
   sandbox-harness-parallel-ali-network
   sandbox-harness-parallel-ali-postgresql
