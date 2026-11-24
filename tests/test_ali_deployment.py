@@ -136,6 +136,7 @@ def test_ali_profile_catalog_rewrite_preserves_digests_and_changes_registry():
     assert release["ref"].startswith(
         "127.0.0.1:25001/sandbox-harness-platform-parallel-ali/")
     assert "sandbox-harness-parallel/" not in release["ref"]
+    assert assets.rewrite_profile_catalog(rewritten)==rewritten
 
 
 def test_ali_asset_materializer_owns_all_runtime_paths():

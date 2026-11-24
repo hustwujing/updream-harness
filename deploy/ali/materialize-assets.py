@@ -99,12 +99,16 @@ def rewrite_profile_catalog(value:dict)->dict:
         releases=profile.get("provider_releases",{}).get("opensandbox",{})
         for harness,release in list(releases.items()):
             reference=release["ref"]
-            if not reference.startswith(old_prefix):
+            if reference.startswith(new_prefix):
+                rewritten_reference=reference
+            elif reference.startswith(old_prefix):
+                rewritten_reference=new_prefix+reference.removeprefix(old_prefix)
+            else:
                 raise ValueError("unexpected_registry_reference")
             digest=release["artifact_digest"]
             if not reference.endswith("@sha256:"+digest):
                 raise ValueError("digest_mismatch:image_reference")
-            release["ref"]=new_prefix+reference.removeprefix(old_prefix)
+            release["ref"]=rewritten_reference
     return rewritten
 
 
