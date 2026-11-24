@@ -14,6 +14,12 @@ mkdir -p "$log_root" "$root/.data/tmp"
 set -a
 source "$env_file"
 set +a
+case "${SANDBOX_HARNESS_BACKEND:-}" in
+  opensandbox) provider_gateway_host="172.31.0.1" ;;
+  aliyun) provider_gateway_host="10.194.49.8" ;;
+  *) echo "unsupported sandbox backend: ${SANDBOX_HARNESS_BACKEND:-unset}" >&2; exit 1 ;;
+esac
+export SANDBOX_HARNESS_GATEWAY_URL="http://${provider_gateway_host}:${SANDBOX_HARNESS_GATEWAY_BIND_PORT}"
 export TMPDIR="$root/.data/tmp"
 export XDG_CACHE_HOME="$root/.data/cache"
 export PIP_CACHE_DIR="$root/.data/pip-cache"
