@@ -2,104 +2,104 @@
   "profiles": {
     "data-analysis": {
       "claude": {
-        "artifact_digest": "9495896ed5946344e25d1974769baecee9fb30fc6fc463b51d6f9b49fa384952",
-        "ref": "bzv9kn8y97mdxbs18p8u",
-        "revision": "sha256:637a0314843b03d6281ccd26773ea31ba961deb5f122cf85bcf167f614d0a22e"
+        "artifact_digest": "ec356057f95e7d0073744db78e642d4b9b31763a99e59281e32e9a2e07b64fe3",
+        "ref": "eb5hd762ixjhcsige81l",
+        "revision": "sha256:7dc46d2c78403d4d20c0f59803ca1257ce22234a4d699d9f6409528b6a5fbf46"
       },
       "codex": {
-        "artifact_digest": "949c3132f710f212670ba70ba088b7c38a446b13b391e64419efc1dff1ab5e25",
-        "ref": "d3xlihh7xehta59sa4t5",
-        "revision": "sha256:ee8b643617afdcd4d8505ea34274f9d0041200fbbc985ca59cd91f2f449a2c18"
+        "artifact_digest": "f204828281429ed33d08ba37f3d6f04f65d8574eb6c0d3bdd0bd487d3f934c43",
+        "ref": "ob4hjibvwe4aozotat7u",
+        "revision": "sha256:8333cee488a16ac7a22e171453795e257a667a13f0f6f42c054f388f3607cf46"
       },
       "deepseek": {
-        "artifact_digest": "154978eea392f6596a6f682e640b4bcd6ab8e16b6e73ebb8afb5442e22a7cc69",
-        "ref": "80938pf7pm4rodorji4u",
-        "revision": "sha256:ea7a09385a196203f1413ac8a8c0634a7bfb057762916779ddbe3f2e8d17640b"
+        "artifact_digest": "a05e344041d48291b58e5c19cd70a945adb8c459571d4d9b369a770b1577d34b",
+        "ref": "fnq43pw4p4moij1j96ba",
+        "revision": "sha256:d91ccf472fe3dabacd6f4ba986a41c39bd7d08f5bc2c5c1a87aae1176022d60b"
       }
     },
     "general-cpu": {
       "claude": {
-        "artifact_digest": "9bf7e09923a17ba7ced0e3eaf4380793e1dc24a1ce09f5d2cd5a7137b510c032",
-        "ref": "6y4djb1hagjzwq0mb5mb",
-        "revision": "sha256:30fab49b12a0f207d6fb14091a04b77c016e6c72d444b9f300fc2aca8d46de48"
+        "artifact_digest": "53043d55845aa3da23ab0d89321f3f4ae081b5d118403fb06865aa3d451ab8e0",
+        "ref": "kqm7hituarjzmqcbtjg8",
+        "revision": "sha256:921baac3ff281fcf5fe4a12aa15061c4c3cf4a5b1a6965532361f0b4e5fc9b1c"
       },
       "codex": {
-        "artifact_digest": "6d0d552c4d805db5496d3aae2952895c524a1e48560d1575d92fd14f88b91c27",
-        "ref": "h6x65ulhu21r185n5cuh",
-        "revision": "sha256:ce9ef210031736dd4b238854fef1e2e63aaf27491b6d789052f124421e1c6d05"
+        "artifact_digest": "c092153349b4adb5e728c9176448ab454bc0a7953d2c19e9cbec43c6c4709493",
+        "ref": "iks0qo577kvgiefggjj3",
+        "revision": "sha256:a8d0ab0b6de3320da39c7b366f10ca4592a561bfd7c26288925574803b7a3527"
       },
       "deepseek": {
-        "artifact_digest": "616d52560a32816df24f10a3cded3df2e1e9e32a3d98093949ee86441ff5d8e3",
-        "ref": "ugjxobxzarnu9uhdk9yq",
-        "revision": "sha256:cd96a30a3d51d32db8b647f7b63ff76344cfe265daa480f67c7dc6e095919bcc"
+        "artifact_digest": "0aa5ed3bb8e6a74339da909cc1f4a7fab3a6393b9eefa44ff4bddb1db425d99d",
+        "ref": "mnr9c8kiytcstbsfkewk",
+        "revision": "sha256:81249ff5acc2150b623c0e32d450c936b3a55d5fa70cc0b85219e3a40c827320"
       }
     },
     "media-cpu": {
       "claude": {
-        "artifact_digest": "cf7f1fa832020bbef2e78129e76a325fbaf27ff8e71e19e46c05d88c126ede6c",
-        "ref": "1mmh4fv9svyduy4eq1qu",
-        "revision": "sha256:61aedd1ba67576b7907945baa9cc26632b2d8193d4b13ec54ac8239a95db3821"
+        "artifact_digest": "72d34a05cbcce79aca01605b6321c3fe7da1c4d622e04676b4ac5ac1a609b1f6",
+        "ref": "hnuv71hh17tfz17mftgh",
+        "revision": "sha256:0648980a5512d87ec6734ecf42c9aa2edbd7f596c82945253d2ed3b7c899d040"
       },
       "codex": {
-        "artifact_digest": "3b1c8e3d53df66ecad23dd06a6ffaf66678fefaec2ba4557727405a421d638bc",
-        "ref": "mxoer703uky6mv6r0ka6",
-        "revision": "sha256:231b8be8e6ed3ad7e2683b8f449db231191f0e89bbda75c0e65e30bc159290ec"
+        "artifact_digest": "c189c91bd1279d93e1a3540b382e84bbedba07b61daf958e5bcbaf25a5bab9bf",
+        "ref": "m9i7rdvqh9dg3h28hxf7",
+        "revision": "sha256:dcb579f330731a46c5235e5adf5286506f6a2f5e55354b5b108a3fca9a601396"
       },
       "deepseek": {
-        "artifact_digest": "26f7a13950850988d2bfbb6c40a20b214eb63a2e0f9f0a45013894a41515c182",
-        "ref": "vcwhpp6ly2spyfs0oeb4",
-        "revision": "sha256:aa86f15c6e09a64070db994a06364c9e30543a5ffd0cda83e0c015d916a5a094"
+        "artifact_digest": "d094da287bc373daf257b359d4a2b0e0dc4dc42d2da5d9d3df765b1bd54f8243",
+        "ref": "a7qtkwi5wwdmyramvcdf",
+        "revision": "sha256:a81b35b59d7dd319eecc0ba9016a6f8d2b716686b69f212a87d4ac6b39ad3aa0"
       }
     },
     "office": {
       "claude": {
-        "artifact_digest": "674d67022b5fb57d97cf51b0709595e6cfe623f8712a269abd1321fbed21c709",
-        "ref": "7kpx499acto99g18i23h",
-        "revision": "sha256:a0dbaf570ff0e9159a8d3a8e3c42f4851467de53f7325cabbb78e90e97e1660c"
+        "artifact_digest": "c74c8fc4aa9597f1c17f620d65789471896f534723809035c224d3c9ab8e4dee",
+        "ref": "y9h1lo3dfpnk23lcjzva",
+        "revision": "sha256:5d302755831286829f26b4256ade26b67de63f10b657f0910f7f9cc1150cb750"
       },
       "codex": {
-        "artifact_digest": "5578eda062cb9ca11b8b1a37fd859b015c9c107165bd700e0b94c9bd7c15d1b1",
-        "ref": "cypffmvnk7ppl4pekniy",
-        "revision": "sha256:3d7cd970deb8e4cc773776165d7920e84de87a7833caccf1ffc76dccdead5819"
+        "artifact_digest": "f95c5d38224596352ff4f4d914a92d681bf72b7c178482009824ae0bb74fe2c2",
+        "ref": "je0a3k2obwfitw27gtj9",
+        "revision": "sha256:a3ee9860d383222bafc82ea8d7248a0ddc343c37d9df49aa22da28f82f8ca7ad"
       },
       "deepseek": {
-        "artifact_digest": "4ba6dca830802913b2d0924b62ed51fb738f1ae945fef5a79aad75050597e52d",
-        "ref": "b3fjicrjukfnkphm1fbz",
-        "revision": "sha256:b9b6204aa101b4c643ef760bc55a1ba917cd528d024f942d3cd495d9d72fddb8"
+        "artifact_digest": "c0baa610c0d3b3a4c7ca782e1bbac8395b01df3786cf916d2265bd5bb23d9cca",
+        "ref": "pbsazl5y5z5p6j5saaqv",
+        "revision": "sha256:fc9af871a3d76eceb7d65c9eea0a6a4096df99d00205f105584c9e196be10c99"
       }
     },
     "primary-full-cpu": {
       "claude": {
-        "artifact_digest": "3725c589b20ed5841d4aaffaa1df872b4c8be6a82023f7bee6344213e96e4224",
-        "ref": "qdcg0zc3i32a8r66nxjn",
-        "revision": "sha256:d61865d2071a224ebde7eb143cf45d685306fd97cdc881a81b696f5b62a47662"
+        "artifact_digest": "1757af21bbac3660ed24bd79c522423a724373290d49093b83f3887168957b0d",
+        "ref": "5cuokbzvv6v1mkeq213k",
+        "revision": "sha256:4d592b999083f8aaad7b0fc4fea24e482ca6616b99c73cd302ca594b3c7a8bca"
       },
       "codex": {
-        "artifact_digest": "7fe86dde899742a19d65e701363e13caffa1774625a1874eea782f20ea661775",
-        "ref": "1043z8mpjrxfdvmamdzd",
-        "revision": "sha256:eda199c20706a575095c218a24aeec0823f2409b374fe82fca74d62a1d4d5da2"
+        "artifact_digest": "bd4a19f218e9b25b89ce5c5cde4f4c979f2019d30e5789fc17fac3dcffd0537e",
+        "ref": "zu5vy269mmlpga8vro7b",
+        "revision": "sha256:7c8bc7baa2817983a1e07f3acb55ffa87f107530a2d2afea4d3c7cbc3535ccf5"
       },
       "deepseek": {
-        "artifact_digest": "04bb211d35dfc26a6154115958bc4259009ce5d492ece432e924682c321c2328",
-        "ref": "o8wc89ij1fckb68fpxhl",
-        "revision": "sha256:fec2f6fd5df56e7190a361e9f316de85ce02aa40e080dc0bad9eb5ece042adcf"
+        "artifact_digest": "574497ea3f967d65eec3420d387eecb49d23494a6ca32fe626533667409cdfbc",
+        "ref": "yu5dqsvox4voo1mgcmni",
+        "revision": "sha256:c79226f1acd57e85f4e52cee70669e0213654e17606ded5fd82a4120c4b9d32a"
       }
     },
     "web-browser": {
       "claude": {
-        "artifact_digest": "1f1c9efc7691d55fcadede158fddfe2ed0ff2f20bc4b7dcec1cea8bdf9467c20",
-        "ref": "nwsna1ursh24f8pahiot",
-        "revision": "sha256:47b08e9d23a6f75398fd587293c5c9748209cc649087c20d610410f9c2aae8eb"
+        "artifact_digest": "e87496b25143de7051814e265af30e798ba8fd568e4bd5613e70d181c574ffe4",
+        "ref": "f4qcbtk46tha4p8re9r8",
+        "revision": "sha256:6fb8f327d90b179c8bba2edd356e5c0e5adc4119960d1482c836cb99a75ed09f"
       },
       "codex": {
-        "artifact_digest": "a52a8ad01bc28fb3bb30d3d1ac9dec5533a3a556cc5caa7f8b102c87aa0caf2c",
-        "ref": "gm4nnccjmesfcm3rk2yv",
-        "revision": "sha256:8b236acd1d32d11747b42976951cfcd031cc80018c827fdceb3cdefa7ca29a0e"
+        "artifact_digest": "8fe96247e7b7d104c987c05b78d9a6248eb0f62c858d3e90616f22d642ea81d7",
+        "ref": "9o40eyom2w5s71kr0shx",
+        "revision": "sha256:c67b072a254fd00c706e88f96370a7c553312a320906dc0dcdb072ee8b6bbc40"
       },
       "deepseek": {
-        "artifact_digest": "96333b98465330d195b6f79c3ba24f5782f53cc1e56eded19592f133ab830a02",
-        "ref": "wnzpsda1m4woqmd9qba9",
-        "revision": "sha256:f085ae81e7d33aad08555c80079cecb25e1e0f0d5de1230ecc459314ce4424ea"
+        "artifact_digest": "0e4eb0803db4fb62d038cd432cb3b69fb6647f3f30d800b4d640418a4e5d2c38",
+        "ref": "bhiaew8y5h14fgndpx5k",
+        "revision": "sha256:1111f6b9c5f49cf521f4029f655187c2c06fded296138cb46a7f6cf0f6718139"
       }
     }
   },
