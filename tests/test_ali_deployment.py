@@ -56,6 +56,8 @@ def test_ali_environment_regenerates_service_secrets_and_isolates_paths():
     assert values["SANDBOX_HARNESS_GATEWAY_SIGNING_KEY"]=="gateway-secret"
     assert values["SANDBOX_HARNESS_UPSTREAM_CODEX_KEY"]=="shared-provider-key"
     assert values["SANDBOX_HARNESS_OPENSANDBOX_API_KEY"]=="shared-opensandbox-key"
+    assert values["SANDBOX_HARNESS_ALIYUN_SANDBOX_GATEWAY_URL"]=="http://10.194.49.8:29882"
+    assert values["SANDBOX_HARNESS_ALIYUN_SANDBOX_PROXY_URL"]=="http://10.194.49.8:29883"
     assert "sandbox-harness-platform-parallel/.data" not in "\n".join(values.values())
 
 
@@ -159,9 +161,9 @@ def test_ali_transient_service_graph_is_complete_and_root_partition_free():
                     "media-worker","site-worker","api"):
         assert f"sandbox-harness-parallel-ali-{service}" in combined
     assert "systemd-run" in start and "--collect" in start
-    assert start.index("ali-postgresql")<start.index("ali-network")<start.index("ali-gateway-opensandbox")
-    assert start.index("ali-gateway-opensandbox")<start.index("ali-gateway-aliyun")
-    assert start.index("ali-gateway-aliyun")<start.index("ali-job-worker")<start.index("ali-api")
+    gateway_positions=(start.index("ali-gateway-opensandbox"),start.index("ali-gateway-aliyun"))
+    assert start.index("ali-postgresql")<start.index("ali-network")<min(gateway_positions)
+    assert max(gateway_positions)<start.index("ali-job-worker")<start.index("ali-api")
     assert "/etc/systemd" not in combined
     assert "systemctl enable" not in combined
     assert "/data2/wujing03/sandbox-harness-platform-parallel-ali" in combined
@@ -222,4 +224,8 @@ def test_ali_gateway_lifecycle_uses_two_exact_provider_hosts():
         assert host in status
     assert "start_transient sandbox-harness-parallel-ali-gateway sandbox-harness" not in start
     assert "systemctl stop sandbox-harness-parallel-ali-gateway.service" in start
+    assert 'case "${SANDBOX_HARNESS_BACKEND:-}" in' in start
+    assert "provider switch requires deploy/ali/stop.sh first" in start
+    assert "Aliyun sandbox routes are not explicitly configured" in start
+    assert "selected sandbox backend" in status
     assert "0.0.0.0" not in start+stop+status

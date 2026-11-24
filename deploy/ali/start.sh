@@ -5,7 +5,11 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 [[ "$root" == /data2/wujing03/sandbox-harness-platform-parallel-ali ]] || {
   echo "unexpected_project_root:$root" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || { echo "run as root" >&2; exit 1; }
-[[ -f "$root/.data/config/platform.env" ]] || { echo "Ali environment is not configured" >&2; exit 1; }
+env_file="$root/.data/config/platform.env"
+[[ -f "$env_file" ]] || { echo "Ali environment is not configured" >&2; exit 1; }
+set -a
+source "$env_file"
+set +a
 
 wait_port() {
   local host=$1 port=$2
@@ -36,14 +40,30 @@ if ! systemctl is-active --quiet sandbox-harness-parallel-ali-network.service; t
 fi
 
 systemctl stop sandbox-harness-parallel-ali-gateway.service 2>/dev/null || true
-start_transient sandbox-harness-parallel-ali-gateway-opensandbox sandbox-harness \
-  "$root/deploy/ali/run-service.sh" gateway-opensandbox
-wait_port 172.31.0.1 29882
-wait_port 172.31.0.1 29883
-start_transient sandbox-harness-parallel-ali-gateway-aliyun sandbox-harness \
-  "$root/deploy/ali/run-service.sh" gateway-aliyun
-wait_port 10.194.49.8 29882
-wait_port 10.194.49.8 29883
+case "${SANDBOX_HARNESS_BACKEND:-}" in
+  opensandbox)
+    if systemctl is-active --quiet sandbox-harness-parallel-ali-gateway-aliyun.service; then
+      echo "provider switch requires deploy/ali/stop.sh first" >&2; exit 1
+    fi
+    start_transient sandbox-harness-parallel-ali-gateway-opensandbox sandbox-harness \
+      "$root/deploy/ali/run-service.sh" gateway-opensandbox
+    wait_port 172.31.0.1 29882
+    wait_port 172.31.0.1 29883
+    ;;
+  aliyun)
+    [[ "${SANDBOX_HARNESS_ALIYUN_SANDBOX_GATEWAY_URL:-}" == "http://10.194.49.8:29882" && \
+       "${SANDBOX_HARNESS_ALIYUN_SANDBOX_PROXY_URL:-}" == "http://10.194.49.8:29883" ]] || {
+      echo "Aliyun sandbox routes are not explicitly configured" >&2; exit 1; }
+    if systemctl is-active --quiet sandbox-harness-parallel-ali-gateway-opensandbox.service; then
+      echo "provider switch requires deploy/ali/stop.sh first" >&2; exit 1
+    fi
+    start_transient sandbox-harness-parallel-ali-gateway-aliyun sandbox-harness \
+      "$root/deploy/ali/run-service.sh" gateway-aliyun
+    wait_port 10.194.49.8 29882
+    wait_port 10.194.49.8 29883
+    ;;
+  *) echo "unsupported sandbox backend: ${SANDBOX_HARNESS_BACKEND:-unset}" >&2; exit 1 ;;
+esac
 if [[ ! -f "$root/.data/services/image-layered/service/app.py" ]]; then
   "$root/deploy/ali/materialize-image-decompose.sh"
 fi

@@ -4,8 +4,7 @@
 
 Expose the same signed Gateway and public-proxy protocol to OpenSandbox and
 Aliyun sandboxes without wildcard listeners or provider-specific application
-behavior. A deployment may use either backend, while both network entrances
-remain independently observable during migration and cleanup.
+behavior. A deployment selects exactly one provider listener from configuration.
 
 ## Constraints
 
@@ -21,17 +20,18 @@ remain independently observable during migration and cleanup.
 
 ## Approaches
 
-### Selected: two instances of the existing Gateway service
+### Selected: one provider-selected instance of the existing Gateway service
 
-Run the same entry point twice with provider-specific bind-host overrides.
-Each process owns its matching API and proxy sockets. This preserves the
-existing Gateway implementation and isolates listener failures.
+The deployment owns two explicit unit definitions but starts exactly one,
+selected by `SANDBOX_HARNESS_BACKEND`. This preserves process-local connection
+revocation, keeps the inactive VPC address closed, and reuses the same Gateway
+implementation for both providers.
 
-### Rejected: one process with multiple pre-bound uvicorn sockets
+### Rejected: two simultaneous Gateway processes
 
-This saves one process but requires custom uvicorn lifecycle and multi-server
-proxy management. It increases the regression surface without changing the
-protocol or authorization model.
+Process-local active stream and CONNECT state cannot be revoked atomically
+across two listeners without a new distributed revocation channel. A permanent
+Ali listener would also expand the VPC attack surface while OpenSandbox is active.
 
 ## Service Model
 
@@ -41,14 +41,15 @@ protocol or authorization model.
   binds `10.194.49.8:29882/29883`.
 - `run-service.sh` accepts `gateway-opensandbox` and `gateway-aliyun`, setting
   only the bind host before launching the existing Gateway entry point.
-- Start, stop and status scripts manage both units explicitly.
+- Start chooses one unit and refuses a provider mismatch. Stop manages both
+  possible unit names. Status reports the selected and inactive providers.
 
 ## Verification
 
-Static tests assert disjoint explicit hosts, unit lifecycle coverage and no
-wildcard bind. Runtime verification checks both `/health` endpoints, both proxy
-ports, OpenSandbox bridge access, and Aliyun access from a sandbox created from
-template `tf6ud6ouc1ynsmivnjkq` without dynamic VPC metadata.
+Static tests assert provider selection, disjoint explicit hosts, unit lifecycle
+coverage and no wildcard bind. Runtime verification tests each listener in
+isolation, including Aliyun access from a sandbox created from template
+`tf6ud6ouc1ynsmivnjkq` without dynamic VPC metadata, then restores OpenSandbox.
 
 ## Rollback
 
