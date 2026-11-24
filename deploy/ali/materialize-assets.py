@@ -33,6 +33,14 @@ def digest_bytes(data:bytes)->str:
     return hashlib.sha256(data).hexdigest()
 
 
+def release_identity(source:dict[str,str])->dict[str,str]:
+    return {
+        "SANDBOX_HARNESS_RELEASE":source["SANDBOX_HARNESS_RELEASE"],
+        "SANDBOX_HARNESS_WEB_DIST_DIGEST":source["SANDBOX_HARNESS_WEB_DIST_DIGEST"],
+        "PYTHONPATH":str(ROOT/"src"),
+    }
+
+
 def verified_copy(source:Path,target:Path,digest:str)->None:
     if not source.is_file() or digest_bytes(source.read_bytes())!=digest:
         raise ValueError(f"digest_mismatch:{source}")
@@ -163,7 +171,7 @@ def materialize(source_env:Path,target_env:Path,*,promote_images:bool=False,forc
     primary_releases=primary["provider_releases"].get(provider,{})
     if set(primary_releases)!={"codex","claude","deepseek"}:
         raise ValueError("primary_provider_release_matrix_incomplete")
-    target.update({
+    target.update({**release_identity(source),
         "SANDBOX_HARNESS_JOB_CATALOG_PATH":str(job_target),
         "SANDBOX_HARNESS_JOB_CATALOG_DIGEST":job_digest,
         "SANDBOX_HARNESS_PROFILE_CATALOG_PATH":str(profile_target),

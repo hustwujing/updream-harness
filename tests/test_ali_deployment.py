@@ -181,6 +181,23 @@ def test_ali_controlled_runtime_force_does_not_delete_same_store_source(tmp_path
     assert link.resolve()==source
 
 
+def test_ali_materializer_propagates_release_identity_into_independent_checkout():
+    assets=load("ali_assets_release_identity",ROOT/"deploy/ali/materialize-assets.py")
+    source={
+        "SANDBOX_HARNESS_RELEASE":"abc123def456",
+        "SANDBOX_HARNESS_WEB_DIST_DIGEST":"f"*64,
+        "PYTHONPATH":"/data2/wujing03/sandbox-harness-platform-parallel/src",
+    }
+
+    identity=assets.release_identity(source)
+
+    assert identity=={
+        "SANDBOX_HARNESS_RELEASE":"abc123def456",
+        "SANDBOX_HARNESS_WEB_DIST_DIGEST":"f"*64,
+        "PYTHONPATH":str(ALI_ROOT/"src"),
+    }
+
+
 def test_aliyun_provider_release_overlay_is_complete_and_immutable():
     value=json.loads((ROOT/"deploy/ali/provider-releases.json").read_text())
     assert value["schema_version"]==1 and value["provider"]=="aliyun"
