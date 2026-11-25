@@ -255,10 +255,12 @@ class JobWorker:
                 try:
                     while True:
                         try:
+                            submission_started=True
                             submission=(submission or await self._before_deadline(
                                 adapter.submit(context),deadline))
                             break
                         except PreAcceptFailure as exc:
+                            submission_started=False
                             maximum = int(request.retry_policy.get("max_pre_accept_attempts", 1))
                             retry = exc.retryable and (exc.retry_class=='capacity_wait'
                                 or attempt.generation < max(1, maximum))

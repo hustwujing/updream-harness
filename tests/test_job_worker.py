@@ -183,6 +183,35 @@ async def test_service_capacity_wait_reuses_one_attempt_generation(tmp_path,kind
     finally:await store.close()
 
 
+@pytest.mark.parametrize('retry_started',[False,True])
+async def test_capacity_wait_deadline_is_known_preaccept_timeout(tmp_path,retry_started):
+    import asyncio
+    from datetime import datetime,timedelta,timezone
+    store,_,job=await setup(tmp_path,request(timeout_seconds=1))
+    class CapacityAdapter(FakeAdapter):
+        async def submit(self,context):
+            if self.submit_calls:
+                self.submit_calls+=1
+                await asyncio.sleep(10)
+            return await super().submit(context)
+    adapter=CapacityAdapter([PreAcceptFailure('provider capacity exhausted',
+        infrastructure=True,retry_after_seconds=.01 if retry_started else 1)])
+    async def deadline(*args):return datetime.now(timezone.utc)+timedelta(seconds=.25)
+    store.job_deadline=deadline
+    worker=JobWorker(store,{'fake':adapter},node_id='node',worker_id='worker')
+    try:
+        attempt=await store.claim_job(job.id,'worker','node',30)
+        await worker.process(attempt,continuous=True)
+        final=await store.get_job(job.id)
+        assert final.state==(JobState.UNKNOWN if retry_started else JobState.FAILED),final.result
+        assert final.result['error_code']==('job_timeout_submission_outcome_unknown'
+            if retry_started else 'job_timeout_before_submission')
+        assert final.result['side_effect_state']==('unknown' if retry_started else 'none')
+        assert await store.latest_job_acceptance(job.id) is None
+        assert adapter.submit_calls==(2 if retry_started else 1) and adapter.status_calls==0
+    finally:await store.close()
+
+
 async def test_successful_collection_dispatches_frozen_policy_review_before_terminal(tmp_path):
     store,_,job=await setup(tmp_path,request(kind=JobKind.OPERATION))
     adapter=FakeAdapter([AdapterSubmission('external-1',{'accepted':True},completed=True,
