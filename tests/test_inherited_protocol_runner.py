@@ -38,11 +38,33 @@ def test_inherited_non_protocol_cases_require_real_business_artifact_execution()
 def test_destructive_protocols_are_serialized_and_business_assets_are_configured():
     inherited=(ROOT/'tests/run_real_inherited_protocol.py').read_text()
     parallel=(ROOT/'tests/run_real_parallel_protocol.py').read_text()
-    assert 'async with parallel.protocol_lock():protocol=await handler' in inherited
+    assert 'parallel.protocol_lock() if serial else parallel.concurrent_case()' in inherited
     assert "SERIAL_CASES={'P13','P19','P21','P27'}" in parallel
     assert 'boundary=protocol_lock() if args.case in SERIAL_CASES else concurrent_case()' in parallel
     assert 'async with boundary:' in parallel
     assert "args.asset_root=" in inherited and "ResilientAsyncClient" in inherited
+
+
+async def test_only_shared_service_mutators_take_inherited_protocol_lock(monkeypatch):
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    runner=load_runner();entered=[]
+    @asynccontextmanager
+    async def locked():
+        entered.append('locked');yield
+    @asynccontextmanager
+    async def concurrent():
+        entered.append('concurrent');yield
+    monkeypatch.setattr(runner.parallel,'protocol_lock',locked)
+    monkeypatch.setattr(runner.parallel,'concurrent_case',concurrent)
+    async def handler(client,args):return {'classification':'success'}
+    for protocol,expected in [('P01','concurrent'),('P13','locked'),
+                              ('P19','locked'),('P21','locked'),('P27','locked')]:
+        monkeypatch.setitem(runner.parallel.HANDLERS,protocol,handler)
+        monkeypatch.setitem(runner.SOURCE_CASES,'test',{'expect':{'kind':'protocol'}})
+        await runner.adapt('test','boundary',handler)(None,SimpleNamespace())
+        assert entered.pop()==expected
+        monkeypatch.delitem(runner.parallel.HANDLERS,protocol)
 
 
 def test_continuation_protocols_wait_for_state_instead_of_fixed_sleep():

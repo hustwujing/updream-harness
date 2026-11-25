@@ -44,7 +44,10 @@ def business_artifact_prompt(case:dict)->str:
 
 def adapt(identity:str,boundary:str,handler):
     async def run(client,args):
-        async with parallel.protocol_lock():protocol=await handler(client,args)
+        serial=any(handler is parallel.HANDLERS.get(case)
+            for case in parallel.SERIAL_CASES)
+        guard=parallel.protocol_lock() if serial else parallel.concurrent_case()
+        async with guard:protocol=await handler(client,args)
         if protocol.get('classification')!='success':return decorate(identity,boundary,protocol)
         case=SOURCE_CASES[identity]
         if case.get('expect',{}).get('kind')=='protocol':
