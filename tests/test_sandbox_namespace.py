@@ -705,3 +705,70 @@ async def test_pool_skips_incompatible_warm_sandbox_and_rejects_incompatible_ado
     with pytest.raises(SandboxProfileUnavailable):
         await pool.adopt(external,thread_id='external-thread',turn_id='external')
     await backend.delete(external);await pool.close()
+
+
+async def test_durable_allocation_keeps_one_slot_until_late_adoption():
+    from sandbox_harness.sandbox_contracts import SandboxCreateOutcomeUnknown
+    class Backend(FakeSandboxBackend):
+        creates=[]
+        async def create(self,request):
+            self.creates.append(request.allocation_id)
+            sandbox=await super().create(request)
+            if request.allocation_id=='allocation':
+                raise SandboxCreateOutcomeUnknown('response lost',provider=self.provider)
+            return sandbox
+    backend=Backend();pool=SandboxPool(backend,{Harness.CODEX:'image'},
+        {Harness.CODEX:0},max_sandboxes=1)
+    waiting=None
+    try:
+        with pytest.raises(SandboxCreateOutcomeUnknown):
+            await pool.acquire(thread_id='owner',turn_id='allocation',harness=Harness.CODEX,
+                environment={},retain_unresolved_allocation=True)
+        assert await pool.owns_allocation('fake','allocation')
+        with pytest.raises(SandboxCreateOutcomeUnknown):
+            await pool.acquire(thread_id='owner',turn_id='allocation',harness=Harness.CODEX,
+                environment={},retain_unresolved_allocation=True)
+        assert backend.creates==['allocation']
+        waiting=asyncio.create_task(pool.acquire(thread_id='other',turn_id='other',
+            harness=Harness.CODEX,environment={}))
+        await asyncio.sleep(.02);assert not waiting.done()
+        sandbox=await pool.reconcile_create('allocation')
+        adopted=await asyncio.wait_for(pool.adopt(sandbox,thread_id='owner',turn_id='allocation',
+            expected_profile=sandbox.profile),.5)
+        assert adopted.id==sandbox.id and not waiting.done()
+        await pool.release(adopted,keep_attached=False)
+        replacement=await asyncio.wait_for(waiting,.5)
+        assert backend.creates==['allocation','other']
+        await pool.release(replacement,keep_attached=False)
+    finally:
+        if waiting and not waiting.done():waiting.cancel();await asyncio.gather(waiting,return_exceptions=True)
+        await pool.close()
+
+
+async def test_cancelled_durable_create_retains_slot_until_confirmed_retirement():
+    class Backend(FakeSandboxBackend):
+        created=asyncio.Event();fail_delete=True
+        async def create(self,request):
+            sandbox=await super().create(request)
+            self.created.set()
+            await asyncio.Event().wait()
+            return sandbox
+        async def delete(self,sandbox):
+            if self.fail_delete:raise RuntimeError('temporary deletion failure')
+            await super().delete(sandbox)
+    backend=Backend();pool=SandboxPool(backend,{Harness.CODEX:'image'},
+        {Harness.CODEX:0},max_sandboxes=1)
+    task=asyncio.create_task(pool.acquire(thread_id='owner',turn_id='allocation',
+        harness=Harness.CODEX,environment={},retain_unresolved_allocation=True))
+    try:
+        await backend.created.wait();task.cancel()
+        with pytest.raises(asyncio.CancelledError):await task
+        assert await pool.owns_allocation('fake','allocation')
+        sandbox=await pool.reconcile_create('allocation')
+        with pytest.raises(RuntimeError,match='deletion failure'):await pool.retire(sandbox)
+        assert pool._user_slots._value==0
+        backend.fail_delete=False;await pool.retry_deletions()
+        assert pool._user_slots._value==1 and not backend.items
+        await pool.retire(sandbox)
+        assert pool._user_slots._value==1
+    finally:await pool.close()

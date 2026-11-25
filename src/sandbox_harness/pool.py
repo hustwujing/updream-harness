@@ -7,10 +7,12 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 import logging
 import time
+from typing import Awaitable,Callable
 
 from .domain import Harness, identifier
 from .sandbox import Sandbox, SandboxBackend, SandboxNotFound, SandboxProfileUnavailable
-from .sandbox_contracts import SandboxCreateRequest,SandboxProfile,SandboxScope,SandboxState
+from .sandbox_contracts import (SandboxCreateOutcomeUnknown,SandboxCreateRequest,
+    SandboxProfile,SandboxScope,SandboxState)
 from .sandbox_factory import SandboxProfileResolver
 
 
@@ -27,6 +29,8 @@ class SandboxPool:
             runtime_contract="sandbox-harness-runtime/v1",runtime_bundle_digest="legacy",
             runtime_code_bundle_digest="legacy")
         self.ttl_seconds=ttl_seconds
+        # Only callers with a durable, lease-fenced cleanup owner opt in.
+        self._pending_allocations:dict[tuple[str,str],tuple[str,SandboxProfile]]={}
         user_capacity = self.max_sandboxes - sum(targets.values())
         if user_capacity < 1:
             raise ValueError("Sandbox maximum must leave at least one user slot")
@@ -87,6 +91,29 @@ class SandboxPool:
         return await self.backend.reconcile_create(
             SandboxScope(self.backend.namespace),allocation_id)
 
+    async def owns_allocation(self,provider:str,allocation_id:str)->bool:
+        async with self._lock:
+            return (provider,allocation_id) in self._pending_allocations or any(
+                value.handle.provider==provider and value.handle.allocation_id==allocation_id
+                for value in self._attached.values())
+
+    async def retirement_pending(self,sandbox:Sandbox)->bool:
+        async with self._lock:return self.sandbox_key(sandbox) in self._retiring
+
+    async def _create_for_owner(self,request:SandboxCreateRequest,thread_id:str,
+                                retain_unresolved:bool,before_create=None)->Sandbox:
+        key=(request.profile.provider,request.allocation_id)
+        if before_create:await before_create(request)
+        if retain_unresolved:
+            async with self._lock:
+                self._pending_allocations[key]=(thread_id,request.profile)
+        try:return await self.backend.create(request)
+        except (SandboxCreateOutcomeUnknown,asyncio.CancelledError):raise
+        except BaseException:
+            if retain_unresolved:
+                async with self._lock:self._pending_allocations.pop(key,None)
+            raise
+
     async def execution_available(self) -> bool:
         async with self._lock:
             values=list(self._attached.values())+[sandbox for rows in self._warm.values()
@@ -119,6 +146,14 @@ class SandboxPool:
                 self._idle_since.pop(attached, None)
                 expiry = self._expiry.pop(attached, None)
                 user_slot = True
+            pending_key=(sandbox.handle.provider,sandbox.handle.allocation_id)
+            pending=self._pending_allocations.get(pending_key)
+            if pending:
+                if pending[1].compatibility_key!=sandbox.compatibility_key:
+                    raise SandboxProfileUnavailable('Pending allocation profile mismatch',
+                        provider=sandbox.handle.provider)
+                self._pending_allocations.pop(pending_key)
+                user_slot=True
             for harness,rows in self._warm.items():
                 self._warm[harness]=[value for value in rows if self.sandbox_key(value)!=key]
             existing = self._retiring.get(key)
@@ -239,11 +274,14 @@ class SandboxPool:
     @observed("sandbox.acquire")
     async def acquire(self, *, thread_id: str, turn_id: str, harness: Harness,
                       environment: dict[str, str], image: str | None = None,
-                      profile_id: str | None = None, revision: str | None = None) -> Sandbox:
+                      profile_id: str | None = None, revision: str | None = None,
+                      retain_unresolved_allocation:bool=False,
+                      before_create:Callable[[SandboxCreateRequest],Awaitable[None]]|None=None) -> Sandbox:
         async with self._thread_lock(thread_id):
             desired_image = image or self.images[harness]
             desired_profile=self.profile_resolver.resolve(harness,desired_image,
                 profile_id=profile_id,revision=revision)
+            pending_key=(desired_profile.provider,turn_id)
             slot_reserved = False
             async with self._lock:
                 if self._closed:
@@ -291,6 +329,10 @@ class SandboxPool:
                     attached.health_error=type(exc).__name__
                     raise
 
+            async with self._lock:
+                if pending_key in self._pending_allocations:
+                    raise SandboxCreateOutcomeUnknown('Allocation requires reconciliation',
+                        provider=desired_profile.provider)
             await self._reserve_user_slot()
             slot_reserved=True
 
@@ -302,7 +344,8 @@ class SandboxPool:
                         if value.compatibility_key!=desired_profile.compatibility_key]
                     self._warm[harness]=[value for value in self._warm[harness]
                         if value.compatibility_key==desired_profile.compatibility_key]
-                    sandbox = self._warm[harness].pop() if self._warm[harness] else None
+                    sandbox = (self._warm[harness].pop() if self._warm[harness]
+                        and not retain_unresolved_allocation else None)
                 for stale in incompatible_warm:
                     await self._delete_tracked(stale,user_slot=False)
                 if sandbox:
@@ -312,9 +355,10 @@ class SandboxPool:
                         await self._bind(sandbox,thread_id=thread_id,turn_id=turn_id)
                         sandbox.warm = False
                     except SandboxNotFound:
-                        sandbox=await self.backend.create(SandboxCreateRequest(harness=harness,
+                        sandbox=await self._create_for_owner(SandboxCreateRequest(harness=harness,
                             profile=desired_profile,environment=environment,
-                            ttl_seconds=self.ttl_seconds,allocation_id=turn_id))
+                            ttl_seconds=self.ttl_seconds,allocation_id=turn_id),
+                            thread_id,retain_unresolved_allocation,before_create)
                     except asyncio.CancelledError:
                         cleanup=asyncio.create_task(self._delete_tracked(sandbox,user_slot=False))
                         try:await asyncio.shield(cleanup)
@@ -324,9 +368,10 @@ class SandboxPool:
                         await self._delete_tracked(sandbox,user_slot=False)
                         raise
                 else:
-                    sandbox=await self.backend.create(SandboxCreateRequest(harness=harness,
+                    sandbox=await self._create_for_owner(SandboxCreateRequest(harness=harness,
                         profile=desired_profile,environment=environment,
-                        ttl_seconds=self.ttl_seconds,allocation_id=turn_id))
+                        ttl_seconds=self.ttl_seconds,allocation_id=turn_id),
+                        thread_id,retain_unresolved_allocation,before_create)
                 sandbox.thread_id = thread_id
                 sandbox.turn_id = turn_id
                 sandbox.reused = False
@@ -334,13 +379,17 @@ class SandboxPool:
                     closed = self._closed
                     if not closed:
                         self._attached[thread_id] = sandbox
+                        self._pending_allocations.pop(pending_key,None)
                 if closed:
                     # The local exception path releases this reservation.
                     await self._delete_tracked(sandbox, user_slot=False)
+                    async with self._lock:self._pending_allocations.pop(pending_key,None)
                     raise RuntimeError("sandbox_pool_closed")
             except BaseException:
-                self._user_slots.release()
-                self._capacity_changed.set()
+                async with self._lock:pending=pending_key in self._pending_allocations
+                if not pending:
+                    self._user_slots.release()
+                    self._capacity_changed.set()
                 raise
             self._schedule_refill(harness)
             return sandbox
@@ -362,7 +411,13 @@ class SandboxPool:
                     if self.sandbox_key(existing)!=self.sandbox_key(sandbox):
                         raise RuntimeError("Thread already owns another sandbox")
                     return existing
-            await self._reserve_user_slot()
+                pending_key=(sandbox.handle.provider,sandbox.handle.allocation_id)
+                pending=self._pending_allocations.get(pending_key)
+                if pending and (pending[0]!=thread_id or
+                        pending[1].compatibility_key!=expected_profile.compatibility_key):
+                    raise SandboxProfileUnavailable('Pending allocation owner/profile mismatch',
+                        provider=sandbox.handle.provider)
+            if not pending:await self._reserve_user_slot()
             try:
                 await self._bind(sandbox,thread_id=thread_id,turn_id=turn_id)
                 sandbox.thread_id = thread_id
@@ -372,10 +427,12 @@ class SandboxPool:
                     if self._closed:
                         raise RuntimeError("sandbox_pool_closed")
                     self._attached[thread_id] = sandbox
+                    self._pending_allocations.pop(pending_key,None)
                 return sandbox
             except BaseException:
-                self._user_slots.release()
-                self._capacity_changed.set()
+                if not pending:
+                    self._user_slots.release()
+                    self._capacity_changed.set()
                 raise
 
     @observed("sandbox.release")
