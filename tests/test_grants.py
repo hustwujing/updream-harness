@@ -24,6 +24,59 @@ def turn_request() -> TurnGrantRequest:
     )
 
 
+def lifetime_job_request(ttl):
+    return JobGrantRequest(group_id='e'*32,job_id='f'*32,generation=1,
+        source_identity='sandbox-1',descriptor_id='artifact.inspect',descriptor_version='1',
+        descriptor_digest='1'*64,operations=('status',),parameter_digest='2'*64,
+        routes=('/v1/jobs',),ttl_seconds=ttl,max_requests=1,max_public_requests=1,token_budget=1)
+
+
+def test_child_grant_uses_one_clock_sample_for_check_and_signed_expiry(monkeypatch):
+    from types import SimpleNamespace
+    from sandbox_harness import grants,capability
+    ticks=iter([1000,1030,1031]);clock=SimpleNamespace(time=lambda:next(ticks))
+    monkeypatch.setattr(grants,'time',clock);monkeypatch.setattr(capability,'time',clock)
+    issuer=authority();_,parent=issuer.issue_turn(turn_request())
+    _,child=issuer.issue_job(parent,lifetime_job_request(30))
+    assert child.issued_at==1030 and child.expires_at==parent.expires_at==1060
+
+
+def test_explicit_child_ttl_cannot_exceed_remaining_parent_lifetime(monkeypatch):
+    from types import SimpleNamespace
+    from sandbox_harness import grants,capability
+    clock=SimpleNamespace(time=lambda:1000)
+    monkeypatch.setattr(grants,'time',clock);monkeypatch.setattr(capability,'time',clock)
+    issuer=authority();_,parent=issuer.issue_turn(turn_request())
+    clock.time=lambda:1001
+    with pytest.raises(ValueError,match='exceeds parent'):
+        issuer.issue_job(parent,lifetime_job_request(60))
+
+
+@pytest.mark.parametrize('elapsed',[59,60,61])
+def test_inherited_child_lifetime_stops_at_parent_expiry(monkeypatch,elapsed):
+    from types import SimpleNamespace
+    from sandbox_harness import grants,capability
+    clock=SimpleNamespace(time=lambda:1000)
+    monkeypatch.setattr(grants,'time',clock);monkeypatch.setattr(capability,'time',clock)
+    issuer=authority();_,parent=issuer.issue_turn(turn_request());clock.time=lambda:1000+elapsed
+    if elapsed<60:
+        _,child=issuer.issue_job(parent,lifetime_job_request(None))
+        assert child.expires_at==1060 and child.issued_at==1059
+    else:
+        with pytest.raises(ValueError,match='exceeds parent'):
+            issuer.issue_job(parent,lifetime_job_request(None))
+
+
+@pytest.mark.parametrize('expansion',[
+    {'max_requests':11},{'budget':{'submissions':2}},
+    {'source_identity':'other-sandbox'},{'routes':('/v1/ungranted',)},
+])
+def test_inherited_child_lifetime_preserves_scope_checks(expansion):
+    issuer=authority();_,parent=issuer.issue_turn(turn_request())
+    with pytest.raises(ValueError,match='exceeds parent'):
+        issuer.issue_job(parent,lifetime_job_request(None).model_copy(update=expansion))
+
+
 def test_job_grant_is_exactly_scoped_and_host_secrets_are_absent():
     grants=authority();_,parent=grants.issue_turn(turn_request())
     token,claims=grants.issue_job(parent,JobGrantRequest(

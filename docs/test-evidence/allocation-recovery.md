@@ -146,3 +146,20 @@ the resulting permanent failure. Those I/O errors now propagate to collection
 retry; a replacement Worker collects the same execution with one submission.
 The completed focused suite passed 138 checks and independent review passed 20.
 Broader release checks and deployed regression are pending.
+
+### Grant lifetime boundary found by R09
+
+R09's Reviewer preparation returned a raw `ValueError`; its allocation was
+already RELEASED, but the Worker recorded submission unknown. Replaying the
+frozen request locally succeeded within one clock second and failed when parent
+and child issuance crossed the second boundary. The factory requested the full
+configured TTL after the parent's remaining TTL had decreased. Separately,
+sampling time again during signing could extend a child one second past the
+parent even after a successful scope check.
+
+The clock regressions produced three failures before correction. Child grants
+can explicitly inherit the parent's deadline, and validation/signing share one
+time sample. Explicit TTL and all scope checks remain strict. Focused checks
+passed 82 tests, extra expiry/scope checks passed 29, and independent review
+passed 42. Preparation-failure classification and deployed R09 verification are
+still pending.

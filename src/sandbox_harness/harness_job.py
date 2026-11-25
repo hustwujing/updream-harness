@@ -92,7 +92,7 @@ class JobGrantFactory:
             child_profile_id=request.child_profile_id,runtime_profile_id=request.runtime_profile_id,
             network_origins=request.network_origins,output_scopes=output_scopes,
             parameter_digest=request.request_digest,budget=request.budget_requirements,routes=routes,
-            ttl_seconds=self.settings.capability_ttl_seconds,
+            ttl_seconds=None,
             max_requests=self.settings.capability_request_limit,
             max_public_requests=self.settings.capability_public_request_limit,token_budget=token_budget))
 

@@ -62,6 +62,19 @@ async def test_child_harness_grant_can_read_its_scoped_execution_catalog():
     assert 'check' in claims.operations
 
 
+@pytest.mark.parametrize('adapter',['child-harness','reviewer-harness'])
+async def test_job_grant_factory_crossing_second_keeps_parent_expiry(monkeypatch,adapter):
+    from sandbox_harness import grants,capability
+    ticks=iter([1000,1001,1002])
+    clock=SimpleNamespace(time=lambda:next(ticks))
+    monkeypatch.setattr(grants,'time',clock);monkeypatch.setattr(capability,'time',clock)
+    context=JobExecutionContext(job=SimpleNamespace(thread_id='a'*32,origin_turn_id='b'*32,
+        group_id='c'*32,id='d'*32),request=request(adapter=adapter),generation=1)
+    _,claims=await JobGrantFactory(Settings(backend='fake',capability_ttl_seconds=60))(
+        context,SimpleNamespace(harness='codex'),'sandbox-1')
+    assert claims.issued_at==1001 and claims.expires_at==1060
+
+
 async def setup(tmp_path,status):
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'harness.db'));await store.initialize()
     scheduler=Scheduler(store);await scheduler.register_node(NodeInventory(node_id='node',generation=1,

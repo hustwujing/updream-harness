@@ -13,6 +13,15 @@ token budget. Gateway verifies the route prefix on every request. The token is
 written under `/run/harness`, excluded from checkpoints and revoked during
 cleanup. Active model and public-proxy connections are closed on revocation.
 
+Job grants remain subsets of their Turn/Group parent. `GrantAuthority.issue_job`
+samples time once for remaining-lifetime validation and signing. An explicit
+positive TTL must fit within that remaining lifetime; `ttl_seconds=None`
+inherits the parent's deadline. `JobGrantFactory` uses inheritance so crossing
+a clock second between parent and child issuance cannot reject an otherwise
+valid grant. Expired parents and every scope/budget expansion remain rejected.
+See `tests/test_grants.py` and the Child/Reviewer factory clock regressions in
+`tests/test_harness_job.py`.
+
 The current Gateway authenticates possession of that signed token. It records
 the signed `sandbox_id` but does not independently attest the caller's network
 identity against OpenSandbox. Do not describe the field as source-sandbox

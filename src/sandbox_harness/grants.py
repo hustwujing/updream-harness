@@ -54,7 +54,8 @@ class JobGrantRequest(BaseModel):
     parameter_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     budget: dict[str, int] = Field(default_factory=dict)
     routes: tuple[str, ...] = Field(min_length=1)
-    ttl_seconds: int = Field(ge=1)
+    # None explicitly inherits the parent's remaining lifetime.
+    ttl_seconds: int | None = Field(ge=1)
     max_requests: int = Field(ge=1)
     max_public_requests: int = Field(ge=1)
     token_budget: int = Field(ge=1)
@@ -88,7 +89,9 @@ class GrantAuthority:
                   value: JobGrantRequest) -> tuple[str, CapabilityClaims]:
         if parent.scope not in {"turn", "group"}:
             raise ValueError("Job grant requires a Turn or Group parent grant")
-        remaining_ttl = parent.expires_at - int(time.time())
+        issued_at=int(time.time())
+        remaining_ttl = parent.expires_at - issued_at
+        ttl_seconds=remaining_ttl if value.ttl_seconds is None else value.ttl_seconds
         subset_checks = (
             set(value.artifact_ids) <= set(parent.artifact_ids),
             set(value.skill_ids) <= set(parent.skill_ids),
@@ -104,7 +107,7 @@ class GrantAuthority:
             value.max_requests <= parent.max_requests,
             value.max_public_requests <= parent.max_public_requests,
             value.token_budget <= parent.token_budget,
-            remaining_ttl > 0 and value.ttl_seconds <= remaining_ttl,
+            remaining_ttl > 0 and ttl_seconds <= remaining_ttl,
             value.source_identity == parent.sandbox_id,
         )
         if not all(subset_checks):
@@ -112,7 +115,7 @@ class GrantAuthority:
         return self.codec.issue(
             thread_id=parent.thread_id, turn_id=parent.turn_id, sandbox_id=parent.sandbox_id,
             harness=parent.harness, model=parent.model, routes=value.routes,
-            ttl_seconds=value.ttl_seconds, max_requests=value.max_requests,
+            ttl_seconds=ttl_seconds, issued_at=issued_at, max_requests=value.max_requests,
             max_public_requests=value.max_public_requests, token_budget=value.token_budget,
             parent_nonce=parent.nonce, parent_token_budget=parent.token_budget,
             network_access=parent.network_access, scope="job",

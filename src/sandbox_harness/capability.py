@@ -61,8 +61,9 @@ class CapabilityCodec:
         output_scopes: Iterable[str] = (),
         parameter_digest: str = "",
         budget: dict[str, int] | None = None,
+        issued_at: int | None = None,
     ) -> tuple[str, CapabilityClaims]:
-        issued = int(time.time())
+        issued = int(time.time()) if issued_at is None else issued_at
         claims = CapabilityClaims(
             traceparent=carrier().get("traceparent", ""),
             thread_id=thread_id,
