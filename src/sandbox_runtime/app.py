@@ -40,6 +40,7 @@ from .runtime_bundle import (MAX_BUNDLE_BYTES,activate_runtime_bundle,
 from .pty_service import PtyManager
 from .skills import clear_materialized_skills, materialize_skills
 from .state import runtime_state_dir
+from .project_uploads import ProjectUploads, CHUNK_BYTES
 
 
 WORKSPACE = Path("/workspace")
@@ -1324,6 +1325,8 @@ def create_app() -> FastAPI:
         # A lost reply can leave the first request running when an identical
         # upload retries. Each request owns its temporary file and cleanup.
         temporary = target.parent / (".project-upload-" + uuid.uuid4().hex + ".tmp")
+        writer = uuid.uuid4().hex
+        project_uploads.fence(relative.as_posix(), writer)
         written=0;digest=hashlib.sha256()
         try:
             with temporary.open("wb") as stream:
@@ -1332,8 +1335,11 @@ def create_app() -> FastAPI:
                     if written>size or written>maximum:raise HTTPException(413,"Project file too large")
                     digest.update(data);stream.write(data)
             if written!=size:raise HTTPException(400,"Project file length mismatch")
+            project_uploads.require_current(relative.as_posix(), writer)
             os.chmod(temporary, 0o600);temporary.replace(target)
-        finally:temporary.unlink(missing_ok=True)
+        finally:
+            temporary.unlink(missing_ok=True)
+            project_uploads.finish_write(relative.as_posix(), writer)
         return {"path": "/workspace/project/" + relative.as_posix(), "bytes": written,
             "sha256":digest.hexdigest()}
 
@@ -1351,6 +1357,44 @@ def create_app() -> FastAPI:
         if not target.resolve().is_relative_to(project):
             raise ValueError("Invalid managed project path")
         return target
+
+    project_uploads = ProjectUploads(WORKSPACE / "tmp" / "project-uploads", managed_project_target)
+    app.state.project_uploads = project_uploads
+    project_chunk_slots = asyncio.Semaphore(4)
+
+    @app.get("/v1/project-files/uploads")
+    async def project_upload_protocol():
+        return {"epoch": project_uploads.epoch, "chunk_bytes": CHUNK_BYTES}
+
+    @app.put("/v1/project-files/uploads/{upload_id}")
+    async def begin_project_upload(upload_id: str, path: str, size: int, issued_at: int, epoch: str):
+        return project_uploads.begin(upload_id, path, size, issued_at, epoch)
+
+    @app.put("/v1/project-files/uploads/{upload_id}/chunks/{offset}")
+    async def project_upload_chunk(upload_id: str, offset: int, request: Request):
+        async with project_chunk_slots:
+            if "content-length" in request.headers:
+                try:
+                    declared = int(request.headers["content-length"])
+                except ValueError:
+                    raise HTTPException(400, "project_upload_length_invalid")
+                if declared < 0 or declared > CHUNK_BYTES:
+                    raise HTTPException(413, "project_upload_chunk_too_large")
+            data = bytearray()
+            async for part in request.stream():
+                if len(data) + len(part) > CHUNK_BYTES:
+                    raise HTTPException(413, "project_upload_chunk_too_large")
+                data.extend(part)
+            return project_uploads.chunk(upload_id, offset, bytes(data))
+
+    @app.post("/v1/project-files/uploads/{upload_id}/commit")
+    async def commit_project_upload(upload_id: str, sha256: str):
+        return project_uploads.commit(upload_id, sha256)
+
+    @app.delete("/v1/project-files/uploads/{upload_id}")
+    async def abort_project_upload(upload_id: str):
+        project_uploads.abort(upload_id)
+        return {"aborted": True}
 
     @app.get("/v1/project-files/file")
     async def get_project_file(path: str):
@@ -1417,6 +1461,7 @@ def create_app() -> FastAPI:
 
     @app.post("/v1/project-files/reset")
     async def reset_project_files():
+        project_uploads.reset()
         project = (WORKSPACE / "project").resolve()
         for name in ("assets", "artifacts"):
             target = project / name

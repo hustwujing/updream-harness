@@ -241,9 +241,11 @@ replacement uploaded while that Turn runs is available to the next Turn but
 cannot change the current execution's inputs. Object size and SHA-256 are
 verified before every materialization. `/workspace/outputs` carries a hidden
 Turn batch identity; the Broker rejects stale output from another Turn.
-Materializing an immutable project file retries transient transport failures
-with the same bytes. Each upload owns its temporary file and replaces the
-destination atomically, so a disconnected request cannot remove a retry's data.
+Materializing a managed project file larger than 4 MiB uses bounded chunks.
+Transient failures retry the same chunk; complete size and SHA-256 verification
+precedes atomic publication. A newer write or managed-file reset fences an
+unfinished upload, and replaying a commit receipt never republishes old bytes.
+Smaller uploads retain the single-request protocol and their own temporary file.
 
 The Workspace panel supports direct project uploads, rename, deletion, version
 history, text-version comparison and restore-as-new-version. Deletion creates an

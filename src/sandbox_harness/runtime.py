@@ -8,6 +8,8 @@ import hashlib
 import json
 import logging
 import os
+import time
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +24,7 @@ from .sandbox_contracts import SandboxBackend
 
 
 logger = logging.getLogger(__name__)
+PROJECT_UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024
 
 
 class RuntimeStreamInterrupted(RuntimeError):
@@ -247,6 +250,11 @@ class RuntimeClient:
             self._raise_for_status(sandbox,response)
 
     async def put_project_file(self, sandbox: Sandbox, path: str, data: bytes, mime: str) -> None:
+        if len(data) > PROJECT_UPLOAD_CHUNK_BYTES:
+            async def chunks():
+                for offset in range(0, len(data), PROJECT_UPLOAD_CHUNK_BYTES):
+                    yield data[offset:offset + PROJECT_UPLOAD_CHUNK_BYTES]
+            return await self._put_project_chunks(sandbox, path, chunks(), size=len(data), mime=mime)
         await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()},
             timeout=300, trust_env=False,transport=self.transport) as client:
@@ -256,6 +264,8 @@ class RuntimeClient:
 
     async def put_project_file_stream(self, sandbox: Sandbox, path: str, content,
                                       *, size: int, mime: str) -> None:
+        if size > PROJECT_UPLOAD_CHUNK_BYTES:
+            return await self._put_project_chunks(sandbox, path, content, size=size, mime=mime)
         await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url,
                 headers={**sandbox.runtime_headers,**carrier()},timeout=300,
@@ -264,6 +274,66 @@ class RuntimeClient:
                 headers={"Content-Type":mime,"Content-Length":str(size)})
             self._raise_for_status(sandbox,response)
             return response.json()
+
+    async def _put_project_chunks(self, sandbox: Sandbox, path: str, content,
+                                  *, size: int, mime: str) -> dict:
+        await self._resolve_endpoint(sandbox)
+        upload_path = "/v1/project-files/uploads/" + uuid.uuid4().hex
+        issued_at = int(time.time())
+        digest = hashlib.sha256(); offset = 0; pending = bytearray()
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url,
+                headers={**sandbox.runtime_headers, **carrier()}, timeout=300,
+                trust_env=False, transport=self.transport) as client:
+            async def send_chunk(body):
+                nonlocal offset
+                response = await self._request_with_startup_retry(client, "PUT",
+                    upload_path + "/chunks/" + str(offset), content=body,
+                    headers={"Content-Type": mime})
+                self._raise_for_status(sandbox, response)
+                if response.json() != {"bytes": len(body), "offset": offset}:
+                    raise RuntimeTransferError("runtime_upload_chunk_receipt_mismatch")
+                digest.update(body); offset += len(body)
+            try:
+                response = await self._request_with_startup_retry(client, "GET",
+                    "/v1/project-files/uploads")
+                self._raise_for_status(sandbox, response)
+                epoch = response.json().get("epoch")
+                if not isinstance(epoch, str) or len(epoch) != 32:
+                    raise RuntimeTransferError("runtime_upload_epoch_invalid")
+                async with asyncio.timeout(60):
+                    response = await self._request_with_startup_retry(client, "PUT", upload_path,
+                        params={"path": path, "size": size, "issued_at": issued_at, "epoch": epoch})
+                self._raise_for_status(sandbox, response)
+                chunk_size = response.json().get("chunk_bytes")
+                if not isinstance(chunk_size, int) or not 0 < chunk_size <= PROJECT_UPLOAD_CHUNK_BYTES:
+                    raise RuntimeTransferError("runtime_upload_chunk_limit_invalid")
+                async for part in content:
+                    if offset + len(pending) + len(part) > size:
+                        raise RuntimeTransferError("runtime_transfer_size_mismatch")
+                    view = memoryview(part)
+                    while view:
+                        length = min(chunk_size - len(pending), len(view))
+                        pending.extend(view[:length]); view = view[length:]
+                        if len(pending) == chunk_size:
+                            await send_chunk(bytes(pending)); pending.clear()
+                if pending:
+                    await send_chunk(bytes(pending))
+                if offset != size:
+                    raise RuntimeTransferError("runtime_transfer_size_mismatch")
+                response = await self._request_with_startup_retry(client, "POST",
+                    upload_path + "/commit", params={"sha256": digest.hexdigest()})
+                self._raise_for_status(sandbox, response)
+                result = response.json()
+                if result.get("bytes") != size or result.get("sha256") != digest.hexdigest():
+                    raise RuntimeTransferError("runtime_upload_receipt_mismatch")
+                return result
+            finally:
+                # Abort is idempotent and leaves an already committed file intact.
+                # Bound cleanup separately from the transfer timeout.
+                try:
+                    await client.delete(upload_path, timeout=5)
+                except httpx.HTTPError:
+                    pass
 
     async def reset_project_files(self, sandbox: Sandbox) -> None:
         await self._resolve_endpoint(sandbox)

@@ -95,6 +95,24 @@ paths; deletion is a tombstone. Managed project files are materialized into the
 sandbox and excluded from checkpoint archives to avoid duplicate storage.
 Artifact, transcript Item and artifact ProjectFile publication commit in one
 lease-fenced transaction after the immutable object write.
+Managed files larger than 4 MiB use `RuntimeClient._put_project_chunks` for both
+byte and streaming sources. `sandbox_runtime.project_uploads.ProjectUploads`
+stages at most four uploads with 2 GiB aggregate declared bytes outside
+checkpoints. Chunks are bounded to 4 MiB and retried by upload ID, offset and
+identical bytes. A matching final size/digest precedes atomic target replacement;
+repeated commit returns a receipt without republishing. New writes and reset
+invalidate older unfinished uploads. Cancellation aborts staging; ten minutes
+without activity expires it on subsequent upload activity, and Runtime startup
+removes abandoned stages. Incomplete transfers restart after Runtime replacement.
+Initialization binds a frozen Runtime/reset epoch and issuance timestamp;
+the client bounds all initialization retries to 60 seconds. Runtime rejects
+initialization older than ten minutes or over 60 seconds in the future. The
+128-receipt limit rejects admission rather than forgetting a still-valid old
+writer. Reset and Runtime replacement rotate the epoch.
+Old Runtimes lacking this protocol fail explicitly for large files, with no
+oversized fallback. This does not change checkpoint or attachment transport.
+`tests/test_project_uploads.py` covers transport, resource, cancellation, path
+and overlapping-write boundaries.
 `ArtifactGateway` detects MIME from content before enforcing the frozen output
 contract. Matroska/WebM detection reads only the bounded EBML header and its
 DocType element (RFC 8794); filenames, declared MIME and text inside an unrelated
