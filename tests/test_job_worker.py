@@ -212,6 +212,27 @@ async def test_capacity_wait_deadline_is_known_preaccept_timeout(tmp_path,retry_
     finally:await store.close()
 
 
+async def test_cleanup_worker_claims_only_registered_adapters(tmp_path):
+    from sandbox_harness.store import JobCleanupRow
+    store,_,job=await setup(tmp_path,request('owned'))
+    _,others=await store.create_job_group('owner',JobGroupCreate(thread_id='b'*32,origin_turn_id='c'*32,
+        idempotency_key='other-cleanup-group',jobs=[request('other',adapter='other-service')]))
+    adapter=FakeAdapter([])
+    try:
+        for current in [job,others[0]]:
+            attempt=await store.claim_job(current.id,'producer','node',30)
+            await store.record_job_acceptance(current.id,'producer',attempt.generation,
+                external_execution_id='fixture-'+current.id,receipt={})
+            await store.transition_job(current.id,JobState.SUCCEEDED,expected_generation=attempt.generation)
+        worker=JobWorker(store,{'fake':adapter},node_id='node',worker_id='cleanup')
+        assert await worker.run_cleanup_once(limit=10)==1
+        assert adapter.cleanup_calls==1
+        async with store.connections() as db:
+            other=(await db.scalars(select(JobCleanupRow).where(JobCleanupRow.job_id==others[0].id))).one()
+            assert other.state=='pending' and other.attempt_count==0 and other.claim_owner==''
+    finally:await store.close()
+
+
 async def test_successful_collection_dispatches_frozen_policy_review_before_terminal(tmp_path):
     store,_,job=await setup(tmp_path,request(kind=JobKind.OPERATION))
     adapter=FakeAdapter([AdapterSubmission('external-1',{'accepted':True},completed=True,

@@ -2778,11 +2778,14 @@ class Store:
             return True
 
     async def claim_job_cleanups(self, owner: str, lease_seconds: int,
-                                 *, limit: int = 10) -> list[dict]:
+                                 *, limit: int = 10, adapters: set[str] | None = None) -> list[dict]:
+        if adapters is not None and not adapters:return []
         async with self.connections.begin() as db:
-            rows=list((await db.execute(select(JobCleanupRow).where(or_(
+            query=select(JobCleanupRow).where(or_(
                 JobCleanupRow.state=="pending",and_(JobCleanupRow.state=="running",
-                    JobCleanupRow.claim_expires_at < now()))).order_by(
+                    JobCleanupRow.claim_expires_at < now())))
+            if adapters is not None:query=query.where(JobCleanupRow.adapter.in_(adapters))
+            rows=list((await db.execute(query.order_by(
                 JobCleanupRow.updated_at,JobCleanupRow.job_id).limit(limit)
                 .with_for_update(skip_locked=True))).scalars().all())
             expires=now()+timedelta(seconds=lease_seconds)

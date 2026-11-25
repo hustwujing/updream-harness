@@ -473,7 +473,8 @@ class JobWorker:
                 side_effect_state='unknown'))
 
     async def run_cleanup_once(self,*,limit:int=10)->int:
-        rows=await self.store.claim_job_cleanups(self.worker_id,self.lease_seconds,limit=limit)
+        rows=await self.store.claim_job_cleanups(self.worker_id,self.lease_seconds,
+            limit=limit,adapters=set(self.adapters))
         for row in rows:
             owner=asyncio.current_task();lost=asyncio.Event()
             async def heartbeat():
