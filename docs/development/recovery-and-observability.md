@@ -173,6 +173,14 @@ dismissal is presentation state and never mutates Turn recovery or retry state.
 
 ## Runtime child durability
 
+Runtime Code and Content Bundle status reads use the same bounded startup retry
+as their idempotent uploads. Connection/transport failures and HTTP
+429/502/503/504 retry at most eight times; permanent responses return immediately
+for normal error handling. Configuration begins only after both Bundle stages
+succeed. Harness execution submission is outside this helper and is never
+replayed by bootstrap retry. Runtime client tests cover both reads, permanent
+rejection and retry exhaustion.
+
 Native Interaction delivery is tri-state. A successful stdin drain is
 `delivered`; a failure before write is retryable; a drain failure after write is
 `unknown` and must never be replayed as accepted or blindly written again. The

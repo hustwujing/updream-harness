@@ -98,11 +98,13 @@ class RuntimeClient:
             self._endpoint_refresh.add(sandbox.id)
         response.raise_for_status()
 
-    async def _put_with_startup_retry(self,client:httpx.AsyncClient,path:str,**kwargs)->httpx.Response:
+    async def _request_with_startup_retry(self,client:httpx.AsyncClient,method:str,
+                                          path:str,**kwargs)->httpx.Response:
+        """Retry idempotent bootstrap reads/uploads, never execution submission."""
         retryable={429,502,503,504}
         for attempt in range(8):
             try:
-                response=await client.put(path,**kwargs)
+                response=await client.request(method,path,**kwargs)
                 if response.status_code not in retryable or attempt==7:return response
             except (httpx.TimeoutException,httpx.TransportError):
                 if attempt==7:raise
@@ -187,10 +189,10 @@ class RuntimeClient:
                     (self.code_bundle_dir / (code_digest + ".sig")).read_bytes)
                 if hashlib.sha256(code).hexdigest() != code_digest:
                     raise RuntimeError("runtime_code_bundle_digest_mismatch")
-                status = await client.get("/bootstrap/code-bundle")
+                status = await self._request_with_startup_retry(client,"GET","/bootstrap/code-bundle")
                 self._raise_for_status(sandbox,status)
                 if status.json().get("sha256") != code_digest:
-                    response = await self._put_with_startup_retry(client,"/bootstrap/code-bundle", params={"sha256": code_digest},
+                    response = await self._request_with_startup_retry(client,"PUT","/bootstrap/code-bundle", params={"sha256": code_digest},
                         content=code, headers={"Content-Type": "application/x-tar",
                             "X-Runtime-Bundle-Signature": signature.hex()})
                     self._raise_for_status(sandbox,response)
@@ -203,12 +205,12 @@ class RuntimeClient:
                     (self.bundle_dir / (bundle_digest + ".sig")).read_bytes)
                 if hashlib.sha256(bundle).hexdigest() != bundle_digest:
                     raise RuntimeError("runtime_bundle_digest_mismatch")
-                status = await client.get("/v1/runtime-bundle")
+                status = await self._request_with_startup_retry(client,"GET","/v1/runtime-bundle")
                 self._raise_for_status(sandbox,status)
                 if status.json().get("sha256") != bundle_digest:
                     compressed = await asyncio.to_thread(
                         gzip.compress, bundle, 6, mtime=0)
-                    response = await self._put_with_startup_retry(client,"/v1/runtime-bundle", params={"sha256": bundle_digest},
+                    response = await self._request_with_startup_retry(client,"PUT","/v1/runtime-bundle", params={"sha256": bundle_digest},
                         content=compressed, headers={"Content-Type": "application/x-tar",
                             "Content-Encoding": "gzip",
                             "X-Uncompressed-Content-Length": str(len(bundle)),

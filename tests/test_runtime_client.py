@@ -146,6 +146,57 @@ async def test_runtime_configuration_installs_code_before_content_bundle(tmp_pat
         ('GET','/v1/runtime-bundle'),('PUT','/v1/runtime-bundle'),('POST','/v1/configure')]
 
 
+@pytest.mark.parametrize('failure',['transport','proxy'])
+async def test_runtime_bundle_status_reads_retry_before_configuration(tmp_path,monkeypatch,failure):
+    import hashlib
+    from collections import Counter
+    waits=[]
+    async def no_wait(seconds):waits.append(seconds)
+    monkeypatch.setattr('sandbox_harness.runtime.asyncio.sleep',no_wait)
+    digests={}
+    for name in ['code','content']:
+        directory=tmp_path/name;directory.mkdir();data=name.encode()
+        digest=hashlib.sha256(data).hexdigest();digests[name]=digest
+        (directory/(digest+'.tar')).write_bytes(data)
+        (directory/(digest+'.sig')).write_bytes(b'signature')
+    calls=Counter()
+    def respond(request):
+        key=(request.method,request.url.path);calls[key]+=1
+        if request.method=='GET':
+            if calls[key]==1:
+                if failure=='transport':raise httpx.ConnectError('startup connection unavailable',request=request)
+                return httpx.Response(503)
+            return httpx.Response(200,json={'sha256':''})
+        return httpx.Response(200,json={'configured':True})
+    runtime=RuntimeClient(code_bundle_dir=tmp_path/'code',default_code_bundle_digest=digests['code'],
+        bundle_dir=tmp_path/'content',default_bundle_digest=digests['content'],transport=httpx.MockTransport(respond))
+    sandbox=Sandbox(id='s',harness=Harness.CODEX,image='i',runtime_url='http://runtime',metadata={})
+    await runtime.inject(sandbox,capability_token='x'*32,gateway_url='http://gateway',
+        proxy_url='http://proxy',harness='codex',model='gpt')
+    assert calls=={('GET','/bootstrap/code-bundle'):2,('PUT','/bootstrap/code-bundle'):1,
+        ('GET','/v1/runtime-bundle'):2,('PUT','/v1/runtime-bundle'):1,('POST','/v1/configure'):1}
+    assert waits==[.25,.25]
+
+
+@pytest.mark.parametrize('status,expected_calls',[(403,1),(503,8)])
+async def test_runtime_bundle_status_retry_is_bounded_and_rejects_permanent_errors(tmp_path,monkeypatch,status,expected_calls):
+    import hashlib
+    waits=[];calls=[]
+    async def no_wait(seconds):waits.append(seconds)
+    monkeypatch.setattr('sandbox_harness.runtime.asyncio.sleep',no_wait)
+    data=b'code';digest=hashlib.sha256(data).hexdigest()
+    (tmp_path/(digest+'.tar')).write_bytes(data);(tmp_path/(digest+'.sig')).write_bytes(b'signature')
+    def respond(request):calls.append((request.method,request.url.path));return httpx.Response(status)
+    runtime=RuntimeClient(code_bundle_dir=tmp_path,default_code_bundle_digest=digest,
+        transport=httpx.MockTransport(respond))
+    sandbox=Sandbox(id='s',harness=Harness.CODEX,image='i',runtime_url='http://runtime',metadata={})
+    with pytest.raises(httpx.HTTPStatusError):
+        await runtime.inject(sandbox,capability_token='x'*32,gateway_url='http://gateway',
+            proxy_url='http://proxy',harness='codex',model='gpt')
+    assert calls==[('GET','/bootstrap/code-bundle')]*expected_calls
+    assert len(waits)==expected_calls-1
+
+
 async def test_runtime_configuration_retries_transient_code_bundle_upload(tmp_path,monkeypatch):
     waits=[]
     async def no_wait(seconds):waits.append(seconds)

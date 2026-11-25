@@ -170,3 +170,14 @@ passes111. D06's Child SIGKILL protocol had already passed with one external
 execution across two attempts. Real scope is D06/R17 plus the D08 restart
 trigger; unaffected successes are preserved. See the Primary release recovery
 plan and `.data/tmp/profile-revision-*.log`.
+
+### Runtime bootstrap status read retry
+
+D40's business Turn failed in the initial Code Bundle status GET with
+ConnectError after its protocol phase passed. The common RuntimeClient now
+applies the existing bounded startup retry to Code/Content status reads as well
+as idempotent uploads. Execution submission is unchanged. Three regression
+variants first failed; the permanent-rejection negative test already passed.
+The corrected focused suite passes144 tests and review is clear. Real scope is
+D40 plus unfinished cases, preserving unaffected successes. See the startup-read
+plan and `.data/tmp/startup-read-*.log`; release and real regression are pending.
