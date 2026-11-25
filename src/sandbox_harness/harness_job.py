@@ -13,6 +13,7 @@ from .grants import GrantAuthority,JobGrantRequest,TurnGrantRequest
 from .job_adapters import (AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExecutionContext,
     PreAcceptCancelled,PreAcceptFailure,SubmissionRecovery,SubmissionOutcomeUnknown,SubmissionInterrupted)
 from .job_contracts import JobState,TERMINAL_JOB_STATES
+from .job_errors import ArtifactCollectionCardinalityError
 from .artifact_gateway import ArtifactEmission,ArtifactGateway
 from .scheduler import ResourceRequest, Scheduler
 from .sandbox import Sandbox,SandboxCapacityUnavailable,SandboxNotFound,SandboxRateLimited
@@ -45,11 +46,6 @@ class ChildExecutionBackend(Protocol):
                       receipt: dict[str, Any]) -> None: ...
     async def collect(self,context:JobExecutionContext,external_execution_id:str,
                       status:AdapterStatus,receipt:dict[str,Any])->dict[str,Any]: ...
-
-
-class ChildOutputContractError(RuntimeError):
-    def __init__(self,code:str,summary:str):
-        super().__init__(code);self.result={'error_code':code,'child_summary':summary[:65536]}
 
 
 class JobGrantFactory:
@@ -763,9 +759,8 @@ class SandboxChildBackend:
                 collections.append(await self.store.finalize_job_artifact_collection(
                     context.job.id,context.generation,role,
                     validation_receipts=receipts))
-        except RuntimeError as exc:
-            if str(exc)=='artifact_collection_cardinality_invalid':
-                raise ChildOutputContractError('required_child_output_missing',child_summary) from exc
+        except ArtifactCollectionCardinalityError as exc:
+            exc.result['child_summary']=child_summary[:65536]
             raise
         return {**status.result,'child_summary':child_summary,
             'artifacts':emitted,'collections':collections}

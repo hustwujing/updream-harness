@@ -373,6 +373,51 @@ async def test_collection_retry_exhaustion_is_structured_without_resubmission(tm
     finally:await store.close()
 
 
+@pytest.mark.parametrize('actual_count',[0,2])
+async def test_frozen_collection_cardinality_failure_never_retries_immutable_result(tmp_path,actual_count):
+    from sandbox_harness.artifact_gateway import ArtifactEmission,ArtifactGateway
+    from sandbox_harness.job_contracts import OutputDisposition
+    from sandbox_harness.objects import ObjectStore
+    from sandbox_harness.store import JobArtifactRow,ProjectFileRow
+    store,_,job=await setup(tmp_path,request(kind=JobKind.OPERATION,
+        expected_outputs=[{'artifact_role':'files','output_disposition':'delivery',
+            'min_items':1,'max_items':1}],
+        retry_policy={'max_pre_accept_attempts':2,'max_collection_attempts':3}))
+    gateway=ArtifactGateway(store,ObjectStore(tmp_path/'objects'),tmp_path/'stage',maximum_bytes=1024)
+    async def chunks():yield b'result'
+    class Collector(FakeAdapter):
+        collect_calls=0
+        async def collect(self,context,external_id,status):
+            self.collect_calls+=1
+            for position in range(actual_count):
+                await gateway.emit(ArtifactEmission(context.job.id,context.generation,'files',
+                    str(position),position,f'{position}.txt',OutputDisposition.DELIVERY,'text/plain'),chunks())
+            return await store.finalize_job_artifact_collection(context.job.id,context.generation,'files')
+    adapter=Collector([AdapterSubmission('external-1',{'accepted':True},completed=True)])
+    worker=JobWorker(store,{'fake':adapter},node_id='node',worker_id='worker')
+    try:
+        await worker.run_once();failed=await store.get_job(job.id)
+        assert failed.state==JobState.FAILED
+        assert failed.result['error_code']=='artifact_collection_cardinality_invalid'
+        assert failed.result['failed_phase']=='validation'
+        assert failed.result['retryable'] is False and failed.result['retry_class']=='none'
+        assert failed.result['side_effect_state']=='completed'
+        assert failed.result['output_contract']=={'artifact_role':'files','min_items':1,
+            'max_items':1,'actual_items':actual_count}
+        assert 'max_items' in failed.result['error_guidance']
+        await worker.run_once()
+        assert adapter.submit_calls==adapter.collect_calls==1
+        assert adapter.cleanup_calls==1
+        async with store.connections() as db:
+            attempts=(await db.scalars(select(JobAttemptRow).where(JobAttemptRow.job_id==job.id))).all()
+            assert len(attempts)==1 and attempts[0].outcome=='FAILED'
+            artifacts=(await db.scalars(select(JobArtifactRow).where(JobArtifactRow.job_id==job.id))).all()
+            assert len(artifacts)==actual_count
+            assert all(row.output_disposition=='candidate' and row.state=='committed' for row in artifacts)
+            assert (await db.scalars(select(ProjectFileRow))).all()==[]
+    finally:await store.close()
+
+
 async def test_unknown_submission_without_handle_is_terminal_and_consumes_acceptance_budget(tmp_path):
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'unknown.db'));await store.initialize()
     try:

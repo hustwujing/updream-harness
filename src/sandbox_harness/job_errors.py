@@ -9,6 +9,14 @@ ERROR_PHASES=frozenset({'input_validation','authorization','capacity','submissio
 SIDE_EFFECT_STATES=frozenset({'none','possible','accepted','completed','unknown'})
 
 
+class ArtifactCollectionCardinalityError(RuntimeError):
+    """A frozen collection count cannot be repaired by reading the same result."""
+    def __init__(self,artifact_role:str,minimum:int,maximum:int,actual:int):
+        super().__init__('artifact_collection_cardinality_invalid')
+        self.result={'output_contract':{'artifact_role':artifact_role,'min_items':minimum,
+            'max_items':maximum,'actual_items':actual}}
+
+
 @dataclass(frozen=True)
 class JobErrorContract:
     message:str
@@ -135,6 +143,10 @@ JOB_ERROR_CONTRACTS={
     'artifact_collection_failed':_contract('任务已执行，但成果收集失败',
         '保留原执行句柄和成果位置，从收集阶段恢复，不要重复执行外部任务。','collection',
         retryable=True,retry_class='collect_same_execution',side_effect='completed'),
+    'artifact_collection_cardinality_invalid':_contract('成果文件数量不符合已确认的产物契约',
+        'min_items/max_items 按每个集合内的文件数计数；检查实际文件数量与契约，'
+        '明确修正输入或输出契约后创建替代任务。不要原样重试收集。','validation',
+        side_effect='completed'),
     'external_status_unavailable':_contract('暂时无法确认任务状态',
         '保留原执行句柄并继续查询；不要创建重复任务。','status',retryable=True,
         retry_class='reconcile_only',side_effect='unknown'),

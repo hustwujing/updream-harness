@@ -21,7 +21,7 @@ from .domain import AccountView, CapabilityClaims, RuntimeEvent, Artifact, Event
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
 from .media_errors import media_error_guidance
-from .job_errors import job_error_payload,normalize_job_error
+from .job_errors import ArtifactCollectionCardinalityError,job_error_payload,normalize_job_error
 from .activity_projection import merge_projection_payload,projection_instruction
 from .job_contracts import (
     JobAttemptReceipt, JobGroupCreate, JobGroupDraftCreate, JobGroupDraftState,
@@ -3529,7 +3529,8 @@ class Store:
                     JobArtifactRow.artifact_role == artifact_role,
                 ).order_by(JobArtifactRow.position).with_for_update())).scalars().all())
                 if not contract.min_items <= len(rows) <= contract.max_items:
-                    raise RuntimeError("artifact_collection_cardinality_invalid")
+                    raise ArtifactCollectionCardinalityError(artifact_role,
+                        contract.min_items,contract.max_items,len(rows))
                 if [row.position for row in rows] != list(range(len(rows))):
                     raise RuntimeError("artifact_collection_order_invalid")
                 if sum(row.size for row in rows) > contract.max_total_bytes:

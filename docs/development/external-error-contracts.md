@@ -95,6 +95,15 @@ Nonterminal cleanup keeps the normal reservation hold.
 10. Reviewer verdict/schema validation is deterministic. It never uses generic
     artifact collection retry: the Reviewer Job and required/optional Review
     Gate reach their terminal outcome atomically on the first such failure.
+11. Frozen collection cardinality violations use the typed Store exception and
+    `artifact_collection_cardinality_invalid`: validation phase, completed side
+    effects, and no collection retry. Results retain the requested role/count
+    bounds and actual count; `min_items`/`max_items` count files within a
+    collection. Child collection preserves this boundary and its summary.
+    Candidates remain unpublished and normal durable cleanup still runs.
+    Cardinality evidence alone does not prove a non-program cause: the campaign
+    continues to require source/output investigation and retains strict failure
+    classification.
 
 ## Readiness And Preflight
 

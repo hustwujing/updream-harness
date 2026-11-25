@@ -318,11 +318,13 @@ async def test_opensandbox_child_cannot_succeed_without_required_artifact(tmp_pa
         token_factory=lambda *args:None);backend.sessions[job.id]=sandbox
     try:
         await store.append_job_activity(job.id,1,'text_delta',{'text':'缺少受控图片能力'})
-        with pytest.raises(RuntimeError,match='required_child_output_missing') as raised:
+        with pytest.raises(RuntimeError,match='artifact_collection_cardinality_invalid') as raised:
             await backend.collect(JobExecutionContext(job=job,request=frozen,generation=0,
                 previous_acceptance_receipt=sandbox_receipt(sandbox)),'execution',
                 AdapterStatus(True,JobState.SUCCEEDED,{}),sandbox_receipt(sandbox))
         assert raised.value.result['child_summary']=='缺少受控图片能力'
+        assert raised.value.result['output_contract']=={'artifact_role':'images','min_items':1,
+            'max_items':2,'actual_items':0}
     finally:await store.close()
 
 

@@ -130,3 +130,15 @@ Final reporting must distinguish deterministic tests, real Ali Provider
 protocol, real Harness/Provider campaign, browser evidence and deployment
 health. Original OpenSandbox deployment state is outside this release's
 mutation scope.
+
+### Deterministic collection count validation
+
+The resumed `3006bd2` run exposed a different C09 boundary: a frozen one-file
+collection received ten files. Store blocked publication, but the generic
+collector retried the same immutable result. The typed cardinality correction
+returns a nonretryable validation failure with requested/actual counts, retains
+unpublished candidates and normal cleanup, and applies to Child and other
+adapters without provider/case branches. Missing/excess-output regressions first
+failed with `WAITING_EXTERNAL`; the focused suite now passes 97 tests. Campaign
+classification remains strict. Real C09 retest and final release evidence are
+pending; see the cardinality validation plan for scope and checks.
