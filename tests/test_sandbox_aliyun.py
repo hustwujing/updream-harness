@@ -173,6 +173,11 @@ async def test_aliyun_lifecycle_maps_template_metadata_ttl_endpoint_and_delete()
         assert sandbox.expires_at > datetime.now(timezone.utc)
         reconciled=await value.reconcile_create(SandboxScope("ali-test"),"turn-1")
         assert reconciled and reconciled.id=="sandbox-1"
+        assert reconciled.handle.allocation_id==creation().allocation_id
+        value._profiles.clear()
+        recovered=await value.reconcile_create(SandboxScope('ali-test'),'turn-1')
+        assert recovered.handle.allocation_id==creation().allocation_id
+        assert recovered.handle.profile_key==creation().profile.compatibility_key
         assert [row.id for row in await value.list_owned(SandboxScope("ali-test"))] == ["sandbox-1"]
 
         await value.delete(sandbox)

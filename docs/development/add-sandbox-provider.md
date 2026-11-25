@@ -1,5 +1,13 @@
 # Adding a Sandbox Provider
 
+Inventory reconstruction must preserve the immutable creation allocation ID in
+`SandboxHandle.allocation_id`; it is distinct from the provider's sandbox ID.
+Test `reconcile_create` with an empty process cache and compare both allocation
+identity and profile key. The database restores the frozen release revision;
+provider inventory does not own lifecycle or recovery decisions. The shared
+Sandbox fallback understands the platform's immutable creation correlation key;
+adapters with another representation must supply an explicit handle.
+
 ## Applies to
 
 Use this guide to add a sandbox infrastructure backend alongside OpenSandbox

@@ -76,6 +76,11 @@ async def test_opensandbox_conforms_to_provider_lifecycle_contract():
     assert sandbox.expires_at and sandbox.expires_at>datetime.now(timezone.utc)
     reconciled=await backend.reconcile_create(SandboxScope("test-namespace"),"turn-1")
     assert reconciled and reconciled.id=="sandbox-1"
+    assert reconciled.handle.allocation_id==request().allocation_id
+    backend._profiles.clear()
+    recovered=await backend.reconcile_create(SandboxScope('test-namespace'),'turn-1')
+    assert recovered.handle.allocation_id==request().allocation_id
+    assert recovered.handle.profile_key==request().profile.compatibility_key
     await backend.delete(sandbox);await backend.delete(sandbox)
     assert await backend.list_owned(SandboxScope("test-namespace"))==[]
     await backend.aclose()

@@ -186,7 +186,9 @@ class Sandbox:
                 runtime_code_bundle_digest="legacy")
         elif not self.image:self.image=self.profile.provider_ref
         if self.handle is None:
-            allocation=str(self.turn_id or self.id)
+            # Inventory carries immutable creation correlation, not lifecycle
+            # authority. Adapters with other identity formats supply a handle.
+            allocation=str(self.metadata.get('sandbox-harness.io/idempotency-key') or self.turn_id or self.id)
             self.handle=SandboxHandle(provider=self.provider,sandbox_id=self.id,
                 allocation_id=allocation,profile_key=self.profile.compatibility_key,
                 revision=self.profile.revision)
