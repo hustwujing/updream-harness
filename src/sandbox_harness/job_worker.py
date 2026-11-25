@@ -262,7 +262,10 @@ class JobWorker:
                                 if exc.retry_after_seconds:
                                     await self._before_deadline(
                                         asyncio.sleep(exc.retry_after_seconds),deadline)
-                                if not self.stop_event.is_set():continue
+                                if not self.stop_event.is_set():
+                                    await self.store.mark_job_submission_started(
+                                        job.id,self.worker_id,attempt.generation)
+                                    continue
                             elif retry and exc.retry_after_seconds:
                                 await self._before_deadline(
                                     asyncio.sleep(exc.retry_after_seconds),deadline)

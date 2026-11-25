@@ -134,6 +134,38 @@ async def test_child_sandbox_allocation_is_durable_before_runtime_acceptance(tmp
     finally:await store.close()
 
 
+async def test_capacity_wait_submission_resumes_with_same_lease_and_rejects_stale_writes(tmp_path):
+    store=await make_store(tmp_path)
+    try:
+        _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id='a'*32,
+            origin_turn_id='b'*32,idempotency_key='capacity-resume-group',jobs=[request('child')]))
+        job=jobs[0]
+        first=await store.claim_job(job.id,'worker-1','node',30)
+        await store.mark_job_submission_started(job.id,'worker-1',first.generation)
+        await store.mark_infrastructure_wait(job.id,'worker-1',first.generation,
+            error_detail='no capacity')
+        for owner,generation in [('worker-2',first.generation),('worker-1',first.generation+1)]:
+            with pytest.raises(RuntimeError,match='stale_job_generation'):
+                await store.mark_job_submission_started(job.id,owner,generation)
+        await store.mark_job_submission_started(job.id,'worker-1',first.generation)
+        await store.record_job_submission_allocation(job.id,first.generation,
+            external_execution_id='execution',receipt={'sandbox_id':'sandbox'})
+        accepted=await store.record_job_acceptance(job.id,'worker-1',first.generation,
+            external_execution_id='execution',receipt={'sandbox_id':'sandbox'})
+        assert accepted.generation==first.generation
+        with pytest.raises(RuntimeError,match='stale_job_generation'):
+            await store.mark_job_submission_started(job.id,'worker-1',first.generation)
+        await store.defer_accepted_job(job.id,'worker-1',first.generation)
+        second=await store.claim_job(job.id,'worker-2','node',30)
+        assert second.generation==first.generation+1
+        with pytest.raises(RuntimeError,match='stale_job_generation'):
+            await store.mark_job_submission_started(job.id,'worker-1',first.generation)
+        with pytest.raises(RuntimeError,match='stale_job_generation'):
+            await store.record_job_submission_allocation(job.id,first.generation,
+                external_execution_id='duplicate',receipt={})
+    finally:await store.close()
+
+
 async def test_terminal_unknown_job_keeps_provisional_sandbox_until_cleanup(tmp_path):
     store=await make_store(tmp_path)
     try:

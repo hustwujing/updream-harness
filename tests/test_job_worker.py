@@ -8,6 +8,7 @@ from sandbox_harness.job_worker import JobWorker
 from sandbox_harness.store import JobAttemptRow,Store
 from sqlalchemy import select
 import httpx
+import pytest
 
 
 class FakeAdapter(BaseJobAdapter):
@@ -140,24 +141,45 @@ async def test_infrastructure_pre_accept_failure_does_not_consume_business_retry
     finally:await store.close()
 
 
-async def test_service_capacity_wait_reuses_one_attempt_generation(tmp_path):
-    store,_,job=await setup(tmp_path,request(retry_policy={'max_pre_accept_attempts':1}))
-    adapter=FakeAdapter([PreAcceptFailure('no capacity',infrastructure=True),
-        PreAcceptFailure('no capacity',infrastructure=True),
+@pytest.mark.parametrize('kind',[JobKind.OPERATION,JobKind.PROVIDER])
+async def test_service_capacity_wait_reuses_one_attempt_generation(tmp_path,kind):
+    store,_,job=await setup(tmp_path,request(kind=kind,
+        retry_policy={'max_pre_accept_attempts':1,'deterministic':True}))
+    allocation_errors=[]
+    class AllocatingAdapter(FakeAdapter):
+        async def submit(self,context):
+            submission=await super().submit(context)
+            try:
+                await store.record_job_submission_allocation(context.job.id,context.generation,
+                    external_execution_id=submission.external_execution_id,
+                    receipt=submission.acceptance_receipt)
+            except RuntimeError as exc:
+                allocation_errors.append(str(exc))
+                raise
+            return submission
+    adapter=AllocatingAdapter([PreAcceptFailure('no capacity',infrastructure=True,
+            retry_after_seconds=.01),
+        PreAcceptFailure('no capacity',infrastructure=True,retry_after_seconds=.01),
         AdapterSubmission('external-1',{'accepted':True},completed=True,result={'ok':True})])
     worker=JobWorker(store,{'fake':adapter},node_id='node',worker_id='worker',poll_seconds=.01)
     try:
         task=__import__('asyncio').create_task(worker.run())
         for _ in range(200):
-            if (await store.get_job(job.id)).state==JobState.SUCCEEDED:break
+            current=await store.get_job(job.id)
+            if current.state in {JobState.SUCCEEDED,JobState.FAILED,JobState.UNKNOWN}:break
             await __import__('asyncio').sleep(.01)
         else:raise AssertionError('capacity wait did not recover')
         worker.stop_event.set();await task
+        assert allocation_errors==[]
+        assert current.state==JobState.SUCCEEDED,current.result
         async with store.connections() as db:
             attempts=list((await db.execute(select(JobAttemptRow).where(
                 JobAttemptRow.job_id==job.id))).scalars().all())
         assert len(attempts)==1 and (await store.get_job(job.id)).generation==1
         assert adapter.submit_calls==3
+        assert adapter.cleanup_calls==1
+        assert attempts[0].external_execution_id=='external-1'
+        assert attempts[0].accepted_at is not None
     finally:await store.close()
 
 

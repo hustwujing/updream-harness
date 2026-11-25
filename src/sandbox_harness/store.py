@@ -2587,7 +2587,7 @@ class Store:
             if (not lease or not attempt or lease.worker_id != worker_id
                     or lease.generation != generation or attempt.accepted_at is not None):
                 raise RuntimeError("stale_job_generation")
-            if attempt.outcome not in {"", "SUBMITTING"}:
+            if attempt.outcome not in {"", "SUBMITTING", "INFRASTRUCTURE_WAIT"}:
                 raise RuntimeError("job_submission_intent_conflict")
             attempt.outcome = "SUBMITTING"
 

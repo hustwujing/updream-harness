@@ -42,6 +42,13 @@ opaque Provider message.
 
 ## Adapter Rules
 
+Continuous capacity waits keep one Job attempt and generation. Before retrying
+submission, JobWorker restores the same attempt from `INFRASTRUCTURE_WAIT` to
+`SUBMITTING` through `Store.mark_job_submission_started`; provisional allocation
+must never be recorded while the attempt is still waiting. The existing owner,
+generation and acceptance fences remain mandatory. Accepted executions and
+unknown submission outcomes are reconciled, not reopened by this transition.
+
 1. Validate frozen inputs before external submission. Raise `PreAcceptFailure`
    with a registered code, canonical phase and explicit retryability.
 2. Do not throw a raw `ValueError`, HTTP exception or SDK exception across the
