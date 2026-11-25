@@ -61,6 +61,13 @@ transient collection failure retries the same completed external execution and
 never resubmits business work. Deterministic Reviewer verdict/schema failures
 terminalize immediately and atomically update the Review Gate.
 
+Capacity waits restore submission intent within the same fenced attempt before
+allocation. Temporary status HTTP failures keep polling the accepted handle.
+Child preparation failures are distinguished from uncertain execution-start
+responses, which retain their sandbox and reservation for reconciliation.
+See [Ali execution reliability verification](docs/test-evidence/ali-execution-reliability.md)
+for the regression boundaries and release evidence locations.
+
 The execution catalog publishes dynamic readiness. Unavailable Operations are
 rejected before confirmation or Job creation, and Provider references, modes
 and artifact bytes are preflighted before the user authorizes side effects.

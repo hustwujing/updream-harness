@@ -11,7 +11,9 @@ Read this before the first code change or when setting up a new checkout.
 - Python package and console entry points are defined in `pyproject.toml`.
 - Dependencies and build output stay inside the project checkout on `/data2`;
   runtime state, caches, logs, databases and test temporaries belong under
-  `/data2/wujing03/sandbox-harness-platform-parallel/.data`.
+  the selected checkout's `.data` directory. The isolated Ali checkout is
+  `/data2/wujing03/sandbox-harness-platform-parallel-ali`; its state must never
+  use the original checkout's `.data` tree.
 - Do not install a second PostgreSQL, Redis, Docker, registry, object store or
   OpenSandbox instance for this product.
 
