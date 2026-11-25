@@ -395,6 +395,22 @@ def test_authoritative_awaiting_user_is_a_terminal_prompt_outcome():
         "optimizable_prompt","unclear_user_intervention")
 
 
+@pytest.mark.parametrize('code',['submission_outcome_unknown','external_status_unavailable'])
+def test_completed_primary_does_not_hide_internal_job_defects(code):
+    campaign=campaign_module()
+    outcome=campaign.classify_job_failures([{'state':'UNKNOWN','result':{'error_code':code}}])
+    assert campaign.combine_job_outcome('success','',outcome)==('program_failure',code)
+
+
+def test_completed_primary_can_recover_from_non_program_job_failure():
+    campaign=campaign_module()
+    outcome=campaign.classify_job_failures([{'state':'FAILED','result':{
+        'error_code':'model_rate_limited'}}])
+    assert campaign.combine_job_outcome('success','',outcome)==('success','')
+    assert campaign.combine_job_outcome('program_failure','generic',outcome)==(
+        'non_program_failure','model_rate_limited')
+
+
 def test_waiting_user_report_includes_the_actual_pending_prompt():
     campaign=campaign_module()
     reason=campaign.waiting_interaction_reason([{'turn_id':'turn-1','status':'pending',

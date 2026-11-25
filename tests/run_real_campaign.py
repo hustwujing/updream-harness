@@ -154,6 +154,12 @@ def classify_job_failures(rows):
         or (outcomes[0] if outcomes else None))
 
 
+def combine_job_outcome(classification,reason,job_outcome):
+    if job_outcome and (classification!='success' or job_outcome[0]=='program_failure'):
+        return job_outcome
+    return classification,reason
+
+
 async def failed_job_results(client,thread_id):
     response=await client.get(f"api/threads/{thread_id}/execution-graph",
         params={"include_history":"true"});response.raise_for_status()
@@ -459,7 +465,7 @@ async def primary_case(client,case,args,running):
     artifacts=[row for row in items if row.get("type")=="artifact"]
     classification,reason=classify(final,artifacts,media_jobs)
     job_outcome=classify_job_failures(job_failures)
-    if classification!='success' and job_outcome:classification,reason=job_outcome
+    classification,reason=combine_job_outcome(classification,reason,job_outcome)
     if final.get('state') in {'AWAITING_USER','WAITING_USER'}:
         response=await client.get(f"api/threads/{thread['id']}/interactions");response.raise_for_status()
         reason=waiting_interaction_reason(response.json(),final['id'])

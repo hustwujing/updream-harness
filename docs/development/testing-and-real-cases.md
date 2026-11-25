@@ -71,6 +71,11 @@ Completion means no known program error in affected cases and no clear,
 bounded prompt/UI improvement left unaddressed. It does not mean every model
 response is semantically successful.
 
+The campaign combines Primary outcome with internal Durable Job outcomes.
+A completed Primary with valid Artifacts cannot hide a program failure in a
+Child, Operation or Reviewer. A successfully recovered model/Provider failure
+may remain a successful case, with its internal failure retained in evidence.
+
 Evidence for external execution must distinguish submission, polling,
 collection, deterministic validation/Review and cleanup. A successful upstream
 task followed by a collection failure is not evidence for a second submission;
