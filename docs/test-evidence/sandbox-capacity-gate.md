@@ -1,8 +1,8 @@
 # Real sandbox capacity gate
 
 `tests/run_real_sandbox_capacity.py` exercises real creation and a Runtime image
-resize, without model calls. These six cases are separate from the original
-169-case product matrix, for 175 cases in the combined report.
+resize, without model calls. These seven cases are separate from the original
+169-case product matrix, for 176 cases in the combined report.
 
 | Case | Boundary | Expected result |
 | --- | --- | --- |
@@ -12,6 +12,7 @@ resize, without model calls. These six cases are separate from the original
 | RC04 | SIGKILL the isolated Worker during capacity wait | Replacement generation resumes; releasing the holder permits exactly one Runtime submission |
 | RC05 | Platform node resources are reserved while a real holder exists | Wait without a provider create call; confirmed deletion and reservation release permit one execution |
 | RC06 | Hold a real create response in the allocation service and SIGKILL the waiting JobWorker | The independent service persists the original response; replacement retires the unstarted sandbox, reallocates safely and submits Runtime exactly once |
+| RC07 | Kill a Worker after a real operation is accepted; fill its replacement's only admission slot with provider quota wait | Accepted recovery progresses independently, cleanup releases the old quota, and both jobs execute Runtime exactly once |
 
 Use an exclusively owned provider Team/project with a one-instance quota. The
 Ali fixture uses its own Team, API key and template, reusing the validated Runtime

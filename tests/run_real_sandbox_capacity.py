@@ -46,7 +46,7 @@ from sandbox_harness.scheduler import NodeInventory,ResourceRequest,Scheduler
 from sandbox_harness.store import JobAttemptRow,Store
 
 ROOT=Path(__file__).resolve().parents[1]
-CASES=('RC01','RC02','RC03','RC04','RC05','RC06')
+CASES=('RC01','RC02','RC03','RC04','RC05','RC06','RC07')
 
 
 def append_audit(path:Path,value:dict):
@@ -89,6 +89,15 @@ async def worker_main(path):
     raw,settings,profile=fixture(path);store=Store(settings.database_url)
     await store.initialize();backend=build_sandbox_backend(settings)
     audit=settings.data_root/'execution-audit.jsonl'
+    record_acceptance=store.record_job_acceptance
+    async def held_acceptance(job_id,*args,**kwargs):
+        value=await record_acceptance(job_id,*args,**kwargs)
+        gate=settings.data_root/'hold-acceptance.json'
+        if gate.exists() and json.loads(gate.read_text()).get('job_id')==job_id:
+            append_audit(audit,{'event':'acceptance_held','job_id':job_id})
+            while gate.exists():await asyncio.sleep(.05)
+        return value
+    store.record_job_acceptance=held_acceptance
     pool=SandboxPool(backend,{Harness.CODEX:profile.provider_ref},{Harness.CODEX:0},
         max_sandboxes=2,profile_resolver=build_profile_resolver(settings,backend),ttl_seconds=300)
     runtime=RuntimeClient(timeout_seconds=60,backend=backend,
@@ -121,7 +130,8 @@ async def worker_main(path):
         token_factory=JobGrantFactory(settings),profile_resolver=Profiles())
     adapter.allocation_client=AllocationClient(store,backend,poll_seconds=.05)
     worker=JobWorker(store,{'media.render':adapter},node_id='capacity-node',
-        worker_id='capacity-'+uuid.uuid4().hex,concurrency=1,lease_seconds=2,poll_seconds=.1)
+        worker_id='capacity-'+uuid.uuid4().hex,concurrency=1,
+        lease_seconds=raw.get('worker_lease_seconds',2),poll_seconds=.1)
     try:await worker.run()
     finally:
         heartbeat_task.cancel();await asyncio.gather(heartbeat_task,return_exceptions=True)
@@ -164,6 +174,7 @@ async def create_job(store,objects,profile,digest,case,timeout,adapter='media.re
 
 
 async def run_case(case,raw,path,store,backend,profile):
+    if case=='RC07':return await run_saturation_case(raw,path,store,backend,profile)
     settings=Settings.model_validate(raw['settings']);scheduler=Scheduler(store)
     allocation=case.lower()+'-holder-'+uuid.uuid4().hex;held=None;process=None;log=None;reserved=None
     evidence={'case':case,'passed':False,'scope':('real_provider_response_barrier' if case=='RC06'
@@ -270,6 +281,67 @@ async def run_case(case,raw,path,store,backend,profile):
         if held:await backend.delete(held)
         if reserved:await scheduler.release(reserved.id,reserved.node_id,reserved.node_generation)
     return evidence
+
+
+async def run_saturation_case(raw,path,store,backend,profile):
+    settings=Settings.model_validate(raw['settings']);objects=ObjectStore(settings.data_root/'objects')
+    scheduler=Scheduler(store);process=None;log=None;gate=settings.data_root/'hold-acceptance.json'
+    audit=settings.data_root/'execution-audit.jsonl';result={'case':'RC07','passed':False,
+        'scope':'real_provider_quota_and_worker_saturation'}
+    def events():return [json.loads(line) for line in audit.read_text().splitlines()] if audit.exists() else []
+    def start_worker():
+        nonlocal log
+        raw['worker_generation']=raw.get('worker_generation',int(time.time()))+1
+        raw['worker_lease_seconds']=15
+        path.write_text(json.dumps(raw));path.chmod(0o600)
+        log=(settings.data_root/('RC07-worker-'+uuid.uuid4().hex[:8]+'.log')).open('w')
+        return subprocess.Popen([sys.executable,str(Path(__file__).resolve()),'--fixture',str(path),'--worker'],
+            cwd=ROOT,env={**os.environ,'TMPDIR':str(settings.data_root/'tmp'),'PYTHONDONTWRITEBYTECODE':'1'},
+            stdout=log,stderr=subprocess.STDOUT)
+    try:
+        first=await create_job(store,objects,profile,raw['image_digest'],'RC07 accepted',120)
+        gate.write_text(json.dumps({'job_id':first.id}));process=start_worker()
+        await wait_until(lambda:asyncio.sleep(0,result=any(
+            r.get('job_id')==first.id and r['event']=='acceptance_held' for r in events())))
+        accepted=await store.latest_job_acceptance(first.id);assert accepted and accepted.external_execution_id
+        result['accepted_job_id']=first.id;result['external_execution_id']=accepted.external_execution_id
+        result['killed_worker_pid']=process.pid
+        process.kill();await asyncio.to_thread(process.wait);log.close();gate.unlink()
+        second=await create_job(store,objects,profile,raw['image_digest'],'RC07 waiting',120)
+        result['waiting_job_id']=second.id;process=start_worker()
+        async def waiting():
+            async with store.connections() as db:
+                row=(await db.scalars(select(JobAttemptRow).where(JobAttemptRow.job_id==second.id)
+                    .order_by(JobAttemptRow.generation.desc()).limit(1))).first()
+                return row if row and row.outcome=='INFRASTRUCTURE_WAIT' else None
+        waiting_attempt=await wait_until(waiting,10)
+        assert await scheduler.active_reservation(first.id)
+        result['all_admission_slots_waiting']=True
+        async def completed():
+            values=[await store.get_job(job.id) for job in (first,second)]
+            return values if all(v.state==JobState.SUCCEEDED for v in values) else None
+        final=await wait_until(completed,90)
+        async def cleaned():
+            for job in (first,second):
+                cleanup=await store.get_job_cleanup(job.id)
+                if await scheduler.active_reservation(job.id) or (cleanup and cleanup['state']!='completed'):return False
+            return True
+        await wait_until(cleaned)
+        result['job_states']=[job.state.value for job in final]
+        result['runtime_submissions']={job.id:sum(r['event']=='runtime_submitted'
+            and r.get('allocation_id','').split('-g',1)[0]==job.id for r in events()) for job in (first,second)}
+        assert set(result['runtime_submissions'].values())=={1}
+        assert final[1].generation==waiting_attempt.generation
+        assert (await store.latest_job_acceptance(first.id)).external_execution_id==accepted.external_execution_id
+        result['recovery_generation']=final[0].generation
+        assert final[0].generation>accepted.generation
+        result['cleanup_released_quota']=True;result['passed']=True
+    except Exception as exc:result['error_type']=type(exc).__name__
+    finally:
+        gate.unlink(missing_ok=True);raw.pop('worker_lease_seconds',None)
+        if process and process.poll() is None:process.kill();await asyncio.to_thread(process.wait)
+        if log:log.close()
+    return result
 
 
 async def run(args):
