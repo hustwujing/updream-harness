@@ -589,7 +589,7 @@ class MediaDraftView(BaseModel):
 
 class MediaJobOutputView(BaseModel):
     id: str
-    role: Literal["primary", "preview", "auxiliary"]
+    role: str = Field(pattern=r"^(primary|preview|auxiliary|output_[0-9]{4})$")
     filename: str
     mime: str
     size: int

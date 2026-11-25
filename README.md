@@ -84,6 +84,16 @@ the Worker alone submits external Provider requests, persists external IDs,
 resumes polling after crashes and commits the Artifact, terminal state and
 Outbox transaction. API and Worker can restart independently.
 
+`image.decompose` uses that same MediaWorker execution path. JobWorker performs
+only an atomic database handoff from the authorized Operation; MediaWorker owns
+the HTTP submit, poll, cancel and multi-file download. The independent
+image-layering inference service still owns its model and GPU execution.
+The original Job owns Artifact contracts, Review and the sole continuation.
+Exact provider IDs and staged output receipts survive Worker replacement;
+an uncertain create is never replayed or matched to an unrelated active task.
+See [media execution contracts](docs/development/media-generation.md) and the
+[real migration runner](tests/run_real_image_decompose_media.py).
+
 The generic Job Worker uses the same accepted-handle rule for Child Harnesses,
 Operations and Providers. Submission identity is persisted before polling. A
 transient collection failure retries the same completed external execution and

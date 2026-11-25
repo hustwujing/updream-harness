@@ -285,6 +285,50 @@ successor Agent can inspect it with `sandbox-media fetch` and retain it only by
 calling `sandbox-media promote --output-role workspace|delivery`; promotion is
 thread-scoped and idempotent.
 
+## Delegated external Operations
+
+`image.decompose` retains its Operation descriptor, Artifact input and JobGroup
+confirmation. `ImageDecomposeAdapter` creates one MediaJob through
+`Store.enqueue_job_media_execution`; it sends no HTTP request. The transaction
+locks the source Job and lease, verifies generation/request digest and resolves
+input Artifacts within the same owner/Thread. A unique nullable `source_job_id`
+allows recovery after database handoff but before Job acceptance is recorded.
+Its internal confirmed draft has no origin Turn batch. Only the source Durable
+Job publishes through ArtifactGateway and creates the Primary continuation.
+
+MediaWorker dispatches `image_layered_http` through the registered
+`ExternalMediaProvider` transport contract. The independent HTTP service keeps
+its model, GPU queue and process lifecycle. Do not move its inference into
+ControlledWorker or add Operation/provider checks to shared Store state logic.
+Register another external transport with prepare/submit/poll/cancel/download
+methods while retaining the common lease and receipt transitions.
+
+For these transports, `provider_started_at` is committed before POST. It
+remains evidence of possible acceptance even when the phase becomes
+`recovery_required` or cancellation is requested. Only an explicit rejection
+before acceptance clears it. Definite busy/rate-limit/connect refusal can wait;
+lost create responses stay UNKNOWN. Empty inventory and a sole active native
+task are never correlation evidence. A known native ID is persisted before
+polling and survives SIGKILL. Cancellation must confirm native quiescence;
+missing identity after a possible submit cannot become confirmed cancellation.
+
+Provider result manifests and completed downloads use the existing immutable
+MediaExecution receipts. Authenticated downloads are bounded, content MIME is
+checked, and excluded formats are discarded before object storage. The frozen
+single-item bound applies after MIME selection; the platform transport and
+total-byte bounds still cover all candidate downloads. Selected outputs use
+dense Artifact positions, preserve existing matching Artifact identities during
+legacy recovery, and retain the original collection cardinality/Review rules.
+Internal delegated MediaJobs stay out of ordinary media lists, and media
+fetch/promote cannot bypass source-Job publication.
+
+Legacy native handles may be imported only from the source Job's recorded
+acceptance or its exact historical receipt file. The old direct HTTP adapter,
+active-task adoption heuristic and temporary output cache are superseded.
+`tests/test_image_decompose_media.py`, `tests/test_media_handoff_postgres.py` and
+`tests/run_real_image_decompose_media.py` cover the handoff, cancellation races,
+response loss, old collections, staging retries and real inference recovery.
+
 ## Controlled segmentation selection
 
 `image.segment` uses SAM3 and treats `no_target_found` as a semantic terminal

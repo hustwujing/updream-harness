@@ -21,6 +21,7 @@ from .domain import AccountView, CapabilityClaims, RuntimeEvent, Artifact, Event
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
 from .media_errors import media_error_guidance
+from .media_provider import MediaCancellationRequested
 from .job_errors import ArtifactCollectionCardinalityError,job_error_payload,normalize_job_error
 from .activity_projection import merge_projection_payload,projection_instruction
 from .job_contracts import (
@@ -385,6 +386,8 @@ class MediaJobRow(Base):
     thread_id: Mapped[str] = mapped_column(String(32), index=True)
     turn_id: Mapped[str] = mapped_column(String(32), default="", index=True)
     draft_id: Mapped[str] = mapped_column(String(32), index=True)
+    source_job_id: Mapped[str | None] = mapped_column(String(32), nullable=True,
+        unique=True, index=True)
     kind: Mapped[str] = mapped_column(String(16))
     model: Mapped[str] = mapped_column(String(160))
     generation_mode: Mapped[str] = mapped_column(String(40), default="", server_default="")
@@ -1081,6 +1084,12 @@ class Store:
                         raise
             media_columns = await connection.run_sync(lambda value: {
                 column["name"] for column in sqlalchemy_inspect(value).get_columns("media_jobs")})
+            if "source_job_id" not in media_columns:
+                suffix=" IF NOT EXISTS" if connection.dialect.name=="postgresql" else ""
+                await connection.execute(text(
+                    f"ALTER TABLE media_jobs ADD COLUMN{suffix} source_job_id VARCHAR(32)"))
+            await connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS "
+                "ix_media_jobs_source_job_id ON media_jobs (source_job_id)"))
             if "generation" not in media_columns:
                 statement = ("ALTER TABLE media_jobs ADD COLUMN IF NOT EXISTS "
                     "generation INTEGER NOT NULL DEFAULT 0" if connection.dialect.name == "postgresql"
@@ -6274,7 +6283,8 @@ class Store:
         error=(job_error_payload(row.error_code,detail=row.error_detail)
             if row.error_code else {})
         return MediaJobView(id=row.id, thread_id=row.thread_id, turn_id=row.turn_id or "", kind=row.kind,
-            model=row.model, generation_mode=row.generation_mode or "", references=json.loads(row.references_json or "[]"),
+            model=row.model, generation_mode=row.generation_mode or "",
+            references=[] if row.source_job_id else json.loads(row.references_json or "[]"),
             provider=row.provider, adapter=row.adapter, execution_mode=row.execution_mode,
             cancellation_mode=row.cancellation_mode, status=row.status, phase=row.phase or "",
             progress=row.progress, error_code=row.error_code or "", error_detail=row.error_detail or "",
@@ -6397,6 +6407,8 @@ class Store:
         async with self.connections() as db:
             rows = (await db.execute(select(MediaDraftRow).where(
                 MediaDraftRow.thread_id == thread_id, MediaDraftRow.owner_id == owner_id,
+                MediaDraftRow.id.not_in(select(MediaJobRow.draft_id).where(
+                    MediaJobRow.source_job_id.is_not(None))),
             ).order_by(MediaDraftRow.created_at.desc()))).scalars().all()
         return [self._media_draft_view(row) for row in rows]
 
@@ -6441,6 +6453,87 @@ class Store:
                     await db.execute(update(MediaBatchRow).where(MediaBatchRow.turn_id == row.turn_id,
                         MediaBatchRow.status == "sealed").values(lease_expires_at=None, updated_at=now()))
         return self._media_draft_view(row)
+
+    async def enqueue_job_media_execution(self, job_id: str, generation: int, *,
+                                           request_digest: str, provider_spec,
+                                           parameters: dict,
+                                           provider_job_id: str = "") -> MediaJobView:
+        """Atomically hand an authorized, leased Job to the media executor.
+
+        The source Job remains the publication/continuation authority. An exact
+        legacy provider receipt may be imported for observation, never submission.
+        """
+        async with self.job_lock("media-source:"+job_id):
+            async with self.connections.begin() as db:
+                source=await db.get(JobRow,job_id,with_for_update=True)
+                lease=await db.get(JobLeaseRow,job_id,with_for_update=True)
+                if (not source or not lease or source.generation!=generation
+                        or lease.generation!=generation or utc_datetime(lease.expires_at)<=now()
+                        or source.request_digest!=request_digest):
+                    raise RuntimeError("stale_job_generation")
+                existing=(await db.execute(select(MediaJobRow).where(
+                    MediaJobRow.source_job_id==job_id))).scalar_one_or_none()
+                if existing:
+                    if provider_job_id and existing.provider_job_id!=provider_job_id:
+                        raise RuntimeError("media_provider_identity_conflict")
+                    return self._media_job_view(existing)
+                request=JobRequest.model_validate_json(source.request_json)
+                if not provider_job_id:
+                    attempt=await db.get(JobAttemptRow,lease.attempt_id)
+                    if source.cancel_requested:raise RuntimeError("job_cancel_requested")
+                    if (JobState(source.state) in TERMINAL_JOB_STATES
+                            or not attempt or attempt.outcome!="SUBMITTING"):
+                        raise RuntimeError("job_submission_intent_conflict")
+                references=[]
+                for binding in request.input_artifacts:
+                    artifact=(await db.execute(select(ArtifactRow).join(TurnRow,
+                        TurnRow.id==ArtifactRow.turn_id).join(ThreadRow,
+                        ThreadRow.id==TurnRow.thread_id).where(ArtifactRow.id==binding.artifact_id,
+                        TurnRow.thread_id==source.thread_id,ThreadRow.owner_id==source.owner_id)
+                        )).scalar_one_or_none()
+                    if not artifact:raise RuntimeError("job_input_artifact_outside_scope")
+                    references.append({"artifact_id":artifact.id,"role":binding.artifact_role,
+                        "filename":PurePosixPath(artifact.path).name,"object_ref":artifact.object_ref,
+                        "sha256":artifact.sha256,"size":artifact.size,"mime":artifact.mime})
+                timestamp=now();identity=identifier();draft_id=identifier()
+                key="job-"+source.id
+                encoded=canonical_json(parameters);frozen=canonical_json(references)
+                db.add(MediaDraftRow(id=draft_id,owner_id=source.owner_id,
+                    thread_id=source.thread_id,turn_id="",kind=provider_spec.kind,
+                    model=provider_spec.model,generation_mode="",parameters_json=encoded,
+                    references_json="[]",idempotency_key=key,status="confirmed",job_id=identity,
+                    output_role="candidate",expires_at=timestamp,created_at=timestamp,updated_at=timestamp))
+                row=MediaJobRow(id=identity,owner_id=source.owner_id,thread_id=source.thread_id,
+                    turn_id="",draft_id=draft_id,source_job_id=source.id,kind=provider_spec.kind,
+                    model=provider_spec.model,generation_mode="",provider=provider_spec.provider,
+                    adapter=provider_spec.adapter,execution_mode=provider_spec.execution,
+                    cancellation_mode=provider_spec.cancellation,
+                    status=("cancel_requested" if source.cancel_requested else
+                        "running" if provider_job_id else "created"),
+                    phase="provider_polling" if provider_job_id else "prepared",
+                    parameters_json=encoded,references_json=frozen,provider_job_id=provider_job_id,
+                    provider_started_at=timestamp if provider_job_id else None,
+                    idempotency_key=key,output_role="candidate",created_at=timestamp,updated_at=timestamp)
+                db.add(row);await db.flush()
+                return self._media_job_view(row)
+
+    async def media_execution_for_job(self, job_id: str, owner_id: str) -> MediaJobView | None:
+        async with self.connections() as db:
+            row=(await db.execute(select(MediaJobRow).where(MediaJobRow.source_job_id==job_id,
+                MediaJobRow.owner_id==owner_id))).scalar_one_or_none()
+            return self._media_job_view(row) if row else None
+
+    async def media_job_outputs_for_source(self, media_job_id: str, job_id: str,
+                                          owner_id: str) -> list[dict]:
+        async with self.connections() as db:
+            rows=(await db.execute(select(MediaJobOutputRow).join(MediaJobRow,
+                MediaJobRow.id==MediaJobOutputRow.job_id).where(MediaJobRow.id==media_job_id,
+                MediaJobRow.source_job_id==job_id,MediaJobRow.owner_id==owner_id,
+                MediaJobRow.status=="succeeded").order_by(
+                    case((MediaJobOutputRow.role=="primary",0),else_=1),
+                    MediaJobOutputRow.role))).scalars().all()
+            return [{key:getattr(row,key) for key in
+                ("role","filename","object_ref","sha256","size","mime")} for row in rows]
 
     async def confirm_media_draft(self, draft_id: str, owner_id: str, *, provider_spec) -> MediaJobView:
         async with self.connections.begin() as db:
@@ -6530,7 +6623,7 @@ class Store:
     async def get_media_job_for_thread(self, job_id: str, thread_id: str) -> MediaJobView | None:
         async with self.connections() as db:
             row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
-                MediaJobRow.thread_id == thread_id))).scalar_one_or_none()
+                MediaJobRow.thread_id == thread_id,MediaJobRow.source_job_id.is_(None)))).scalar_one_or_none()
             artifact_ids = await self._media_artifact_ids(db, row) if row else []
             outputs = await self._media_job_outputs(db, row.id) if row else []
         return self._media_job_view(row, artifact_ids, outputs) if row else None
@@ -6538,7 +6631,7 @@ class Store:
     async def media_job_output_for_thread(self, job_id: str, thread_id: str) -> dict | None:
         async with self.connections() as db:
             row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
-                MediaJobRow.thread_id == thread_id))).scalar_one_or_none()
+                MediaJobRow.thread_id == thread_id,MediaJobRow.source_job_id.is_(None)))).scalar_one_or_none()
             if not row or row.status != "succeeded" or not row.output_object_ref:
                 return None
             primary=(await db.execute(select(MediaJobOutputRow).where(
@@ -6555,7 +6648,8 @@ class Store:
             raise ValueError("media_output_role_invalid")
         async with self.connections.begin() as db:
             row = (await db.execute(select(MediaJobRow).where(MediaJobRow.id == job_id,
-                MediaJobRow.thread_id == thread_id).with_for_update())).scalar_one_or_none()
+                MediaJobRow.thread_id == thread_id,MediaJobRow.source_job_id.is_(None))
+                .with_for_update())).scalar_one_or_none()
             if not row:
                 raise KeyError("media_job_not_found")
             if row.status != "succeeded" or not row.output_object_ref:
@@ -6590,7 +6684,8 @@ class Store:
     async def list_media_jobs(self, thread_id: str, owner_id: str) -> list[MediaJobView]:
         async with self.connections() as db:
             rows = (await db.execute(select(MediaJobRow).where(MediaJobRow.thread_id == thread_id,
-                MediaJobRow.owner_id == owner_id).order_by(MediaJobRow.created_at.desc()))).scalars().all()
+                MediaJobRow.owner_id == owner_id,MediaJobRow.source_job_id.is_(None))
+                .order_by(MediaJobRow.created_at.desc()))).scalars().all()
             paths = {f"artifacts/{row.id}": row.id for row in rows if row.turn_id}
             artifact_ids: dict[str, list[str]] = {row.id: [] for row in rows}
             if paths:
@@ -6763,6 +6858,9 @@ class Store:
             expiry = now() + timedelta(seconds=lease_seconds)
             result = []
             for row in rows:
+                source=await db.get(JobRow,row.source_job_id) if row.source_job_id else None
+                if source and (source.cancel_requested or JobState(source.state) in TERMINAL_JOB_STATES):
+                    row.status="cancel_requested"
                 row.generation+=1
                 row.lease_owner = owner; row.lease_expires_at = expiry; row.updated_at = now()
                 execution=await db.get(MediaExecutionRow,row.id)
@@ -6772,12 +6870,44 @@ class Store:
                     "references": json.loads(row.references_json or "[]"), "provider_job_id": row.provider_job_id,
                     "thread_id": row.thread_id, "owner_id": row.owner_id, "turn_id": row.turn_id,
                     "output_role":row.output_role, "created_at":utc_datetime(row.created_at),
-                    "generation":row.generation,
+                    "generation":row.generation,"source_job_id":row.source_job_id,
+                    "output_contracts":(json.loads(source.request_json).get("expected_outputs",[])
+                        if source else []),
                     "provider_result":json.loads(execution.provider_result_json) if execution else {},
                     "staged_outputs":json.loads(execution.staged_outputs_json) if execution else [],
                     "provider_started_at":(utc_datetime(row.provider_started_at)
                         if row.provider_started_at else None)})
         return result
+
+    async def _media_source_cancelled_locked(self, db, row) -> bool:
+        source=await db.get(JobRow,row.source_job_id,with_for_update=True) if row.source_job_id else None
+        cancelled=(row.status=="cancel_requested" or bool(source and
+            (source.cancel_requested or JobState(source.state) in TERMINAL_JOB_STATES)))
+        if cancelled:row.status="cancel_requested"
+        return cancelled
+
+    async def media_cancel_requested(self, job_id: str, owner: str, generation: int,
+                                     *, begin_submission: bool = False) -> bool:
+        async with self.connections.begin() as db:
+            row=(await db.execute(select(MediaJobRow).where(MediaJobRow.id==job_id,
+                MediaJobRow.lease_owner==owner,MediaJobRow.generation==generation)
+                .with_for_update())).scalar_one_or_none()
+            if not row:raise RuntimeError("stale_media_job_lease")
+            cancelled=await self._media_source_cancelled_locked(db,row)
+            if begin_submission and not cancelled:
+                row.status="running";row.phase="requesting";row.updated_at=now()
+                row.provider_started_at=row.provider_started_at or now()
+            return cancelled
+
+    async def record_media_submission_rejection(self,job_id:str,owner:str,generation:int)->None:
+        """Clear ambiguity only after an authoritative rejection before acceptance."""
+        async with self.connections.begin() as db:
+            row=(await db.execute(select(MediaJobRow).where(MediaJobRow.id==job_id,
+                MediaJobRow.lease_owner==owner,MediaJobRow.generation==generation)
+                .with_for_update())).scalar_one_or_none()
+            if not row:raise RuntimeError("stale_media_job_lease")
+            if row.provider_job_id:raise RuntimeError("media_provider_already_accepted")
+            row.provider_started_at=None;row.phase="prepared";row.updated_at=now()
 
     async def renew_media_job_lease(self,job_id:str,owner:str,generation:int,
                                     lease_seconds:int=60)->bool:
@@ -6837,7 +6967,8 @@ class Store:
                 MediaJobRow.lease_owner==owner,MediaJobRow.generation==generation)
             row=(await db.execute(query.with_for_update())).scalar_one_or_none()
             if not row:raise RuntimeError("stale_media_job_lease")
-            row.status = "running"; row.phase = phase; row.error_code = error_code
+            if row.status!="cancel_requested":row.status="running"
+            row.phase = phase; row.error_code = error_code
             row.error_detail = error_detail[:2000]; row.lease_owner = ""
             row.lease_expires_at = (now() + timedelta(seconds=retry_after_seconds)
                 if retry_after_seconds > 0 else None); row.updated_at = now()
@@ -7279,7 +7410,11 @@ class Store:
                 MediaJobRow.lease_owner==owner,MediaJobRow.generation==generation)
             row=(await db.execute(query.with_for_update())).scalar_one_or_none()
             if not row:raise RuntimeError("stale_media_job_lease")
-            row.status = status; row.phase = phase or row.phase; row.progress = progress
+            if row.status=="cancel_requested":
+                status=("cancelled" if status in {"succeeded","failed"} else status
+                    if status in {"cancelled","unknown"} else "cancel_requested")
+            row.status=status
+            row.phase = phase or row.phase; row.progress = progress
             if provider_job_id: row.provider_job_id = provider_job_id
             if provider_job_id and row.provider_started_at is None: row.provider_started_at = now()
             if output_object_ref: row.output_object_ref = output_object_ref; row.output_mime = output_mime; row.output_size = output_size
@@ -7327,6 +7462,8 @@ class Store:
             if generation:query=query.where(MediaJobRow.generation==generation)
             row=(await db.execute(query.with_for_update())).scalar_one_or_none()
             if not row:raise RuntimeError("stale_media_job_lease")
+            if await self._media_source_cancelled_locked(db,row):
+                raise MediaCancellationRequested("media_cancellation_requested")
             existing = (await db.execute(select(MediaJobOutputRow).where(
                 MediaJobOutputRow.job_id == row.id))).scalars().all()
             if existing:
@@ -7343,7 +7480,9 @@ class Store:
                 digest = object_ref.removeprefix("sha256:")
                 mime = str(output.get("mime") or "application/octet-stream")
                 size = int(output.get("size") or 0)
-                if (role not in {"primary", "preview", "auxiliary"} or role in seen_roles
+                valid_role=(role in {"primary","preview","auxiliary"} or
+                    bool(row.source_job_id and re.fullmatch(r"output_[0-9]{4}",role)))
+                if (not valid_role or role in seen_roles
                         or not filename or filename in seen_names or size <= 0 or len(digest) != 64
                         or any(character not in "0123456789abcdef" for character in digest)):
                     raise ValueError("invalid_media_output")

@@ -179,6 +179,21 @@ budget.
 ## Media execution receipts
 
 `media_jobs.generation` fences every claimed Worker generation.
+
+`media_jobs.source_job_id` is an optional unique link for a Durable Job delegated
+to MediaWorker. An additive SQLite/PostgreSQL upgrade leaves old rows NULL.
+Source Job/lease validation, the internal confirmed MediaDraft and MediaJob are
+committed together; their empty origin Turn prevents a second continuation.
+Frozen source Artifact references remain internal rather than masquerading as
+public ProjectFile references. Source cancellation is checked before the
+provider request and terminal output commit.
+
+Registered external transports commit `provider_started_at` before submission;
+only an authoritative pre-accept rejection clears that ambiguity marker. A
+cancelled request with no native ID and a possible submission remains UNKNOWN.
+Multi-file results use one primary output and stable `output_NNNN` roles;
+ordinary Provider primary/preview/auxiliary roles remain valid. The source Job's
+ArtifactGateway remains the publication authority for delegated rows.
 All single-Job Worker mutations require this value; no owner-only compatibility
 path exists. Heartbeat failure invalidates the active generation locally.
 `media_job_executions` stores the immutable sanitized Provider result receipt

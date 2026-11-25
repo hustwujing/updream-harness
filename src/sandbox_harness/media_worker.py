@@ -11,7 +11,7 @@ import shutil
 import tarfile
 import time
 import uuid
-from dataclasses import asdict,dataclass
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -22,6 +22,9 @@ import httpx
 import av
 
 from .media_catalog import MediaCatalog
+from .artifact_gateway import MimeRegistry
+from .media_provider import DownloadedMedia, ProviderResult, MediaCancellationRequested
+from .image_decompose_provider import ImageDecomposeProvider
 from .media_errors import classify_provider_error
 from .media_reference_publisher import MediaReferencePreparationError, MediaReferencePublisher
 from .minimax_voice import MiniMaxVoiceCloneError, MiniMaxVoiceClonePending, MiniMaxVoiceClones
@@ -32,35 +35,17 @@ from .store import Store
 from .runtime import _process_start
 
 
-@dataclass
-class ProviderResult:
-    status: str
-    url: str = ""
-    provider_job_id: str = ""
-    progress: int | None = None
-    error: str = ""
-    error_code: str = ""
-    outputs: list[dict[str, str]] | None = None
-    credits_consumed: float | None = None
-
-
-@dataclass
-class DownloadedMedia:
-    path: Path
-    size: int
-    sha256: str
-    mime: str
-    def remove(self):self.path.unlink(missing_ok=True)
-
-
 class MediaWorker:
     """Durable media executor for the real, probed Provider protocols."""
 
-    def __init__(self, settings, store: Store, objects: ObjectStore | S3ObjectStore, catalog: MediaCatalog):
+    def __init__(self, settings, store: Store, objects: ObjectStore | S3ObjectStore, catalog: MediaCatalog,
+                 *, external_providers=None):
         self.settings = settings
         self.store = store
         self.objects = objects
         self.catalog = catalog
+        self.external_providers=(external_providers if external_providers is not None else
+            {"image_layered_http":ImageDecomposeProvider(settings,objects)})
         self.owner = "media-worker-" + uuid.uuid4().hex
         self.reference_publisher = MediaReferencePublisher(settings, store, objects, self.owner)
         self.voice_clones = MiniMaxVoiceClones(settings, store, objects, self.owner)
@@ -169,6 +154,11 @@ class MediaWorker:
     async def _process_claimed(self, job: dict[str, Any]) -> None:
         stage = "claimed"
         try:
+            if job.get("source_job_id") and await self.store.media_cancel_requested(
+                    job["id"],self.owner,job["generation"]):
+                await self._cancel_external(job);return
+            if job["status"] == "cancel_requested" and job["adapter"] in self.external_providers:
+                await self._cancel_external(job);return
             if job["status"] == "cancel_requested":
                 await self.store.update_media_job(job["id"], self.owner, job["generation"], status="failed", phase="cancel_refused",
                     error_code="media_cancel_not_supported", error_detail="Provider cancellation is not supported")
@@ -186,6 +176,13 @@ class MediaWorker:
                     else "preparing_references" if job.get("references") else "requesting"))
             result=(ProviderResult(**job["provider_result"]) if job.get("provider_result")
                 else await self._execute(job))
+            if job.get("source_job_id") and await self.store.media_cancel_requested(
+                    job["id"],self.owner,job["generation"]):
+                await self._cancel_external(job);return
+            if result.status == "cancelled":
+                await self.store.update_media_job(job["id"],self.owner,job["generation"],
+                    status="cancelled",phase="terminal",provider_job_id=result.provider_job_id)
+                return
             if result.status == "unknown":
                 error_code = result.error_code or ("provider_result_unresolved" if result.provider_job_id
                     else "provider_submission_outcome_unknown")
@@ -210,11 +207,27 @@ class MediaWorker:
             specs=(result.outputs or [{"role":"primary","filename":f"{job['kind']}-{job['id'][:8]}",
                 "url":result.url,"kind":job["kind"]}])
             completed=list(job.get("staged_outputs") or []);staged_by_role={item["role"]:item for item in completed}
+            total_downloaded=sum(value["size"] for value in completed)
+            contracts=job.get("output_contracts") or []
+            provider=self.external_providers.get(job["adapter"])
             for output in specs:
                 if output["role"] in staged_by_role:continue
                 stage = "download_" + output["role"]
-                downloaded=await self._download(output["url"], expected_kind=output["kind"])
+                downloaded=(await provider.download(job,output,staging_root=self.staging_root,
+                    prefix=self.stage_prefix,maximum_bytes=self.settings.max_artifact_bytes) if provider else
+                    await self._download(output["url"],expected_kind=output["kind"]))
                 try:
+                    total_downloaded+=downloaded.size
+                    if provider and total_downloaded>128*1024**2:
+                        raise ValueError("provider_outputs_too_large")
+                    if contracts and not MimeRegistry.matches(downloaded.mime,
+                            tuple(contracts[0].get("mime_patterns") or [])):
+                        continue
+                    if contracts and downloaded.size>contracts[0]["max_item_bytes"]:
+                        raise ValueError("provider_selected_output_too_large")
+                    if job.get("source_job_id") and await self.store.media_cancel_requested(
+                            job["id"],self.owner,job["generation"]):
+                        raise MediaCancellationRequested("media_cancellation_requested")
                     stage = "object_store_" + output["role"]
                     object_ref,_=await asyncio.to_thread(self.objects.put_file,downloaded.path,
                         digest=downloaded.sha256,size=downloaded.size)
@@ -225,6 +238,9 @@ class MediaWorker:
                         job["generation"],value);staged_by_role[value["role"]]=value
                 finally:downloaded.remove()
             stage = "commit"
+            if provider and completed and not any(value["role"]=="primary" for value in completed):
+                completed=sorted(completed,key=lambda value:value["role"])
+                completed=[{**completed[0],"role":"primary"},*completed[1:]]
             if not await self.store.complete_media_job(job["id"], self.owner,
                     provider_job_id=result.provider_job_id, outputs=completed,
                     credits_consumed=result.credits_consumed,generation=job["generation"]):
@@ -232,6 +248,8 @@ class MediaWorker:
             total_bytes = sum(output["size"] for output in completed)
             event("media.job.succeeded", job_id=job["id"], provider=job["provider"], model=job["model"],
                 bytes=total_bytes)
+        except MediaCancellationRequested:
+            await self._cancel_external(job)
         except MediaReferencePreparationError as exc:
             detail = str(exc)[:200]
             error_code = ("media_reference_policy_rejected"
@@ -292,7 +310,45 @@ class MediaWorker:
                 event("media.job.unknown", level=40, job_id=job["id"], provider=job["provider"], model=job["model"],
                     failure_stage=stage, exception_type=type(exc).__name__)
 
+    async def _cancel_external(self,job:dict)->None:
+        provider=self.external_providers.get(job["adapter"])
+        if not provider:raise RuntimeError("media_cancel_adapter_unavailable")
+        if job.get("provider_job_id"):
+            result=await provider.cancel(job)
+        elif job["phase"]=="requesting" or job.get("provider_started_at"):
+            result=ProviderResult("unknown",error_code="provider_submission_outcome_unknown")
+        else:result=ProviderResult("cancelled")
+        if result.status=="pending":
+            await self.store.release_media_job_lease(job["id"],self.owner,job["generation"],
+                phase="cancelling",error_code=result.error_code,retry_after_seconds=5)
+        else:
+            await self.store.update_media_job(job["id"],self.owner,job["generation"],
+                status=result.status,phase="terminal" if result.status=="cancelled" else "recovery_required",
+                provider_job_id=result.provider_job_id,error_code=result.error_code)
+
     async def _execute(self, job: dict[str, Any]) -> ProviderResult:
+        provider=self.external_providers.get(job["adapter"])
+        if provider:
+            if not job.get("provider_job_id"):
+                prepared=await provider.prepare(job)
+                if prepared:return prepared
+                if await self.store.media_cancel_requested(job["id"],self.owner,
+                        job["generation"],begin_submission=True):
+                    raise MediaCancellationRequested("media_cancellation_requested")
+                job["phase"]="requesting"
+                job["provider_started_at"]=datetime.now(timezone.utc)
+                accepted=await provider.submit(job)
+                if accepted.status!="accepted":
+                    if accepted.status!="unknown":
+                        await self.store.record_media_submission_rejection(job["id"],
+                            self.owner,job["generation"])
+                        job["phase"]="prepared";job["provider_started_at"]=None
+                    return accepted
+                job["provider_job_id"]=accepted.provider_job_id
+                await self.store.update_media_job(job["id"],self.owner,job["generation"],
+                    status="running",phase="provider_polling",provider_job_id=accepted.provider_job_id)
+                job["phase"]="provider_polling"
+            return await provider.poll(job)
         if job.get("references") and job["adapter"] not in {"tripo_v3", "minimax_t2a"}:
             job = {**job, "references": await self.reference_publisher.prepare(job,
                 require_ark=job["adapter"] == "ark_video_v2")}

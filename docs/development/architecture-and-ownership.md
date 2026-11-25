@@ -28,6 +28,9 @@ the summary.
 | `allocation_dispatch.py` / `allocation_service.py` | Durable provider create ledger and independent allocation service; unknown outcomes reconcile without another create |
 | `harness_job.py` / `job_service.py` | Child/Reviewer execution through the configured SandboxBackend and production worker lifecycle |
 | `job_continuation.py` | all-terminal outbox batching back into the Primary Harness Session |
+| `image_decompose_adapter.py` | database-only handoff of the authorized Operation; exact legacy receipt import |
+| `media_worker.py` / `media_provider.py` | shared media leases, submission boundaries, cancellation, output staging and terminal commit |
+| `image_decompose_provider.py` | host-only HTTP/session transport for the independent image-layering inference service |
 
 ## Gateway
 

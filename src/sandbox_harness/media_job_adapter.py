@@ -42,7 +42,11 @@ class MediaProviderJobAdapter(BaseJobAdapter):
             'media_job_id':media_job.id,'provider':media_job.provider,'provider_adapter':media_job.adapter,
             'execution_mode':media_job.execution_mode})
 
+    async def resolve_execution(self,context:JobExecutionContext,external_execution_id:str)->str:
+        return external_execution_id
+
     async def status(self,context:JobExecutionContext,external_execution_id:str)->AdapterStatus:
+        external_execution_id=await self.resolve_execution(context,external_execution_id)
         owner_id=await self.store.owner_id_for_thread(context.job.thread_id)
         value=await self.store.get_media_job(external_execution_id,owner_id)
         if not value:raise RuntimeError('accepted_media_job_missing')
@@ -60,6 +64,7 @@ class MediaProviderJobAdapter(BaseJobAdapter):
         return await self.status(context,external_execution_id)
 
     async def cancel(self,context:JobExecutionContext,external_execution_id:str)->AdapterStatus:
+        external_execution_id=await self.resolve_execution(context,external_execution_id)
         current=await self.status(context,external_execution_id)
         if current.terminal:return current
         owner_id=await self.store.owner_id_for_thread(context.job.thread_id)
@@ -68,21 +73,35 @@ class MediaProviderJobAdapter(BaseJobAdapter):
             'media_job_id':external_execution_id,'cancel_refused':True})
         return AdapterStatus(False,JobState.CANCELLING,{'media_job_id':value.id})
 
+    async def outputs(self,context:JobExecutionContext,external_execution_id:str)->list[dict]:
+        output=await self.store.media_job_output_for_thread(external_execution_id,context.job.thread_id)
+        return [{"role":"primary",**output}] if output else []
+
     async def collect(self,context:JobExecutionContext,external_execution_id:str,
                       status:AdapterStatus)->dict:
         if status.state!=JobState.SUCCEEDED:return status.result
-        output=await self.store.media_job_output_for_thread(external_execution_id,context.job.thread_id)
-        if not output:raise RuntimeError('media_job_output_unavailable')
+        external_execution_id=await self.resolve_execution(context,external_execution_id)
+        outputs=await self.outputs(context,external_execution_id)
+        if not outputs:raise RuntimeError('media_job_output_unavailable')
         if len(context.request.expected_outputs)!=1:
             raise RuntimeError('media_provider_output_contract_requires_one_role')
         contract=context.request.expected_outputs[0]
-        data=await asyncio.to_thread(self.objects.get,output['object_ref'],maximum=contract.max_item_bytes)
-        async def chunks():yield data
-        artifact=await self.artifacts.emit(ArtifactEmission(job_id=context.job.id,
-            generation=context.generation,artifact_role=contract.artifact_role,item_key='primary',position=0,
-            filename=Path(output['filename']).name,output_disposition=contract.output_disposition,
-            declared_mime=output['mime']),chunks())
+        artifacts=[];existing=await self.store.list_job_artifacts(context.job.id,contract.artifact_role)
+        for output in outputs:
+            data=await asyncio.to_thread(self.objects.get,output['object_ref'],maximum=contract.max_item_bytes)
+            async def chunks():yield data
+            # Preserve identities already bound before a worker/adapter upgrade.
+            previous=next((value for value in existing if value.position==len(artifacts)
+                and value.filename==Path(output['filename']).name
+                and value.object_ref==output['object_ref'] and value.size==len(data)
+                and value.mime==output['mime']),None)
+            artifact=await self.artifacts.emit(ArtifactEmission(job_id=context.job.id,
+                generation=context.generation,artifact_role=contract.artifact_role,
+                item_key=previous.item_key if previous else output['role'],
+                position=len(artifacts),filename=Path(output['filename']).name,
+                output_disposition=contract.output_disposition,declared_mime=output['mime']),chunks())
+            artifacts.append(artifact.model_dump(mode='json'))
         collection=await self.store.finalize_job_artifact_collection(context.job.id,
             context.generation,contract.artifact_role)
-        return {**status.result,'artifacts':[artifact.model_dump(mode='json')],
+        return {**status.result,'artifacts':artifacts,
             'collections':[collection]}
