@@ -7,11 +7,12 @@ import hashlib
 import json
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, or_, func
 
 from .domain import Harness,now
 from .job_adapters import PreAcceptCancelled
 from .job_contracts import JobState,TERMINAL_JOB_STATES
+from .observability import event
 from .sandbox_contracts import (Sandbox,SandboxCreateRequest,SandboxHandle,SandboxProfile,
     SandboxScope,SandboxCapacityUnavailable,SandboxRateLimited,SandboxAuthenticationFailed,
     SandboxProfileUnavailable,SandboxCreateOutcomeUnknown,SandboxProviderError)
@@ -46,7 +47,8 @@ def decode_request(encoded):
 def snapshot(row):
     if row is None:return None
     return {'id':row.id,'state':row.state,'job_id':row.job_id,'job_generation':row.job_generation,
-        'request_json':row.request_json,'handle':json.loads(row.handle_json),'error_code':row.error_code}
+        'request_json':row.request_json,'handle':json.loads(row.handle_json),'error_code':row.error_code,
+        'reconcile_token':row.reconcile_token,'reconcile_attempts':row.reconcile_attempts}
 
 
 class AllocationClient:
@@ -85,6 +87,8 @@ class AllocationClient:
                     row.state='PENDING';row.job_generation=context.generation
                     row.error_code='';row.handle_json='{}';row.claim_owner=''
                     row.claim_expires_at=None;row.updated_at=now()
+                    row.reconcile_after=None;row.reconcile_attempts=0
+                    row.reconcile_token='';row.reconcile_expires_at=None
             else:
                 db.add(SandboxAllocationRow(id=identity,namespace=self.backend.namespace,
                     provider=request.profile.provider,allocation_id=request.allocation_id,
@@ -167,16 +171,25 @@ class AllocationClient:
 
 
 class AllocationService:
-    def __init__(self,store,backend,*,owner='',lease_seconds=120):
+    def __init__(self,store,backend,*,owner='',lease_seconds=30):
         self.store=store;self.backend=backend;self.owner=owner or 'allocator-'+uuid.uuid4().hex
         self.lease_seconds=lease_seconds
 
     async def _finish(self,identity,state,*,handle=None,error_code=''):
         async with self.store.connections.begin() as db:
             row=await db.get(SandboxAllocationRow,identity,with_for_update=True)
-            if not row or row.claim_owner!=self.owner or row.state not in {'SENDING','UNKNOWN'}:
+            if not row or row.claim_owner!=self.owner:
+                raise RuntimeError('stale_allocation_claim')
+            # Observation may win the race with the original create response.
+            # Its resolved handle (or subsequent cleanup) must never regress.
+            if row.state in {'READY','RELEASED'}:
+                if handle and json.loads(row.handle_json)!=handle.to_mapping():
+                    raise RuntimeError('sandbox_allocation_handle_conflict')
+                return
+            if row.state not in {'SENDING','UNKNOWN'}:
                 raise RuntimeError('stale_allocation_claim')
             row.state=state;row.error_code=error_code;row.updated_at=now();row.claim_expires_at=None
+            row.reconcile_after=None;row.reconcile_token='';row.reconcile_expires_at=None
             if handle:row.handle_json=json.dumps(handle.to_mapping(),sort_keys=True)
 
     async def _execute(self,value):
@@ -205,14 +218,19 @@ class AllocationService:
         finally:
             task.cancel();await asyncio.gather(task,return_exceptions=True)
 
-    async def run_once(self,limit=8):
+    async def _expire_creates(self):
         async with self.store.connections.begin() as db:
             stale=(await db.scalars(select(SandboxAllocationRow).where(
                 SandboxAllocationRow.namespace==self.backend.namespace,
                 SandboxAllocationRow.provider==self.backend.provider,
                 SandboxAllocationRow.state=='SENDING',SandboxAllocationRow.claim_expires_at<now())
                 .with_for_update(skip_locked=True))).all()
-            for row in stale:row.state='UNKNOWN';row.updated_at=now()
+            for row in stale:
+                row.state='UNKNOWN';row.updated_at=now();row.reconcile_after=None
+
+    async def _claim_creates(self,limit):
+        if limit<=0:return []
+        async with self.store.connections() as db:
             candidates=(await db.scalars(select(SandboxAllocationRow.id).where(
                 SandboxAllocationRow.namespace==self.backend.namespace,
                 SandboxAllocationRow.provider==self.backend.provider,SandboxAllocationRow.state=='PENDING')
@@ -220,37 +238,104 @@ class AllocationService:
         claimed=[]
         for identity in candidates:
             async with self.store.connections() as db:
-                current=await db.get(SandboxAllocationRow,identity);job_id=current.job_id
+                current=await db.get(SandboxAllocationRow,identity)
+                if not current:continue
+                job_id=current.job_id
             async with self.store.connections.begin() as db:
                 job=await db.get(JobRow,job_id,with_for_update=True)
                 row=await db.get(SandboxAllocationRow,identity,with_for_update=True)
                 if not row or row.state!='PENDING':continue
-                if not job or job.cancel_requested or JobState(job.state) in TERMINAL_JOB_STATES:
+                if (not job or job.cancel_requested or JobState(job.state) in TERMINAL_JOB_STATES
+                        or job.generation!=row.job_generation):
                     row.state='CANCELLED';row.updated_at=now();continue
                 row.state='SENDING';row.claim_owner=self.owner
                 row.claim_expires_at=now()+timedelta(seconds=self.lease_seconds);row.updated_at=now()
                 claimed.append(snapshot(row))
-        await asyncio.gather(*(self._execute(value) for value in claimed))
-        await self.reconcile_once(limit=limit)
+        return claimed
+
+    async def run_once(self,limit=8):
+        await self._expire_creates()
+        claimed=await self._claim_creates(limit)
+        await asyncio.gather(*(self._execute(value) for value in claimed),self.reconcile_once(limit=limit))
         return len(claimed)
 
-    async def reconcile_once(self,limit=8):
-        async with self.store.connections() as db:
+    async def _claim_reconciliations(self,limit):
+        if limit<=0:return []
+        timestamp=now()
+        async with self.store.connections.begin() as db:
             rows=(await db.scalars(select(SandboxAllocationRow).where(
                 SandboxAllocationRow.namespace==self.backend.namespace,
-                SandboxAllocationRow.provider==self.backend.provider,SandboxAllocationRow.state=='UNKNOWN')
-                .limit(limit))).all()
-            values=[snapshot(row) for row in rows]
-        for value in values:
-            request=decode_request(value['request_json'])
-            try:sandbox=await self.backend.reconcile_create(SandboxScope(self.backend.namespace),request.allocation_id)
-            except SandboxProviderError:continue
-            if not sandbox:continue
-            if (sandbox.handle.provider!=request.profile.provider
-                    or sandbox.handle.allocation_id!=request.allocation_id
-                    or sandbox.compatibility_key!=request.profile.compatibility_key):continue
-            handle=replace(sandbox.handle,revision=request.profile.revision)
-            async with self.store.connections.begin() as db:
-                row=await db.get(SandboxAllocationRow,value['id'],with_for_update=True)
-                if row.state!='UNKNOWN':continue
-                row.state='READY';row.handle_json=json.dumps(handle.to_mapping(),sort_keys=True);row.updated_at=now()
+                SandboxAllocationRow.provider==self.backend.provider,SandboxAllocationRow.state=='UNKNOWN',
+                or_(SandboxAllocationRow.reconcile_after.is_(None),SandboxAllocationRow.reconcile_after<=timestamp),
+                or_(SandboxAllocationRow.reconcile_expires_at.is_(None),SandboxAllocationRow.reconcile_expires_at<=timestamp))
+                .order_by(func.coalesce(SandboxAllocationRow.reconcile_after,SandboxAllocationRow.created_at),
+                    SandboxAllocationRow.created_at,SandboxAllocationRow.id)
+                .limit(limit).with_for_update(skip_locked=True))).all()
+            values=[]
+            for row in rows:
+                row.reconcile_token=uuid.uuid4().hex
+                row.reconcile_expires_at=timestamp+timedelta(seconds=self.lease_seconds)
+                row.reconcile_attempts+=1
+                # Persist rotation even if the observer dies during its RPC.
+                row.reconcile_after=row.reconcile_expires_at
+                values.append(snapshot(row))
+            return values
+
+    async def _reconcile(self,value):
+        request=decode_request(value['request_json']);handle=None;error_code='allocation_not_visible'
+        try:
+            async with asyncio.timeout(self.lease_seconds*.8):
+                sandbox=await self.backend.reconcile_create(SandboxScope(self.backend.namespace),request.allocation_id)
+            if sandbox:
+                if (sandbox.handle.provider==request.profile.provider
+                        and sandbox.handle.allocation_id==request.allocation_id
+                        and sandbox.compatibility_key==request.profile.compatibility_key):
+                    handle=replace(sandbox.handle,revision=request.profile.revision)
+                else:error_code='allocation_identity_mismatch'
+        except (SandboxProviderError,TimeoutError):error_code='allocation_observation_unavailable'
+        async with self.store.connections.begin() as db:
+            row=await db.get(SandboxAllocationRow,value['id'],with_for_update=True)
+            if (not row or row.state!='UNKNOWN' or row.reconcile_token!=value['reconcile_token']
+                    or not row.reconcile_expires_at or utc_datetime(row.reconcile_expires_at)<=now()):return
+            row.reconcile_token='';row.reconcile_expires_at=None;row.updated_at=now()
+            if handle:
+                row.state='READY';row.handle_json=json.dumps(handle.to_mapping(),sort_keys=True)
+                row.error_code='';row.reconcile_after=None
+            else:
+                row.error_code=error_code
+                row.reconcile_after=now()+timedelta(seconds=min(30,2**min(row.reconcile_attempts-1,5)))
+
+    async def reconcile_once(self,limit=8):
+        await self._expire_creates()
+        values=await self._claim_reconciliations(limit)
+        await asyncio.gather(*(self._reconcile(value) for value in values))
+        return len(values)
+
+    async def _run_lane(self,stop,*,concurrency,reconciliation):
+        tasks=set()
+        try:
+            while not stop.is_set():
+                completed={task for task in tasks if task.done()}
+                tasks-=completed
+                for result in await asyncio.gather(*completed,return_exceptions=True):
+                    if isinstance(result,Exception):
+                        event('sandbox.allocation.dispatch_failed',level=40,exception_type=type(result).__name__)
+                try:
+                    if reconciliation:await self._expire_creates()
+                    claim=self._claim_reconciliations if reconciliation else self._claim_creates
+                    execute=self._reconcile if reconciliation else self._execute
+                    for value in await claim(concurrency-len(tasks)):
+                        tasks.add(asyncio.create_task(execute(value)))
+                except Exception as exc:
+                    event('sandbox.allocation.dispatch_failed',level=40,exception_type=type(exc).__name__)
+                try:await asyncio.wait_for(stop.wait(),timeout=.2)
+                except TimeoutError:pass
+        finally:
+            for task in tasks:task.cancel()
+            await asyncio.gather(*tasks,return_exceptions=True)
+
+    async def run(self,stop,*,concurrency=8):
+        if concurrency<1:raise ValueError('allocation_concurrency_invalid')
+        async with asyncio.TaskGroup() as group:
+            group.create_task(self._run_lane(stop,concurrency=concurrency,reconciliation=False))
+            group.create_task(self._run_lane(stop,concurrency=concurrency,reconciliation=True))

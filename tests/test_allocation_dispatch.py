@@ -111,6 +111,9 @@ async def test_allocator_loss_keeps_unknown_and_never_reissues_create(tmp_path):
         assert (await client.snapshot(context,request))['state']=='UNKNOWN' and backend.calls==0
         # A late original create becomes visible. Reconciliation adopts it.
         sandbox=await backend.create(request)
+        async with store.connections.begin() as db:
+            row=await db.get(SandboxAllocationRow,identity)
+            row.reconcile_after=now()-timedelta(seconds=1)
         assert await newer.run_once()==0
         assert (await client.snapshot(context,request))['handle']==sandbox.handle.to_mapping()
         assert backend.calls==1

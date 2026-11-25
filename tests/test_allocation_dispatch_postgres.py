@@ -42,3 +42,72 @@ async def test_concurrent_enqueues_and_allocators_issue_one_provider_create():
         assert (await AllocationClient(store,backend).snapshot(context,creation))['state']=='READY'
     finally:
         await asyncio.gather(*(s.close() for s in others));await store.close()
+
+
+async def allocation_fixture(store, backend):
+    identity=identifier()
+    request=JobRequest(local_job_id='allocation',kind='harness',adapter='child-harness',
+        descriptor_id='delegate.harness',descriptor_version='1',descriptor_digest='a'*64,
+        idempotency_key='allocation-'+identity)
+    _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id=identifier(),
+        origin_turn_id=identifier(),idempotency_key='group-'+identity,jobs=[request]))
+    job=jobs[0];attempt=await store.claim_job(job.id,'worker','node',30)
+    await store.mark_job_submission_started(job.id,'worker',attempt.generation)
+    context=JobExecutionContext(job=await store.get_job(job.id),request=request,generation=attempt.generation)
+    creation=SandboxCreateRequest(harness=Harness.CODEX,
+        profile=backend.legacy_profile(Harness.CODEX,'image'),environment={},ttl_seconds=300,
+        allocation_id=job.id)
+    return context,creation
+
+
+async def test_concurrent_observers_claim_each_allocation_once():
+    from sandbox_harness.store import SandboxAllocationRow
+    store=Store(URL);await store.initialize();other=Store(URL)
+    class Provider(FakeSandboxBackend):
+        reads=0
+        entered=asyncio.Event();finish=asyncio.Event()
+        async def reconcile_create(self,scope,allocation_id):
+            self.reads+=1;self.entered.set();await self.finish.wait()
+            return None
+    backend=Provider(namespace='pg-reconcile-'+identifier())
+    task=None
+    try:
+        context,request=await allocation_fixture(store,backend)
+        identity=await AllocationClient(store,backend).enqueue(context,request)
+        async with store.connections.begin() as db:
+            row=await db.get(SandboxAllocationRow,identity);row.state='UNKNOWN'
+        first=AllocationService(store,backend);second=AllocationService(other,backend)
+        task=asyncio.create_task(first.reconcile_once(limit=1))
+        await asyncio.wait_for(backend.entered.wait(),2)
+        assert await second.reconcile_once(limit=1)==0
+        backend.finish.set();assert await task==1
+        assert backend.reads==1
+    finally:
+        backend.finish.set()
+        if task:await asyncio.gather(task,return_exceptions=True)
+        await other.close();await store.close()
+
+
+async def test_postgres_upgrade_preserves_unknown_allocation_and_original_claim():
+    from sqlalchemy import text
+    from sandbox_harness.store import SandboxAllocationRow
+    store=Store(URL);await store.initialize()
+    backend=FakeSandboxBackend(namespace='pg-upgrade-'+identifier())
+    try:
+        context,request=await allocation_fixture(store,backend)
+        client=AllocationClient(store,backend)
+        identity=await client.enqueue(context,request)
+        async with store.connections.begin() as db:
+            row=await db.get(SandboxAllocationRow,identity)
+            row.state='UNKNOWN';row.claim_owner='original-create-owner'
+        async with store.engine.begin() as db:
+            for column in ('reconcile_after','reconcile_attempts','reconcile_token','reconcile_expires_at'):
+                await db.execute(text('ALTER TABLE sandbox_allocations DROP COLUMN '+column))
+        await asyncio.gather(store.initialize(),store.initialize())
+        async with store.connections() as db:
+            row=await db.get(SandboxAllocationRow,identity)
+            assert row.state=='UNKNOWN' and row.claim_owner=='original-create-owner'
+            assert row.reconcile_attempts==0 and row.reconcile_token==''
+        assert await AllocationService(store,backend).reconcile_once()==1
+        assert (await client.snapshot(context,request))['state']=='UNKNOWN'
+    finally:await store.close()

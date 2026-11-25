@@ -768,6 +768,10 @@ class SandboxAllocationRow(Base):
     error_code: Mapped[str] = mapped_column(String(80),default='',server_default='')
     claim_owner: Mapped[str] = mapped_column(String(64),default='',server_default='')
     claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),nullable=True)
+    reconcile_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),nullable=True)
+    reconcile_attempts: Mapped[int] = mapped_column(Integer,default=0,server_default='0')
+    reconcile_token: Mapped[str] = mapped_column(String(64),default='',server_default='')
+    reconcile_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -1061,6 +1065,24 @@ class Store:
                 await connection.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"),
                     {"lock_id": SCHEMA_INITIALIZATION_LOCK_ID})
             await connection.run_sync(Base.metadata.create_all)
+            allocation_columns=await connection.run_sync(lambda value:{column['name'] for column in
+                sqlalchemy_inspect(value).get_columns('sandbox_allocations')})
+            timestamp_type='TIMESTAMP WITH TIME ZONE' if connection.dialect.name=='postgresql' else 'TIMESTAMP'
+            for column,definition in {
+                'reconcile_after':timestamp_type,
+                'reconcile_attempts':'INTEGER NOT NULL DEFAULT 0',
+                'reconcile_token':"VARCHAR(64) NOT NULL DEFAULT ''",
+                'reconcile_expires_at':timestamp_type,
+            }.items():
+                if column not in allocation_columns:
+                    suffix=' IF NOT EXISTS' if connection.dialect.name=='postgresql' else ''
+                    try:await connection.execute(text(
+                        f'ALTER TABLE sandbox_allocations ADD COLUMN{suffix} {column} {definition}'))
+                    except OperationalError as exc:
+                        if (connection.dialect.name!='sqlite' or
+                                f'duplicate column name: {column}' not in str(exc).lower()):raise
+            await connection.execute(text('CREATE INDEX IF NOT EXISTS ix_sandbox_allocations_due '
+                'ON sandbox_allocations (namespace, provider, state, reconcile_after)'))
             turn_columns=await connection.run_sync(lambda value:{column["name"] for column in
                 sqlalchemy_inspect(value).get_columns("turns")})
             if "sandbox_handle_json" not in turn_columns:

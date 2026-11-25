@@ -9,23 +9,19 @@ import signal
 
 from .allocation_dispatch import AllocationService
 from .config import Settings,load_settings
-from .observability import configure,event
+from .observability import configure
 from .sandbox_factory import build_sandbox_backend
 from .store import Store
 
 
 async def serve(settings):
     store=Store(settings.database_url);await store.initialize()
-    backend=build_sandbox_backend(settings);service=AllocationService(store,backend)
+    backend=build_sandbox_backend(settings)
+    service=AllocationService(store,backend,lease_seconds=settings.allocation_lease_seconds)
     stop=asyncio.Event();loop=asyncio.get_running_loop()
     for name in (signal.SIGINT,signal.SIGTERM):loop.add_signal_handler(name,stop.set)
     try:
-        while not stop.is_set():
-            try:await service.run_once(limit=max(1,settings.job_worker_concurrency))
-            except Exception as exc:
-                event('sandbox.allocation.dispatch_failed',level=40,exception_type=type(exc).__name__)
-            try:await asyncio.wait_for(stop.wait(),timeout=.2)
-            except asyncio.TimeoutError:pass
+        await service.run(stop,concurrency=settings.job_worker_concurrency)
     finally:await backend.aclose();await store.close()
 
 

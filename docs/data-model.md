@@ -43,6 +43,20 @@ There is no separate sandbox-attempt or capability-grant table. Current sandbox,
 lease and capability identity are fields on the Turn; OpenSandbox metadata and
 telemetry provide additional audit evidence.
 
+## Sandbox allocation ledger
+
+`sandbox_allocations` separately persists Job sandbox creation intent, frozen
+request/profile, source Job generation, provider/namespace/allocation identity,
+state and exact returned handle. A create claim has its own owner and expiry.
+UNKNOWN allocations remain owned even when no provider inventory match is found.
+
+`reconcile_after`, `reconcile_attempts`, `reconcile_token` and
+`reconcile_expires_at` provide durable observation scheduling and fencing,
+independent of the original create owner. The due index covers namespace,
+provider, state and scheduled time. Startup adds these fields without changing
+existing allocation states, requests or handles; fresh and upgraded SQLite and
+PostgreSQL databases use the same contract.
+
 ## Turn inputs
 
 `turn_inputs` stores appended messages with per-Turn sequence and idempotency

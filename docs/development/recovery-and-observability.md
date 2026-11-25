@@ -29,6 +29,23 @@ New dispatched provider allocation IDs include attempt generation, while retries
 within a capacity wait retain one ID. Frozen handles and exact identities fence
 cleanup; a superseded generation must never release a replacement allocation.
 
+AllocationWorker schedules creation and reconciliation independently, each with
+bounded concurrency. Slow creates cannot block UNKNOWN observation or refill of
+another available creation slot. `allocation_lease_seconds` defaults to 30;
+the create owner renews every third of that interval. An expired create lease
+permits observation only. Reconciliation has its own persisted claim token,
+lease, attempt count and due time, with exponential delay capped at 30 seconds.
+Empty/unavailable inventory retains UNKNOWN. Late authoritative creation and
+stale observation cannot regress READY or RELEASED. Shutdown joins its owned
+tasks before closing the backend and Store. See `test_allocation_scheduling.py`
+and the isolated PostgreSQL allocation tests.
+
+`max_sandboxes` is a per-Pool process limit, not a global cloud quota. The API
+and JobWorker have separate Pools. `job_worker_concurrency` bounds each
+AllocationWorker's create lane; durable Scheduler reservations independently
+limit registered Job resources. A Pool waits for a local slot before submitting
+a create request, so this wait is not an uncertain cloud creation outcome.
+
 An explicit allocation ID passed to `SandboxPool.acquire` must match any reused
 attachment. A replacement ID retires the old sandbox before reallocation; normal
 same-Thread reuse without a replacement ID keeps its existing behavior. Check
