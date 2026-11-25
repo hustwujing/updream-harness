@@ -170,3 +170,14 @@ grant `ValueError`, while five cancellation/cleanup/submission-boundary controls
 passed. The correction passed 147 focused tests. It preserves capacity when
 retirement fails and preserves accepted/possibly-started Runtime handling.
 Final broad checks and deployed R09 verification remain pending.
+
+### Appended-input completion after API restart
+
+The authorized in-flight API restart during the `75f4a19` rollout exposed R15's
+`UnboundLocalError: execution_id`. Recovery had reused the Runtime execution,
+but the shared completion loop only initialized its local execution identity in
+the new-submission branch. Applying recovered appended-input receipts therefore
+failed. Initializing from the persisted Turn identity fixes both journal replay
+and already-completed status recovery. Both regressions failed first; 78 focused
+checks passed with zero new Runtime submissions and the input marked applied.
+Deployed R15/input-recovery verification remains pending.

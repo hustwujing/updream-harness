@@ -173,6 +173,13 @@ does not publish the terminal state while resources remain. A replacement
 Broker retries cleanup and publishes exactly that pending outcome after
 convergence. This makes uninterrupted and crash-during-cleanup behavior equal.
 
+Recovered Runtime completion uses the Turn's persisted execution ID when
+applying appended-input receipts. Both replayed completion and an already
+completed status response enter this path; a fresh `Runtime.run` is unnecessary.
+Keep lease/generation and execution-ID checks on every input status write.
+`test_broker.py` covers both receipt paths with an already delivered input and
+asserts that recovery never resubmits the accepted execution.
+
 Turn inventory lookup classifies every matching Sandbox independently. Recovery
 selects one ready Sandbox with the recorded Runtime execution, deletes permanent
 failures and duplicates, and waits for `starting` or transiently unhealthy

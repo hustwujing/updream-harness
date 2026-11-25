@@ -728,7 +728,8 @@ async def test_broker_delivers_live_input_and_marks_it_applied_at_turn_boundary(
         await pool.close(); await store.close()
 
 
-async def test_broker_reattaches_expired_running_turn_and_replays_runtime_journal(tmp_path):
+@pytest.mark.parametrize('recovery_mode',['journal','completed_receipt'])
+async def test_broker_reattaches_expired_running_turn_and_replays_runtime_journal(tmp_path,recovery_mode):
     from sandbox_harness.profiles import ProviderRelease
     settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "recover.db"),
         backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9",
@@ -770,8 +771,31 @@ async def test_broker_reattaches_expired_running_turn_and_replays_runtime_journa
         recovery_generation=old.recovery_generation)
     persisted=await store.get_turn(turn.id)
     assert SandboxHandle.from_mapping(json.loads(persisted.sandbox_handle_json))==sandbox.handle
+    appended,_=await store.create_turn_input(turn.id,
+        TurnInputCreate(message='keep this completed input',idempotency_key='recovered-input-key'),owner)
+    await store.set_input_status(appended.id,'delivered','native_stream',execution_id=execution_id,
+        lease_owner='dead-broker',recovery_generation=old.recovery_generation)
+    if recovery_mode=='completed_receipt':
+        await store.update_runtime_sequence(turn.id,2,'dead-broker',old.recovery_generation)
     await store.release_turn_lease(turn.id, "dead-broker", old.recovery_generation)
-    broker = Broker(settings, store, objects, pool, RecoverableRuntime(), catalog)
+    class InputReceiptRuntime(RecoverableRuntime):
+        run_calls=0;resume_calls=0
+        async def execution_status(self,sandbox,identity):
+            value=await super().execution_status(sandbox,identity)
+            value['result']['input_ids']=[appended.id]
+            return value
+        async def resume(self,sandbox,identity,after_sequence):
+            self.resume_calls+=1
+            assert identity==execution_id
+            async for value in super().resume(sandbox,identity,after_sequence):
+                yield (value.model_copy(update={'input_ids':[appended.id]})
+                    if isinstance(value,RuntimeResult) else value)
+        async def run(self,*args,**kwargs):
+            self.run_calls+=1
+            raise AssertionError('Recovery must not resubmit an accepted execution')
+            yield
+    runtime=InputReceiptRuntime()
+    broker = Broker(settings, store, objects, pool, runtime, catalog)
     try:
         await broker.start()
         for _ in range(200):
@@ -781,7 +805,11 @@ async def test_broker_reattaches_expired_running_turn_and_replays_runtime_journa
             await asyncio.sleep(.01)
         assert current.state == TurnState.COMPLETED
         assert current.runtime_sequence == 2
-        assert "recovered" in [item.summary for item in await store.items_after(thread.id)]
+        if recovery_mode=='journal':
+            assert "recovered" in [item.summary for item in await store.items_after(thread.id)]
+        assert (await store.get_turn_input(appended.id)).status=='applied'
+        assert current.runtime_execution_id==execution_id and runtime.run_calls==0
+        assert runtime.resume_calls==(1 if recovery_mode=='journal' else 0)
         assert any(event.payload.get("code") == "turn_runtime_reattached"
             for event in await store.events_after(turn.id, 0))
         assert backend.get_calls and {value.sandbox_id for value in backend.get_calls}=={sandbox.id}

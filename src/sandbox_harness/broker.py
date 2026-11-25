@@ -977,6 +977,7 @@ class Broker:
                 self.active_sandboxes[turn.id] = sandbox
                 message = turn.runtime_message or turn.message
                 attachments, native_thread_id = turn.attachments, thread.native_thread_id
+                execution_id = turn.runtime_execution_id
                 result, current_input_id = None, None
                 while True:
                     if recovered_result is not None:
