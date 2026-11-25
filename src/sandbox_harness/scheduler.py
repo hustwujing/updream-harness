@@ -6,11 +6,11 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import select
+from sqlalchemy import select,exists
 
 from .domain import identifier, now
 from .job_contracts import TERMINAL_JOB_STATES
-from .store import JobRow,NodeRow, ResourceReservationRow, utc_datetime
+from .store import JobRow,JobAttemptRow,JobCleanupRow,NodeRow, ResourceReservationRow, utc_datetime
 
 
 class GPUInventory(BaseModel):
@@ -122,7 +122,11 @@ class Scheduler:
                     ResourceReservationRow.node_generation!=node_generation,
                     ResourceReservationRow.state.in_(["reserved","running"]),
                     ResourceReservationRow.expires_at<now(),
-                    JobRow.state.in_([state.value for state in TERMINAL_JOB_STATES])))
+                    JobRow.state.in_([state.value for state in TERMINAL_JOB_STATES]),
+                    ~exists(select(JobAttemptRow.id).where(JobAttemptRow.job_id==JobRow.id,
+                        JobAttemptRow.outcome.in_(['SUBMITTING','UNKNOWN']))),
+                    ~exists(select(JobCleanupRow.id).where(JobCleanupRow.job_id==JobRow.id,
+                        JobCleanupRow.state!='completed',JobCleanupRow.phase=='external_quiescence'))))
             if live_sandbox_job_ids:
                 query=query.where(ResourceReservationRow.job_id.not_in(live_sandbox_job_ids))
             rows=list((await db.execute(query.order_by(ResourceReservationRow.created_at)

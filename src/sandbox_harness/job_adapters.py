@@ -35,6 +35,29 @@ class SubmissionRecovery:
             raise ValueError("Submission recovery cannot be accepted and retryable")
 
 
+async def reserve_job_resources(context:JobExecutionContext,scheduler,resources):
+    """Persist the pre-external-call boundary before acquiring any capacity."""
+    await scheduler.store.record_job_submission_allocation(context.job.id,context.generation,
+        external_execution_id=context.job.id+':'+str(context.generation),
+        receipt={'allocation_phase':'reserving_resources','reservation_generation':context.generation})
+    try:
+        return await scheduler.reserve(context.job.id,context.generation,resources)
+    except RuntimeError as exc:
+        if str(exc)=='no_compatible_node_capacity':
+            raise PreAcceptFailure(str(exc),infrastructure=True,retry_after_seconds=1) from exc
+        raise
+
+
+async def recover_resource_reservation(context:JobExecutionContext,scheduler)->bool:
+    receipt=context.previous_acceptance_receipt
+    if receipt.get('allocation_phase') not in {'reserving_resources','awaiting_capacity','absent'}:
+        return False
+    await scheduler.store.release_unstarted_job_reservation(context.job.id,context.generation,
+        int(receipt['reservation_generation']) if receipt.get('reservation_generation') else None,
+        reservation_id=str(receipt.get('reservation_id','')))
+    return True
+
+
 @dataclass(frozen=True)
 class AdapterStatus:
     terminal: bool

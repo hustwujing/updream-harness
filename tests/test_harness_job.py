@@ -96,6 +96,8 @@ async def test_child_harness_maps_sandbox_capacity_to_pre_accept_wait(tmp_path):
         raise SandboxCapacityUnavailable('provider capacity',provider='opensandbox')
     backend.start=unavailable
     try:
+        await store.claim_job(job.id,'worker','node',30)
+        await store.mark_job_submission_started(job.id,'worker',1)
         frozen=await store.get_job_request(job.id)
         with pytest.raises(PreAcceptFailure) as raised:
             await adapter.submit(JobExecutionContext(job=job,request=frozen,generation=1))
@@ -212,6 +214,8 @@ async def test_submission_reservation_survives_failure_after_external_start(tmp_
         backend.start=interrupted
     else:adapter.scheduler.mark_running=mark_failed
     try:
+        await store.claim_job(job.id,'worker','node',30)
+        await store.mark_job_submission_started(job.id,'worker',1)
         context=JobExecutionContext(job=job,request=await store.get_job_request(job.id),generation=1)
         if boundary=='mark_running_cancel':
             with pytest.raises(asyncio.CancelledError):await adapter.submit(context)
@@ -621,6 +625,34 @@ async def test_child_reconciles_delayed_allocation_before_one_runtime_submission
             submission.external_execution_id)
         assert not provider.items and await adapter.scheduler.active_reservation(job.id) is None
     finally:await pool.close();await store.close()
+
+
+@pytest.mark.parametrize('phase',['reserving_resources','legacy_unknown'])
+@pytest.mark.parametrize('takeover',[False,True])
+async def test_terminal_job_keeps_prior_reservation_cleanup_even_without_allocation(tmp_path,phase,takeover):
+    store,adapter,_,job=await setup(tmp_path,AdapterStatus(False))
+    try:
+        first=await store.claim_job(job.id,'first','node',30)
+        await store.mark_job_submission_started(job.id,'first',first.generation)
+        context=JobExecutionContext(job=await store.get_job(job.id),
+            request=await store.get_job_request(job.id),generation=first.generation)
+        if phase!='legacy_unknown':
+            await store.record_job_submission_allocation(job.id,first.generation,
+                external_execution_id=job.id+':1',receipt={'allocation_phase':phase})
+        reservation=await adapter.scheduler.reserve(job.id,first.generation,adapter._resources(context))
+        generation=first.generation
+        if takeover:
+            await store.release_job_lease(job.id,'first',first.generation)
+            generation=(await store.claim_job(job.id,'replacement','node',30)).generation
+        await store.transition_job(job.id,JobState.UNKNOWN,expected_generation=generation)
+        cleanups=await store.claim_job_cleanups('cleanup-worker',30)
+        assert len(cleanups)==1
+        cleanup=cleanups[0]
+        assert cleanup['generation']==first.generation
+        assert cleanup['acceptance_receipt']['reservation_id']==reservation.id
+        assert cleanup['acceptance_receipt']['allocation_phase']==phase
+        assert cleanup['phase']==('external_quiescence' if phase=='legacy_unknown' else 'capacity_release')
+    finally:await store.close()
 
 
 @pytest.mark.parametrize('takeover',[False,True])

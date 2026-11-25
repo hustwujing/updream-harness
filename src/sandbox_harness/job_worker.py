@@ -442,7 +442,7 @@ class JobWorker:
             provisional=await self.store.unresolved_job_submission(context.job.id,
                 context.generation,include_current=True)
             phase=(provisional or {}).get('acceptance_receipt',{}).get('allocation_phase')
-            if phase in {'awaiting_capacity','allocating','preparing','absent'}:
+            if phase in {'reserving_resources','awaiting_capacity','allocating','preparing','absent'}:
                 await self.store.transition_job(context.job.id,JobState.FAILED,
                     expected_generation=context.generation,result=normalize_job_error({
                         'error_code':'child_allocation_timeout' if phase!='preparing'
@@ -489,6 +489,8 @@ class JobWorker:
                     previous_external_execution_id=row["external_execution_id"],
                     previous_acceptance_receipt=row["acceptance_receipt"])
                 if row["phase"]=="external_quiescence":
+                    if context.previous_acceptance_receipt.get('allocation_phase')=='legacy_unknown':
+                        raise RuntimeError('legacy_submission_requires_reconciliation')
                     resolver=getattr(adapter,'resolve_cleanup',None)
                     if resolver:
                         receipt=await resolver(context,row['external_execution_id'])

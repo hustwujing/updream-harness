@@ -9,9 +9,11 @@ import time
 from typing import Any, Awaitable, Callable, Protocol
 
 from .domain import Harness
+from .job_allocation import SandboxAllocationOwner
 from .grants import GrantAuthority,JobGrantRequest,TurnGrantRequest
 from .job_adapters import (AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExecutionContext,
-    PreAcceptCancelled,PreAcceptFailure,SubmissionRecovery,SubmissionOutcomeUnknown,SubmissionInterrupted)
+    PreAcceptCancelled,PreAcceptFailure,SubmissionRecovery,SubmissionOutcomeUnknown,SubmissionInterrupted,
+    reserve_job_resources,recover_resource_reservation)
 from .job_contracts import JobState,TERMINAL_JOB_STATES
 from .job_errors import ArtifactCollectionCardinalityError
 from .artifact_gateway import ArtifactEmission,ArtifactGateway
@@ -145,12 +147,7 @@ class HarnessJobAdapter(BaseJobAdapter):
             affinity_node_id=str(values.get('affinity_node_id','')))
 
     async def submit(self,context:JobExecutionContext)->AdapterSubmission:
-        try:reservation=await self.scheduler.reserve(
-            context.job.id,context.generation,self._resources(context))
-        except RuntimeError as exc:
-            if str(exc)=='no_compatible_node_capacity':
-                raise PreAcceptFailure(str(exc),infrastructure=True,retry_after_seconds=1) from exc
-            raise
+        reservation=await reserve_job_resources(context,self.scheduler,self._resources(context))
         execution_id='';receipt={}
         def complete_receipt(value):
             return {'executor':'harness','reservation_id':reservation.id,
@@ -202,6 +199,8 @@ class HarnessJobAdapter(BaseJobAdapter):
             acceptance_receipt=complete_receipt(receipt))
 
     async def recover_submission(self,context:JobExecutionContext)->SubmissionRecovery:
+        if await recover_resource_reservation(context,self.scheduler):
+            return SubmissionRecovery(safe_to_retry=True)
         reservation=await self.scheduler.active_reservation(context.job.id)
         if not reservation:
             return SubmissionRecovery(safe_to_retry=(
@@ -283,7 +282,7 @@ class HarnessJobAdapter(BaseJobAdapter):
         return result
 
 
-class SandboxChildBackend:
+class SandboxChildBackend(SandboxAllocationOwner):
     allocation_poll_seconds=1.0
     def __init__(self,*,pool,runtime,store,objects,settings,
                  token_factory:Callable[[JobExecutionContext,Any,str],Awaitable[tuple[str,Any]]],
@@ -307,49 +306,9 @@ class SandboxChildBackend:
         return ProviderRelease(ref=image,revision=image,
             artifact_digest=reservation.image_digest)
 
-    def _allocation_profile(self,reservation,harness,release):
-        resolver=getattr(self.pool,'profile_resolver',None) or SandboxProfileResolver(
-            provider=getattr(self.pool.backend,'provider',self.settings.backend),
-            runtime_contract='sandbox-harness-runtime/v1',
-            runtime_bundle_digest=self.settings.runtime_bundle_digest,
-            runtime_code_bundle_digest=self.settings.runtime_code_bundle_digest)
-        return resolver.resolve(harness,release.ref,profile_id=reservation.runtime_profile_id,
-            revision=release.revision)
 
-    async def _check_cancelled(self,context):
-        reader=getattr(self.store,'get_job',None)
-        current=await reader(context.job.id) if reader else None
-        if current and current.cancel_requested:raise PreAcceptCancelled()
 
-    @staticmethod
-    def _validate_allocation(sandbox,receipt):
-        profile=SandboxProfile(**receipt['allocation_profile'])
-        if (sandbox.handle.provider!=receipt['allocation_provider']
-                or sandbox.handle.allocation_id!=receipt['allocation_id']
-                or sandbox.compatibility_key!=profile.compatibility_key):
-            raise SandboxProfileUnavailable('Allocation identity/profile mismatch',
-                provider=receipt['allocation_provider'])
-        return profile
 
-    async def _reconcile_allocation(self,context,receipt,*,ready):
-        if self.pool.backend.provider!=receipt['allocation_provider']:
-            raise SandboxProfileUnavailable('Allocation provider is not active',
-                provider=receipt['allocation_provider'])
-        while True:
-            await self._check_cancelled(context)
-            try:
-                sandbox=await self.pool.reconcile_create(receipt['allocation_id'])
-                if sandbox:
-                    profile=self._validate_allocation(sandbox,receipt)
-                    if ready:
-                        sandbox=await self.pool.backend.get(sandbox.handle)
-                        return await self.pool.adopt(sandbox,
-                            thread_id=self._thread_id(context.job.id),turn_id=context.job.id,
-                            expected_profile=profile)
-                    return sandbox
-            except (SandboxNotFound,SandboxEndpointUnavailable,SandboxProviderUnavailable,
-                    SandboxRateLimited):pass
-            await asyncio.sleep(self.allocation_poll_seconds)
 
     async def _sandbox(self,context:JobExecutionContext,receipt:dict):
         identity=str(receipt.get('sandbox_id',''))
@@ -382,61 +341,8 @@ class SandboxChildBackend:
         if ((total_bytes+1024*1024-1)//(1024*1024)+512)>reservation.disk_mb:
             raise ValueError('child_input_exceeds_reserved_disk')
         execution_id=context.job.id+':'+str(context.generation)
-        await self._check_cancelled(context)
-        profile=self._allocation_profile(reservation,harness,release)
-        allocation={'allocation_id':context.job.id,'allocation_provider':profile.provider,
-            'allocation_profile':asdict(profile),'allocation_phase':'awaiting_capacity',
-            'reservation_id':reservation.id,'node_id':reservation.node_id,
-            'node_generation':reservation.node_generation}
+        sandbox,allocation=await self.acquire_allocation(context,reservation,execution_id)
         try:
-            await self.store.record_job_submission_allocation(context.job.id,context.generation,
-                external_execution_id=execution_id,receipt=allocation)
-        except Exception as exc:
-            if isinstance(exc,RuntimeError) and str(exc)=='stale_job_generation':raise
-            raise PreAcceptFailure('Allocation intent could not be persisted',
-                error_code='child_allocation_failed',failed_phase='submission',
-                retryable=True,retry_class='bounded_pre_accept') from exc
-        async def before_create(_request):
-            await self._check_cancelled(context)
-            allocation['allocation_phase']='allocating'
-            await self.store.record_job_submission_allocation(context.job.id,context.generation,
-                external_execution_id=execution_id,receipt=allocation)
-        async def owns_allocation():
-            owned=getattr(self.pool,'owns_allocation',None)
-            return bool(owned and await owned(profile.provider,context.job.id))
-        async def mark_absent():
-            allocation['allocation_phase']='absent'
-            await self.store.record_job_submission_allocation(context.job.id,context.generation,
-                external_execution_id='',receipt=allocation)
-        try:
-            try:
-                sandbox=await self.pool.acquire(thread_id=self._thread_id(context.job.id),
-                    turn_id=context.job.id,harness=harness,environment={},image=image,
-                    profile_id=reservation.runtime_profile_id,revision=release.revision,
-                    retain_unresolved_allocation=True,before_create=before_create)
-            except SandboxCreateOutcomeUnknown:
-                sandbox=await self._reconcile_allocation(context,allocation,ready=True)
-        except asyncio.CancelledError as exc:
-            if await owns_allocation():
-                raise SubmissionInterrupted(execution_id,allocation) from exc
-            await mark_absent()
-            raise SubmissionInterrupted(execution_id,allocation) from exc
-        except PreAcceptCancelled:raise
-        except (SandboxCapacityUnavailable,SandboxRateLimited):
-            await mark_absent()
-            raise
-        except Exception as exc:
-            if isinstance(exc,RuntimeError) and str(exc)=='stale_job_generation':raise
-            owned=await owns_allocation()
-            if not owned:await mark_absent()
-            raise PreAcceptFailure('Child sandbox allocation failed before execution',
-                error_code='child_allocation_failed',failed_phase='submission',
-                retryable=False,retain_capacity=owned) from exc
-        try:
-            allocation={**allocation,'allocation_phase':'preparing',
-                "sandbox_id":sandbox.id,"sandbox_handle":sandbox.handle.to_mapping()}
-            await self.store.record_job_submission_allocation(context.job.id,context.generation,
-                external_execution_id=execution_id,receipt=allocation)
             token,claims=await self.token_factory(context,reservation,sandbox.id)
             allocation["capability_nonce"]=claims.nonce
             await self.store.record_job_submission_allocation(context.job.id,context.generation,
@@ -527,24 +433,8 @@ class SandboxChildBackend:
             raise
 
     async def recover_submission(self,context:JobExecutionContext,reservation)->SubmissionRecovery:
-        receipt=context.previous_acceptance_receipt
-        if receipt.get('allocation_phase') in {'awaiting_capacity','absent'}:
-            return SubmissionRecovery(safe_to_retry=True)
-        if receipt.get('allocation_phase')=='allocating':
-            if not receipt.get('sandbox_handle'):
-                sandbox=await self._reconcile_allocation(context,receipt,ready=False)
-                await self.store.record_recovered_job_allocation(context.job.id,context.generation,
-                    reservation.job_generation,sandbox.handle)
-                receipt={**receipt,'sandbox_id':sandbox.id,
-                    'sandbox_handle':sandbox.handle.to_mapping()}
-            sandbox=self._unstarted_allocation(context,receipt)
-            await self.pool.retire(sandbox)
-            if await self.pool.retirement_pending(sandbox):
-                raise SandboxProviderUnavailable('Allocation deletion is pending',
-                    provider=sandbox.handle.provider)
-            await self.store.mark_recovered_allocation_absent(context.job.id,context.generation,
-                reservation.job_generation)
-            return SubmissionRecovery(safe_to_retry=True)
+        recovery=await self.recover_allocation(context,reservation)
+        if recovery is not None:return recovery
         harness=Harness(reservation.harness)
         matches=[];raw=context.previous_acceptance_receipt.get("sandbox_handle") or {}
         if raw:
@@ -765,27 +655,7 @@ class SandboxChildBackend:
         return {**status.result,'child_summary':child_summary,
             'artifacts':emitted,'collections':collections}
 
-    def _unstarted_allocation(self,context,receipt):
-        handle=SandboxHandle.from_mapping(receipt['sandbox_handle'])
-        profile=SandboxProfile(**receipt['allocation_profile'])
-        sandbox=Sandbox(id=handle.sandbox_id,provider=handle.provider,
-            harness=Harness(context.request.parameters.get('harness','codex')),
-            profile=profile,handle=handle,metadata={})
-        self._validate_allocation(sandbox,receipt)
-        return sandbox
 
-    async def resolve_cleanup(self,context,external_execution_id,receipt):
-        if receipt.get('allocation_phase')!='allocating' or receipt.get('sandbox_handle'):
-            return receipt
-        if self.pool.backend.provider!=receipt['allocation_provider']:
-            raise SandboxProfileUnavailable('Allocation provider is not active',
-                provider=receipt['allocation_provider'])
-        sandbox=await self.pool.reconcile_create(receipt['allocation_id'])
-        if not sandbox:
-            raise SandboxCreateOutcomeUnknown('Allocation cleanup is awaiting visibility',
-                provider=receipt['allocation_provider'])
-        self._validate_allocation(sandbox,receipt)
-        return {**receipt,'sandbox_id':sandbox.id,'sandbox_handle':sandbox.handle.to_mapping()}
 
     async def cleanup(self,context:JobExecutionContext,external_execution_id:str,
                       receipt:dict[str,Any])->None:

@@ -147,3 +147,27 @@ async def test_scheduler_reaps_only_expired_terminal_stale_generation_without_li
             second=await db.get(ResourceReservationRow,jobs[1][1].id)
         assert first.state=="released" and second.state=="reserved"
     finally:await store.close()
+
+
+async def test_stale_reservation_reaper_cannot_erase_unknown_submission_without_cleanup(tmp_path):
+    from sandbox_harness.store import JobRow,JobAttemptRow
+    store,scheduler=await setup(tmp_path)
+    try:
+        await scheduler.register_node(node(generation=1))
+        _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id='b'*32,
+            origin_turn_id='c'*32,idempotency_key='unknown-group',jobs=[JobRequest(
+                local_job_id='unknown',kind=JobKind.OPERATION,adapter='fake',descriptor_id='fake',
+                descriptor_version='1',descriptor_digest='a'*64,idempotency_key='unknown-job')]))
+        job=jobs[0];attempt=await store.claim_job(job.id,'worker','node-a',30)
+        await store.mark_job_submission_started(job.id,'worker',attempt.generation)
+        reservation=await scheduler.reserve(job.id,attempt.generation,request())
+        # Historical terminal rows can lack a cleanup owner. An empty live set
+        # does not prove that an interrupted create request was rejected.
+        async with store.connections.begin() as db:
+            await db.execute(update(JobRow).where(JobRow.id==job.id).values(state='UNKNOWN'))
+            await db.execute(update(ResourceReservationRow).where(
+                ResourceReservationRow.id==reservation.id).values(expires_at=now()-timedelta(seconds=1)))
+        await scheduler.register_node(node(generation=2))
+        assert await scheduler.reap_stale_reservations('node-a',2,set())==[]
+        assert await scheduler.active_reservation(job.id) is not None
+    finally:await store.close()

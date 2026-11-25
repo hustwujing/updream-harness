@@ -2635,6 +2635,32 @@ class Store:
             attempt.external_execution_id=external_execution_id
             attempt.acceptance_receipt_json=canonical_json(receipt)
 
+    async def release_unstarted_job_reservation(self,job_id:str,generation:int,
+                                                original_generation:int|None,*,reservation_id:str='')->None:
+        async with self.connections.begin() as db:
+            job=await db.get(JobRow,job_id,with_for_update=True)
+            lease=await db.get(JobLeaseRow,job_id,with_for_update=True)
+            if not job or not lease or job.generation!=generation or lease.generation!=generation:
+                raise RuntimeError('stale_job_generation')
+            if original_generation is None:
+                reserved=await db.get(ResourceReservationRow,reservation_id,with_for_update=True)
+                if not reserved or reserved.job_id!=job_id:raise RuntimeError('stale_resource_reservation')
+                original_generation=reserved.job_generation
+            original=(await db.scalars(select(JobAttemptRow).where(JobAttemptRow.job_id==job_id,
+                JobAttemptRow.generation==original_generation).with_for_update())).one_or_none()
+            if (original_generation>=generation or not original or original.accepted_at):
+                raise RuntimeError('stale_job_generation')
+            receipt=json.loads(original.acceptance_receipt_json or '{}')
+            if receipt.get('allocation_phase') not in {'reserving_resources','awaiting_capacity','absent'}:
+                raise RuntimeError('job_allocation_phase_conflict')
+            reservation=(await db.scalars(select(ResourceReservationRow).where(
+                ResourceReservationRow.job_id==job_id,
+                ResourceReservationRow.job_generation==original_generation).with_for_update())).one_or_none()
+            if reservation_id and (not reservation or reservation.id!=reservation_id):
+                raise RuntimeError('stale_resource_reservation')
+            if reservation and reservation.state!='released':
+                reservation.state='released';reservation.released_at=now();reservation.expires_at=now()
+
     @staticmethod
     def _resolved_allocation_receipt(previous:dict,handle:SandboxHandle)->dict:
         profile=previous.get('allocation_profile') or {}
@@ -2677,7 +2703,7 @@ class Store:
                     or previous.outcome!='SUBMITTING' or previous.accepted_at is not None):
                 raise RuntimeError('stale_job_generation')
             receipt=json.loads(previous.acceptance_receipt_json)
-            if receipt.get('allocation_phase')!='allocating' or not receipt.get('sandbox_handle'):
+            if receipt.get('allocation_phase') not in {'allocating','preparing'} or not receipt.get('sandbox_handle'):
                 raise RuntimeError('job_allocation_phase_conflict')
             previous.acceptance_receipt_json=canonical_json({**receipt,'allocation_phase':'absent'})
 
@@ -2965,6 +2991,7 @@ class Store:
                                     if (provisional.get('sandbox_id') or
                                             provisional.get('allocation_phase')=='allocating'):
                                         accepted_attempt=candidate;break
+                            previous_outcome=attempt.outcome
                             attempt.outcome = state.value
                             if accepted_attempt:
                                 cleanup=(await db.execute(select(JobCleanupRow).where(
@@ -2979,22 +3006,35 @@ class Store:
                                         state="pending",phase="external_quiescence",attempt_count=0,last_error="",claim_owner="",
                                         claim_expires_at=None,created_at=now(),updated_at=now()))
                             else:
-                                reservation=(await db.execute(select(ResourceReservationRow).where(
-                                    ResourceReservationRow.job_id==job.id,
-                                    ResourceReservationRow.job_generation==job.generation)
-                                    .with_for_update())).scalar_one_or_none()
-                                cleanup=(await db.execute(select(JobCleanupRow).where(
-                                    JobCleanupRow.job_id==job.id,
-                                    JobCleanupRow.generation==job.generation)
-                                    .with_for_update())).scalar_one_or_none()
-                                if reservation and not cleanup:
-                                    receipt=canonical_json({"reservation_id":reservation.id,
-                                        "node_id":reservation.node_id,
-                                        "node_generation":reservation.node_generation})
+                                reservations=(await db.scalars(select(ResourceReservationRow).where(
+                                    ResourceReservationRow.job_id==job.id)
+                                    .with_for_update())).all()
+                                for reservation in reservations:
+                                    original=(await db.scalars(select(JobAttemptRow).where(
+                                        JobAttemptRow.job_id==job.id,
+                                        JobAttemptRow.generation==reservation.job_generation)
+                                        .with_for_update())).one_or_none()
+                                    cleanup=(await db.scalars(select(JobCleanupRow).where(
+                                        JobCleanupRow.job_id==job.id,
+                                        JobCleanupRow.generation==reservation.job_generation)
+                                        .with_for_update())).one_or_none()
+                                    if cleanup:continue
+                                    value=json.loads(original.acceptance_receipt_json or '{}') if original else {}
+                                    safe=value.get('allocation_phase') in {
+                                        'reserving_resources','awaiting_capacity','absent'}
+                                    original_outcome=(previous_outcome if original is attempt else
+                                        original.outcome if original else '')
+                                    uncertain=bool(original and (original_outcome=='SUBMITTING'
+                                        or original.external_execution_id)) and not safe
+                                    if uncertain:value={**value,'allocation_phase':'legacy_unknown'}
+                                    receipt=canonical_json({**value,'reservation_id':reservation.id,
+                                        'node_id':reservation.node_id,
+                                        'node_generation':reservation.node_generation})
                                     db.add(JobCleanupRow(id=identifier(),job_id=job.id,
-                                        adapter=job.adapter,generation=job.generation,
+                                        adapter=job.adapter,generation=reservation.job_generation,
                                         external_execution_id="",acceptance_receipt_json=receipt,
-                                        state="pending",phase="capacity_release",attempt_count=0,last_error="",claim_owner="",
+                                        state="pending",phase=('external_quiescence' if uncertain
+                                            else 'capacity_release'),attempt_count=0,last_error="",claim_owner="",
                                         claim_expires_at=None,created_at=now(),updated_at=now()))
                         await db.execute(delete(JobLeaseRow).where(JobLeaseRow.job_id == job.id))
                     if group.state == JobGroupState.COMMITTED.value:

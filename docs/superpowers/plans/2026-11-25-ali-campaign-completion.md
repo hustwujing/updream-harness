@@ -42,3 +42,24 @@
    - [ ] Publish a final per-case result report with evidence and any limits.
 
 The user explicitly authorized continuous native execution; no additional plan approval is required.
+
+## Current execution policy and additional resource gate
+
+The later user instruction supersedes the clean-run reset above: preserve
+unaffected successful receipts, rerun failed/affected cases, finish unrun cases,
+and report mixed revisions as `composite_verified`. Restart affected isolated
+Ali services while tests are active to verify recovery; do not wait for drain.
+
+- [ ] Recover reservations and sandbox allocations across worker loss for all
+  sandbox-backed Job adapters. Reproduce loss after reserve and before Runtime
+  submission; preserve unknown creations and original cleanup generation.
+- [ ] Restrict inherited protocol locking to the existing explicit shared-service
+  mutator set. Verify ordinary handlers bypass the lock and mutators retain it.
+- [ ] Add a separate real resource-exhaustion gate: fill an isolated configured
+  sandbox/Job capacity, verify waiting without duplicate creation, release and
+  automatic progress, cancellation/deadline and Worker replacement. Exercise
+  bounded memory and disk exhaustion inside exclusively owned test sandboxes.
+  Record configured-capacity exhaustion separately from provider quota failures
+  and internal sandbox limits; never claim one proves another.
+- [ ] Include added case counts and receipts separately from the original 169
+  until the final report explicitly accounts for both.

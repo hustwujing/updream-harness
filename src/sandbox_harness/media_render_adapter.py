@@ -9,14 +9,17 @@ import httpx
 from .artifact_gateway import ArtifactEmission,ArtifactGateway
 from .domain import Harness
 from .harness_job import HarnessJobAdapter, staged_file_chunks
+from .job_allocation import SandboxAllocationOwner
 from .job_adapters import (AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExecutionContext,
-    PreAcceptFailure)
+    PreAcceptFailure,PreAcceptCancelled,SubmissionRecovery,SubmissionOutcomeUnknown,
+    SubmissionInterrupted,reserve_job_resources,recover_resource_reservation)
 from .job_contracts import JobState
-from .sandbox_contracts import SandboxHandle
+from .sandbox_contracts import (SandboxHandle,SandboxNotFound,SandboxCapacityUnavailable,
+    SandboxRateLimited,SandboxCreateOutcomeUnknown,SandboxProviderUnavailable)
 from .profiles import ProviderRelease
 
 
-class MediaRenderOperationAdapter(BaseJobAdapter):
+class MediaRenderOperationAdapter(SandboxAllocationOwner,BaseJobAdapter):
     def __init__(self,*,scheduler,pool,runtime,store,objects,settings,token_factory,
                  profile_resolver=None):
         self.scheduler=scheduler;self.pool=pool;self.runtime=runtime;self.store=store
@@ -62,30 +65,22 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
         attached=await self.pool.get_attached(self._thread_id(context.job.id))
         if attached and attached.handle==handle:self.sessions[context.job.id]=attached;return attached
         try:candidate=await self.pool.backend.get(handle)
-        except Exception as exc:raise RuntimeError('operation_sandbox_unavailable') from exc
-        adopted=await self.pool.adopt(candidate,thread_id=self._thread_id(context.job.id),turn_id=context.job.id)
+        except SandboxNotFound as exc:raise RuntimeError('operation_sandbox_unavailable') from exc
+        adopted=await self.pool.adopt(candidate,thread_id=self._thread_id(context.job.id),
+            turn_id=context.job.id,expected_profile=candidate.profile)
         self.sessions[context.job.id]=adopted;return adopted
 
     async def submit(self,context:JobExecutionContext)->AdapterSubmission:
-        try:reservation=await self.scheduler.reserve(context.job.id,context.generation,
-            HarnessJobAdapter._resources(context))
-        except RuntimeError as exc:
-            if str(exc)=='no_compatible_node_capacity':
-                raise PreAcceptFailure(str(exc),infrastructure=True,retry_after_seconds=1) from exc
-            raise
+        reservation=await reserve_job_resources(context,self.scheduler,HarnessJobAdapter._resources(context))
         harness=Harness(reservation.harness)
-        release=self._provider_release(reservation,harness);image=release.ref
-        sandbox=None;claims=None
+        sandbox=None;claims=None;allocation={};receipt={};execution_requested=False
+        execution_id='operation:'+context.job.id
         try:
-            sandbox=await self.pool.acquire(thread_id=self._thread_id(context.job.id),turn_id=context.job.id,
-                harness=harness,environment={},image=image,
-                profile_id=reservation.runtime_profile_id,revision=release.revision)
-            allocation={'sandbox_id':sandbox.id,'sandbox_handle':sandbox.handle.to_mapping(),
-                'reservation_id':reservation.id,'node_id':reservation.node_id,
-                'node_generation':reservation.node_generation}
-            await self.store.record_job_submission_allocation(context.job.id,context.generation,
-                external_execution_id='operation:'+context.job.id,receipt=allocation)
+            sandbox,allocation=await self.acquire_allocation(context,reservation,execution_id)
             token,claims=await self.token_factory(context,reservation,sandbox.id)
+            allocation['capability_nonce']=claims.nonce
+            await self.store.record_job_submission_allocation(context.job.id,context.generation,
+                external_execution_id=execution_id,receipt=allocation)
             route=self.pool.backend.runtime_route(sandbox)
             await self.runtime.inject(sandbox,capability_token=token,gateway_url=route.gateway_url,
                 proxy_url=route.proxy_url,harness=harness.value,model='operation-only',
@@ -113,19 +108,63 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
                 if role not in inputs:raise ValueError('operation_input_role_missing')
                 runtime_value={**recipe,'input_path':inputs[role]}
             async with self.scheduler.hold(reservation.id,reservation.node_id,reservation.node_generation):
+                await self._check_cancelled(context)
+                allocation['allocation_phase']='runtime_submission'
+                await self.store.record_job_submission_allocation(context.job.id,context.generation,
+                    external_execution_id=execution_id,receipt=allocation)
+                execution_requested=True
                 value=await self.runtime.media_render(sandbox,runtime_value)
                 self.sessions[context.job.id]=sandbox
-                receipt={'sandbox_id':sandbox.id,'sandbox_handle':sandbox.handle.to_mapping(),
-                    'capability_nonce':claims.nonce,
-                    'reservation_id':reservation.id,'node_id':reservation.node_id,
-                    'node_generation':reservation.node_generation,'operation_completed':True,'output':value}
+                receipt={**allocation,'operation_completed':True,'output':value}
+                await self.store.record_job_submission_allocation(context.job.id,context.generation,
+                    external_execution_id=execution_id,receipt=receipt)
                 await self.scheduler.mark_running(reservation.id,reservation.node_id,reservation.node_generation)
-            return AdapterSubmission(external_execution_id='operation:'+context.job.id,
+            return AdapterSubmission(external_execution_id=execution_id,
                 acceptance_receipt=receipt,completed=True,result=value)
-        except BaseException:
-            if sandbox:await self.pool.release(sandbox,keep_attached=False)
+        except (SandboxCapacityUnavailable,SandboxRateLimited) as exc:
             await self.scheduler.release(reservation.id,reservation.node_id,reservation.node_generation)
+            raise PreAcceptFailure('Sandbox capacity is unavailable',infrastructure=True,
+                retry_after_seconds=1,error_code=exc.code,failed_phase='submission') from exc
+        except PreAcceptFailure as exc:
+            if not exc.retain_capacity:
+                await self.scheduler.release(reservation.id,reservation.node_id,reservation.node_generation)
             raise
+        except (PreAcceptCancelled,SubmissionInterrupted):raise
+        except asyncio.CancelledError as exc:
+            raise SubmissionInterrupted(execution_id,allocation) from exc
+        except Exception as exc:
+            if isinstance(exc,RuntimeError) and str(exc)=='job_cancelled_before_acceptance':
+                raise PreAcceptCancelled() from exc
+            if execution_requested:
+                raise SubmissionOutcomeUnknown('Operation result requires reconciliation',
+                    external_execution_id=execution_id,acceptance_receipt=receipt or allocation) from exc
+            if isinstance(exc,RuntimeError) and str(exc)=='stale_job_generation':raise
+            raise PreAcceptFailure('Sandbox preparation failed before execution',
+                error_code='child_preparation_failed',failed_phase='submission',
+                retryable=False,retain_capacity=True) from exc
+
+    async def recover_submission(self,context:JobExecutionContext)->SubmissionRecovery:
+        if await recover_resource_reservation(context,self.scheduler):
+            return SubmissionRecovery(safe_to_retry=True)
+        receipt=context.previous_acceptance_receipt
+        if receipt.get('operation_completed'):
+            return SubmissionRecovery(submission=AdapterSubmission(
+                external_execution_id=context.previous_external_execution_id,
+                acceptance_receipt=receipt,completed=True,result=dict(receipt.get('output',{}))))
+        reservation=await self.scheduler.active_reservation(context.job.id)
+        if not reservation:
+            return SubmissionRecovery(safe_to_retry=receipt.get('allocation_phase') in {
+                'awaiting_capacity','absent'})
+        async with self.scheduler.hold(reservation.id,reservation.node_id,reservation.node_generation):
+            recovery=await self.recover_allocation(context,reservation)
+            if recovery is None and receipt.get('allocation_phase')=='preparing':
+                await self.cleanup_external(context,context.previous_external_execution_id)
+                await self.store.mark_recovered_allocation_absent(context.job.id,context.generation,
+                    reservation.job_generation)
+                recovery=SubmissionRecovery(safe_to_retry=True)
+        if recovery and recovery.safe_to_retry:
+            await self.scheduler.release(reservation.id,reservation.node_id,reservation.node_generation)
+        return recovery or SubmissionRecovery()
 
     async def status(self,context:JobExecutionContext,external_execution_id:str)->AdapterStatus:
         receipt=context.previous_acceptance_receipt
@@ -178,17 +217,23 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
         await self.cleanup_external(context,external_execution_id)
         await self.release_capacity(context)
 
+    async def resolve_cleanup(self,context,external_execution_id):
+        return await super().resolve_cleanup(context,external_execution_id,
+            context.previous_acceptance_receipt)
+
     async def cleanup_external(self,context:JobExecutionContext,external_execution_id:str)->None:
         receipt=context.previous_acceptance_receipt;sandbox=None;identity=str(receipt.get('sandbox_id',''))
-        if identity:
+        durable=bool(receipt.get('allocation_profile') and receipt.get('sandbox_handle'))
+        if durable:
+            sandbox=self._unstarted_allocation(context,receipt)
+        elif identity:
             try:sandbox=await self._sandbox(context,receipt)
             except RuntimeError as exc:
                 if str(exc)!='operation_sandbox_unavailable':raise
         else:
-            match=await self.pool.reconcile_create(context.job.id)
-            for match in ([match] if match else []):
-                adopted=await self.pool.adopt(match,thread_id=self._thread_id(context.job.id),turn_id=context.job.id)
-                await self.pool.release(adopted,keep_attached=False)
+            if receipt.get('allocation_phase') not in {'reserving_resources','awaiting_capacity','absent'}:
+                raise SandboxCreateOutcomeUnknown('Allocation cleanup is awaiting visibility',
+                    provider=self.pool.backend.provider)
         reservation_id=str(receipt['reservation_id']);node_id=str(receipt['node_id']);generation=int(receipt['node_generation'])
         nonce=str(receipt.get('capability_nonce',''))
         async with self.scheduler.hold(reservation_id,node_id,generation):
@@ -200,7 +245,13 @@ class MediaRenderOperationAdapter(BaseJobAdapter):
                             'X-Updream-Turn-Id':context.job.origin_turn_id,
                             'X-Updream-Sandbox-Id':sandbox.id if sandbox else identity})
                     response.raise_for_status()
-            if sandbox:await self.pool.release(sandbox,keep_attached=False)
+            if sandbox:
+                if durable:
+                    await self.pool.retire(sandbox)
+                    if await self.pool.retirement_pending(sandbox):
+                        raise SandboxProviderUnavailable('Allocation deletion is pending',
+                            provider=sandbox.handle.provider)
+                else:await self.pool.release(sandbox,keep_attached=False)
             self.sessions.pop(context.job.id,None)
 
     async def release_capacity(self,context:JobExecutionContext)->None:

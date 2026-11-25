@@ -1,5 +1,23 @@
 # Recovery and Observability
 
+## Sandbox Job allocation ownership
+
+`job_allocation.SandboxAllocationOwner` is shared by Child/Reviewer execution and
+sandbox Operations. Before resource reservation, persist `reserving_resources`.
+Before the provider create call, persist the allocation ID and frozen provider,
+profile and original reservation generation. Inventory can restore identity but
+must not replace the frozen profile with provider-side placeholder fields.
+
+Safe pre-execution recovery releases only the original reservation, with the
+current Job/lease generation checked in the same transaction. Empty legacy
+receipts are uncertain, not evidence of absence. Terminal cleanup owns previous
+generations; the stale reservation reaper must preserve unresolved submissions.
+
+An Operation records `runtime_submission` before its RPC and persists the full
+completed result before returning acceptance. A lost response is not permission
+to repeat the RPC. Cleanup confirms deletion before capacity release, and
+preparation recovery persists absence before releasing the original reservation.
+
 ## Pause Is A Durable Saga
 
 Never implement user pause by only cancelling a process. Commit the Thread control generation and participant set first, quiesce each Harness, save its native session identity and workspace checkpoint, then release the sandbox. A service restart must claim the existing generation and finish it; it must not resume business execution while the desired state is paused.
