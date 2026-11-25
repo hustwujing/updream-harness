@@ -11,14 +11,25 @@ Image Lifecycle](skill-and-image-lifecycle.md).
 
 ## Choose the correct layer
 
-- `foundation.Dockerfile`: OS packages, compiler/toolchain, Node, global browser
-  and rendering packages shared by every Harness.
-- `base.Dockerfile` and `pyproject.toml[runtime-media]`: project Runtime plus
-  shared Python/media libraries and project-owned helper commands.
+- `bootstrap.Dockerfile`: signature verification, supervision and generic CLI dispatch.
+- `common.Dockerfile` / `requirements-common.txt`: shared lightweight dependencies.
+- `profiles/<profile>.Dockerfile` and the matching requirements file: the
+  narrowest dependency closure needed by the declared Skills.
 - `{codex,claude,deepseek}.Dockerfile`: native Harness client only.
 
-Do not add a shared media library three times in Harness images. Do not add a
-Harness client to the common base.
+`runtime/build-images.sh` is authoritative for these layers. The older
+`foundation.Dockerfile` and `base.Dockerfile` remain compatibility references;
+their complete toolchain is not a guarantee for every smaller profile.
+
+A required signed CLI needs a global dispatcher entrypoint in its profile:
+login shells can discard the Code Bundle bin directory from inherited `PATH`.
+Test both inherited and login shells, then execute the activated CLI and verify
+its output. Keep independent entrypoint changes in a separate layer when they
+do not change heavy dependencies.
+
+Do not add a shared dependency independently to three Harness layers. Rebuild
+and probe every affected Profile/Harness variant, then merge unchanged digest
+rows into a complete signed catalog before deployment.
 
 ## Reproducibility and mirrors
 
@@ -28,8 +39,9 @@ Playwright and Python downloads use the configured domestic mirrors. New
 downloads must preserve configurable mirror arguments and fail the build on
 checksum/version mismatch where the upstream publishes one.
 
-`toolchain_probe.py` verifies OS packages, commands, global npm packages and the
-Playwright browser against `toolchain.lock.json`. An intentional foundation
+`toolchain_probe.py` verifies the older full foundation against
+`toolchain.lock.json`; apply that lock only to the image it describes. Current
+profile probes must check the profile catalog and Skill dependency declarations. An intentional foundation
 change requires generating and reviewing a new snapshot from the built image;
 do not hand-edit a version string merely to make verification pass.
 Use `python runtime/toolchain_probe.py --output runtime/toolchain.lock.json`

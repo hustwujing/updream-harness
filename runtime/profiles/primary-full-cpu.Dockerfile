@@ -26,6 +26,7 @@ RUN pip install --no-cache-dir --trusted-host mirrors.cloud.aliyuncs.com \
       playwright install chromium && chmod -R a+rX /ms-playwright && npm cache clean --force && \
     for command in sandbox-job sandbox-artifact sandbox-review sandbox-media sandbox-site sandbox-background sandbox-interact; do \
       ln -s /usr/local/bin/sandbox-runtime-cli "/usr/local/bin/$command"; done
+RUN ln -s /usr/local/bin/sandbox-runtime-cli /usr/local/bin/editppt
 COPY runtime/browser_screenshot.mjs /usr/local/bin/sandbox-browser-screenshot
 COPY runtime/browser_render.mjs /usr/local/bin/sandbox-browser-render
 COPY runtime/chromium_proxy.cjs /usr/local/bin/chromium

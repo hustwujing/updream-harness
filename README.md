@@ -320,7 +320,20 @@ workflows are recorded in
 
 ## Runtime Toolchain
 
-Every Harness image inherits the same immutable foundation with Python, Node.js, ffmpeg/ffprobe, Chromium, Playwright with its pinned Chromium browser, ImageMagick, Three.js, Git, curl, jq, ripgrep, file inspection, GCC/G++, Make, CMake, pkg-config, archive tools and CJK fonts. The common Runtime layer additionally carries NumPy, Pillow, OpenCV, Beautiful Soup, psutil, SciPy, scikit-image, librosa, SoundFile, Matplotlib, MoviePy, PyAV, ImageIO, CairoSVG, PSD Tools, rembg/ONNX Runtime, Trimesh and related media libraries, plus the workspace-scoped `apply_patch` helper. `runtime/media_probe.py` imports the declared modules during every image build. [toolchain.lock.json](runtime/toolchain.lock.json) records the observed foundation command and package versions; image builds fail when the foundation no longer matches it. The deployed Harness images are referenced by registry digest rather than mutable tag.
+Runtime images have Bootstrap, Common, dependency Profile and native Harness
+layers. `primary-full-cpu` contains the complete media, browser, data and Office
+toolchain; `general-cpu`, `media-cpu`, `office`, `web-browser` and `data-analysis`
+contain their declared subsets. A tool present in the complete profile is not
+promised by every smaller profile. The signed catalog and each profile's
+Dockerfile and requirements file define its dependencies.
+
+Signed Runtime CLIs required by a profile also need image entrypoints so login
+shells can find them after resetting `PATH`. These entrypoints dispatch to the
+active signed Code Bundle; they do not duplicate CLI source in the image.
+Image releases must verify commands/imports as a non-root user and validate a
+representative output. The older foundation `toolchain.lock.json` describes
+that foundation, not every current smaller profile. Deployed profile/Harness
+images are pinned by registry digest.
 
 Runtime Python and CLI ship as a signed Code Bundle; instructions and Skills
 ship as a signed Content Bundle. A minimal image-resident Bootstrap verifies,

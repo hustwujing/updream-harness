@@ -148,6 +148,10 @@ def test_parallel_profiles_are_dependency_only_and_cover_declared_catalog():
     assert "libreoffice" in (ROOT/"runtime/profiles/office.Dockerfile").read_text()
     assert "playwright install chromium" in (ROOT/"runtime/profiles/web-browser.Dockerfile").read_text()
     primary=(ROOT/"runtime/profiles/primary-full-cpu.Dockerfile").read_text()
+    # This profile declares image-to-editable-ppt. A login shell discards the
+    # Code Bundle's inherited PATH, so its already packaged CLI needs an image
+    # entrypoint just like the other signed Runtime tools.
+    assert '/usr/local/bin/editppt' in primary or 'sandbox-interact editppt' in primary
     web=(ROOT/"runtime/profiles/web-browser.Dockerfile").read_text()
     assert "npm install -g --force" in primary
     for value in ("sandbox-browser-screenshot","sandbox-browser-render","chromium_proxy.cjs"):
