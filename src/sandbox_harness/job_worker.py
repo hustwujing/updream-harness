@@ -9,7 +9,7 @@ import httpx
 
 from .job_adapters import (
     AdapterStatus, ExternalJobFailure, JobAdapter, JobExecutionContext, PreAcceptCancelled,PreAcceptFailure,
-    SubmissionOutcomeUnknown,
+    SubmissionOutcomeUnknown,AllocationRecoveryRequired,
 )
 from .job_contracts import JobKind, JobState, TERMINAL_JOB_STATES
 from .job_errors import ArtifactCollectionCardinalityError,normalize_job_error
@@ -205,6 +205,13 @@ class JobWorker:
         request = await self.store.get_job_request(attempt.job_id)
         if not job or not request:
             return
+        if attempt.retry_kind in {'allocation_recovery_exhausted','allocation_capacity_exhausted'}:
+            code=('allocation_replacement_capacity_unavailable'
+                if attempt.retry_kind=='allocation_capacity_exhausted' else 'allocation_recovery_exhausted')
+            await self.store.transition_job(job.id,JobState.CANCELLED if job.cancel_requested else JobState.FAILED,
+                expected_generation=attempt.generation,result=normalize_job_error({'error_code':code},
+                    side_effect_state='none'))
+            return
         adapter = self.adapters.get(job.adapter)
         if not adapter:
             await self.store.finish_pre_accept_attempt(job.id, self.worker_id, attempt.generation,
@@ -222,6 +229,7 @@ class JobWorker:
             job=job, request=request, generation=attempt.generation,
             previous_external_execution_id=accepted.external_execution_id if accepted else "",
             previous_acceptance_receipt=accepted.acceptance_receipt if accepted else {},
+            allocation_replacement=attempt.retry_kind=='allocation_replacement',
         )
         external_id = context.previous_external_execution_id
         deadline=await self.store.job_deadline(job.id,request.timeout_seconds)
@@ -295,11 +303,16 @@ class JobWorker:
                             submission=(submission or await self._before_deadline(
                                 adapter.submit(context),deadline))
                             break
+                        except AllocationRecoveryRequired:raise
                         except PreAcceptFailure as exc:
                             submission_started=False
                             maximum = int(request.retry_policy.get("max_pre_accept_attempts", 1))
                             retry = exc.retryable and (exc.retry_class=='capacity_wait'
                                 or attempt.generation < max(1, maximum))
+                            if context.allocation_replacement and exc.retry_class=='capacity_wait':
+                                retry=False;exc.retryable=False;exc.infrastructure=False
+                                exc.error_code='allocation_replacement_capacity_unavailable'
+                                exc.retry_class='none';exc.failed_phase='capacity'
                             if (exc.infrastructure and exc.retryable and continuous
                                     and exc.retry_class=='capacity_wait'):
                                 await self.store.mark_infrastructure_wait(job.id,self.worker_id,
@@ -323,6 +336,7 @@ class JobWorker:
                                     'retryable':exc.retryable,
                                     'node_health_generation':exc.node_health_generation})
                             return
+                except AllocationRecoveryRequired:raise
                 except PreAcceptCancelled:
                     await self.store.transition_job(job.id,JobState.CANCELLED,
                         expected_generation=attempt.generation,
@@ -378,6 +392,21 @@ class JobWorker:
                     return
             status=await self._external_status(adapter,context,external_id,deadline)
             await self._finish_or_defer(adapter,context,external_id,status,continuous,deadline)
+        except AllocationRecoveryRequired as exc:
+            try:
+                result=await self.store.replace_unstarted_allocation(job.id,self.worker_id,attempt.generation,exc.identity)
+            except RuntimeError as stale:
+                if str(stale)!='stale_job_generation':raise
+                return
+            if result=='observe':
+                await self.store.release_job_lease(job.id,self.worker_id,attempt.generation)
+            elif result=='cancelled':
+                await self.store.transition_job(job.id,JobState.CANCELLED,
+                    expected_generation=attempt.generation,result={'cancelled_before_acceptance':True})
+            elif result=='exhausted':
+                await self.store.transition_job(job.id,JobState.FAILED,
+                    expected_generation=attempt.generation,result=normalize_job_error({
+                        'error_code':'allocation_recovery_exhausted'},side_effect_state='none'))
         except PreAcceptCancelled:
             await self.store.transition_job(job.id,JobState.CANCELLED,
                 expected_generation=attempt.generation,

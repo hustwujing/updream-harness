@@ -101,13 +101,50 @@ async def test_postgres_upgrade_preserves_unknown_allocation_and_original_claim(
             row=await db.get(SandboxAllocationRow,identity)
             row.state='UNKNOWN';row.claim_owner='original-create-owner'
         async with store.engine.begin() as db:
-            for column in ('reconcile_after','reconcile_attempts','reconcile_token','reconcile_expires_at'):
+            for column in ('reconcile_after','reconcile_attempts','reconcile_token','reconcile_expires_at',
+                           'issued_at','recovery_policy_json'):
                 await db.execute(text('ALTER TABLE sandbox_allocations DROP COLUMN '+column))
+            await db.execute(text('ALTER TABLE jobs DROP COLUMN allocation_replacements'))
         await asyncio.gather(store.initialize(),store.initialize())
         async with store.connections() as db:
             row=await db.get(SandboxAllocationRow,identity)
             assert row.state=='UNKNOWN' and row.claim_owner=='original-create-owner'
             assert row.reconcile_attempts==0 and row.reconcile_token==''
+            assert row.issued_at is None and row.recovery_policy_json=='{}'
         assert await AllocationService(store,backend).reconcile_once()==1
         assert (await client.snapshot(context,request))['state']=='UNKNOWN'
     finally:await store.close()
+
+
+@pytest.mark.parametrize('replacement_first',[False,True])
+async def test_runtime_submission_and_allocation_replacement_are_mutually_exclusive(replacement_first):
+    from datetime import timedelta
+    from sandbox_harness.domain import now
+    from sandbox_harness.store import SandboxAllocationRow,JobRow
+    store=Store(URL);await store.initialize();other=Store(URL)
+    backend=FakeSandboxBackend(namespace='pg-replacement-'+identifier())
+    try:
+        context,request=await allocation_fixture(store,backend)
+        identity=await AllocationClient(store,backend).enqueue(context,request)
+        receipt={'allocation_phase':'allocating','allocation_dispatch_id':identity}
+        await store.record_job_submission_allocation(context.job.id,context.generation,
+            external_execution_id='original-runtime',receipt=receipt)
+        async with store.connections.begin() as db:
+            row=await db.get(SandboxAllocationRow,identity)
+            row.state='UNKNOWN';row.issued_at=now()-timedelta(seconds=91)
+        replacement=store.replace_unstarted_allocation(context.job.id,'worker',context.generation,identity)
+        submission=other.record_job_submission_allocation(context.job.id,context.generation,
+            external_execution_id='original-runtime',receipt={**receipt,'allocation_phase':'runtime_submission'})
+        calls=[replacement,submission] if replacement_first else [submission,replacement]
+        values=await asyncio.gather(*calls,return_exceptions=True)
+        replaced,submitted=values if replacement_first else reversed(values)
+        if replaced=='queued':
+            assert isinstance(submitted,RuntimeError) and str(submitted)=='stale_job_generation'
+            async with store.connections() as db:
+                assert (await db.get(JobRow,context.job.id)).allocation_replacements==1
+        else:
+            assert isinstance(replaced,RuntimeError) and str(replaced)=='allocation_not_replaceable'
+            assert submitted is None
+            async with store.connections() as db:
+                assert (await db.get(JobRow,context.job.id)).allocation_replacements==0
+    finally:await other.close();await store.close()

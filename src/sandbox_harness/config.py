@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     backend: Literal["opensandbox", "aliyun", "fake"] = "opensandbox"
     job_allocation_dispatcher_enabled: bool = False
     allocation_lease_seconds: float = Field(default=30,ge=3,le=300)
+    allocation_recovery_seconds: float = Field(default=90,ge=10,le=900)
+    allocation_provision_ttl_seconds: int = Field(default=300,ge=60,le=3600)
     opensandbox_url: str = "http://127.0.0.1:28090"
     opensandbox_api_key: str = ""
     aliyun_sandbox_api_url: str = "https://api.cn-shanghai.sandbox.aliyuncs.com"

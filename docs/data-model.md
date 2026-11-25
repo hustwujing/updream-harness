@@ -57,6 +57,15 @@ provider, state and scheduled time. Startup adds these fields without changing
 existing allocation states, requests or handles; fresh and upgraded SQLite and
 PostgreSQL databases use the same contract.
 
+New dispatched allocations freeze `recovery_policy_json` and persist `issued_at`
+when the allocator claims a create. PENDING and definitively rejected capacity
+waits do not consume the uncertain-create window. Legacy rows receive an empty
+policy and no invented issuance timestamp. `jobs.allocation_replacements` is the
+durable count of additional allocations allowed after an uncertain unstarted
+creation. Attempt outcomes ALLOCATION_REPLACED/ALLOCATION_EXPIRED fence prior
+workers; cleanup retains the original attempt receipt and reservation. A claim's
+`retry_kind` carries replacement or exhausted recovery across Worker restarts.
+
 ## Turn inputs
 
 `turn_inputs` stores appended messages with per-Turn sequence and idempotency

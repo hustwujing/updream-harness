@@ -73,7 +73,9 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
         staging_root=settings.data_root / "tmp" / "runtime-downloads",backend=pool.backend)
     scheduler=Scheduler(store)
     resolver=profile_resolver(settings)
-    allocation_client=AllocationClient(store,pool.backend)
+    allocation_client=AllocationClient(store,pool.backend,
+        recovery_seconds=settings.allocation_recovery_seconds,
+        provision_ttl_seconds=settings.allocation_provision_ttl_seconds)
     child_backend=SandboxChildBackend(pool=pool,runtime=runtime,store=store,objects=objects,
         settings=settings,token_factory=JobGrantFactory(settings),profile_resolver=resolver,
         allocation_client=allocation_client)

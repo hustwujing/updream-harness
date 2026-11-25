@@ -224,6 +224,7 @@ class JobArtifactOutput(BaseModel):
 
 
 class JobAttemptReceipt(BaseModel):
+    retry_kind: str = 'initial'
     model_config = ConfigDict(extra="forbid", frozen=True)
     id: str
     job_id: str

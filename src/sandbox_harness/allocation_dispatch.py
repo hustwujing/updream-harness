@@ -10,7 +10,7 @@ import uuid
 from sqlalchemy import select, or_, func
 
 from .domain import Harness,now
-from .job_adapters import PreAcceptCancelled
+from .job_adapters import PreAcceptCancelled,AllocationRecoveryRequired
 from .job_contracts import JobState,TERMINAL_JOB_STATES
 from .observability import event
 from .sandbox_contracts import (Sandbox,SandboxCreateRequest,SandboxHandle,SandboxProfile,
@@ -48,12 +48,23 @@ def snapshot(row):
     if row is None:return None
     return {'id':row.id,'state':row.state,'job_id':row.job_id,'job_generation':row.job_generation,
         'request_json':row.request_json,'handle':json.loads(row.handle_json),'error_code':row.error_code,
-        'reconcile_token':row.reconcile_token,'reconcile_attempts':row.reconcile_attempts}
+        'reconcile_token':row.reconcile_token,'reconcile_attempts':row.reconcile_attempts,
+        'issued_at':utc_datetime(row.issued_at) if row.issued_at else None,
+        'recovery_policy':json.loads(row.recovery_policy_json)}
 
 
 class AllocationClient:
-    def __init__(self,store,backend,*,poll_seconds=.2):
+    def __init__(self,store,backend,*,poll_seconds=.2,recovery_seconds=90,provision_ttl_seconds=300):
         self.store=store;self.backend=backend;self.poll_seconds=poll_seconds
+        self.recovery_policy={'recovery_seconds':recovery_seconds,
+            'provision_ttl_seconds':provision_ttl_seconds,'max_replacements':1}
+
+    @staticmethod
+    def _check_recovery(value):
+        seconds=value['recovery_policy'].get('recovery_seconds')
+        if (seconds and value['issued_at'] and value['state'] in {'SENDING','UNKNOWN'}
+                and (now()-value['issued_at']).total_seconds()>=seconds):
+            raise AllocationRecoveryRequired(value['id'])
 
     def identity(self,request):
         return allocation_key(self.backend.namespace,request.profile.provider,request.allocation_id)
@@ -89,11 +100,13 @@ class AllocationClient:
                     row.claim_expires_at=None;row.updated_at=now()
                     row.reconcile_after=None;row.reconcile_attempts=0
                     row.reconcile_token='';row.reconcile_expires_at=None
+                    row.issued_at=None
             else:
                 db.add(SandboxAllocationRow(id=identity,namespace=self.backend.namespace,
                     provider=request.profile.provider,allocation_id=request.allocation_id,
                     job_id=job.id,job_generation=context.generation,request_json=encoded,
-                    request_digest=digest,state='PENDING',created_at=now(),updated_at=now()))
+                    request_digest=digest,state='PENDING',created_at=now(),updated_at=now(),
+                    recovery_policy_json=json.dumps(self.recovery_policy,sort_keys=True)))
         return identity
 
     async def create(self,context,request):
@@ -123,8 +136,13 @@ class AllocationClient:
                     provider=request.profile.provider) from exc
             if current and current.cancel_requested:
                 raise PreAcceptCancelled(retain_allocation=True)
+            self._check_recovery(value)
             if value['state']=='READY':
-                try:return await self.backend.get(SandboxHandle.from_mapping(value['handle']))
+                try:
+                    sandbox=await self.backend.get(SandboxHandle.from_mapping(value['handle']))
+                    if value['recovery_policy'].get('provision_ttl_seconds'):
+                        sandbox=await self.backend.renew(sandbox,force=True)
+                    return sandbox
                 except Exception as exc:
                     raise SandboxCreateOutcomeUnknown('Allocated sandbox requires reconciliation',
                         provider=request.profile.provider) from exc
@@ -154,6 +172,7 @@ class AllocationClient:
             if row and row.job_id!=job.id:raise RuntimeError('sandbox_allocation_owner_mismatch')
             value=snapshot(row)
         if not value or value['state'] in ABSENT_STATES:raise AllocationAbsent()
+        if not cleanup and receipt.get('allocation_phase')=='allocating':self._check_recovery(value)
         if value['state']!='READY':return None
         request=decode_request(value['request_json']);handle=SandboxHandle.from_mapping(value['handle'])
         return Sandbox(id=handle.sandbox_id,provider=handle.provider,harness=request.harness,
@@ -194,6 +213,8 @@ class AllocationService:
 
     async def _execute(self,value):
         request=decode_request(value['request_json']);identity=value['id']
+        provision_ttl=value['recovery_policy'].get('provision_ttl_seconds')
+        if provision_ttl:request=replace(request,ttl_seconds=min(request.ttl_seconds,int(provision_ttl)))
         async def heartbeat():
             while True:
                 await asyncio.sleep(max(.05,self.lease_seconds/3))
@@ -249,6 +270,7 @@ class AllocationService:
                         or job.generation!=row.job_generation):
                     row.state='CANCELLED';row.updated_at=now();continue
                 row.state='SENDING';row.claim_owner=self.owner
+                row.issued_at=now()
                 row.claim_expires_at=now()+timedelta(seconds=self.lease_seconds);row.updated_at=now()
                 claimed.append(snapshot(row))
         return claimed

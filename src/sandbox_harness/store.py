@@ -712,6 +712,7 @@ class JobRow(Base):
     request_json: Mapped[str] = mapped_column(Text)
     state: Mapped[str] = mapped_column(String(32), index=True)
     generation: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    allocation_replacements: Mapped[int] = mapped_column(Integer,default=0,server_default='0')
     cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     replaces_job_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
     reconciles_job_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
@@ -772,6 +773,8 @@ class SandboxAllocationRow(Base):
     reconcile_attempts: Mapped[int] = mapped_column(Integer,default=0,server_default='0')
     reconcile_token: Mapped[str] = mapped_column(String(64),default='',server_default='')
     reconcile_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),nullable=True)
+    issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),nullable=True)
+    recovery_policy_json: Mapped[str] = mapped_column(Text,default='{}',server_default='{}')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -1073,6 +1076,8 @@ class Store:
                 'reconcile_attempts':'INTEGER NOT NULL DEFAULT 0',
                 'reconcile_token':"VARCHAR(64) NOT NULL DEFAULT ''",
                 'reconcile_expires_at':timestamp_type,
+                'issued_at':timestamp_type,
+                'recovery_policy_json':"TEXT NOT NULL DEFAULT '{}'",
             }.items():
                 if column not in allocation_columns:
                     suffix=' IF NOT EXISTS' if connection.dialect.name=='postgresql' else ''
@@ -1083,6 +1088,15 @@ class Store:
                                 f'duplicate column name: {column}' not in str(exc).lower()):raise
             await connection.execute(text('CREATE INDEX IF NOT EXISTS ix_sandbox_allocations_due '
                 'ON sandbox_allocations (namespace, provider, state, reconcile_after)'))
+            job_columns=await connection.run_sync(lambda value:{column['name'] for column in
+                sqlalchemy_inspect(value).get_columns('jobs')})
+            if 'allocation_replacements' not in job_columns:
+                suffix=' IF NOT EXISTS' if connection.dialect.name=='postgresql' else ''
+                try:await connection.execute(text(f'ALTER TABLE jobs ADD COLUMN{suffix} '
+                    'allocation_replacements INTEGER NOT NULL DEFAULT 0'))
+                except OperationalError as exc:
+                    if (connection.dialect.name!='sqlite' or
+                            'duplicate column name: allocation_replacements' not in str(exc).lower()):raise
             turn_columns=await connection.run_sync(lambda value:{column["name"] for column in
                 sqlalchemy_inspect(value).get_columns("turns")})
             if "sandbox_handle_json" not in turn_columns:
@@ -1347,7 +1361,7 @@ class Store:
     def job_attempt_view(row: JobAttemptRow) -> JobAttemptReceipt:
         return JobAttemptReceipt(
             id=row.id, job_id=row.job_id, generation=row.generation, worker_id=row.worker_id,
-            node_id=row.node_id, executor_kind=row.executor_kind,
+            node_id=row.node_id, executor_kind=row.executor_kind,retry_kind=row.retry_kind,
             request_digest=row.request_digest,
             accepted_at=utc_datetime(row.accepted_at) if row.accepted_at else None,
             external_execution_id=row.external_execution_id,
@@ -2402,6 +2416,62 @@ class Store:
                     raise
         return result
 
+    async def replace_unstarted_allocation(self,job_id:str,worker_id:str,generation:int,
+                                          allocation_identity:str)->str:
+        """Fence unstarted work, retaining its distinct resource/cleanup ownership."""
+        async with self.job_lock(f'job:{job_id}'):
+            async with self.connections.begin() as db:
+                job=await db.get(JobRow,job_id,with_for_update=True)
+                lease=await db.get(JobLeaseRow,job_id,with_for_update=True)
+                if (not job or not lease or job.generation!=generation or lease.generation!=generation
+                        or lease.worker_id!=worker_id or utc_datetime(lease.expires_at)<=now()
+                        or JobState(job.state) in TERMINAL_JOB_STATES):
+                    raise RuntimeError('stale_job_generation')
+                if job.cancel_requested:return 'cancelled'
+                row=await db.get(SandboxAllocationRow,allocation_identity,with_for_update=True)
+                if not row or row.job_id!=job_id or row.job_generation>generation:
+                    raise RuntimeError('sandbox_allocation_owner_mismatch')
+                if row.state in {'READY','REJECTED','CANCELLED','RELEASED'}:return 'observe'
+                policy=json.loads(row.recovery_policy_json)
+                seconds=policy.get('recovery_seconds')
+                if (row.state not in {'SENDING','UNKNOWN'} or not seconds or not row.issued_at
+                        or (now()-utc_datetime(row.issued_at)).total_seconds()<seconds):
+                    raise RuntimeError('allocation_recovery_not_due')
+                source=(await db.scalars(select(JobAttemptRow).where(JobAttemptRow.job_id==job_id,
+                    JobAttemptRow.generation==row.job_generation).with_for_update())).one_or_none()
+                current=await db.get(JobAttemptRow,lease.attempt_id,with_for_update=True)
+                receipt=json.loads(source.acceptance_receipt_json) if source else {}
+                if (not source or source.accepted_at or source.outcome!='SUBMITTING'
+                        or receipt.get('allocation_phase')!='allocating'
+                        or receipt.get('allocation_dispatch_id')!=allocation_identity
+                        or not source.external_execution_id or not current or current.accepted_at
+                        or current.outcome not in {'','SUBMITTING'}
+                        or (current.id!=source.id and current.acceptance_receipt_json!='{}')):
+                    raise RuntimeError('allocation_not_replaceable')
+                cleanup=(await db.scalars(select(JobCleanupRow).where(JobCleanupRow.job_id==job_id,
+                    JobCleanupRow.generation==source.generation).with_for_update())).one_or_none()
+                timestamp=now()
+                if not cleanup:
+                    db.add(JobCleanupRow(id=identifier(),job_id=job_id,adapter=job.adapter,
+                        generation=source.generation,external_execution_id=source.external_execution_id,
+                        acceptance_receipt_json=source.acceptance_receipt_json,state='pending',
+                        phase='external_quiescence',attempt_count=0,last_error='',claim_owner='',
+                        claim_expires_at=None,created_at=timestamp,updated_at=timestamp))
+                retry=job.allocation_replacements<min(1,int(policy.get('max_replacements',0)))
+                for attempt in {source.id:source,current.id:current}.values():
+                    attempt.outcome='ALLOCATION_REPLACED' if retry else 'ALLOCATION_EXPIRED'
+                    attempt.finished_at=timestamp;attempt.error_code='allocation_recovery_required'
+                job.updated_at=timestamp
+                if not retry:return 'exhausted'
+                job.allocation_replacements+=1
+                pause=(await db.scalars(select(PauseParticipantRow.id).where(
+                    PauseParticipantRow.thread_id==job.thread_id,PauseParticipantRow.kind=='child_harness',
+                    PauseParticipantRow.participant_id==job.id,
+                    PauseParticipantRow.state==PauseParticipantState.REQUESTED.value).limit(1))).first()
+                job.state=JobState.PAUSING.value if pause else JobState.QUEUED.value
+                await db.delete(lease)
+                return 'queued'
+
     async def finish_pre_accept_attempt(self, job_id: str, worker_id: str, generation: int, *,
                                         retry: bool, error_code: str, error_detail: str,
                                         error_metadata:dict|None=None) -> JobView:
@@ -2590,6 +2660,15 @@ class Store:
                     JobAttemptRow.generation.desc()).limit(1))).scalar_one_or_none()
                 if retry_kind=='initial' and previous_outcome=='COLLECTION_RETRY':
                     retry_kind='collection'
+                if retry_kind=='initial' and job.allocation_replacements:
+                    retry_kind='allocation_replacement'
+                    exhausted=(await db.scalars(select(JobAttemptRow).where(
+                        JobAttemptRow.job_id==job.id,or_(JobAttemptRow.outcome=='ALLOCATION_EXPIRED',
+                            JobAttemptRow.error_code=='allocation_replacement_capacity_unavailable'))
+                        .order_by(JobAttemptRow.generation.desc()).limit(1))).first()
+                    if exhausted:
+                        retry_kind=('allocation_capacity_exhausted' if exhausted.error_code==
+                            'allocation_replacement_capacity_unavailable' else 'allocation_recovery_exhausted')
                 job.generation += 1
                 job.state = JobState.RUNNING.value
                 job.updated_at = now()

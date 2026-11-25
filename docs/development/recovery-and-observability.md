@@ -46,6 +46,24 @@ AllocationWorker's create lane; durable Scheduler reservations independently
 limit registered Job resources. A Pool waits for a local slot before submitting
 a create request, so this wait is not an uncertain cloud creation outcome.
 
+New dispatched allocations freeze a 90-second recovery window and a 300-second
+provisioning TTL, configurable through `allocation_recovery_seconds` and
+`allocation_provision_ttl_seconds`. The window begins with issued creation,
+never while queued for local capacity. Adoption renews the sandbox through the
+backend's normal TTL before business preparation. Renewal failure retains the
+exact handle for cleanup. Neither TTL nor an empty inventory proves absence.
+
+`Store.replace_unstarted_allocation` may fence an allocating attempt before
+Runtime submission and queue at most one replacement of the same logical Job.
+It atomically creates cleanup of the old generation and retains its reservation.
+The replacement acquires additional Scheduler and Pool capacity; local, node or
+provider capacity rejection fails it explicitly. Regular capacity waits retain
+their existing generation. Runtime submission intent or acceptance prohibits
+replacement. Exhaustion survives a crash before terminal publication, and late
+cleanup cannot remove the new session or its event collector. See
+`tests/test_allocation_recovery.py` and the PostgreSQL submission/replacement race.
+Legacy unknown allocations keep their previous conservative recovery policy.
+
 An explicit allocation ID passed to `SandboxPool.acquire` must match any reused
 attachment. A replacement ID retires the old sandbox before reallocation; normal
 same-Thread reuse without a replacement ID keeps its existing behavior. Check
@@ -117,8 +135,10 @@ from interrupting cancellation handling again. `Task.cancelling()` alone does
 not cover an explicitly raised `CancelledError`. Keep the database-read,
 startup and repeated-cancellation barriers in `tests/test_cancel_boundaries.py`.
 
-Unknown creation results remain charged and cannot be replaced on the strength
-of an empty inventory, lease expiry or audit-access error. Record the missing
+Unknown creation results remain charged and cannot be declared absent on the
+strength of an empty inventory, lease expiry or audit-access error. An authorized
+unstarted Job replacement uses additional capacity and retains the old cleanup;
+it never reissues the old allocation or replays a business execution. Record the missing
 provider evidence separately from current functional case results. Reclaim only
 after authoritative reconciliation or verified retirement of the exclusively
 owned test scope; do not change a historical result to make cleanup look green.

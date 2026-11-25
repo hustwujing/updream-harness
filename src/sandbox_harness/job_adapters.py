@@ -15,6 +15,7 @@ class JobExecutionContext:
     generation: int
     previous_external_execution_id: str = ""
     previous_acceptance_receipt: dict[str, Any] = field(default_factory=dict)
+    allocation_replacement: bool = False
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,16 @@ class PreAcceptCancelled(RuntimeError):
     """Durable user cancellation observed before Runtime submission."""
     def __init__(self,*,retain_allocation:bool=False):
         super().__init__();self.retain_allocation=retain_allocation
+
+
+class AllocationRecoveryRequired(PreAcceptFailure):
+    """An issued environment creation exceeded its frozen recovery window."""
+    retain_allocation=True
+
+    def __init__(self,identity:str):
+        super().__init__('allocation_recovery_required',error_code='allocation_recovery_required',
+            failed_phase='reconciliation',retryable=False,retain_capacity=True)
+        self.identity=identity
 
 
 class SubmissionOutcomeUnknown(RuntimeError):

@@ -669,7 +669,7 @@ class SandboxChildBackend(SandboxAllocationOwner):
             try:sandbox=await self._sandbox(context,receipt)
             except RuntimeError as exc:
                 if str(exc)!='child_sandbox_unavailable':raise
-        collector=self.collectors.pop(context.job.id,None)
+        collector=self.collectors.pop(context.job.id,None) if not unstarted else None
         if collector:
             try:await asyncio.wait_for(asyncio.shield(collector),timeout=5)
             except (asyncio.TimeoutError,Exception):
@@ -692,7 +692,8 @@ class SandboxChildBackend(SandboxAllocationOwner):
                         provider=sandbox.handle.provider)
             else:await self.pool.release(sandbox,keep_attached=False)
         if self.allocation_client and identity:await self.allocation_client.released(receipt)
-        self.sessions.pop(context.job.id,None)
+        cached=self.sessions.get(context.job.id)
+        if cached and sandbox and cached.handle==sandbox.handle:self.sessions.pop(context.job.id,None)
 
 
 # Temporary import compatibility for external real-case scripts.

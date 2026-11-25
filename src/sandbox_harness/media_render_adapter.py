@@ -254,7 +254,8 @@ class MediaRenderOperationAdapter(SandboxAllocationOwner,BaseJobAdapter):
                             provider=sandbox.handle.provider)
                 else:await self.pool.release(sandbox,keep_attached=False)
                 if self.allocation_client:await self.allocation_client.released(receipt)
-            self.sessions.pop(context.job.id,None)
+            cached=self.sessions.get(context.job.id)
+            if cached and sandbox and cached.handle==sandbox.handle:self.sessions.pop(context.job.id,None)
 
     async def release_capacity(self,context:JobExecutionContext)->None:
         receipt=context.previous_acceptance_receipt

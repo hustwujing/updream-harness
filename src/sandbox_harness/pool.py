@@ -11,7 +11,7 @@ from typing import Awaitable,Callable
 
 from .domain import Harness, identifier
 from .sandbox import Sandbox, SandboxBackend, SandboxNotFound, SandboxProfileUnavailable
-from .sandbox_contracts import (SandboxCreateOutcomeUnknown,SandboxCreateRequest,
+from .sandbox_contracts import (SandboxCreateOutcomeUnknown,SandboxCreateRequest,SandboxCapacityUnavailable,
     SandboxProfile,SandboxScope,SandboxState)
 from .sandbox_factory import SandboxProfileResolver
 
@@ -256,7 +256,7 @@ class SandboxPool:
         sandbox.warm=False;sandbox.thread_id=thread_id;sandbox.turn_id=turn_id
         return sandbox
 
-    async def _reserve_user_slot(self) -> None:
+    async def _reserve_user_slot(self,*,wait_for_capacity:bool=True) -> None:
         while True:
             evict=None;evict_expiry=None;waiter=None
             async with self._lock:
@@ -271,6 +271,8 @@ class SandboxPool:
                     await self._user_slots.acquire()
                     return
                 else:
+                    if not wait_for_capacity:
+                        raise SandboxCapacityUnavailable('No local sandbox capacity',provider=self.backend.provider)
                     self._capacity_changed.clear()
                     waiter=self._capacity_changed.wait()
             if evict_expiry:
@@ -288,7 +290,7 @@ class SandboxPool:
                       retain_unresolved_allocation:bool=False,
                       before_create:Callable[[SandboxCreateRequest],Awaitable[None]]|None=None,
                       create:Callable[[SandboxCreateRequest],Awaitable[Sandbox]]|None=None,
-                      allocation_id:str|None=None) -> Sandbox:
+                      allocation_id:str|None=None,wait_for_capacity:bool=True) -> Sandbox:
         async with self._thread_lock(thread_id):
             desired_image = image or self.images[harness]
             desired_profile=self.profile_resolver.resolve(harness,desired_image,
@@ -348,7 +350,7 @@ class SandboxPool:
                 if pending_key in self._pending_allocations:
                     raise SandboxCreateOutcomeUnknown('Allocation requires reconciliation',
                         provider=desired_profile.provider)
-            await self._reserve_user_slot()
+            await self._reserve_user_slot(wait_for_capacity=wait_for_capacity)
             slot_reserved=True
 
             try:

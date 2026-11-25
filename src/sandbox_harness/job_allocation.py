@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict,replace
 from .domain import Harness
-from .job_adapters import PreAcceptCancelled,PreAcceptFailure,SubmissionInterrupted,SubmissionRecovery
+from .job_adapters import (PreAcceptCancelled,PreAcceptFailure,SubmissionInterrupted,SubmissionRecovery,
+    AllocationRecoveryRequired)
 from .sandbox import Sandbox,SandboxCapacityUnavailable,SandboxNotFound,SandboxRateLimited
 from .sandbox_contracts import (SandboxCreateOutcomeUnknown,SandboxEndpointUnavailable,
     SandboxHandle,SandboxProfile,SandboxProfileUnavailable,SandboxProviderUnavailable)
@@ -111,6 +112,7 @@ class SandboxAllocationOwner:
                     allocation['allocation_id']))
             dispatch['create']=lambda request:self.allocation_client.create(context,request)
             dispatch['allocation_id']=allocation['allocation_id']
+        if context.allocation_replacement:dispatch['wait_for_capacity']=False
         try:
             await self.store.record_job_submission_allocation(context.job.id,context.generation,
                 external_execution_id=execution_id,receipt=allocation)
@@ -145,7 +147,7 @@ class SandboxAllocationOwner:
                 raise SubmissionInterrupted(execution_id,allocation) from exc
             await mark_absent()
             raise SubmissionInterrupted(execution_id,allocation) from exc
-        except PreAcceptCancelled:raise
+        except (PreAcceptCancelled,AllocationRecoveryRequired):raise
         except (SandboxCapacityUnavailable,SandboxRateLimited):
             await mark_absent()
             raise

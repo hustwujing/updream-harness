@@ -38,12 +38,12 @@ Files: `allocation_dispatch.py`, `job_allocation.py`, `job_adapters.py`,
 `job_worker.py`, `store.py`, `scheduler.py` if required, `pool.py`, `job_errors.py`,
 `config.py`, `job_service.py`, related worker/store/capacity tests.
 
-- [ ] Add red tests for the 90-second uncertain boundary, old-generation cleanup and one replacement.
-- [ ] Freeze per-allocation policy and introduce a typed recovery-expiry signal.
-- [ ] Atomically queue replacement only before Runtime submission; retain the old cleanup/reservation and bound replacements independently of capacity waits.
-- [ ] Require new capacity and fail replacement explicitly when unavailable; preserve normal capacity waiting.
-- [ ] Use a 300-second provisioning TTL and renew before business use; test renewal failure and no local quota release on mere TTL expiry.
-- [ ] Test cancellation, stale writes, late READY, Thread ownership and PostgreSQL races; commit after review fixes.
+- [x] Add red tests for the 90-second uncertain boundary, old-generation cleanup and one replacement.
+- [x] Freeze per-allocation policy and introduce a typed recovery-expiry signal.
+- [x] Atomically queue replacement only before Runtime submission; retain the old cleanup/reservation and bound replacements independently of capacity waits.
+- [x] Require new capacity and fail replacement explicitly when unavailable; preserve normal capacity waiting.
+- [x] Use a 300-second provisioning TTL and renew before business use; test renewal failure and no local quota release on mere TTL expiry.
+- [x] Test cancellation, stale writes, late READY, Thread ownership and PostgreSQL races. Expanded focused gate: 163 passed; isolated PostgreSQL: 14 passed. Whole-change review remains in Task 3.
 
 ## Task 3: Real faults, release and publication
 
