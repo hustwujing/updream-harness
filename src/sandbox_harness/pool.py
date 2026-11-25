@@ -293,6 +293,7 @@ class SandboxPool:
             desired_image = image or self.images[harness]
             desired_profile=self.profile_resolver.resolve(harness,desired_image,
                 profile_id=profile_id,revision=revision)
+            explicit_allocation=bool(allocation_id)
             allocation_id=allocation_id or turn_id
             pending_key=(desired_profile.provider,allocation_id)
             slot_reserved = False
@@ -302,7 +303,8 @@ class SandboxPool:
                 attached = self._attached.get(thread_id)
                 expiry = None
                 incompatible=bool(attached and (attached.harness!=harness
-                    or attached.compatibility_key!=desired_profile.compatibility_key))
+                    or attached.compatibility_key!=desired_profile.compatibility_key
+                    or (explicit_allocation and attached.handle.allocation_id!=allocation_id)))
                 if incompatible:
                     self._attached.pop(thread_id, None)
                     self._idle_since.pop(thread_id, None)

@@ -137,6 +137,7 @@ class SandboxAllocationOwner:
                     turn_id=context.job.id,harness=harness,environment={},image=image,
                     profile_id=reservation.runtime_profile_id,revision=release.revision,
                     retain_unresolved_allocation=True,before_create=before_create,**dispatch)
+                if dispatch:self._validate_allocation(sandbox,allocation)
             except SandboxCreateOutcomeUnknown:
                 sandbox=await self._reconcile_allocation(context,allocation,ready=True)
         except asyncio.CancelledError as exc:

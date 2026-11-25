@@ -312,3 +312,18 @@ async def test_retiring_old_generation_does_not_release_new_pending_allocation()
         provider.finish.set()
         if task:await asyncio.gather(task,return_exceptions=True)
         await pool.close()
+
+
+async def test_explicit_replacement_allocation_never_reuses_previous_attachment():
+    from sandbox_harness.pool import SandboxPool
+    provider=FakeSandboxBackend();pool=SandboxPool(provider,{Harness.CODEX:'image'},
+        {Harness.CODEX:0},max_sandboxes=1)
+    try:
+        first=await pool.acquire(thread_id='job',turn_id='job',harness=Harness.CODEX,
+            environment={},allocation_id='job-g1',retain_unresolved_allocation=True)
+        replacement=await pool.acquire(thread_id='job',turn_id='job',harness=Harness.CODEX,
+            environment={},allocation_id='job-g3',retain_unresolved_allocation=True)
+        assert replacement.id!=first.id
+        assert replacement.handle.allocation_id=='job-g3'
+        assert first.id not in provider.items
+    finally:await pool.close()
