@@ -14,7 +14,10 @@ def main(argv: list[str] | None = None) -> int:
     parser=argparse.ArgumentParser(prog="sandbox-review")
     parser.add_argument("--request",required=True,help="JSON object or path")
     args=parser.parse_args(argv);raw=args.request
-    path=Path(raw);value=json.loads(path.read_text() if path.is_file() else raw)
+    if raw.lstrip().startswith(("{","[")):source=raw
+    else:
+        path=Path(raw);source=path.read_text() if path.is_file() else raw
+    value=json.loads(source)
     if not isinstance(value,dict):parser.error("Review request must be an object")
     if os.environ.get("HARNESS_CHILD_MODE")=="1":
         print(json.dumps({"error":"A Child Harness cannot create a Reviewer"}));return 2

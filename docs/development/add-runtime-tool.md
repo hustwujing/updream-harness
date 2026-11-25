@@ -27,6 +27,10 @@ Existing patterns:
 ## Requirements
 
 - Accept structured arguments; avoid a host shell and ambiguous string parsing.
+- For JSON-or-file arguments, recognize inline objects/arrays before filesystem
+  inspection; a long rubric or task must not be passed to `Path.is_file` as a
+  filename. Preserve file input and the tool's object/array validation. See
+  `job_cli._json_value`, `review_cli.main` and `tests/test_job_api.py`.
 - Validate paths under approved workspace roots and reject links/special files
   where files cross the host boundary.
 - Bound input size, output size, concurrency, duration and retained logs.

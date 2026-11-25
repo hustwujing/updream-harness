@@ -102,3 +102,15 @@ remain pending.
 The remaining 68 product cases will continue afterward. Other successful cases
 retain their evidence: healthy byte transfers and execution submission behavior
 are unchanged, with transport failure and overlap covered at both API boundaries.
+
+### Reviewer CLI input defect found during the resumed gate
+
+R03 and R04 exposed an internal `sandbox-review` exception despite subsequently
+using a request file: a long inline JSON argument reached `Path.is_file` before
+JSON parsing and raised `ENAMETOOLONG`. These attempts require rerun even if their
+top-level result succeeds. The regression reproduced one failure for long inline
+JSON while short JSON and file input passed. The correction recognizes inline
+objects/arrays first, matching the existing Job CLI boundary; it changes no
+Review authorization, Gateway request or execution policy. Deployed verification
+remains pending. Focused tests passed 57 checks, independent review passed six,
+and the complete Python suite passed 1312 tests with 14 skipped.

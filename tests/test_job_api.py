@@ -206,19 +206,26 @@ def test_gateway_exposes_catalog_and_explicit_review_without_user_confirmation_r
     assert '/v1/job-group-drafts/{draft_id}/confirm' not in paths
 
 
-def test_review_cli_uses_host_identity_and_refuses_child_mode(tmp_path,monkeypatch,capsys):
+@pytest.mark.parametrize('representation',['short_inline','long_inline','long_file'])
+def test_review_cli_uses_host_identity_and_refuses_child_mode(tmp_path,monkeypatch,capsys,representation):
     token=tmp_path/'token';token.write_text('x'*32);calls=[]
     monkeypatch.setenv('HARNESS_GATEWAY_URL','http://gateway.test')
     monkeypatch.setenv('HARNESS_CAPABILITY_TOKEN_FILE',str(token))
     monkeypatch.setenv('HARNESS_KIND','codex');monkeypatch.setenv('HARNESS_MODEL','gpt-5.6')
     class Result:is_success=True;text='{"mode":"committed"}'
     monkeypatch.setattr(review_cli.httpx,'post',lambda url,**kwargs:calls.append((url,kwargs)) or Result())
-    payload={'artifact_ids':['a'*32],'rubric':'Check it','idempotency_key':'review-cli-key'}
-    assert review_cli.main(['--request',__import__('json').dumps(payload)])==0
+    payload={'artifact_ids':['a'*32],'rubric':'Check it' if representation=='short_inline' else
+        'Verify the complete ordered collection. '*150,'idempotency_key':'review-cli-key'}
+    raw=' \n'+json.dumps(payload)
+    if representation=='long_file':
+        request=tmp_path/'review.json';request.write_text(raw);raw=str(request)
+    assert review_cli.main(['--request',raw])==0
     assert calls[0][0]=='http://gateway.test/v1/reviews'
     assert calls[0][1]['json']['harness']=='codex' and calls[0][1]['json']['model']=='gpt-5.6'
+    assert calls[0][1]['json']['rubric']==payload['rubric']
     monkeypatch.setenv('HARNESS_CHILD_MODE','1')
-    assert review_cli.main(['--request',__import__('json').dumps(payload)])==2
+    assert review_cli.main(['--request',raw])==2
+    assert len(calls)==1
     assert 'cannot create' in capsys.readouterr().out
 
 
