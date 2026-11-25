@@ -76,6 +76,14 @@ on mutable provider metadata.
   model-specific bounded ingress and durable error observation are described
   in the [model ingress design](../superpowers/specs/2026-11-25-model-ingress-budget-design.md).
   That gate drained to 38 successes, one failure and 130 unstarted cases.
+- **C09 allocation:** the `289455c` gate exposed a distinct Child allocation
+  failure. Sandbox creation became uncertain before Runtime submission; the
+  old generic exception path recorded an empty accepted handle and dropped
+  capacity ownership. Durable allocation phases now retain the original
+  provider/profile/reservation through delayed visibility, cancellation,
+  Worker replacement and cleanup. Reviewer wrappers use the same lifecycle.
+  That gate drained to 58 successes, one failure and 110 unstarted cases.
+  See the [allocation recovery design](../superpowers/specs/2026-11-25-child-allocation-recovery-design.md).
 
 ## Validation layers
 
@@ -103,9 +111,13 @@ Pre-gate validation at `239f242` recorded:
 Generated receipts stay below the Ali checkout's `.data/evidence/`; raw logs and
 temporary files stay below `.data/tmp`. The per-case status file is
 `real-campaign/ali-handoff-status.md`. Historical reports labelled
-`composite_verified` are not a clean full gate. Final acceptance requires all
-169 cases in a fresh report without `--resume-report`, with the committed
-release revision, per-case classifications and inspected internal failures.
+`composite_verified` are not a clean full gate. The user's later instruction
+on 2026-11-25 changes this campaign's acceptance workflow: after a fix, rerun
+only its triggering/affected cases and finish never-run cases. Preserve
+unaffected successes with their original revisions and an explicit impact
+assessment. Final coverage still requires all 169 cases and inspected internal
+failures. Reports spanning revisions must remain `composite_verified`; do not
+claim that every success ran on the final revision.
 
 The release manifest records source revision, frontend digest, Runtime Code and
 Content Bundle digests and the signed profile catalog. These host-state-machine

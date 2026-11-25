@@ -556,15 +556,275 @@ async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(
     assert backend.runtime.injected['gateway_url']=='http://sandbox-gateway:29880'
     assert backend.pool.acquired_kwargs['profile_id']=='reviewer-readonly'
     assert backend.pool.acquired_kwargs['revision']=='runtime-config-v2'
-    assert backend.store.allocations==[
-        {"sandbox_id":sandbox.id,"sandbox_handle":sandbox.handle.to_mapping(),
-            "reservation_id":"reservation","node_id":"node",
-            "node_generation":1},
-        {"sandbox_id":sandbox.id,"sandbox_handle":sandbox.handle.to_mapping(),
-            "reservation_id":"reservation","node_id":"node",
-            "node_generation":1,"capability_nonce":"nonce"}]
+    intent=backend.store.allocations[0]
+    assert intent['allocation_id']==context.job.id
+    assert intent['allocation_phase']=='awaiting_capacity' and 'sandbox_id' not in intent
+    final=backend.store.allocations[-1]
+    assert final['allocation_phase']=='runtime_submission'
+    assert final['sandbox_id']==sandbox.id and final['sandbox_handle']==sandbox.handle.to_mapping()
+    assert final['reservation_id']=='reservation' and final['node_generation']==1
+    assert final['capability_nonce']=='nonce'
 
     backend.pool.acquired=0
     with pytest.raises(ValueError,match="reserved_disk"):
         await backend.start(context,SimpleNamespace(**{**reservation.__dict__,"disk_mb":514}))
     assert backend.pool.acquired==0
+
+
+async def test_child_reconciles_delayed_allocation_before_one_runtime_submission(tmp_path):
+    from sandbox_harness.pool import SandboxPool
+    from sandbox_harness.sandbox import FakeSandboxBackend
+    from sandbox_harness.sandbox_contracts import SandboxCreateOutcomeUnknown
+    class LateCreate(FakeSandboxBackend):
+        calls=0;lookups=0;delayed=False
+        async def create(self,value):
+            self.calls+=1
+            intent=await store.unresolved_job_submission(job.id,2)
+            assert intent['external_execution_id']==job.id+':1'
+            assert intent['acceptance_receipt']['allocation_phase']=='allocating'
+            assert await store.latest_job_acceptance(job.id) is None
+            await super().create(value)
+            self.delayed=True
+            raise SandboxCreateOutcomeUnknown('create response unavailable',provider=self.provider)
+        async def reconcile_create(self,*args):
+            if self.delayed:
+                self.lookups+=1
+                if self.lookups<3:return None
+            return await super().reconcile_create(*args)
+    class Runtime:
+        starts=0
+        async def inject(self,*args,**kwargs):pass
+        async def start_execution(self,*args,**kwargs):
+            self.starts+=1;return {'accepted':True,'created':True}
+    async def token(*args):return 'token',SimpleNamespace(nonce='')
+    store,adapter,_,job=await setup(tmp_path,AdapterStatus(False))
+    provider=LateCreate();pool=SandboxPool(provider,{Harness.CODEX:'image'},
+        {Harness.CODEX:0},max_sandboxes=1);runtime=Runtime()
+    backend=SandboxChildBackend(pool=pool,runtime=runtime,store=store,
+        objects=ObjectStore(tmp_path/'objects'),settings=Settings(backend='fake',
+            data_root=tmp_path,runtime_image_codex='image'),token_factory=token)
+    backend._ensure_collector=lambda *args:None;adapter.backend=backend
+    try:
+        attempt=await store.claim_job(job.id,'worker','node',30)
+        await store.mark_job_submission_started(job.id,'worker',attempt.generation)
+        context=JobExecutionContext(job=await store.get_job(job.id),
+            request=await store.get_job_request(job.id),generation=attempt.generation)
+        submission=await asyncio.wait_for(adapter.submit(context),10)
+        assert submission.external_execution_id==job.id+':1'
+        assert provider.calls==1 and provider.lookups>=3 and runtime.starts==1
+        assert await store.latest_job_acceptance(job.id) is None
+        assert await adapter.scheduler.active_reservation(job.id) is not None
+        await adapter.cleanup(JobExecutionContext(job=context.job,request=context.request,
+            generation=context.generation,previous_acceptance_receipt=submission.acceptance_receipt),
+            submission.external_execution_id)
+        assert not provider.items and await adapter.scheduler.active_reservation(job.id) is None
+    finally:await pool.close();await store.close()
+
+
+@pytest.mark.parametrize('takeover',[False,True])
+async def test_unaccepted_allocation_cleanup_keeps_original_reservation_generation(tmp_path,takeover):
+    from dataclasses import asdict
+    from sandbox_harness.sandbox import FakeSandboxBackend
+    store,adapter,_,job=await setup(tmp_path,AdapterStatus(False))
+    try:
+        first=await store.claim_job(job.id,'first','node',30)
+        await store.mark_job_submission_started(job.id,'first',first.generation)
+        context=JobExecutionContext(job=await store.get_job(job.id),
+            request=await store.get_job_request(job.id),generation=first.generation)
+        reservation=await adapter.scheduler.reserve(job.id,first.generation,adapter._resources(context))
+        profile=FakeSandboxBackend.legacy_profile(Harness.CODEX,'image')
+        receipt={'allocation_id':job.id,'allocation_provider':'fake',
+            'allocation_profile':asdict(profile),'allocation_phase':'allocating',
+            'reservation_id':reservation.id,'node_id':reservation.node_id,
+            'node_generation':reservation.node_generation}
+        await store.record_job_submission_allocation(job.id,first.generation,
+            external_execution_id=job.id+':1',receipt=receipt)
+        generation=first.generation
+        if takeover:
+            await store.release_job_lease(job.id,'first',first.generation)
+            generation=(await store.claim_job(job.id,'replacement','node',30)).generation
+        await store.transition_job(job.id,JobState.CANCELLED,expected_generation=generation)
+        cleanups=await store.claim_job_cleanups('cleanup-worker',30)
+        assert len(cleanups)==1
+        cleanup=cleanups[0]
+        assert cleanup['phase']=='external_quiescence'
+        assert cleanup['generation']==first.generation
+        assert cleanup['external_execution_id']==job.id+':1'
+        assert cleanup['acceptance_receipt']==receipt
+        assert await store.latest_job_acceptance(job.id) is None
+    finally:await store.close()
+
+
+@pytest.mark.parametrize(('replace_worker','mode'),[
+    (False,'task'),(True,'task'),(False,'user'),(False,'heartbeat'),(True,'recovery_user')])
+@pytest.mark.parametrize('reviewer',[False,True])
+async def test_cancelled_allocation_retains_durable_cleanup_and_recovery(
+        tmp_path,replace_worker,mode,reviewer):
+    from sandbox_harness.pool import SandboxPool
+    from sandbox_harness.sandbox import FakeSandboxBackend
+    from sandbox_harness.sandbox_contracts import SandboxCreateOutcomeUnknown
+    from sandbox_harness.reviewer import ReviewerJobAdapter
+    from contextlib import asynccontextmanager
+    class PendingCreate(FakeSandboxBackend):
+        created=asyncio.Event();request_return=asyncio.Event();reconciled=asyncio.Event()
+        visible=False;starts=0;pause=True
+        async def create(self,value):
+            self.starts+=1;sandbox=await super().create(value);self.created.set()
+            if self.pause:
+                await self.request_return.wait()
+                raise SandboxCreateOutcomeUnknown('response lost',provider=self.provider)
+            return sandbox
+        async def reconcile_create(self,*args):
+            if self.created.is_set():self.reconciled.set()
+            if not self.visible:return None
+            return await super().reconcile_create(*args)
+        async def get(self,*args):raise AssertionError('cleanup must not wait for Runtime readiness')
+        async def delete(self,value):
+            assert await adapter.scheduler.active_reservation(job.id) is not None
+            await super().delete(value)
+    class Runtime:
+        starts=0
+        async def inject(self,*args,**kwargs):pass
+        async def start_execution(self,*args,**kwargs):self.starts+=1;return {'accepted':True}
+    async def token(*args):return 'token',SimpleNamespace(nonce='')
+    store,adapter,_,job=await setup(tmp_path,AdapterStatus(False));provider=PendingCreate();runtime=Runtime()
+    def make_backend():
+        pool=SandboxPool(provider,{Harness.CODEX:'image'},{Harness.CODEX:0},max_sandboxes=1)
+        backend=SandboxChildBackend(pool=pool,runtime=runtime,store=store,
+            objects=ObjectStore(tmp_path/'objects'),settings=Settings(backend='fake',
+                data_root=tmp_path,runtime_image_codex='image'),token_factory=token)
+        backend.allocation_poll_seconds=.01;backend._ensure_collector=lambda *args:None
+        return pool,backend
+    pool,backend=make_backend();adapter.backend=backend;old_pool=None
+    lifecycle=ReviewerJobAdapter(adapter) if reviewer else adapter
+    try:
+        first=await store.claim_job(job.id,'first','node',30)
+        await store.mark_job_submission_started(job.id,'first',first.generation)
+        context=JobExecutionContext(job=await store.get_job(job.id),
+            request=await store.get_job_request(job.id),generation=first.generation)
+        if mode=='user':
+            async def done(*args):return AdapterStatus(True,JobState.SUCCEEDED)
+            async def collect(*args):return {}
+            backend.status=done;backend.collect=collect
+            worker=JobWorker(store,{'child-harness':lifecycle},node_id='node',worker_id='first')
+            task=asyncio.create_task(worker.process(first,continuous=True))
+            await provider.created.wait();provider.request_return.set();await asyncio.sleep(.03)
+            await store.request_job_cancel(job.id,'owner');provider.visible=True
+            await asyncio.wait_for(task,3)
+            assert runtime.starts==0
+            assert (await store.get_job(job.id)).state==JobState.CANCELLED
+            assert await store.latest_job_acceptance(job.id) is None
+            assert not provider.items and await adapter.scheduler.active_reservation(job.id) is None
+            return
+        if mode=='heartbeat':
+            @asynccontextmanager
+            async def failed_hold(*args):
+                try:yield
+                except asyncio.CancelledError as exc:
+                    raise RuntimeError('resource_reservation_lost') from exc
+            adapter.scheduler.hold=failed_hold
+        task=asyncio.create_task(lifecycle.submit(context));await provider.created.wait();task.cancel()
+        with pytest.raises(PreAcceptFailure if mode=='heartbeat' else asyncio.CancelledError):await task
+        assert runtime.starts==0 and provider.starts==1
+        assert await store.latest_job_acceptance(job.id) is None
+        assert await adapter.scheduler.active_reservation(job.id) is not None
+        provisional=await store.unresolved_job_submission(job.id,first.generation,include_current=True)
+        assert provisional['acceptance_receipt']['allocation_phase']=='allocating'
+        if replace_worker:
+            await store.release_job_lease(job.id,'first',first.generation)
+            second=await store.claim_job(job.id,'replacement','node',30)
+            old_pool=pool;pool,backend=make_backend();adapter.backend=backend
+            context=JobExecutionContext(job=await store.get_job(job.id),request=context.request,
+                generation=second.generation,previous_external_execution_id=job.id+':1',
+                previous_acceptance_receipt=provisional['acceptance_receipt'])
+            if mode=='recovery_user':
+                worker=JobWorker(store,{'child-harness':lifecycle},node_id='node',worker_id='replacement')
+                task=asyncio.create_task(worker.process(second,continuous=True))
+                await asyncio.wait_for(provider.reconciled.wait(),1)
+                await store.request_job_cancel(job.id,'owner')
+                await asyncio.wait_for(task,1)
+                assert (await store.get_job(job.id)).state==JobState.CANCELLED
+                assert runtime.starts==0 and await store.latest_job_acceptance(job.id) is None
+                assert await store.pending_job_cleanup_ids()=={job.id}
+                assert await adapter.scheduler.active_reservation(job.id) is not None
+                provider.visible=True;await worker.run_cleanup_once()
+                assert not provider.items and await adapter.scheduler.active_reservation(job.id) is None
+                return
+            provider.visible=True
+            recovered=await lifecycle.recover_submission(context)
+            assert recovered.safe_to_retry and recovered.submission is None
+            assert not provider.items and runtime.starts==0
+            saved=await store.unresolved_job_submission(job.id,second.generation)
+            assert saved['acceptance_receipt']['sandbox_handle']['allocation_id']==job.id
+            assert saved['acceptance_receipt']['allocation_phase']=='absent'
+            assert await adapter.scheduler.active_reservation(job.id) is None
+            # Crash after confirmed deletion/release, before resolving the old attempt.
+            await store.release_job_lease(job.id,'replacement',second.generation)
+            third=await store.claim_job(job.id,'third','node',30)
+            replay=JobExecutionContext(job=await store.get_job(job.id),request=context.request,
+                generation=third.generation,previous_external_execution_id=job.id+':1',
+                previous_acceptance_receipt=saved['acceptance_receipt'])
+            assert (await lifecycle.recover_submission(replay)).safe_to_retry
+            assert provider.starts==1 and runtime.starts==0
+        else:
+            worker=JobWorker(store,{'child-harness':lifecycle},node_id='node',worker_id='first')
+            if mode=='heartbeat':
+                await store.finish_pre_accept_attempt(job.id,'first',first.generation,retry=False,
+                    error_code='child_allocation_failed',error_detail='allocation lease lost')
+            else:await worker._timeout(lifecycle,context,'',submission_started=True)
+            failed=await store.get_job(job.id)
+            assert failed.state==JobState.FAILED and failed.result['error_code']==(
+                'child_allocation_failed' if mode=='heartbeat' else 'child_allocation_timeout')
+            await worker.run_cleanup_once()
+            assert await store.pending_job_cleanup_ids()=={job.id}
+            assert await adapter.scheduler.active_reservation(job.id) is not None
+            provider.visible=True;await worker.run_cleanup_once()
+            assert await store.pending_job_cleanup_ids()==set() and not provider.items
+            assert await adapter.scheduler.active_reservation(job.id) is None
+    finally:
+        provider.visible=True
+        await pool.close()
+        if old_pool:await old_pool.close()
+        await store.close()
+
+
+async def test_pending_allocation_fences_cleanup_identity_and_provider_switch(tmp_path):
+    from dataclasses import asdict,replace
+    from sandbox_harness.sandbox import FakeSandboxBackend
+    from sandbox_harness.sandbox_contracts import SandboxHandle
+    store,adapter,_,job=await setup(tmp_path,AdapterStatus(False))
+    try:
+        attempt=await store.claim_job(job.id,'worker','node',30)
+        await store.mark_job_submission_started(job.id,'worker',attempt.generation)
+        profile=FakeSandboxBackend.legacy_profile(Harness.CODEX,'image')
+        receipt={'allocation_id':job.id,'allocation_provider':'fake',
+            'allocation_profile':asdict(profile),'allocation_phase':'allocating'}
+        await store.record_job_submission_allocation(job.id,attempt.generation,
+            external_execution_id=job.id+':1',receipt=receipt)
+        assert await store.active_sandbox_allocations()=={('fake',job.id)}
+        assert await store.active_sandbox_providers()=={'fake'}
+        await store.request_job_cancel(job.id,'owner')
+        with pytest.raises(RuntimeError,match='job_cancelled_before_acceptance'):
+            await store.record_job_submission_allocation(job.id,attempt.generation,
+                external_execution_id=job.id+':1',receipt={**receipt,
+                    'allocation_phase':'runtime_submission'})
+        await store.transition_job(job.id,JobState.CANCELLED,expected_generation=attempt.generation)
+        cleanup=(await store.claim_job_cleanups('cleaner',30))[0]
+        assert await store.active_sandbox_allocations()=={('fake',job.id)}
+        assert await store.active_sandbox_providers()=={'fake'}
+        handle=SandboxHandle(provider='fake',sandbox_id='late-sandbox',allocation_id=job.id,
+            profile_key=profile.compatibility_key,revision=profile.revision)
+        resolved={**receipt,'sandbox_id':handle.sandbox_id,'sandbox_handle':handle.to_mapping()}
+        with pytest.raises(RuntimeError,match='claim_lost'):
+            await store.record_job_cleanup_receipt(cleanup['cleanup_id'],'stale-owner',resolved)
+        for wrong in [replace(handle,allocation_id='another'),replace(handle,provider='aliyun'),
+                replace(handle,profile_key='f'*63)]:
+            with pytest.raises(RuntimeError,match='identity_mismatch'):
+                await store.record_job_cleanup_receipt(cleanup['cleanup_id'],'cleaner',
+                    {**resolved,'sandbox_handle':wrong.to_mapping()})
+        await store.record_job_cleanup_receipt(cleanup['cleanup_id'],'cleaner',resolved)
+        assert ('fake','late-sandbox') in await store.active_sandbox_keys()
+        await store.finish_job_cleanup(cleanup['cleanup_id'],'cleaner',succeeded=True)
+        assert await store.active_sandbox_allocations()==set()
+        assert await store.active_sandbox_providers()==set()
+    finally:await store.close()

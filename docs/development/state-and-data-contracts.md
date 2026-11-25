@@ -110,7 +110,9 @@ were modified. Size framing failures use `checkpoint_content_length_invalid`,
 Durable Jobs write a pre-submit `SUBMITTING` intent under the active Job lease
 before any external call. A heartbeat covers submit, status, reconcile,
 cancel, collect and pause. If a process dies after intent but before acceptance,
-a replacement generation records an unknown outcome and never replays submit.
+a replacement generation reconciles the durable evidence; it never blindly
+replays submit. A confirmed unstarted allocation may be retired and retried,
+while an accepted Runtime execution must be reattached.
 Descriptor timeout is frozen into `JobRequest` and measured from the first
 Attempt across restarts. Unsupported cancellation becomes a soft cancel that
 continues observing the accepted execution; unsupported reconciliation is
@@ -132,6 +134,25 @@ separate claim-fenced transactions. A crash after external absence skips
 quiescence on retry; a crash after Scheduler release repeats only the
 idempotent release and then commits completion, without trying to renew an
 already released reservation.
+
+Child/Reviewer allocation receipts freeze provider, allocation ID, compatible
+profile, planned execution ID and original reservation identity. Phases
+`awaiting_capacity`, `allocating`, `preparing`, and `runtime_submission` distinguish
+resource allocation from execution acceptance. Only the final boundary may have
+started user work. `record_job_submission_allocation` rejects a Runtime submission
+marker when durable cancellation already won. Allocation lookup checks cancel
+during both initial start and replacement-worker recovery.
+
+Pool callers opt into `retain_unresolved_allocation` only with a durable cleanup
+owner. `before_create` persists the create phase after capacity acquisition.
+Pending capacity is keyed by `(provider, allocation_id)`; adoption consumes the
+existing slot. Empty inventory is not proof of absence. Cleanup persists a
+discovered handle under its claim fence before deletion and does not require
+Runtime health for unstarted allocations. Confirmed absence is durable before
+Scheduler release, so another Worker can finish the retry decision. Original
+attempt generation survives terminal cleanup. Pending allocation IDs also fence
+orphan deletion and provider switching. Relevant regressions live in
+`test_harness_job.py`, `test_sandbox_namespace.py`, and `test_broker.py`.
 
 ## Reviewer gates
 

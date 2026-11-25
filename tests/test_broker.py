@@ -1223,3 +1223,21 @@ async def test_genuine_upstream_error_is_not_rewritten_as_local_ingress_failure(
         async def latest_model_activity_error(self,turn_id):return 'model_request_too_large'
     assert await reconcile_native_model_error(StoreStub(),'turn','model_service_overloaded','upstream 503')==(
         'model_service_overloaded','upstream 503')
+
+
+async def test_orphan_reaper_keeps_late_visible_durable_allocation_without_handle():
+    sandbox=SimpleNamespace(id='late-sandbox',handle=SandboxHandle(provider='fake',
+        sandbox_id='late-sandbox',allocation_id='pending-allocation',profile_key='a'*63,
+        revision='revision'),metadata={})
+    deleted=[]
+    async def empty():return set()
+    async def retry():pass
+    async def owned():return [sandbox]
+    async def remove(value):deleted.append(value.id)
+    async def allocations():return {('fake','pending-allocation')}
+    pool=SimpleNamespace(backend=SimpleNamespace(delete=remove),retry_deletions=retry,
+        managed_sandbox_keys=empty,list_owned=owned,
+        sandbox_key=lambda value:(value.handle.provider,value.handle.sandbox_id))
+    store=SimpleNamespace(active_sandbox_keys=empty,active_sandbox_allocations=allocations)
+    await Broker.cleanup_startup_orphans(SimpleNamespace(pool=pool,store=store,active_sandboxes={}))
+    assert deleted==[]

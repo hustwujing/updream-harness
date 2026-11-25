@@ -8,7 +8,7 @@ from datetime import datetime,timezone
 import httpx
 
 from .job_adapters import (
-    AdapterStatus, ExternalJobFailure, JobAdapter, JobExecutionContext, PreAcceptFailure,
+    AdapterStatus, ExternalJobFailure, JobAdapter, JobExecutionContext, PreAcceptCancelled,PreAcceptFailure,
     SubmissionOutcomeUnknown,
 )
 from .job_contracts import JobKind, JobState, TERMINAL_JOB_STATES
@@ -280,6 +280,11 @@ class JobWorker:
                                     'retryable':exc.retryable,
                                     'node_health_generation':exc.node_health_generation})
                             return
+                except PreAcceptCancelled:
+                    await self.store.transition_job(job.id,JobState.CANCELLED,
+                        expected_generation=attempt.generation,
+                        result={'cancelled_before_acceptance':True})
+                    return
                 except SubmissionOutcomeUnknown as exc:
                     await self.store.record_job_acceptance(job.id, self.worker_id, attempt.generation,
                         external_execution_id=exc.external_execution_id,
@@ -330,6 +335,10 @@ class JobWorker:
                     return
             status=await self._external_status(adapter,context,external_id,deadline)
             await self._finish_or_defer(adapter,context,external_id,status,continuous,deadline)
+        except PreAcceptCancelled:
+            await self.store.transition_job(job.id,JobState.CANCELLED,
+                expected_generation=attempt.generation,
+                result={'cancelled_before_acceptance':True})
         except JobDeadlineExceeded:
             await self._timeout(adapter,context,external_id,submission_started)
         except ExternalJobFailure as exc:
@@ -425,6 +434,16 @@ class JobWorker:
 
     async def _timeout(self,adapter,context,external_id,submission_started=False):
         if not external_id:
+            provisional=await self.store.unresolved_job_submission(context.job.id,
+                context.generation,include_current=True)
+            phase=(provisional or {}).get('acceptance_receipt',{}).get('allocation_phase')
+            if phase in {'awaiting_capacity','allocating','preparing','absent'}:
+                await self.store.transition_job(context.job.id,JobState.FAILED,
+                    expected_generation=context.generation,result=normalize_job_error({
+                        'error_code':'child_allocation_timeout' if phase!='preparing'
+                            else 'child_preparation_failed','retryable':False,
+                        'retry_class':'none'},side_effect_state='none'))
+                return
             code=("job_timeout_submission_outcome_unknown" if submission_started
                 else "job_timeout_before_submission")
             await self.store.transition_job(context.job.id,
@@ -465,6 +484,13 @@ class JobWorker:
                     previous_external_execution_id=row["external_execution_id"],
                     previous_acceptance_receipt=row["acceptance_receipt"])
                 if row["phase"]=="external_quiescence":
+                    resolver=getattr(adapter,'resolve_cleanup',None)
+                    if resolver:
+                        receipt=await resolver(context,row['external_execution_id'])
+                        if receipt!=context.previous_acceptance_receipt:
+                            await self.store.record_job_cleanup_receipt(row['cleanup_id'],
+                                self.worker_id,receipt)
+                            context=replace(context,previous_acceptance_receipt=receipt)
                     if row["external_execution_id"]:
                         cleanup_external=getattr(adapter,"cleanup_external",None)
                         if cleanup_external:await cleanup_external(context,row["external_execution_id"])

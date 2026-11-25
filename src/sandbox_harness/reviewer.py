@@ -153,6 +153,12 @@ class ReviewerCoordinator:
 class ReviewerJobAdapter:
     def __init__(self,delegate,store=None):self.delegate=delegate;self.store=store
     async def submit(self,context:JobExecutionContext)->AdapterSubmission:return await self.delegate.submit(context)
+    async def recover_submission(self,context:JobExecutionContext):
+        return await self.delegate.recover_submission(context)
+    async def resolve_cleanup(self,context:JobExecutionContext,external_execution_id:str):
+        resolver=getattr(self.delegate,'resolve_cleanup',None)
+        return (await resolver(context,external_execution_id) if resolver
+            else context.previous_acceptance_receipt)
     async def status(self,context:JobExecutionContext,external_execution_id:str)->AdapterStatus:
         return await self.delegate.status(context,external_execution_id)
     async def cancel(self,context:JobExecutionContext,external_execution_id:str)->AdapterStatus:

@@ -83,6 +83,12 @@ JOB_ERROR_CONTRACTS={
         '请检查音频清晰度和使用授权后更换素材。','execution',side_effect='accepted'),
 
     # Controlled Operations and sandbox execution.
+    'child_allocation_failed':_contract('子任务执行环境分配失败，尚未提交执行',
+        '检查资源与配置；平台会保留未确认的分配记录并继续清理。',
+        'submission'),
+    'child_allocation_timeout':_contract('子任务执行环境分配超时，尚未提交执行',
+        '任务未开始执行；平台会继续确认和清理未确定的沙箱资源。',
+        'submission'),
     'child_preparation_failed':_contract('子任务执行环境准备失败，尚未开始执行',
         '平台仅可按已冻结的提交前重试策略重试；持续失败时需检查执行环境。',
         'submission',retryable=True,retry_class='bounded_pre_accept'),

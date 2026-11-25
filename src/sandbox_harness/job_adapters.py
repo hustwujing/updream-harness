@@ -45,7 +45,8 @@ class AdapterStatus:
 class PreAcceptFailure(RuntimeError):
     def __init__(self,message:str,*,infrastructure:bool=False,retry_after_seconds:float=0,
                  error_code:str='pre_accept_failure',failed_phase:str='',
-                 retry_class:str='none',retryable:bool|None=None,node_health_generation:int=0):
+                 retry_class:str='none',retryable:bool|None=None,node_health_generation:int=0,
+                 retain_capacity:bool=False):
         super().__init__(message);self.infrastructure=infrastructure
         self.retry_after_seconds=max(0,float(retry_after_seconds))
         self.error_code=error_code
@@ -53,6 +54,11 @@ class PreAcceptFailure(RuntimeError):
         self.retry_class=('capacity_wait' if infrastructure and retry_class=='none' else retry_class)
         self.retryable=True if retryable is None else retryable
         self.node_health_generation=max(0,int(node_health_generation))
+        self.retain_capacity=retain_capacity
+
+
+class PreAcceptCancelled(RuntimeError):
+    """Durable user cancellation observed before Runtime submission."""
 
 
 class SubmissionOutcomeUnknown(RuntimeError):

@@ -158,8 +158,11 @@ class Broker:
         await self.pool.retry_deletions()
         active_keys=({self.pool.sandbox_key(sandbox) for sandbox in self.active_sandboxes.values()}
             | await self.pool.managed_sandbox_keys() | await self.store.active_sandbox_keys())
+        allocations=getattr(self.store,'active_sandbox_allocations',None)
+        active_allocations=await allocations() if allocations else set()
         for sandbox in await self.pool.list_owned():
-            if self.pool.sandbox_key(sandbox) not in active_keys:
+            allocation=(sandbox.handle.provider,sandbox.handle.allocation_id)
+            if self.pool.sandbox_key(sandbox) not in active_keys and allocation not in active_allocations:
                 event("sandbox.orphan.delete",level=logging.WARNING,sandbox_id=sandbox.id)
                 await self.pool.backend.delete(sandbox)
 

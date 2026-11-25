@@ -2591,10 +2591,13 @@ class Store:
                 raise RuntimeError("job_submission_intent_conflict")
             attempt.outcome = "SUBMITTING"
 
-    async def unresolved_job_submission(self, job_id: str, generation: int) -> dict | None:
+    async def unresolved_job_submission(self, job_id: str, generation: int,*,
+                                       include_current:bool=False) -> dict | None:
         async with self.connections() as db:
             row=(await db.execute(select(JobAttemptRow).where(
-                JobAttemptRow.job_id == job_id, JobAttemptRow.generation < generation,
+                JobAttemptRow.job_id == job_id,
+                (JobAttemptRow.generation <= generation if include_current
+                    else JobAttemptRow.generation < generation),
                 JobAttemptRow.outcome == "SUBMITTING", JobAttemptRow.accepted_at.is_(None),
             ).order_by(JobAttemptRow.generation.desc()).limit(1))).scalar_one_or_none()
         if not row:return None
@@ -2627,8 +2630,56 @@ class Store:
                     or lease.generation!=generation or attempt.accepted_at is not None
                     or attempt.outcome!="SUBMITTING"):
                 raise RuntimeError("stale_job_generation")
+            if receipt.get('allocation_phase')=='runtime_submission' and job.cancel_requested:
+                raise RuntimeError('job_cancelled_before_acceptance')
             attempt.external_execution_id=external_execution_id
             attempt.acceptance_receipt_json=canonical_json(receipt)
+
+    @staticmethod
+    def _resolved_allocation_receipt(previous:dict,handle:SandboxHandle)->dict:
+        profile=previous.get('allocation_profile') or {}
+        if (previous.get('allocation_id')!=handle.allocation_id
+                or previous.get('allocation_provider')!=handle.provider
+                or profile.get('compatibility_key')!=handle.profile_key
+                or profile.get('revision')!=handle.revision
+                or previous.get('sandbox_id',handle.sandbox_id)!=handle.sandbox_id
+                or previous.get('sandbox_handle',handle.to_mapping())!=handle.to_mapping()):
+            raise RuntimeError('job_allocation_identity_mismatch')
+        return {**previous,'sandbox_id':handle.sandbox_id,'sandbox_handle':handle.to_mapping()}
+
+    async def record_recovered_job_allocation(self,job_id:str,generation:int,
+                                               original_generation:int,handle:SandboxHandle)->None:
+        async with self.connections.begin() as db:
+            job=await db.get(JobRow,job_id,with_for_update=True)
+            lease=await db.get(JobLeaseRow,job_id,with_for_update=True)
+            previous=(await db.execute(select(JobAttemptRow).where(
+                JobAttemptRow.job_id==job_id,JobAttemptRow.generation==original_generation)
+                .with_for_update())).scalar_one_or_none()
+            if (not job or not lease or job.generation!=generation or lease.generation!=generation
+                    or original_generation>=generation or not previous
+                    or previous.outcome!='SUBMITTING' or previous.accepted_at is not None):
+                raise RuntimeError('stale_job_generation')
+            receipt=json.loads(previous.acceptance_receipt_json)
+            if receipt.get('allocation_phase')!='allocating':
+                raise RuntimeError('job_allocation_phase_conflict')
+            previous.acceptance_receipt_json=canonical_json(
+                self._resolved_allocation_receipt(receipt,handle))
+
+    async def mark_recovered_allocation_absent(self,job_id:str,generation:int,
+                                               original_generation:int)->None:
+        async with self.connections.begin() as db:
+            job=await db.get(JobRow,job_id,with_for_update=True)
+            lease=await db.get(JobLeaseRow,job_id,with_for_update=True)
+            previous=(await db.execute(select(JobAttemptRow).where(JobAttemptRow.job_id==job_id,
+                JobAttemptRow.generation==original_generation).with_for_update())).scalar_one_or_none()
+            if (not job or not lease or job.generation!=generation or lease.generation!=generation
+                    or original_generation>=generation or not previous
+                    or previous.outcome!='SUBMITTING' or previous.accepted_at is not None):
+                raise RuntimeError('stale_job_generation')
+            receipt=json.loads(previous.acceptance_receipt_json)
+            if receipt.get('allocation_phase')!='allocating' or not receipt.get('sandbox_handle'):
+                raise RuntimeError('job_allocation_phase_conflict')
+            previous.acceptance_receipt_json=canonical_json({**receipt,'allocation_phase':'absent'})
 
     async def job_deadline(self, job_id: str, timeout_seconds: int) -> datetime | None:
         async with self.connections() as db:
@@ -2685,6 +2736,21 @@ class Store:
                     "acceptance_receipt":json.loads(row.acceptance_receipt_json),
                     "attempt_count":row.attempt_count,"phase":row.phase})
             return result
+
+    async def record_job_cleanup_receipt(self,cleanup_id:str,owner:str,receipt:dict)->None:
+        """Fence the discovered handle before an unstarted allocation is deleted."""
+        async with self.connections.begin() as db:
+            row=await db.get(JobCleanupRow,cleanup_id,with_for_update=True)
+            if not row or row.claim_owner!=owner or row.state!='running':
+                raise RuntimeError('job_cleanup_claim_lost')
+            previous=json.loads(row.acceptance_receipt_json)
+            if (any(receipt.get(key)!=value for key,value in previous.items())
+                    or set(receipt)-set(previous)-{'sandbox_id','sandbox_handle'}):
+                raise RuntimeError('job_cleanup_receipt_mismatch')
+            handle=SandboxHandle.from_mapping(receipt.get('sandbox_handle') or {})
+            if receipt!=self._resolved_allocation_receipt(previous,handle):
+                raise RuntimeError('job_cleanup_receipt_mismatch')
+            row.acceptance_receipt_json=canonical_json(receipt);row.updated_at=now()
 
     async def advance_job_cleanup(self, cleanup_id: str, owner: str, *,
                                   expected_phase: str, next_phase: str) -> None:
@@ -2886,10 +2952,19 @@ class Store:
                                     JobAttemptRow.external_execution_id!="").order_by(
                                     JobAttemptRow.generation.desc()).limit(1).with_for_update()
                                 )).scalar_one_or_none())
-                            if not accepted_attempt and attempt.external_execution_id:
-                                try:provisional=json.loads(attempt.acceptance_receipt_json)
-                                except (TypeError,ValueError):provisional={}
-                                if provisional.get("sandbox_id"):accepted_attempt=attempt
+                            if not accepted_attempt:
+                                provisional_attempts=list((await db.execute(select(JobAttemptRow).where(
+                                    JobAttemptRow.job_id==job.id,JobAttemptRow.external_execution_id!='',
+                                    or_(JobAttemptRow.generation==job.generation,
+                                        JobAttemptRow.outcome=='SUBMITTING'))
+                                    .order_by(JobAttemptRow.generation.desc()).with_for_update()
+                                    )).scalars())
+                                for candidate in provisional_attempts:
+                                    try:provisional=json.loads(candidate.acceptance_receipt_json)
+                                    except (TypeError,ValueError):continue
+                                    if (provisional.get('sandbox_id') or
+                                            provisional.get('allocation_phase')=='allocating'):
+                                        accepted_attempt=candidate;break
                             attempt.outcome = state.value
                             if accepted_attempt:
                                 cleanup=(await db.execute(select(JobCleanupRow).where(
@@ -4164,8 +4239,32 @@ class Store:
             result.append(handle)
         return result
 
+    async def active_sandbox_allocations(self)->set[tuple[str,str]]:
+        async with self.connections() as db:
+            receipts=list((await db.execute(select(JobAttemptRow.acceptance_receipt_json).join(
+                JobRow,JobRow.id==JobAttemptRow.job_id).where(
+                JobRow.state.not_in([state.value for state in TERMINAL_JOB_STATES]),
+                JobAttemptRow.acceptance_receipt_json!='{}'))).scalars())
+            receipts.extend((await db.execute(select(JobCleanupRow.acceptance_receipt_json).where(
+                JobCleanupRow.state!='completed'))).scalars())
+        result=set()
+        for encoded in receipts:
+            try:
+                value=json.loads(encoded)
+                if value.get('allocation_phase') not in {
+                        'awaiting_capacity','allocating','preparing','runtime_submission'}:continue
+                provider=value['allocation_provider'];allocation=value['allocation_id']
+                profile=value['allocation_profile']
+                if (not isinstance(provider,str) or not provider or not isinstance(allocation,str)
+                        or not allocation or profile.get('provider')!=provider):raise ValueError()
+                result.add((provider,allocation))
+            except (TypeError,ValueError,KeyError,AttributeError) as exc:
+                raise RuntimeError('active_sandbox_allocation_missing_or_invalid') from exc
+        return result
+
     async def active_sandbox_providers(self)->set[str]:
-        return {handle.provider for handle in await self.active_sandbox_handles()}
+        return ({handle.provider for handle in await self.active_sandbox_handles()}
+            | {provider for provider,_ in await self.active_sandbox_allocations()})
 
     async def active_sandbox_keys(self)->set[tuple[str,str]]:
         return {(handle.provider,handle.sandbox_id)

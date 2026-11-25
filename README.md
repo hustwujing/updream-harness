@@ -68,6 +68,11 @@ Capacity waits restore submission intent within the same fenced attempt before
 allocation. Temporary status HTTP failures keep polling the accepted handle.
 Child preparation failures are distinguished from uncertain execution-start
 responses, which retain their sandbox and reservation for reconciliation.
+Child and Reviewer sandbox allocation intent is also durable before create.
+An uncertain create reconciles the original allocation without accepting
+Runtime work or releasing capacity. Replacement workers persist discovered
+handles and confirmed absence before retirement/retry; cancellation remains
+effective while allocation is pending.
 See [Ali execution reliability verification](docs/test-evidence/ali-execution-reliability.md)
 for the regression boundaries and release evidence locations.
 
