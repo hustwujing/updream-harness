@@ -288,6 +288,16 @@ succeed. Harness execution submission is outside this helper and is never
 replayed by bootstrap retry. Runtime client tests cover both reads, permanent
 rejection and retry exhaustion.
 
+`RuntimeClient.put_project_file` uses the same bounded retry only for immutable
+byte uploads. Every attempt resends the complete original body; cancellation
+propagates and deterministic rejection is not retried. One-shot streaming
+uploads are not replayed by this helper. The Runtime project-file endpoint uses
+a request-unique sibling temporary file, verifies the length, then atomically
+replaces the destination. Cleanup owns only that request's temporary file,
+including when an older disconnected upload overlaps a retry. Keep lost-reply,
+bounded exhaustion, cancellation and overlapping-upload regressions in
+`test_runtime_client.py` and `test_runtime_boundaries.py`.
+
 Native Interaction delivery is tri-state. A successful stdin drain is
 `delivered`; a failure before write is retryable; a drain failure after write is
 `unknown` and must never be replayed as accepted or blindly written again. The

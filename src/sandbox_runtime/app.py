@@ -1321,7 +1321,9 @@ def create_app() -> FastAPI:
             try:declared=int(request.headers["content-length"])
             except ValueError:raise HTTPException(400,"Invalid Content-Length")
             if declared!=size:raise HTTPException(400,"Project file length mismatch")
-        temporary = target.with_name("." + target.name + ".tmp")
+        # A lost reply can leave the first request running when an identical
+        # upload retries. Each request owns its temporary file and cleanup.
+        temporary = target.parent / (".project-upload-" + uuid.uuid4().hex + ".tmp")
         written=0;digest=hashlib.sha256()
         try:
             with temporary.open("wb") as stream:

@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import httpx
@@ -36,6 +37,76 @@ async def test_runtime_project_file_upload_streams_with_explicit_length():
     assert requests[0].headers["content-length"]=="12"
     assert requests[0].url.params["size"]=="12"
     assert requests[0].content==b"first-second"
+
+
+async def test_project_file_upload_recovers_lost_reply_with_identical_bytes(monkeypatch):
+    requests=[]
+    async def respond(request):
+        body=await request.aread()
+        requests.append((request.method,request.url.path,dict(request.url.params),body))
+        if len(requests)==1:raise httpx.ReadError('reply lost after upload',request=request)
+        return httpx.Response(200,json={'ok':True})
+    original=httpx.AsyncClient
+    transport=httpx.MockTransport(respond)
+    # Exercise the current byte-upload path even before it honors the test transport.
+    def client(**kwargs):
+        kwargs['transport']=transport
+        return original(**kwargs)
+    monkeypatch.setattr('sandbox_harness.runtime.httpx.AsyncClient',client)
+    runtime=RuntimeClient(transport=transport)
+    sandbox=Sandbox(id='sandbox',harness=Harness.CODEX,image='image',runtime_url='http://runtime',metadata={})
+    payload=b'immutable-project-file'*1024
+    await runtime.put_project_file(sandbox,'artifacts/video.bin',payload,'application/octet-stream')
+    assert len(requests)==2
+    assert requests[0]==requests[1]==('PUT','/v1/project-files/file',
+        {'path':'artifacts/video.bin','size':str(len(payload))},payload)
+
+
+async def test_project_file_upload_does_not_retry_deterministic_rejection(monkeypatch):
+    requests=[]
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(422,json={'detail':'invalid_project_path'})
+    original=httpx.AsyncClient
+    transport=httpx.MockTransport(respond)
+    def client(**kwargs):
+        kwargs['transport']=transport
+        return original(**kwargs)
+    monkeypatch.setattr('sandbox_harness.runtime.httpx.AsyncClient',client)
+    runtime=RuntimeClient(transport=transport)
+    sandbox=Sandbox(id='sandbox',harness=Harness.CODEX,image='image',runtime_url='http://runtime',metadata={})
+    with pytest.raises(httpx.HTTPStatusError):
+        await runtime.put_project_file(sandbox,'artifacts/rejected.bin',b'content','application/octet-stream')
+    assert len(requests)==1
+
+
+async def test_project_file_upload_retry_exhaustion_keeps_identical_body():
+    requests=[]
+    def respond(request):
+        requests.append(request)
+        raise httpx.ReadError('controlled lost reply',request=request)
+    runtime=RuntimeClient(transport=httpx.MockTransport(respond))
+    sandbox=Sandbox(id='sandbox',harness=Harness.CODEX,image='image',runtime_url='http://runtime',metadata={})
+    with pytest.raises(httpx.ReadError):
+        await runtime.put_project_file(sandbox,'artifacts/file.bin',b'content','application/octet-stream')
+    assert len(requests)==8
+    assert all(r.method=='PUT' and r.url.path=='/v1/project-files/file' and
+        r.content==b'content' for r in requests)
+
+
+async def test_project_file_upload_cancellation_stops_retries():
+    entered=asyncio.Event();requests=[]
+    def respond(request):
+        requests.append(request);entered.set()
+        raise httpx.ReadError('controlled lost reply',request=request)
+    runtime=RuntimeClient(transport=httpx.MockTransport(respond))
+    sandbox=Sandbox(id='sandbox',harness=Harness.CODEX,image='image',runtime_url='http://runtime',metadata={})
+    task=asyncio.create_task(runtime.put_project_file(
+        sandbox,'artifacts/file.bin',b'content','application/octet-stream'))
+    await asyncio.wait_for(entered.wait(),2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):await task
+    assert len(requests)==1
 
 
 async def test_runtime_auth_failure_forces_endpoint_refresh_on_next_operation():

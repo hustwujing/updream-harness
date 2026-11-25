@@ -81,3 +81,24 @@ With AR01–AR04 the eventual combined matrix contains 184 cases. Its results mu
 be labeled `composite_verified`, not a clean rerun of every earlier case.
 Deployment, affected product results and final cleanup are still pending here;
 the final report will retain each case's actual tested revision.
+
+### Project-file transfer defect found by C29
+
+The deployed `9c2c93d` campaign completed C05, C16, C22, R01 and R02. C29's
+Child succeeded and all five media artifacts validated, but the Primary
+continuation failed with `ReadError` while materializing a project file. That
+byte-upload path lacked the existing bounded transport retry. Its Runtime
+endpoint also shared a fixed temporary filename between requests, making an
+overlapping retry unsafe. Both failure receipts remain retained.
+
+The generic correction retries the immutable PUT body and gives each Runtime
+upload its own temporary file. A lost-reply regression failed with `ReadError`
+before the client fix; the overlapping-disconnect regression failed with
+`FileNotFoundError` before the Runtime fix. The initial focused suite passed 137
+tests; independent review passed eight checks including exhaustion and
+cancellation. After adding the retry-budget and cancellation regressions, the
+complete Python suite passed 1310 tests with 14 skipped. Deployed C29/C22 reruns
+remain pending.
+The remaining 68 product cases will continue afterward. Other successful cases
+retain their evidence: healthy byte transfers and execution submission behavior
+are unchanged, with transport failure and overlap covered at both API boundaries.

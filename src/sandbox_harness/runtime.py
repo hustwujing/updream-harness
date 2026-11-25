@@ -100,7 +100,7 @@ class RuntimeClient:
 
     async def _request_with_startup_retry(self,client:httpx.AsyncClient,method:str,
                                           path:str,**kwargs)->httpx.Response:
-        """Retry idempotent bootstrap reads/uploads, never execution submission."""
+        """Retry idempotent Runtime reads/uploads, never execution submission."""
         retryable={429,502,503,504}
         for attempt in range(8):
             try:
@@ -249,8 +249,8 @@ class RuntimeClient:
     async def put_project_file(self, sandbox: Sandbox, path: str, data: bytes, mime: str) -> None:
         await self._resolve_endpoint(sandbox)
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()},
-            timeout=300, trust_env=False) as client:
-            response = await client.put("/v1/project-files/file", params={"path": path,"size":len(data)},
+            timeout=300, trust_env=False,transport=self.transport) as client:
+            response = await self._request_with_startup_retry(client,"PUT","/v1/project-files/file", params={"path": path,"size":len(data)},
                 content=data,headers={"Content-Type": mime})
             self._raise_for_status(sandbox,response)
 

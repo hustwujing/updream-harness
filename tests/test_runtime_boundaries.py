@@ -31,6 +31,41 @@ async def completed(app):
     return app.state.execution.result
 
 
+async def test_overlapping_project_upload_retry_keeps_its_own_temporary_file(tmp_path,monkeypatch):
+    from starlette.requests import ClientDisconnect
+    app=runtime(tmp_path,monkeypatch,'')
+    upload=endpoint(app,'/v1/project-files/file')
+    payload=b'immutable-project-content'
+    first_entered=asyncio.Event();second_entered=asyncio.Event()
+    disconnect=asyncio.Event();finish=asyncio.Event()
+    class Request:
+        headers={'content-length':str(len(payload))}
+        def __init__(self,first):self.first=first
+        async def stream(self):
+            if self.first:
+                yield payload[:5]
+                first_entered.set();await disconnect.wait()
+                raise ClientDisconnect()
+            yield payload
+            second_entered.set();await finish.wait()
+    first=asyncio.create_task(upload(Request(True),'artifacts/result.bin',len(payload)))
+    second=None
+    try:
+        await asyncio.wait_for(first_entered.wait(),2)
+        second=asyncio.create_task(upload(Request(False),'artifacts/result.bin',len(payload)))
+        await asyncio.wait_for(second_entered.wait(),2)
+        disconnect.set()
+        with pytest.raises(ClientDisconnect):await first
+        finish.set();result=await second
+        assert result['bytes']==len(payload)
+        target=tmp_path/'workspace/project/artifacts/result.bin'
+        assert target.read_bytes()==payload
+        assert sorted(p.name for p in target.parent.iterdir())==['result.bin']
+    finally:
+        disconnect.set();finish.set()
+        await asyncio.gather(*(v for v in (first,second) if v),return_exceptions=True)
+
+
 async def test_background_inventory_exposes_only_transitively_unresolved_failures(tmp_path,monkeypatch):
     app=runtime(tmp_path,monkeypatch,'')
     failed=runtime_app.BackgroundJob(id='a'*32,name='render',argv=['false'],
