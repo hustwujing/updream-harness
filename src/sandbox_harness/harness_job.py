@@ -152,9 +152,18 @@ class HarnessJobAdapter(BaseJobAdapter):
             if str(exc)=='no_compatible_node_capacity':
                 raise PreAcceptFailure(str(exc),infrastructure=True,retry_after_seconds=1) from exc
             raise
+        execution_id='';receipt={}
+        def complete_receipt(value):
+            return {'executor':'harness','reservation_id':reservation.id,
+                'node_id':reservation.node_id,'node_generation':reservation.node_generation,
+                'runtime_profile_id':reservation.runtime_profile_id,
+                'image_digest':reservation.image_digest,'gpu_ids':list(reservation.gpu_ids),**value}
         try:
             async with self.scheduler.hold(reservation.id,reservation.node_id,reservation.node_generation):
-                execution_id,receipt=await self.backend.start(context,reservation)
+                try:execution_id,receipt=await self.backend.start(context,reservation)
+                except (SubmissionOutcomeUnknown,SubmissionInterrupted) as exc:
+                    execution_id=exc.external_execution_id;receipt=exc.acceptance_receipt
+                    raise
                 await self.scheduler.mark_running(reservation.id,reservation.node_id,reservation.node_generation)
         except (SandboxCapacityUnavailable,SandboxRateLimited) as exc:
             await self.scheduler.release(reservation.id,reservation.node_id,reservation.node_generation)
@@ -162,25 +171,20 @@ class HarnessJobAdapter(BaseJobAdapter):
                 error_code=exc.code,failed_phase='submission',retry_class='capacity_wait',
                 retryable=True) from exc
         except SubmissionOutcomeUnknown as exc:
-            await self.scheduler.mark_running(reservation.id,reservation.node_id,
-                reservation.node_generation)
             raise SubmissionOutcomeUnknown('Child execution acceptance requires reconciliation',
-                external_execution_id=exc.external_execution_id,acceptance_receipt={
-                    'executor':'harness','reservation_id':reservation.id,
-                    'node_id':reservation.node_id,'node_generation':reservation.node_generation,
-                    'runtime_profile_id':reservation.runtime_profile_id,
-                    'image_digest':reservation.image_digest,'gpu_ids':list(reservation.gpu_ids),
-                    **exc.acceptance_receipt}) from exc
-        except SubmissionInterrupted:
-            # The fenced provisional receipt owns cleanup or takeover after cancellation.
-            raise
-        except BaseException:
+                external_execution_id=exc.external_execution_id,
+                acceptance_receipt=complete_receipt(exc.acceptance_receipt)) from exc
+        except BaseException as exc:
+            if execution_id:
+                # Keep evidence across cancellation, hold exit and mark-running failures.
+                if isinstance(exc,asyncio.CancelledError):raise
+                raise SubmissionOutcomeUnknown('Child execution acceptance requires reconciliation',
+                    external_execution_id=execution_id,
+                    acceptance_receipt=complete_receipt(receipt)) from exc
             await self.scheduler.release(reservation.id,reservation.node_id,reservation.node_generation)
             raise
-        return AdapterSubmission(external_execution_id=execution_id,acceptance_receipt={
-            'executor':'harness','reservation_id':reservation.id,'node_id':reservation.node_id,
-            'node_generation':reservation.node_generation,'runtime_profile_id':reservation.runtime_profile_id,
-            'image_digest':reservation.image_digest,'gpu_ids':list(reservation.gpu_ids),**receipt})
+        return AdapterSubmission(external_execution_id=execution_id,
+            acceptance_receipt=complete_receipt(receipt))
 
     async def recover_submission(self,context:JobExecutionContext)->SubmissionRecovery:
         reservation=await self.scheduler.active_reservation(context.job.id)
@@ -395,7 +399,9 @@ class SandboxChildBackend:
         except asyncio.CancelledError as exc:
             if execution_requested:
                 self.sessions[context.job.id]=sandbox
-                raise SubmissionInterrupted() from exc
+                raise SubmissionInterrupted(execution_id,{
+                    'sandbox_id':sandbox.id,'sandbox_handle':sandbox.handle.to_mapping(),
+                    'capability_nonce':claims.nonce}) from exc
             await self.pool.release(sandbox,keep_attached=False)
             raise
         except BaseException:

@@ -20,11 +20,21 @@ on mutable provider metadata.
    `child_preparation_failed`, without consuming acceptance. Once execution
    submission is attempted, response loss retains the sandbox, reservation and
    execution ID. `SubmissionOutcomeUnknown` carries the complete receipt for
-   status/recovery rather than deleting possibly running work.
+   status/recovery rather than deleting possibly running work. Cancellation
+   retains that identity across reservation heartbeat loss and the subsequent
+   mark-running step. A fenced terminal cleanup can finish revocation/deletion
+   against an exactly matching released reservation without reactivating it.
 4. **Campaign integrity:** Primary success does not override a program failure
    in an internal Durable Job. Recovered model/Provider failures remain in the
    evidence. The SQL continuation fixture now provides its exact query and
-   inline data instead of asking a Child to infer absent inputs.
+   inline data instead of asking a Child to infer absent inputs. An independent
+   Primary program error or invalid final artifact takes precedence over an
+   unrelated model/Provider error.
+5. **Authorized continuations:** Runtime instructions let the Harness choose
+   routine reversible details for bounded edits and incremental deliverables.
+   Skill planning defaults do not introduce another approval for authorized
+   work. Missing material facts and required Provider/deployment cards retain
+   their existing interaction boundaries.
 
 ## Incident audit
 
@@ -41,7 +51,9 @@ on mutable provider metadata.
   scoped telemetry shows `HTTPStatusError` from execution-status polling; it
   does not establish the exact HTTP response code. Regression tests cover
   transient transport/HTTP failures, permanent HTTP rejection and reuse of the
-  accepted handle without a second submission.
+  accepted handle without a second submission. A later real regression had no
+  internal Job failure but asked for redundant design approval on the requested
+  incremental contact sheet; this motivated the generic authorization instruction.
 - **K12:** the first historical failure was a model 429. The next run reached a
   blocked Child because the query-review objective supplied no query. The
   fixture now includes PostgreSQL VALUES data, the exact aggregation, explicit

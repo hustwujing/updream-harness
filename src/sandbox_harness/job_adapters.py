@@ -66,6 +66,11 @@ class SubmissionOutcomeUnknown(RuntimeError):
 class SubmissionInterrupted(asyncio.CancelledError):
     """Cancellation after submission: durable allocation still owns capacity."""
 
+    def __init__(self,external_execution_id:str,acceptance_receipt:dict[str,Any]):
+        super().__init__()
+        self.external_execution_id=external_execution_id
+        self.acceptance_receipt=acceptance_receipt
+
 
 class ExternalJobFailure(RuntimeError):
     def __init__(self,message:str,*,error_code:str,failed_phase:str,

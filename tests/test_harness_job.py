@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from sandbox_harness.harness_job import HarnessJobAdapter,JobGrantFactory,SandboxChildBackend
 from sandbox_harness.job_adapters import (AdapterStatus,JobExecutionContext,PreAcceptFailure,
-    SubmissionOutcomeUnknown)
+    SubmissionOutcomeUnknown,SubmissionInterrupted)
 from sandbox_harness.job_contracts import (JobGroupCreate,JobExpectedOutput,JobKind,JobRequest,
     JobState,OutputDisposition)
 from sandbox_harness.job_worker import JobWorker
@@ -186,6 +186,42 @@ async def test_terminal_preparation_failure_finishes_provisional_cleanup(tmp_pat
         assert backend.cleaned==['provisional']
         assert await store.pending_job_cleanup_ids()==set()
         assert await adapter.scheduler.active_reservation(job.id) is None
+    finally:await store.close()
+
+
+@pytest.mark.parametrize('boundary',['mark_running_cancel','mark_running_failure','resource_heartbeat'])
+async def test_submission_reservation_survives_failure_after_external_start(tmp_path,boundary):
+    store,adapter,backend,job=await setup(tmp_path,AdapterStatus(False))
+    async def mark_failed(*args):
+        if boundary=='mark_running_cancel':raise asyncio.CancelledError()
+        raise RuntimeError('resource_reservation_lost')
+    if boundary=='resource_heartbeat':
+        adapter.scheduler.reservation_seconds=.03
+        renew=adapter.scheduler.renew;renewals=0
+        async def lose_resource(*args):
+            nonlocal renewals
+            renewals+=1
+            if renewals>1:raise RuntimeError('resource_reservation_lost')
+            return await renew(*args)
+        adapter.scheduler.renew=lose_resource
+        async def interrupted(context,reservation):
+            backend.started.append((context,reservation))
+            try:await asyncio.sleep(10)
+            except asyncio.CancelledError as exc:
+                raise SubmissionInterrupted('runtime-execution',{'sandbox_id':'sandbox-1'}) from exc
+        backend.start=interrupted
+    else:adapter.scheduler.mark_running=mark_failed
+    try:
+        context=JobExecutionContext(job=job,request=await store.get_job_request(job.id),generation=1)
+        if boundary=='mark_running_cancel':
+            with pytest.raises(asyncio.CancelledError):await adapter.submit(context)
+        else:
+            with pytest.raises(SubmissionOutcomeUnknown) as raised:await adapter.submit(context)
+            assert raised.value.external_execution_id=='runtime-execution'
+            assert raised.value.acceptance_receipt['reservation_id']
+            assert raised.value.acceptance_receipt['sandbox_id']=='sandbox-1'
+        assert len(backend.started)==1
+        assert await adapter.scheduler.active_reservation(job.id) is not None
     finally:await store.close()
 
 
