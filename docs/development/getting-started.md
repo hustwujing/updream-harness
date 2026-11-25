@@ -13,22 +13,37 @@ Read this before the first code change or when setting up a new checkout.
   runtime state, caches, logs, databases and test temporaries belong under
   the selected checkout's `.data` directory. The isolated Ali checkout is
   `/data2/wujing03/sandbox-harness-platform-parallel-ali`; its state must never
-  use the original checkout's `.data` tree.
-- Do not install a second PostgreSQL, Redis, Docker, registry, object store or
-  OpenSandbox instance for this product.
+  use the original checkout's `.data` tree. Other explicit writable paths for
+  this work must also stay under `/data2/wujing03`.
+- Reuse shared binaries and existing infrastructure services. The Ali deployment
+  has its own PostgreSQL cluster on port 28433; never share its database or
+  application runtime directory with the sibling deployment on port 28432.
 
 ## Initial setup
 
 ```bash
-UV_CACHE_DIR=.data/uv-cache uv sync --extra test
-npm --prefix web ci --cache .data/npm-cache
-cp .env.example .env
+mkdir -p .data/tmp .data/cache .data/uv-cache .data/pip-cache .data/npm-cache
+export TMPDIR="$PWD/.data/tmp" XDG_CACHE_HOME="$PWD/.data/cache"
+export UV_CACHE_DIR="$PWD/.data/uv-cache" PIP_CACHE_DIR="$PWD/.data/pip-cache"
+export npm_config_cache="$PWD/.data/npm-cache" PYTHONDONTWRITEBYTECODE=1
+export PLAYWRIGHT_BROWSERS_PATH="$PWD/.data/playwright-browsers"
+uv sync --extra test
+npm --prefix web ci
 ```
+
+Before starting a local service, configure its ignored `.env` with its own
+database, namespace, object/Redis prefixes and writable paths. Root
+`.env.example` contains original-deployment paths and ports; use it as a field
+reference, not as an unchanged Ali configuration. The configured Ali services
+load `.data/config/platform.env` through `deploy/ali/run-service.sh`.
 
 Use `SANDBOX_HARNESS_BACKEND=fake` only for local API/UI development. Production
 must use an explicitly configured real Sandbox backend; the code deliberately
-has no host-execution fallback. The deployed Ali environment remains on
-`opensandbox` until the Aliyun template and release gates pass.
+has no host-execution fallback. The verified Ali baseline uses
+`SANDBOX_HARNESS_BACKEND=aliyun` and the durable allocation dispatcher. OpenSandbox
+remains configurable; provider switching requires checking outstanding work and
+the frozen release/route configuration before restarting the selected services.
+Local `.env` setup does not replace the deployed `.data/config/platform.env`.
 Keep credentials in ignored environment files, never in source or test fixtures.
 
 ## Common commands
@@ -46,9 +61,13 @@ module resolution needs the project dependency directory.
 
 ## Before editing
 
-1. Run `git status --short` and preserve unrelated work.
-2. Locate the current implementation with `rg`; do not infer it from an old
-   report.
+1. Check `pwd`, `git worktree list`, `git branch --show-current` and
+   `git status --short`; preserve unrelated work. Ali edits belong only in
+   `/data2/wujing03/sandbox-harness-platform-parallel-ali` on branch
+   `sandbox-harness-platform-parallel-ali`. The sibling original project is
+   read-only for this work.
+2. Prefer CodeGraph when `.codegraph/` exists; otherwise locate the current
+   implementation with `rg`. Do not infer it from an old report.
 3. Read the relevant development guide from the index.
 4. Identify the smallest focused tests that exercise the affected contract.
 

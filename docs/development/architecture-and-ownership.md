@@ -24,7 +24,9 @@ the summary.
 | `events.py` | Redis Streams wake-up/bounded replay aid; PostgreSQL remains authoritative |
 | `job_coordinator.py` / `job_worker.py` | immutable JobGroup preflight and generic accepted-handle execution/recovery |
 | `scheduler.py` / `node_agent.py` | registered Profile/resource inventory and fenced reservations |
-| `harness_job.py` / `job_service.py` | Child/Reviewer OpenSandbox execution and production worker lifecycle |
+| `job_allocation.py` | Shared Child/Reviewer/Operation allocation ownership, frozen identity and original reservation cleanup |
+| `allocation_dispatch.py` / `allocation_service.py` | Durable provider create ledger and independent allocation service; unknown outcomes reconcile without another create |
+| `harness_job.py` / `job_service.py` | Child/Reviewer execution through the configured SandboxBackend and production worker lifecycle |
 | `job_continuation.py` | all-terminal outbox batching back into the Primary Harness Session |
 
 ## Gateway

@@ -13,12 +13,18 @@ Every code change requires:
 3. [Architecture and ownership](architecture-and-ownership.md)
 4. [Testing and real cases](testing-and-real-cases.md)
 
+For the isolated Ali checkout, first verify the directory and branch described
+in [Getting started](getting-started.md). The
+[90f51d5 release record](../test-evidence/ali-release-90f51d5.md) is the completed
+baseline; subsequent documentation edits do not relabel that release evidence.
+
 ## Task routing
 
 | Task | Required guidance |
 | --- | --- |
 | Thread, Turn, input, event, lease or database change | [State and data contracts](state-and-data-contracts.md), [Lifecycle changes](change-lifecycle.md), [Database migrations](database-migration.md) |
 | Recovery, cancellation, cleanup, pool or checkpoint change | [State and data contracts](state-and-data-contracts.md), [Recovery and observability](recovery-and-observability.md), [Lifecycle changes](change-lifecycle.md) |
+| Sandbox allocation dispatcher, admission saturation or provider quota exhaustion | [Recovery and observability](recovery-and-observability.md), [Testing and real cases](testing-and-real-cases.md), [Real capacity gate](../test-evidence/sandbox-capacity-gate.md) |
 | Add or change a Harness | [Sandbox and Harness](sandbox-and-harness.md), [Adding a Harness](add-harness.md), [Skill and image lifecycle](skill-and-image-lifecycle.md) |
 | Add a model route or Provider | [Gateway, security and Providers](gateway-security-providers.md), [Adding a model Provider](add-model-provider.md) |
 | Add image/video/audio/3D generation | [Media Generation Design and Provider Integration Standard](media-generation.md) |

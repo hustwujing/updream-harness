@@ -7,15 +7,16 @@ Read this for every change and before reporting completion.
 ## Test layers
 
 1. **Pure/unit tests** validate parsers, contracts and reducers without services.
-2. **Component tests** use SQLite, fake Runtime/OpenSandbox or mock transports to
+2. **Component tests** use SQLite, fake Runtime/SandboxBackend or mock transports to
    exercise transactions and boundaries.
-3. **Real OpenSandbox tests** verify image, process, network, checkpoint and
-   recovery behavior with isolated namespaces/data.
+3. **Real sandbox tests** identify OpenSandbox or Ali explicitly and verify
+   image, process, network, checkpoint and recovery with isolated namespaces/data.
 4. **Real Provider tests** verify the selected native Harness and upstream route.
 5. **Browser tests** verify the deployed product from the user surface.
 
-Never report a deterministic fixture as a real model test. Never use a previous
-revision's report as evidence for current code.
+Never report a deterministic fixture as a real model test. A retained success
+from an earlier revision must keep that revision and an impact assessment; it
+is not evidence that a newly changed boundary passed on current code.
 
 ## Source-to-test map
 
@@ -26,6 +27,9 @@ revision's report as evidence for current code.
 | Runtime/adapters | `test_runtime_boundaries.py`, `test_runtime_configuration.py`, adapter/runner tests |
 | Sandbox background control | CLI structured errors, wait observation/terminal behavior, deadline escalation, cancellation mapping and real OpenSandbox B04-B06 |
 | Sandbox/pool | `test_sandbox_namespace.py`, `test_runtime_client.py` |
+| Durable sandbox allocation / replacement | `test_allocation_dispatch.py`, `test_allocation_dispatch_postgres.py`, Child/Operation tests and RC04/RC06 |
+| Worker saturation / cleanup routing | `test_job_worker.py`, `test_job_store.py`, `test_job_postgres_concurrency.py`, `test_thread_pause.py` and RC07 |
+| Broker cancellation during database work | `test_cancel_boundaries.py`, including repeated cancellation and startup claim/release barriers; `test_broker.py` |
 | Gateway/capability/network | `test_gateway.py`, `test_capability.py`, `test_public_proxy.py` |
 | Models/catalog | `test_catalog.py`, `test_model_health.py`, `test_model_activity.py` |
 | Objects/files | `test_s3_objects.py`, `test_runtime_paths.py`, owner tests |
@@ -47,8 +51,23 @@ when shared contracts, lifecycle, Gateway, Runtime or deployment changed.
 After a failure, reproduce it with the smallest relevant case, fix the shared
 boundary, rerun that case and the affected previously-passing cases, then resume
 the remaining matrix. Do not add case-name branches or prompt keywords to make a
-real case green. Run the complete gate once after all fixes and documentation
-are committed; its receipt must identify the exact release revision.
+real case green. For the Ali campaign, the user-authorized workflow preserves
+unaffected successes and reruns only failed/affected cases plus unrun cases.
+Record that assessment before resuming. Complete all 169 product cases and the
+seven additional resource cases, with each result's actual revision. This is
+`composite_verified`; run the whole matrix on one revision only when a
+`clean_run` claim or a newly agreed release requirement needs it.
+
+Documentation-only updates to a verified baseline need content, source-reference
+and link checks, not another real-provider campaign or deployment. Preserve the
+tested/deployed revision and commit the documentation separately; do not rewrite
+existing receipts to the new documentation revision.
+
+PostgreSQL tests use `PARALLEL_TEST_POSTGRES_URL` pointing to a unique throwaway
+database, never the application database. The legacy `tests/gate.py` starts its
+own cluster on port 28433, which conflicts with the deployed Ali cluster; do
+not stop that deployment to run it. Use an isolated test database and the
+PostgreSQL test modules directly, then remove only that test database.
 
 Real protocol cases are concurrent by default. Serialize only cases that mutate
 shared services or global configuration, and list those IDs explicitly in the
@@ -58,7 +77,10 @@ unrelated K cases.
 Real tests must use unique namespaces, data directories and idempotency keys.
 They must clean only resources they created and must not restart shared Redis,
 Docker, OpenSandbox, registry or object storage. Before service restart, query
-nonterminal Turns and avoid interrupting active user work.
+nonterminal Turns and identify ownership. Authorized Ali test restarts may run
+with cases in flight; capture generations and external execution IDs before and
+after, verify recovery and zero duplicate execution, and do not wait for drain
+solely to avoid exercising that boundary. Protect unrelated user work.
 
 ## Evidence
 
@@ -71,10 +93,20 @@ Completion means no known program error in affected cases and no clear,
 bounded prompt/UI improvement left unaddressed. It does not mean every model
 response is semantically successful.
 
+During a requested campaign, report progress every two minutes: total, started,
+running, successful, program failures, non-program failures, unrun and average
+elapsed time of completed cases. Explain what each running case is doing and
+whether its current state matches expectations. Negative cases count as passing
+only when their intended cancellation/failure and side-effect assertions pass.
+
 The campaign combines Primary outcome with internal Durable Job outcomes.
 A completed Primary with valid Artifacts cannot hide a program failure in a
 Child, Operation or Reviewer. A successfully recovered model/Provider failure
 may remain a successful case, with its internal failure retained in evidence.
+If an operator aborts a stalled case, retain that intervention and audit the
+whole case: an existing Artifact must not turn cancelled required work into a
+successful result. Retest with distinct test identities and retain the old
+unknown allocation's reconciliation obligation.
 
 Evidence for external execution must distinguish submission, polling,
 collection, deterministic validation/Review and cleanup. A successful upstream
@@ -106,9 +138,19 @@ list of commands or checks is not proof that a product existed.
 Campaign reports use `verification_scope=clean_run` only when every reported
 success was executed on the report revision. Resuming passed cases from an older
 revision produces `composite_verified`; summaries must not describe that as one
-complete green matrix. After a generic fix, rerun the failed member and affected
-passed members first, then run the complete matrix once before release when the
+clean run on the final revision. After a generic fix, rerun the failed member
+and affected passed members first, then run the complete matrix once before release when the
 claim requires a clean full pass.
+
+## Resource exhaustion evidence
+
+Use `tests/run_real_sandbox_capacity.py` and the
+[capacity gate contract](../test-evidence/sandbox-capacity-gate.md). RC01-RC04
+exercise actual provider creation refusal, waiting, cancellation, deadline and
+Worker replacement. RC05 covers local scheduling exhaustion; RC06 covers a
+held real create response; RC07 covers accepted recovery and cleanup while all
+admission slots wait for quota. Keep fake regressions and real fault-injection
+evidence distinct, and never exhaust a shared production provider account.
 
 ## Sandbox provider protocol evidence
 

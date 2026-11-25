@@ -29,6 +29,12 @@ New dispatched provider allocation IDs include attempt generation, while retries
 within a capacity wait retain one ID. Frozen handles and exact identities fence
 cleanup; a superseded generation must never release a replacement allocation.
 
+An explicit allocation ID passed to `SandboxPool.acquire` must match any reused
+attachment. A replacement ID retires the old sandbox before reallocation; normal
+same-Thread reuse without a replacement ID keeps its existing behavior. Check
+`test_explicit_replacement_allocation_never_reuses_previous_attachment` in
+`tests/test_allocation_dispatch.py` when changing this boundary.
+
 ## Pause Is A Durable Saga
 
 Never implement user pause by only cancelling a process. Commit the Thread control generation and participant set first, quiesce each Harness, save its native session identity and workspace checkpoint, then release the sandbox. A service restart must claim the existing generation and finish it; it must not resume business execution while the desired state is paused.
@@ -42,9 +48,10 @@ Gateway lifecycle or telemetry changes.
 
 ## Non-graceful recovery model
 
-Do not assume shutdown hooks run. PostgreSQL leases and OpenSandbox metadata are
-the recovery anchors. Startup repairs stale Thread heads, claims only expired
-active Turns and reconciles by namespace plus Turn metadata.
+Do not assume shutdown hooks run. PostgreSQL leases, allocation receipts and
+frozen SandboxHandles are the recovery anchors. Startup repairs stale Thread
+heads and claims expired work. Provider inventory can locate an allocation but
+does not own lifecycle transitions or replace persisted execution identity.
 
 - `QUEUED` may be scheduled normally.
 - `RESTORING` and `STARTING` delete/recreate before Harness execution.
@@ -76,8 +83,28 @@ recovery. One independent cleanup batch and a bounded observation capacity
 (`job_recovery_concurrency`, default one) keep these paths progressing. Recovery
 observations cannot submit work, and round-robin ordering uses the Job's update
 time. Only acceptance newer than the latest applicable resume boundary is valid.
+`Store.claim_job_cleanups` filters registered adapters before locking/limiting
+rows; an empty adapter set claims nothing. Recovery-only claims also require a
+valid accepted identity, and `JobWorker` rechecks it before any adapter work.
+On shutdown or dispatch failure, the Worker joins its cleanup, admission and
+recovery tasks before closing their Store or Pool. Validate these contracts in
+`tests/test_job_worker.py` and `tests/test_job_postgres_concurrency.py`.
 Reservation expiry is diagnostic, not permission to double-allocate a live
 exclusive GPU; the durable cleanup obligation is the recovery authority.
+
+`Broker._database_call` settles an in-flight database operation before propagating
+even repeated cancellation. `_claim_turn_safely` records or releases a completed
+claim; lease release and matching-generation bookkeeping settle together.
+An explicit cancellation-handler marker prevents heartbeat, API stop and close
+from interrupting cancellation handling again. `Task.cancelling()` alone does
+not cover an explicitly raised `CancelledError`. Keep the database-read,
+startup and repeated-cancellation barriers in `tests/test_cancel_boundaries.py`.
+
+Unknown creation results remain charged and cannot be replaced on the strength
+of an empty inventory, lease expiry or audit-access error. Record the missing
+provider evidence separately from current functional case results. Reclaim only
+after authoritative reconciliation or verified retirement of the exclusively
+owned test scope; do not change a historical result to make cleanup look green.
 
 An accepted execution and its collected Artifacts are separate durable
 boundaries. If submission/execution completed but Artifact collection failed,

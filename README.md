@@ -1,6 +1,6 @@
 # sandbox-harness-platform-parallel
 
-A thin, stateful OpenSandbox platform that sends every user message to a Codex,
+A thin, stateful sandbox platform that sends every user message to a Codex,
 Claude or DeepSeek Primary Harness. The Primary Harness owns the conversation
 and may delegate one dependency-free JobGroup to parallel Child Harnesses,
 Operations or Providers. Durable Continuations return bounded results to the
@@ -9,10 +9,28 @@ second planner. The platform restores the workspace, streams public output and
 semantic steps, exports files, checkpoints the environment and removes the
 sandbox.
 
+The configured `SandboxBackend` supports OpenSandbox and Ali Sandbox. Lifecycle,
+submission, recovery and cleanup state belongs to the platform database; a
+provider failure never falls back to a host Agent.
+
+## Verified Ali baseline
+
+The 2026-11-25 release baseline is `90f51d5`: all 169 product cases and seven
+real resource-exhaustion cases met their expectations. Coverage is
+`composite_verified`: 152 unaffected successes retain their original revisions,
+17 product cases and all seven resource cases ran on this baseline. Python
+verification passed 1253 tests, with seven PostgreSQL tests passed separately.
+Health, desktop/mobile pages, takeover, checkpoint recovery and terminal replay
+were verified. Seven historical unknown allocations still await authoritative
+provider reconciliation and remain charged; they are not reported as reclaimed.
+See the [release record](docs/test-evidence/ali-release-90f51d5.md) for evidence,
+loaded service versions and cleanup scope. Later documentation commits do not
+change the revision of those test or deployment receipts.
+
 ## Services
 
 ```text
-Web → Session API → Leased Turn Worker → Warm Sandbox Pool → OpenSandbox/gVisor
+Web → Session API → Leased Turn Worker → Warm Sandbox Pool → SandboxBackend
                                       │                     │
                                       └──── Capability Gateway ◄── Harness
 
@@ -25,6 +43,9 @@ Harness delegation → Job Coordinator → PostgreSQL JobGroup → Job Worker
                                              ├── optional Reviewer Gate
                                              └── all-terminal Outbox → Primary Harness
 
+Job sandbox allocation → PostgreSQL allocation ledger → Allocation Worker
+                                                        └── configured SandboxBackend
+
 Site confirmation  → Session API → PostgreSQL Job → Site Worker → Object storage
                                                         └── immutable version → public route
 
@@ -33,12 +54,15 @@ Redis: live event fan-out and short-lived capability revocation
 Object storage: content-addressed checkpoints and artifacts
 ```
 
-The parallel project uses a dedicated PostgreSQL database on `127.0.0.1:28432` and reuses only
-shared executables and infrastructure daemons. PostgreSQL data, service logs, caches, browser
-dependencies, test temporaries, and all other writable state stay under
-`/data2/wujing03/sandbox-harness-platform-parallel/.data`. Database identity, Redis key prefix,
-image repository, OpenSandbox namespace, object prefix, ports, service units, and Nginx ingress are
-isolated from both predecessor deployments.
+The Ali checkout and branch are both `sandbox-harness-platform-parallel-ali`.
+Its working directory is `/data2/wujing03/sandbox-harness-platform-parallel-ali`,
+API is `127.0.0.1:24767`, PostgreSQL is `127.0.0.1:28433`, and ingress is
+`/sandbox-harness-platform-parallel-ali/`. Use `deploy/ali/` for this deployment.
+The sibling `sandbox-harness-platform-parallel` checkout is a separate deployment
+and is read-only during Ali work. Database identity, Redis prefix, namespace,
+object prefix, ports and service units remain isolated. Shared executables may
+be reused; writable state, caches, logs and temporary files stay in this
+checkout's `.data` or another explicit `/data2/wujing03` path.
 
 The Capability Gateway is an infrastructure proxy. It injects model and Provider credentials after validating a Turn-scoped token. It does not understand prompts, plans or media quality.
 
@@ -73,6 +97,15 @@ An uncertain create reconciles the original allocation without accepting
 Runtime work or releasing capacity. Replacement workers persist discovered
 handles and confirmed absence before retirement/retry; cancellation remains
 effective while allocation is pending.
+
+With the allocation dispatcher enabled, a separate Allocation Worker owns the
+provider create RPC and its durable response. Explicit replacement allocations
+retire an incompatible Thread attachment before acquiring a new sandbox.
+JobWorker cleanup continues under full admission load, and bounded recovery
+observations reuse already accepted executions without submitting new work.
+Broker cancellation settles in-flight database operations and avoids repeatedly
+cancelling a task already handling cancellation.
+
 See [Ali execution reliability verification](docs/test-evidence/ali-execution-reliability.md)
 for the regression boundaries and release evidence locations.
 
@@ -99,7 +132,8 @@ successful Turn, Broker detects each exported directory containing
 bundle digest. This is still only a confirmation draft; no public version is
 activated until the user chooses **部署站点**. The HTML Artifact opens as an
 interactive owner-scoped preview in a CSP-sandboxed iframe instead of source
-text. Published versions use `/sandbox-harness-platform-parallel/sites/<slug>/`, and Workspace
+text. The Ali deployment publishes versions under
+`/sandbox-harness-platform-parallel-ali/sites/<slug>/`, and Workspace
 provides the stable link, immutable history, rollback and downline controls.
 
 Seedream supports immutable single/multi-image references through stable public
@@ -168,7 +202,7 @@ Runtime UID/GID remain fixed at `10001`; the passwd username is configurable at
 image build time with `SANDBOX_HARNESS_SANDBOX_USERNAME` and defaults to
 `updream`. Changing the display name does not change checkpoint ownership.
 
-Uploaded Turn attachments are versioned as managed project assets and exported outputs are versioned as managed project artifacts. Their immutable objects remain in object storage and are materialized under `/workspace/project/assets` and `/workspace/project/artifacts` after every checkpoint restore. They therefore survive a new Sandbox or a different OpenSandbox worker without retaining historical `inbox` or `outputs` directories.
+Uploaded Turn attachments are versioned as managed project assets and exported outputs are versioned as managed project artifacts. Their immutable objects remain in object storage and are materialized under `/workspace/project/assets` and `/workspace/project/artifacts` after every checkpoint restore. They therefore survive a new Sandbox or a different Worker without retaining historical `inbox` or `outputs` directories.
 
 Each Turn freezes an immutable ProjectFile snapshot before materialization. A
 replacement uploaded while that Turn runs is available to the next Turn but
@@ -183,7 +217,7 @@ its frozen snapshot, so stale files cannot survive in an attached Sandbox.
 
 The Sandbox workbench adds owner-scoped live overview, files, processes,
 metrics, Execd PTY terminal, private port preview and audit history. Inspection
-does not expose OpenSandbox credentials. Writable terminal and file editing use
+does not expose sandbox provider credentials. Writable terminal and file editing use
 an exclusive takeover state; release checkpoints the workspace and revokes its
 short-lived network capability before Agent execution is re-enabled.
 If terminal work changed `project/assets` or `project/artifacts`, release
@@ -199,20 +233,30 @@ shown independently.
 
 ## Development
 
+Configure an isolated local environment and the `.data` cache/temp exports in
+[Getting started](docs/development/getting-started.md) before these commands:
+
 ```bash
-UV_CACHE_DIR=.data/uv-cache uv sync --extra test --extra runtime-media
+uv sync --extra test --extra runtime-media
 .venv/bin/pytest
-.venv/bin/python tests/gate.py
-.venv/bin/uvicorn sandbox_harness.app:create_app --factory --reload --port 24766
+npm --prefix web run build
+.venv/bin/uvicorn sandbox_harness.app:create_app --factory --reload --port 22766
 ```
 
-Set `SANDBOX_HARNESS_BACKEND=fake` only for local UI development and tests. Production accepts only `opensandbox` and never falls back to a host Harness.
+Set `SANDBOX_HARNESS_BACKEND=fake` only for local UI development and tests.
+Production supports configured `opensandbox` or `aliyun` backends and never
+falls back to a host Harness. Use the isolated setup and cache environment in
+[Getting started](docs/development/getting-started.md).
 
 Before changing code, read [AGENTS.md](AGENTS.md) and use the
 [development guide index](docs/development/README.md) to load the rules for the
 affected lifecycle, Gateway, Runtime, image, Skill, API or deployment boundary.
 
 See [architecture.md](docs/architecture.md), [client API](docs/api.md), [data model](docs/data-model.md), [product interface](docs/product-interface.md), [gateway.md](docs/gateway.md), [Runtime Skill Bundle](docs/skills.md) and [deployment.md](docs/deployment.md).
+
+The reports below retain earlier capability evidence at their recorded revisions.
+Use the [Ali baseline record](docs/test-evidence/ali-release-90f51d5.md) for the
+latest completed campaign; an older report is not a test of a later code change.
 
 Real deployment evidence for code execution, media processing, autonomous repair, checkpoint recovery, discovered models and browser isolation is recorded in [first-capability-report.md](docs/test-evidence/first-capability-report.md).
 

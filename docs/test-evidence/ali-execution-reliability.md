@@ -1,5 +1,11 @@
 # Ali execution reliability verification
 
+The completed 2026-11-25 campaign and deployment are summarized in the
+[90f51d5 release record](ali-release-90f51d5.md): 169 product cases plus seven
+resource cases met expectations. The incident entries below preserve their
+original revisions and intermediate results; they are not current open-case
+counts. Seven historical unknown allocations remain an explicit cleanup limit.
+
 ## Implemented design
 
 The provider-neutral Job state machine owns submission, acceptance and recovery.

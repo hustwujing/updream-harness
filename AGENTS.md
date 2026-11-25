@@ -28,6 +28,8 @@ claims made by documentation.
   write made by a worker.
 - Once Harness execution starts, recovery reattaches the existing Runtime
   execution; it never blindly resends a message with unknown side effects.
+- Persist sandbox allocation intent separately from Runtime acceptance. Unknown
+  creation outcomes retain ownership until authoritative reconciliation.
 - Used sandboxes may be retained only for the same Thread and are never returned
   to the pristine warm pool.
 - Persist the intended final state before cleanup. Revoke capability access,
@@ -49,6 +51,9 @@ claims made by documentation.
   files under `.data` or another explicit `/data2` path.
 - Reuse the existing ownership, isolation, cancellation, recovery, event and
   observability mechanisms. A feature is incomplete if it bypasses them.
+- Fix shared contracts without case-, operation- or sandbox-provider-specific
+  state-machine branches. Admission saturation must not block cleanup or
+  observation of already accepted executions.
 - Never log prompts, generated content, commands, file contents, credentials,
   arbitrary headers, raw exception messages or unfiltered URLs. New telemetry
   attributes require explicit allowlisting.

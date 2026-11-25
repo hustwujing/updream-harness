@@ -9,9 +9,16 @@ environment changes, Git operations or concurrent workspaces.
 
 Production uses the project-owned PostgreSQL cluster and isolated namespaces in
 shared infrastructure. All writable project state, caches, logs and databases
-remain under the project `.data` tree on `/data2`. Do not create credentials or
+remain under the selected project's `.data` tree or an explicit
+`/data2/wujing03` path. Do not create credentials or
 state under `/etc`, `/root` or the root filesystem. Systemd units may reference
 the ignored `.data/config/platform.env` only.
+
+For Ali work, use `/data2/wujing03/sandbox-harness-platform-parallel-ali` and branch
+`sandbox-harness-platform-parallel-ali`; inspect `pwd`, worktrees and status
+first. The sibling original checkout is read-only. Use `deploy/ali/` and units
+prefixed `sandbox-harness-parallel-ali-`; API 24767 and PostgreSQL 28433 are
+separate from the original deployment's API 24766 and PostgreSQL 28432.
 
 Do not restart or reconfigure shared Redis, Docker, registry, OpenSandbox or
 object storage as part of this product's release.
@@ -51,23 +58,49 @@ namespace; it never exposes the host `/data` tree.
    freezes both digests. Runtime Python, CLI, prompt and Skill changes stop
    here. Build/push images only when Bootstrap, native helpers, Harness clients,
    verification protocol or image dependencies changed.
-5. Confirm no active Turn would be interrupted.
+5. Identify active work and its owner. For an authorized test restart, record
+   current generations, allocation IDs and external execution IDs, restart the
+   affected Ali services while work is active, and verify takeover with no
+   duplicate execution. Do not require drain for this recovery validation;
+   protect unrelated user work.
 6. Run `deploy/check-service-access.sh`.
-7. Use `deploy/record-release.py` to pin Git revision and `PYTHONPATH`.
+7. Use `deploy/record-release.py` with the selected `--code-root`, `--env-file`
+   and `--record-file` to pin Git revision and `PYTHONPATH`.
 8. Restart only affected services and verify API/Gateway health plus Job,
    Media and Site Worker systemd state. They are independent failure domains.
-9. Install `deploy/nginx.conf` as the dedicated
-   `/etc/nginx/snippets/sandbox-harness-platform-parallel.conf` include inside
-   the existing `updream-lab` server. Run `nginx -t` before reload. Do not
-   register FRPC or alter predecessor locations. Local verification must send
-   `Host: updream-lab.bilibili.co`; bare `127.0.0.1` selects a different server.
+9. Verify the selected deployment's existing ingress. For Ali, request
+   `/sandbox-harness-platform-parallel-ali/` with `Host: updream-lab`; the
+   `90f51d5` release verified this entry. Inspect the actual nginx configuration
+   before changing it and run `nginx -t` before reload. The root
+   `deploy/nginx.conf` targets the original deployment and must not overwrite
+   Ali or predecessor locations. Do not register another FRPC entry.
 10. Run a focused deployed case and confirm state, logs and cleanup.
 
 Before the final gate and push, refresh `README.md`, the affected documents in
 `docs/development/` and the corresponding evidence report. Documentation must
 describe current implemented behavior and link to source/tests; do not publish
-planned behavior as a mandatory rule. Commit documentation before running the
-release gate so the gate receipt and deployed revision refer to the same tree.
+planned behavior as a mandatory rule. For a code release, commit its documents
+before the gate. A later documentation-only refresh is a separate commit on
+the tested baseline: check links and claims, keep existing receipts at their
+original revision, and do not redeploy or rewrite published history merely to
+make documentation HEAD equal the running release.
+
+For Ali, a release-record command must name the isolated paths explicitly and
+use the cache/temp environment from [Getting started](getting-started.md):
+
+```bash
+.venv/bin/python deploy/record-release.py \
+  --code-root "$PWD" \
+  --env-file "$PWD/.data/config/platform.env" \
+  --record-file "$PWD/.data/evidence/release-current.json"
+```
+
+`deploy/ali/start.sh` starts missing services; it does not reload an already
+active process. Include the independent `allocation-worker` when
+`SANDBOX_HARNESS_JOB_ALLOCATION_DISPATCHER_ENABLED=true`. Restart affected units
+explicitly and record each process's loaded release. Unchanged components may
+retain an earlier validated revision; an updated checkout or environment file
+alone does not update a running process.
 
 `record-release.py` refuses staged or unstaged changes to tracked files and
 untracked deployable files in the selected checkout. Ignored `.data` evidence
@@ -79,11 +112,13 @@ window's partial edits merely to make a release command pass.
 
 ## Database and service changes
 
-This project is not online and intentionally has no migration framework.
-`Store.initialize` creates the current schema in the fresh dedicated database;
-do not add compatibility ALTERs or reuse either predecessor database.
+`Store.initialize` creates tables and applies explicit additive upgrades to
+existing databases; there is no Alembic migration directory. Follow
+[Database migration](database-migration.md) for idempotence, defaults and
+SQLite/PostgreSQL checks. Do not reuse either predecessor database.
 `install-units.sh` installs units but does not start them.
-`init-postgresql.sh` targets only the dedicated `127.0.0.1:28432` cluster.
+Root `deploy/init-postgresql.sh` targets the original port 28432 cluster;
+`deploy/ali/init-postgresql.sh` targets only the Ali port 28433 cluster.
 
 Never delete production data or reset the database unless the user explicitly
 authorizes that exact environment. Never rely on graceful shutdown for
@@ -110,4 +145,13 @@ changed boundary.
 
 Push only after deployed verification. Record the local release commit, remote
 branch head, gate receipt, Runtime Code/Content Bundle digests and immutable
-image digests separately; equality is required for the claimed release.
+image digests separately. Equality applies to the claimed code release;
+subsequent documentation commits preserve the original deployed/tested version.
+For composite campaign coverage, retain each case's actual source revision and
+the failed/affected/unrun selection instead of claiming a clean full run.
+
+Cleanup follows verification: retain current image/profile and rollback
+dependencies; delete only proven obsolete owned tags and test data without
+active references. Manage registry/provider credentials on the host, never
+through a sandbox. Preserve sanitized evidence, confirm provider deletion and
+report unresolved historical allocations separately from reclaimed resources.
