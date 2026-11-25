@@ -163,3 +163,10 @@ time sample. Explicit TTL and all scope checks remain strict. Focused checks
 passed 82 tests, extra expiry/scope checks passed 29, and independent review
 passed 42. Preparation-failure classification and deployed R09 verification are
 still pending.
+
+The grant/receipt preparation block now uses the existing pre-execution failure
+contract after confirmed sandbox retirement. Its regression failed on the raw
+grant `ValueError`, while five cancellation/cleanup/submission-boundary controls
+passed. The correction passed 147 focused tests. It preserves capacity when
+retirement fails and preserves accepted/possibly-started Runtime handling.
+Final broad checks and deployed R09 verification remain pending.

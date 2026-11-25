@@ -120,7 +120,8 @@ async def test_child_harness_maps_sandbox_capacity_to_pre_accept_wait(tmp_path):
     finally:await store.close()
 
 
-@pytest.mark.parametrize('phase',['configuration','submission','cancelled_submission'])
+@pytest.mark.parametrize('phase',['grant','grant_cleanup','grant_cancelled',
+    'configuration','submission','cancelled_submission'])
 async def test_child_start_failure_retains_correct_submission_boundary(tmp_path,phase):
     store,adapter,_,job=await setup(tmp_path,AdapterStatus(False))
     sandbox=Sandbox(id='child-boundary',harness=Harness.CODEX,image='image',
@@ -130,7 +131,9 @@ async def test_child_start_failure_retains_correct_submission_boundary(tmp_path,
         backend=SimpleNamespace(runtime_route=lambda value:SandboxRuntimeRoute(
             'http://gateway:29880','http://proxy:29881'))
         async def acquire(self,**kwargs):return sandbox
-        async def release(self,value,**kwargs):self.released.append(value.id)
+        async def release(self,value,**kwargs):
+            if phase=='grant_cleanup':raise httpx.ConnectError('controlled cleanup outage')
+            self.released.append(value.id)
     class Runtime:
         starts=0
         async def inject(self,*args,**kwargs):
@@ -142,7 +145,10 @@ async def test_child_start_failure_retains_correct_submission_boundary(tmp_path,
             self.starts+=1
             if phase=='cancelled_submission':raise asyncio.CancelledError()
             raise httpx.ReadError('accepted response lost')
-    async def token(*args):return 'token',SimpleNamespace(nonce='nonce')
+    async def token(*args):
+        if phase in {'grant','grant_cleanup'}:raise ValueError('controlled grant rejection')
+        if phase=='grant_cancelled':raise asyncio.CancelledError()
+        return 'token',SimpleNamespace(nonce='nonce')
     pool=Pool();runtime=Runtime()
     adapter.backend=SandboxChildBackend(pool=pool,runtime=runtime,store=store,
         objects=ObjectStore(tmp_path/'objects'),settings=Settings(backend='fake',data_root=tmp_path,
@@ -153,10 +159,21 @@ async def test_child_start_failure_retains_correct_submission_boundary(tmp_path,
         await store.mark_job_submission_started(job.id,'worker',attempt.generation)
         context=JobExecutionContext(job=await store.get_job(job.id),
             request=await store.get_job_request(job.id),generation=attempt.generation)
-        if phase=='configuration':
+        if phase in {'grant','configuration'}:
             with pytest.raises(PreAcceptFailure) as raised:await adapter.submit(context)
             assert raised.value.error_code=='child_preparation_failed'
-            assert raised.value.retryable and raised.value.retry_class=='bounded_pre_accept'
+            assert raised.value.retryable==(phase=='configuration')
+            assert raised.value.retry_class==('bounded_pre_accept' if phase=='configuration' else 'none')
+            assert runtime.starts==0 and pool.released==[sandbox.id]
+            assert await adapter.scheduler.active_reservation(job.id) is None
+            assert await store.latest_job_acceptance(job.id) is None
+        elif phase=='grant_cleanup':
+            with pytest.raises(PreAcceptFailure) as raised:await adapter.submit(context)
+            assert raised.value.retain_capacity
+            assert runtime.starts==0 and pool.released==[]
+            assert await adapter.scheduler.active_reservation(job.id) is not None
+        elif phase=='grant_cancelled':
+            with pytest.raises(asyncio.CancelledError):await adapter.submit(context)
             assert runtime.starts==0 and pool.released==[sandbox.id]
             assert await adapter.scheduler.active_reservation(job.id) is None
             assert await store.latest_job_acceptance(job.id) is None

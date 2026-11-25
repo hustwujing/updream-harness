@@ -57,7 +57,10 @@ error contract.
 
 Child Runtime configuration and input staging precede execution submission. A
 failure there is `child_preparation_failed` with no execution side effects after
-the allocated sandbox is retired. Once `start_execution` has been attempted,
+the allocated sandbox is retired. This includes the earlier grant issuance,
+receipt persistence and pause-state lookup block. A failed retirement keeps the
+original allocation/reservation for durable cleanup; cancellation retains its
+existing phase-specific behavior. Once `start_execution` has been attempted,
 response loss preserves the sandbox, reservation and execution ID in
 `SubmissionOutcomeUnknown`; status/recovery uses that handle instead of deleting
 the sandbox or submitting a second execution.

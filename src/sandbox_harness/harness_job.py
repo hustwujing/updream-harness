@@ -326,6 +326,15 @@ class SandboxChildBackend(SandboxAllocationOwner):
             turn_id=context.job.id,expected_profile=candidate.profile)
         self.sessions[context.job.id]=adopted;return adopted
 
+    @staticmethod
+    def _preparation_failure(exc:Exception)->PreAcceptFailure:
+        retryable=isinstance(exc,(httpx.TimeoutException,httpx.TransportError))
+        if isinstance(exc,httpx.HTTPStatusError):
+            retryable=exc.response.status_code in {408,429,500,502,503,504}
+        return PreAcceptFailure('Child runtime preparation failed before execution',
+            error_code='child_preparation_failed',failed_phase='submission',
+            retry_class='bounded_pre_accept' if retryable else 'none',retryable=retryable)
+
     async def start(self,context:JobExecutionContext,reservation)->tuple[str,dict[str,Any]]:
         harness=Harness(reservation.harness)
         release=self._provider_release(reservation,harness);image=release.ref
@@ -351,8 +360,10 @@ class SandboxChildBackend(SandboxAllocationOwner):
             paused=await self.store.get_pause_participant(context.job.thread_id,
                 'child_harness',context.job.id)
             restoring=bool(paused and paused.checkpoint_ref and paused.state.value=='RESUMED')
-        except BaseException:
+        except BaseException as exc:
             await self.release_prepared_allocation(sandbox,allocation)
+            if isinstance(exc,(PreAcceptCancelled,PreAcceptFailure)):raise
+            if isinstance(exc,Exception):raise self._preparation_failure(exc) from exc
             raise
         execution_requested=False
         try:
@@ -418,13 +429,7 @@ class SandboxChildBackend(SandboxAllocationOwner):
                         'sandbox_id':sandbox.id,'sandbox_handle':sandbox.handle.to_mapping(),
                         'capability_nonce':claims.nonce}) from exc
             await self.release_prepared_allocation(sandbox,allocation)
-            retryable=isinstance(exc,(httpx.TimeoutException,httpx.TransportError))
-            if isinstance(exc,httpx.HTTPStatusError):
-                retryable=exc.response.status_code in {408,429,500,502,503,504}
-            raise PreAcceptFailure('Child runtime preparation failed before execution',
-                error_code='child_preparation_failed',failed_phase='submission',
-                retry_class='bounded_pre_accept' if retryable else 'none',
-                retryable=retryable) from exc
+            raise self._preparation_failure(exc) from exc
         except asyncio.CancelledError as exc:
             self.sessions[context.job.id]=sandbox
             raise SubmissionInterrupted(execution_id,allocation) from exc
