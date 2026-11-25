@@ -49,6 +49,12 @@ must never be recorded while the attempt is still waiting. The existing owner,
 generation and acceptance fences remain mandatory. Accepted executions and
 unknown submission outcomes are reconciled, not reopened by this transition.
 
+Status transport failures and HTTP 408/429/500/502/503/504 remain nonterminal
+until the frozen Job deadline. JobWorker polls the same accepted handle; it must
+not turn a temporary status outage into an immediate terminal `UNKNOWN` or
+submit a replacement. Permanent HTTP failures still follow the reconciliation
+error contract.
+
 1. Validate frozen inputs before external submission. Raise `PreAcceptFailure`
    with a registered code, canonical phase and explicit retryability.
 2. Do not throw a raw `ValueError`, HTTP exception or SDK exception across the

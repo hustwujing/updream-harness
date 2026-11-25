@@ -269,10 +269,16 @@ async def test_service_stop_releases_continuous_poll_lease_for_takeover(tmp_path
     finally:await store.close()
 
 
-async def test_one_job_exception_does_not_crash_service_worker(tmp_path):
+@pytest.mark.parametrize('error',[
+    RuntimeError('broken status'),
+    *[httpx.HTTPStatusError('permanent status failure',
+        request=httpx.Request('GET','http://runtime/execution'),
+        response=httpx.Response(code)) for code in [400,401,403,404,422]],
+])
+async def test_one_job_exception_does_not_crash_service_worker(tmp_path,error):
     store,_,job=await setup(tmp_path,request(kind=JobKind.HARNESS))
     adapter=FakeAdapter([AdapterSubmission('external-1',{'accepted':True})],
-        [RuntimeError('broken status')])
+        [error])
     worker=JobWorker(store,{'fake':adapter},node_id='node',concurrency=1,
         worker_id='worker',poll_seconds=.01)
     try:
@@ -290,10 +296,17 @@ async def test_one_job_exception_does_not_crash_service_worker(tmp_path):
     finally:await store.close()
 
 
-async def test_transient_status_transport_error_preserves_execution_for_reconcile(tmp_path):
+@pytest.mark.parametrize('error',[
+    httpx.ConnectError('runtime endpoint temporarily unavailable'),
+    httpx.ReadError('status response interrupted'),
+    *[httpx.HTTPStatusError('temporary status failure',
+        request=httpx.Request('GET','http://runtime/execution'),
+        response=httpx.Response(code)) for code in [408,429,500,502,503,504]],
+])
+async def test_transient_status_transport_error_preserves_execution_for_reconcile(tmp_path,error):
     store,_,job=await setup(tmp_path,request(kind=JobKind.HARNESS))
     adapter=FakeAdapter([AdapterSubmission('external-1',{'accepted':True})],[
-        httpx.ConnectError('runtime endpoint temporarily unavailable'),
+        error,
         AdapterStatus(True,JobState.SUCCEEDED,{'done':True})])
     worker=JobWorker(store,{'fake':adapter},node_id='node',concurrency=1,
         worker_id='worker',poll_seconds=.01)

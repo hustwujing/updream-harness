@@ -147,13 +147,15 @@ class JobWorker:
                 else adapter.status(context,external_id))
             return await self._before_deadline(operation,deadline)
         except (ExternalJobFailure,JobDeadlineExceeded):raise
-        except (httpx.TimeoutException,httpx.TransportError,
-                SandboxEndpointUnavailable,SandboxProviderUnavailable,
-                SandboxRateLimited) as exc:
-            event('job.adapter.status_retry',level=30,job_id=context.job.id,
-                generation=context.generation,exc=exc)
-            return AdapterStatus(False)
         except Exception as exc:
+            transient=isinstance(exc,(httpx.TimeoutException,httpx.TransportError,
+                SandboxEndpointUnavailable,SandboxProviderUnavailable,SandboxRateLimited))
+            if isinstance(exc,httpx.HTTPStatusError):
+                transient=exc.response.status_code in {408,429,500,502,503,504}
+            if transient:
+                event('job.adapter.status_retry',level=30,job_id=context.job.id,
+                    generation=context.generation,exc=exc)
+                return AdapterStatus(False)
             event('job.adapter.status_failed',level=40,job_id=context.job.id,
                 generation=context.generation,exception_type=type(exc).__name__,exc=exc)
             raise ExternalJobFailure('外部任务状态查询失败',
