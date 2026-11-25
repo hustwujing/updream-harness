@@ -78,10 +78,9 @@ def instrument_creates(backend,settings):
 async def allocator_main(path):
     raw,settings,profile=fixture(path);store=Store(settings.database_url)
     await store.initialize();backend=build_sandbox_backend(settings);instrument_creates(backend,settings)
-    service=AllocationService(store,backend)
+    service=AllocationService(store,backend,lease_seconds=settings.allocation_lease_seconds)
     try:
-        while True:
-            await service.run_once();await asyncio.sleep(.05)
+        await service.run(asyncio.Event())
     finally:await store.close();await backend.aclose()
 
 
@@ -99,7 +98,8 @@ async def worker_main(path):
         return value
     store.record_job_acceptance=held_acceptance
     pool=SandboxPool(backend,{Harness.CODEX:profile.provider_ref},{Harness.CODEX:0},
-        max_sandboxes=2,profile_resolver=build_profile_resolver(settings,backend),ttl_seconds=300)
+        max_sandboxes=raw.get('pool_limit',2),profile_resolver=build_profile_resolver(settings,backend),
+        ttl_seconds=settings.sandbox_timeout_seconds)
     runtime=RuntimeClient(timeout_seconds=60,backend=backend,
         bundle_dir=settings.runtime_bundle_dir,default_bundle_digest=settings.runtime_bundle_digest,
         code_bundle_dir=settings.runtime_code_bundle_dir,
@@ -107,8 +107,17 @@ async def worker_main(path):
         staging_root=settings.data_root/'downloads')
     render=runtime.media_render
     async def counted_render(sandbox,recipe):
+        append_audit(audit,{'event':'runtime_submission_intent','allocation_id':sandbox.handle.allocation_id})
+        gate=settings.data_root/'hold-runtime-request.json'
+        while gate.exists() and json.loads(gate.read_text()).get('job_id')==sandbox.handle.allocation_id.split('-g',1)[0]:
+            await asyncio.sleep(.05)
         append_audit(audit,{'event':'runtime_submitted','allocation_id':sandbox.handle.allocation_id})
-        return await render(sandbox,recipe)
+        try:return await render(sandbox,recipe)
+        except Exception as exc:
+            response=getattr(exc,'response',None)
+            append_audit(audit,{'event':'runtime_submit_error','allocation_id':sandbox.handle.allocation_id,
+                'exception_type':type(exc).__name__,'http_status':getattr(response,'status_code',None)})
+            raise
     runtime.media_render=counted_render;scheduler=Scheduler(store)
     inventory=NodeInventory(node_id='capacity-node',generation=raw['worker_generation'],
         cpu_total=raw['node_cpu'],memory_mb_total=131072,disk_mb_total=100000,
@@ -128,7 +137,10 @@ async def worker_main(path):
     adapter=MediaRenderOperationAdapter(scheduler=scheduler,pool=pool,runtime=runtime,
         store=store,objects=ObjectStore(settings.data_root/'objects'),settings=settings,
         token_factory=JobGrantFactory(settings),profile_resolver=Profiles())
-    adapter.allocation_client=AllocationClient(store,backend,poll_seconds=.05)
+    adapter.allocation_client=AllocationClient(store,backend,poll_seconds=.05,
+        recovery_seconds=settings.allocation_recovery_seconds,
+        provision_ttl_seconds=settings.allocation_provision_ttl_seconds)
+    await pool.restore_allocation_capacity(await store.job_sandbox_capacity())
     worker=JobWorker(store,{'media.render':adapter},node_id='capacity-node',
         worker_id='capacity-'+uuid.uuid4().hex,concurrency=1,
         lease_seconds=raw.get('worker_lease_seconds',2),poll_seconds=.1)
