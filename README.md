@@ -119,7 +119,19 @@ handles and confirmed absence before retirement/retry; cancellation remains
 effective while allocation is pending.
 
 With the allocation dispatcher enabled, a separate Allocation Worker owns the
-provider create RPC and its durable response. Explicit replacement allocations
+provider create RPC and its durable response. Creation and reconciliation have
+independent bounded scheduling, with a 30-second allocation lease renewed every
+10 seconds and durable fair reconciliation backoff. New allocations freeze a
+90-second uncertain-create window and a 300-second provisioning TTL; adoption
+renews the normal TTL before business execution. Only an unstarted Job may use
+one additional allocation, with separate capacity and retained cleanup of the
+old generation. Local, node or provider capacity exhaustion fails that recovery
+explicitly; ordinary capacity waits keep their existing behavior. JobWorker
+restores retained Pool slots before admission after restart. Empty inventory or
+TTL expiry never releases uncertain ownership. Runtime submission/acceptance
+continues to prohibit business replay.
+See [allocation recovery evidence](docs/test-evidence/allocation-recovery.md).
+Explicit replacement allocations
 retire an incompatible Thread attachment before acquiring a new sandbox.
 JobWorker cleanup continues under full admission load, and bounded recovery
 observations reuse already accepted executions without submitting new work.
