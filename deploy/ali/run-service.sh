@@ -26,6 +26,12 @@ export PIP_CACHE_DIR="$root/.data/pip-cache"
 export UV_CACHE_DIR="$root/.data/uv-cache"
 export npm_config_cache="$root/.data/npm-cache"
 export PLAYWRIGHT_BROWSERS_PATH="$root/.data/playwright-browsers"
+export PYTHONDONTWRITEBYTECODE=1
+export CUDA_CACHE_PATH="$root/.data/cache/cuda"
+export HF_HOME="$root/.data/cache/huggingface"
+export TORCH_HOME="$root/.data/cache/torch"
+export TORCHINDUCTOR_CACHE_DIR="$root/.data/cache/torchinductor"
+export TRITON_CACHE_DIR="$root/.data/cache/triton"
 
 case "$component" in
   api) command=("$root/.venv/bin/sandbox-harness-parallel-api") ;;
@@ -42,6 +48,7 @@ case "$component" in
   image-decompose)
     service_root="$root/.data/services/image-layered"
     [[ -f "$service_root/service/app.py" ]] || { echo "image decompose service is not materialized" >&2; exit 1; }
+    "$root/.venv/bin/python" "$root/deploy/ali/isolate-image-service.py"
     export PYTHONPATH="$service_root:${PYTHONPATH:-}"
     command=(/data/wujing03/miniforge3/envs/media-foundation/bin/python -m uvicorn
       service.app:app --host 127.0.0.1 --port 8912 --no-access-log)

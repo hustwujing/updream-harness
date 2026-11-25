@@ -48,6 +48,17 @@ as model and environment markers. bwrap mounts the snapshot at `/runtime` and
 maps each copied Conda environment to its build-time prefix only inside the
 namespace; it never exposes the host `/data` tree.
 
+The Ali image-layering HTTP service remains a separate inference process. Its
+startup applies `deploy/ali/isolate-image-service.py` to the already materialized
+dependency: GPU selection and the shared lock inodes stay unchanged, but locks
+are opened read-only and never truncated or recreated. Missing shared locks
+leave work queued. ComfyUI input/output/temp/user directories are per Job below
+the service's isolated runtime. Python bytecode is disabled; CUDA, Hugging Face,
+Torch and Triton caches are explicitly below the Ali `.data/cache` directory.
+The patch verifies its dependency source shape and fails closed after an
+unrecognized upgrade. `tests/test_image_service_isolation.py` verifies lock
+exclusion, unchanged shared file bytes and idempotent application without a GPU.
+
 ## Release sequence
 
 1. Inspect `git status`; preserve concurrent edits.
