@@ -21,6 +21,12 @@ Browser -> owner-scoped API/WebSocket -> SandboxInspector
 The logical Thread workspace remains authoritative. A live Sandbox is an
 attachment that can be deleted and restored from `threads.checkpoint_ref` plus
 managed ProjectFiles.
+Observer restore prepares the signed Runtime code/content bundles before
+checkpoint or managed-file restoration. `RuntimeClient.prepare` shares bundle
+activation with execution configuration but does not install a capability,
+configure a model or grant terminal control. Existing live sandboxes are returned
+without activation or interruption. Failed or cancelled preparation retires the
+newly acquired sandbox through the Pool cleanup path.
 Managed files stream from the object store to Runtime with declared size and
 digest verification; takeover/restore never materializes a full valid file in
 API memory.

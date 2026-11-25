@@ -198,7 +198,8 @@ async def test_child_runtime_configuration_uses_logical_protocol_identity():
     assert payload['job_id']=='c'*32
 
 
-async def test_runtime_configuration_installs_code_before_content_bundle(tmp_path):
+@pytest.mark.parametrize('inspection',[False,True])
+async def test_runtime_configuration_installs_code_before_content_bundle(tmp_path,inspection):
     requests=[];code=b"code-bundle";content=b"content-bundle"
     code_digest=__import__('hashlib').sha256(code).hexdigest();content_digest=__import__('hashlib').sha256(content).hexdigest()
     code_dir=tmp_path/'code';content_dir=tmp_path/'content';code_dir.mkdir();content_dir.mkdir()
@@ -211,10 +212,13 @@ async def test_runtime_configuration_installs_code_before_content_bundle(tmp_pat
     runtime=RuntimeClient(code_bundle_dir=code_dir,default_code_bundle_digest=code_digest,
         bundle_dir=content_dir,default_bundle_digest=content_digest,transport=httpx.MockTransport(respond))
     sandbox=Sandbox(id='s',harness=Harness.CODEX,image='i',runtime_url='http://runtime',metadata={})
-    await runtime.inject(sandbox,capability_token='x'*32,gateway_url='http://gateway:28600',
-        proxy_url='http://proxy:28601',harness='codex',model='gpt')
+    if inspection:
+        await runtime.prepare(sandbox)
+    else:
+        await runtime.inject(sandbox,capability_token='x'*32,gateway_url='http://gateway:28600',
+            proxy_url='http://proxy:28601',harness='codex',model='gpt')
     assert requests == [('GET','/bootstrap/code-bundle'),('PUT','/bootstrap/code-bundle'),
-        ('GET','/v1/runtime-bundle'),('PUT','/v1/runtime-bundle'),('POST','/v1/configure')]
+        ('GET','/v1/runtime-bundle'),('PUT','/v1/runtime-bundle')]+([] if inspection else [('POST','/v1/configure')])
 
 
 @pytest.mark.parametrize('failure',['transport','proxy'])

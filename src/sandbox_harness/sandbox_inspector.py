@@ -220,8 +220,9 @@ class SandboxInspector:
             sandbox = await self.pool.acquire(thread_id=thread_id,
                 turn_id="inspect-" + thread_id, harness=thread.harness, environment={})
             try:
+                await self.runtime.prepare(sandbox)
                 await self._restore_new(thread, sandbox)
-            except Exception:
+            except BaseException:
                 await self.pool.release(sandbox, keep_attached=False)
                 raise
             await self.pool.release(sandbox, keep_attached=True,

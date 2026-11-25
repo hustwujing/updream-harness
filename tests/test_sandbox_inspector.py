@@ -88,6 +88,7 @@ class FakeRuntime:
         data=b"".join([chunk async for chunk in content]);self.materialized.append((path,data,mime))
         return {"bytes":len(data),"sha256":__import__('hashlib').sha256(data).hexdigest()}
     async def inject(self, sandbox, **kwargs): self.injected += 1
+    async def prepare(self, sandbox): pass
     async def inspect_overview(self, sandbox): return {"execution":"idle","cpu_percent":1,
         "cpu_count":4,"memory_used":10,"memory_total":100,"disk_used":20,"disk_total":200,"process_count":3}
     async def inspect_files(self, sandbox, path, depth): return {"root":path,"path":path,"items":[],"truncated":False}
@@ -461,4 +462,34 @@ async def test_port_grant_rejects_reused_sandbox_and_revokes_grant(tmp_path):
         with pytest.raises(KeyError,match="preview_expired"):
             await inspector.port_endpoint(grant["id"],owner)
         assert await store.get_sandbox_port_grant(grant["id"],owner) is None
+    finally:await pool.close();await store.close()
+
+
+async def test_observer_restore_prepares_runtime_before_managed_files_without_grant(tmp_path):
+    store,pool,runtime,objects,inspector,owner,thread=await review17_environment(tmp_path,'observer-prepare')
+    events=[];runtime.active=False;original=runtime.reset_project_files
+    async def prepare(sandbox):events.append('prepare');runtime.active=True
+    async def reset(sandbox):
+        assert runtime.active,'runtime_bundle_not_prepared'
+        events.append('managed-reset');await original(sandbox)
+    runtime.prepare=prepare;runtime.reset_project_files=reset
+    try:
+        await inspector.restore(thread.id,owner)
+        assert events==['prepare','managed-reset']
+        assert runtime.injected==0
+        assert await store.get_sandbox_control(thread.id,owner) is None
+    finally:await pool.close();await store.close()
+
+
+@pytest.mark.parametrize('cancelled',[False,True])
+async def test_observer_prepare_failure_retires_its_new_sandbox(tmp_path,cancelled):
+    import asyncio
+    store,pool,runtime,objects,inspector,owner,thread=await review17_environment(tmp_path,'prepare-failure')
+    error=asyncio.CancelledError if cancelled else RuntimeError
+    async def prepare(sandbox):raise error('controlled preparation stop')
+    runtime.prepare=prepare
+    try:
+        with pytest.raises(error):await inspector.restore(thread.id,owner)
+        assert not await pool.managed_sandbox_ids()
+        assert not runtime.materialized
     finally:await pool.close();await store.close()

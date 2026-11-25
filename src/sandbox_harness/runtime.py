@@ -157,6 +157,56 @@ class RuntimeClient:
                 temporary.unlink(missing_ok=True)
             raise
 
+    async def _install_bundles(self, sandbox: Sandbox, client: httpx.AsyncClient, *,
+                               code_digest: str, bundle_digest: str) -> None:
+        if code_digest:
+            if not self.code_bundle_dir:
+                raise RuntimeError("runtime_code_bundle_directory_missing")
+            code_path = self.code_bundle_dir / (code_digest + ".tar")
+            code = await asyncio.to_thread(code_path.read_bytes)
+            signature = await asyncio.to_thread(
+                (self.code_bundle_dir / (code_digest + ".sig")).read_bytes)
+            if hashlib.sha256(code).hexdigest() != code_digest:
+                raise RuntimeError("runtime_code_bundle_digest_mismatch")
+            status = await self._request_with_startup_retry(client,"GET","/bootstrap/code-bundle")
+            self._raise_for_status(sandbox,status)
+            if status.json().get("sha256") != code_digest:
+                response = await self._request_with_startup_retry(client,"PUT","/bootstrap/code-bundle", params={"sha256": code_digest},
+                    content=code, headers={"Content-Type": "application/x-tar",
+                        "X-Runtime-Bundle-Signature": signature.hex()})
+                self._raise_for_status(sandbox,response)
+        if bundle_digest:
+            if not self.bundle_dir:
+                raise RuntimeError("runtime_bundle_directory_missing")
+            bundle_path = self.bundle_dir / (bundle_digest + ".tar")
+            bundle = await asyncio.to_thread(bundle_path.read_bytes)
+            signature = await asyncio.to_thread(
+                (self.bundle_dir / (bundle_digest + ".sig")).read_bytes)
+            if hashlib.sha256(bundle).hexdigest() != bundle_digest:
+                raise RuntimeError("runtime_bundle_digest_mismatch")
+            status = await self._request_with_startup_retry(client,"GET","/v1/runtime-bundle")
+            self._raise_for_status(sandbox,status)
+            if status.json().get("sha256") != bundle_digest:
+                compressed = await asyncio.to_thread(
+                    gzip.compress, bundle, 6, mtime=0)
+                response = await self._request_with_startup_retry(client,"PUT","/v1/runtime-bundle", params={"sha256": bundle_digest},
+                    content=compressed, headers={"Content-Type": "application/x-tar",
+                        "Content-Encoding": "gzip",
+                        "X-Uncompressed-Content-Length": str(len(bundle)),
+                        "X-Runtime-Bundle-Signature": signature.hex()})
+                self._raise_for_status(sandbox,response)
+
+    @observed("runtime.prepare")
+    async def prepare(self, sandbox: Sandbox) -> None:
+        """Activate signed Runtime code/content without granting execution access."""
+        await self._resolve_endpoint(sandbox)
+        async with httpx.AsyncClient(base_url=sandbox.runtime_url,
+                headers={**sandbox.runtime_headers, **carrier()}, timeout=20,
+                trust_env=False, transport=self.transport) as client:
+            await self._install_bundles(sandbox, client,
+                code_digest=self.default_code_bundle_digest,
+                bundle_digest=self.default_bundle_digest)
+
     @observed("runtime.configure")
     async def inject(self, sandbox: Sandbox, *, capability_token: str, gateway_url: str, proxy_url: str, harness: str, model: str,
                      model_start_timeout_seconds: float = 150, event_idle_timeout_seconds: float = 900,
@@ -183,42 +233,8 @@ class RuntimeClient:
             "job_id":logical_job_id}
         async with httpx.AsyncClient(base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()}, timeout=20,
             trust_env=False, transport=self.transport) as client:
-            if code_digest:
-                if not self.code_bundle_dir:
-                    raise RuntimeError("runtime_code_bundle_directory_missing")
-                code_path = self.code_bundle_dir / (code_digest + ".tar")
-                code = await asyncio.to_thread(code_path.read_bytes)
-                signature = await asyncio.to_thread(
-                    (self.code_bundle_dir / (code_digest + ".sig")).read_bytes)
-                if hashlib.sha256(code).hexdigest() != code_digest:
-                    raise RuntimeError("runtime_code_bundle_digest_mismatch")
-                status = await self._request_with_startup_retry(client,"GET","/bootstrap/code-bundle")
-                self._raise_for_status(sandbox,status)
-                if status.json().get("sha256") != code_digest:
-                    response = await self._request_with_startup_retry(client,"PUT","/bootstrap/code-bundle", params={"sha256": code_digest},
-                        content=code, headers={"Content-Type": "application/x-tar",
-                            "X-Runtime-Bundle-Signature": signature.hex()})
-                    self._raise_for_status(sandbox,response)
-            if bundle_digest:
-                if not self.bundle_dir:
-                    raise RuntimeError("runtime_bundle_directory_missing")
-                bundle_path = self.bundle_dir / (bundle_digest + ".tar")
-                bundle = await asyncio.to_thread(bundle_path.read_bytes)
-                signature = await asyncio.to_thread(
-                    (self.bundle_dir / (bundle_digest + ".sig")).read_bytes)
-                if hashlib.sha256(bundle).hexdigest() != bundle_digest:
-                    raise RuntimeError("runtime_bundle_digest_mismatch")
-                status = await self._request_with_startup_retry(client,"GET","/v1/runtime-bundle")
-                self._raise_for_status(sandbox,status)
-                if status.json().get("sha256") != bundle_digest:
-                    compressed = await asyncio.to_thread(
-                        gzip.compress, bundle, 6, mtime=0)
-                    response = await self._request_with_startup_retry(client,"PUT","/v1/runtime-bundle", params={"sha256": bundle_digest},
-                        content=compressed, headers={"Content-Type": "application/x-tar",
-                            "Content-Encoding": "gzip",
-                            "X-Uncompressed-Content-Length": str(len(bundle)),
-                            "X-Runtime-Bundle-Signature": signature.hex()})
-                    self._raise_for_status(sandbox,response)
+            await self._install_bundles(sandbox, client,
+                code_digest=code_digest, bundle_digest=bundle_digest)
             for attempt in range(8):
                 try:
                     response = await client.post("/v1/configure", json=payload)
