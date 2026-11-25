@@ -50,9 +50,14 @@ Files: `allocation_dispatch.py`, `job_allocation.py`, `job_adapters.py`,
 Files: real capacity/allocation test runners, deployment settings, README,
 development guidance and test-evidence report.
 
-- [ ] Add actual AllocationWorker SIGKILL cases and count provider creates/Runtime submissions separately.
-- [ ] Exercise delayed visibility, one replacement, insufficient capacity and authoritative owned cleanup.
+- [x] Add actual AllocationWorker SIGKILL cases and count provider creates/Runtime submissions separately.
+- [x] Exercise delayed visibility, one replacement, insufficient capacity and authoritative owned cleanup.
 - [ ] Record the affected-case assessment; run new cases and affected existing recovery/capacity cases.
-- [ ] Run full Python and required frontend/build gates; obtain independent whole-change review.
-- [ ] Commit, freeze release, deploy affected Ali services and verify live health, recovery and command execution.
+- [x] Run full Python and required frontend/build gates; obtain independent whole-change review.
+- [x] Commit, freeze release, deploy affected Ali services and verify live health, recovery and command execution.
 - [ ] Preserve all case revisions, clean owned test resources, scan credentials and push GitHub.
+
+Current release: `8b79ea5`; AR4 and RC7 passed. The 184-case affected composite
+gate has 173 successes, including the revalidated K02; an upstream image
+endpoint blocks D02 plus ten unrun cases. Historical unknown allocations remain
+charged. See the refreshed allocation-recovery evidence for exact boundaries.

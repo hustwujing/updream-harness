@@ -41,5 +41,9 @@ Files: create `src/sandbox_runtime/project_uploads.py` and
 - [x] Implement shared bounded client transfer and validate final receipt.
 - [x] Test negative transport/path/concurrency/resource boundaries, then run
   Runtime/Broker/Inspector focused checks and independent review.
-- [ ] Commit this independent fix, run full Python and release build, record
+- [x] Commit this independent fix, run full Python and release build, record
   isolated deployment and verify real large upload, C29 and Inspector restore.
+
+Verified by commits `707bf58` and `136bcb1`: full suite, real Ali/OpenSandbox
+large transfers with lost replies, original C29 Matroska replay, fresh C29,
+large Inspector restore and affected D18/D19/P18/D42 reruns.

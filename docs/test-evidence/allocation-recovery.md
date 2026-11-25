@@ -1,183 +1,149 @@
-# Bounded allocation recovery
+# Allocation recovery and affected-case release
 
-This change keeps sandbox creation and reconciliation independent and bounds
-recovery of an unstarted Job without releasing an uncertain old allocation.
-The previous completed release remains the [180-case MediaWorker baseline](ali-media-68d0274-cases.md)
-until the affected deployed gate below finishes. No new Runtime image is required.
+The isolated Ali deployment runs `8b79ea5`. The current 184-case gate is an
+**incomplete composite**: it retains actual revisions for unaffected successes
+and reruns failures and affected cases. **173 cases meet expectations**; K02
+passed on the new images. D02 and ten unrun cases are blocked by a closed
+upstream image endpoint.
+The [full current matrix](ali-allocation-8b79ea5-cases.md) lists every case and
+its actual revision. The earlier [180-case baseline](ali-media-68d0274-cases.md) remains historical
+completed evidence, not evidence that the current upstream endpoint works.
 
-## Implemented behavior
+## Implemented recovery design
 
-- Allocation lease defaults to 30 seconds, renewed every 10 seconds. Creation
-  and observation have separate bounded task sets. Durable observation tokens,
-  due times and backoff prevent starvation and stale-result publication.
-- New allocation policies freeze a 90-second issued-create recovery window and
-  a 300-second provisioning TTL. Ordinary local/remote capacity waiting does not
-  consume this uncertain recovery window. Successful adoption renews normal TTL.
-- Before any Runtime submission intent, one replacement may be queued atomically.
-  The original reservation, identity and cleanup stay owned. A replacement needs
-  additional Pool, Scheduler and provider capacity; it cannot overcommit.
-- Source generation and attempt outcome fence late Workers. Accepted/possibly
-  started Runtime work uses existing same-execution recovery. Exhaustion and
-  capacity failure decisions survive process loss before terminal publication.
-- JobWorker reconstructs retained Pool capacity from the allocation ledger and
-  legacy receipts before admission. Reducing the configured limit preserves
-  existing ownership until enough allocations are retired. Late cleanup cannot
-  stop a replacement collector or discard its session.
-- Provider adapters reconstruct explicit inventory handles. The generic Sandbox
-  object does not interpret provider metadata. OpenSandbox and Ali tests check
-  original allocation identity with process caches cleared; database policy and
-  frozen release identity remain authoritative.
+AllocationWorker uses a 30-second lease with a 10-second heartbeat. Creation and
+reconciliation have independent bounded task sets, durable observation tokens,
+due times and backoff. A stalled create does not stop reconciliation or cleanup.
 
-No shared state-machine branch depends on a provider name, case or Operation.
-Legacy records retain their existing policy; the seven historical unknown main
-allocations are not declared absent by this migration.
+New allocations freeze a 90-second uncertainty window and 300-second provisioning
+TTL. Ordinary capacity waiting does not consume that uncertainty window. Before
+Runtime submission intent, one replacement can be queued atomically and must
+acquire additional capacity. The old allocation remains owned and charged until
+authoritative reconciliation. Accepted or possibly started Runtime executions
+reattach their existing identity; they are never blindly resubmitted.
 
-## Verification before deployment
+JobWorker reconstructs retained Pool capacity from PostgreSQL, including legacy
+receipts and reduced-limit debt. Late cleanup cannot discard a replacement
+session. Provider adapters recover explicit identity from inventory; mutable
+provider metadata is not the platform's lifecycle database. Shared state-machine
+branches do not depend on a provider, case or Operation.
 
-Two scheduling regressions and two provider identity regressions failed before
-their fixes. Focused worker/store/provider/cleanup tests passed, including an
-independent review's restart-capacity regression. The final functional code at
-`0caaeb6` passed 1305 Python tests with 14 skipped; 14 isolated PostgreSQL tests
-passed separately, including populated upgrades and Runtime/replacement races.
-The frontend build passed. These are component/database/build checks, not
-evidence for real model behavior.
+The seven historical unknown allocations remain charged. Lease expiry, TTL
+passage and an empty inventory response are not evidence that they disappeared.
 
-The real runner [run_real_allocation_recovery.py](../../tests/run_real_allocation_recovery.py)
-kills owned AllocationWorker processes at actual provider boundaries. It uses
-separate databases, namespaces, credentials and a two-instance test Team.
+## Real resource and allocation gates
 
-| Case | Fault and required outcome |
+The real [allocation runner](../../tests/run_real_allocation_recovery.py) kills
+owned AllocationWorker processes at actual Ali provider boundaries, with isolated
+databases and a bounded test Team. Its deterministic Runtime fixture verifies
+execution identity and artifacts; these four cases are not model-quality tests.
+
+| Case | Verified fault and recovery |
 | --- | --- |
-| AR01 | Kill after durable claim, before provider RPC; one replacement executes, old unknown intent remains charged until authoritative fixture-scope retirement |
-| AR02 | Kill after provider create returns, before handle commit; recover the same sandbox, one create and one Runtime request |
-| AR03 | Same kill plus delayed inventory visibility; one capacity-accounted replacement, late original cleanup before the replacement Runtime call, one business execution |
-| AR04 | Same kill plus JobWorker restart and one-slot Pool; restored old ownership blocks replacement, no Runtime request, late original is cleaned |
+| AR01 | Kill after claim, before RPC; one replacement executes, unknown intent remains charged until authoritative test-scope retirement |
+| AR02 | Kill after create returns, before handle commit; recover the same sandbox with one create and one Runtime request |
+| AR03 | Delayed inventory; one capacity-accounted replacement, original cleaned before replacement Runtime starts, one business execution |
+| AR04 | Restart JobWorker with one Pool slot; restored ownership causes terminal `allocation_replacement_capacity_unavailable`, zero Runtime calls, followed by original cleanup |
 
-Development verification passed all four cases. Its source changed while the
-adapter-boundary correction was being validated, so it is not the frozen release
-gate. The fixed-commit gate at `426479e` is tracked separately under
-`.data/evidence/allocation-recovery/recovery-final.json`. Reports preserve the
-frozen profile, template/image identity, Runtime bundle digests, source hashes,
-fault PIDs, request counts, real 8×8 output verification and cleanup state.
-AR01 requires a separate test-Team retirement receipt before cleanup is complete.
+AR01–AR04 passed in `recovery-final.json`; RC01–RC07 passed separately in
+`capacity-final.json`, under `.data/evidence/allocation-recovery/`. The test Team
+and isolated databases were removed with separate receipts. Initial failing
+attempts remain preserved. OpenSandbox lifecycle checks are separate evidence;
+the AR matrix is not claimed to have run on both providers.
 
-An initial AR02 exposed the inventory-handle defect; another attempt completed
-business but exposed the fixture's incorrect cleanup Gateway address. Both failed
-receipts are preserved. Their owned resources and databases were cleaned with
-separate evidence; neither failure is relabeled successful.
+The allocation release passed 14 isolated PostgreSQL tests, including populated
+upgrades and Runtime/replacement races. Later transfer, observer and image fixes
+changed no schema. At `8b79ea5`, the complete Python suite passed **1377 tests,
+14 skipped**. Skips are not counted as passes.
 
-## Affected deployment gate
+## Defects found and verified during the affected gate
 
-Read-only inspection of prior case receipts and their durable Job rows, plus
-the inherited protocol mapping, selected 74 of the 169 product cases for rerun.
-The remaining 95 preserve their original revisions. Child/Reviewer and sandbox
-Operations, cancellation, pause, takeover and inventory adoption are affected;
-pure Provider/Media workflows and preflight/artifact-only protocols retain their
-previous results. C05 is included as an explicit prior unknown-submission audit.
-The exact assessment is `.data/evidence/allocation-recovery/impact-assessment.json`.
+| Boundary | Generic correction | Deployed evidence |
+| --- | --- | --- |
+| Reviewer inline JSON | Parse inline JSON before filesystem probing, avoiding `ENAMETOOLONG` | R03/R04 and R12 internal audit passed |
+| Artifact detection/collection | Bounded Matroska/WebM DocType detection; typed deterministic validation failures; transient I/O remains retryable | C29 fresh workflow and original Matroska replay passed |
+| Child grant deadline | Inherit the parent deadline and sample issuance once; confirmed pre-execution retirement uses pre-acceptance failure semantics | R09 passed |
+| Appended input after restart | Initialize the recovered execution identity before completing input receipts | R05/R15 and delivered-input API SIGKILL proof passed; same execution, counter remains one |
+| Large managed-file upload | 4 MiB idempotent chunks, bounded staging/receipts, hash-checked atomic commit and reset/new-writer fencing | Real Ali and OpenSandbox byte/stream upload with lost chunk/commit replies passed |
+| Explicit Provider rejection | Preserve `provider_endpoint_unavailable`, submission phase, side-effect state and retryability through MediaWorker/JobWorker | D02 proves correct rejection semantics; business remains externally blocked |
+| Observer restore | Activate signed Runtime before restoring checkpoint and managed files, without granting model execution | 35 MiB restore/hash proof, D18/D19/P18/D42 passed |
+| Packaged presentation CLI | Add the declared `editppt` image entrypoint for login shells | Three offline images and six real provider/Harness image gates passed; deployed K02 passed |
 
-Also rerun RC01–RC07 and preserve the four unaffected real MediaWorker cases.
-With AR01–AR04 the eventual combined matrix contains 184 cases. Its results must
-be labeled `composite_verified`, not a clean rerun of every earlier case.
-Deployment, affected product results and final cleanup are still pending here;
-the final report will retain each case's actual tested revision.
+Every correction has focused red/green regression evidence and a separate small
+commit. A top-level successful case is not accepted when its internal execution
+shows a platform exception. K02's earlier successful top-level result was
+explicitly invalidated when the missing CLI caused a model installation workaround.
+The `8b79ea5` rerun finished all six Child Jobs in 1376.57 seconds, including
+local disk-capacity waiting. The image-to-editable-ppt Child used the packaged
+CLI without installation; all six Job reservations were released.
+Its two intermediate nonzero calls were audited independently. Sequence 314 was
+a redirected compound shell invocation with no recorded output, so its exact
+cause remains undetermined. Sequence 364 was a diagnostic-file read of a missing
+file and did not call `editppt`. Neither establishes a platform/Skill exception;
+subsequent success does not erase this attribution limit. The sanitized receipt
+is `runtime-cli-images/k02-nonzero-call-audit.json` under `.data/evidence`.
 
-### Project-file transfer defect found by C29
+C29's fresh workflow completed in 902 seconds. Its new video was smaller than the
+original trigger, so the exact original 64,782,809-byte Matroska was also replayed
+through both byte and uneven-stream transfer with deliberately lost replies.
+The independent larger upload gate used 67 MiB. These receipts are distinct.
 
-The deployed `9c2c93d` campaign completed C05, C16, C22, R01 and R02. C29's
-Child succeeded and all five media artifacts validated, but the Primary
-continuation failed with `ReadError` while materializing a project file. That
-byte-upload path lacked the existing bounded transport retry. Its Runtime
-endpoint also shared a fixed temporary filename between requests, making an
-overlapping retry unsafe. Both failure receipts remain retained.
+D42's long wait was finite resource contention, not a leaked completed Job:
+seven historical reservations and active Child Jobs left insufficient CPU for
+its four-CPU render. It eventually acquired one reservation, completed, and
+released it. The final observer-restore rerun also passed.
 
-The generic correction retries the immutable PUT body and gives each Runtime
-upload its own temporary file. A lost-reply regression failed with `ReadError`
-before the client fix; the overlapping-disconnect regression failed with
-`FileNotFoundError` before the Runtime fix. The initial focused suite passed 137
-tests; independent review passed eight checks including exhaustion and
-cancellation. After adding the retry-budget and cancellation regressions, the
-complete Python suite passed 1310 tests with 14 skipped. Deployed C29/C22 reruns
-remain pending.
-The remaining 68 product cases will continue afterward. Other successful cases
-retain their evidence: healthy byte transfers and execution submission behavior
-are unchanged, with transport failure and overlap covered at both API boundaries.
+## Deployment and image verification
 
-### Reviewer CLI input defect found during the resumed gate
+Only the three `primary-full-cpu` Harness images changed. The complete signed
+catalog retains every other profile, with three new OpenSandbox digest references
+and three verified Ali template revisions. Code Bundle and Content Bundle are
+unchanged by the image-only fix. Registry credentials stayed on the host.
 
-R03 and R04 exposed an internal `sandbox-review` exception despite subsequently
-using a request file: a long inline JSON argument reached `Path.is_file` before
-JSON parsing and raised `ENAMETOOLONG`. These attempts require rerun even if their
-top-level result succeeds. The regression reproduced one failure for long inline
-JSON while short JSON and file input passed. The correction recognizes inline
-objects/arrays first, matching the existing Job CLI boundary; it changes no
-Review authorization, Gateway request or execution policy. Deployed verification
-remains pending. Focused tests passed 57 checks, independent review passed six,
-and the complete Python suite passed 1312 tests with 14 skipped.
+The six real image gates cover Ali/OpenSandbox × Codex/Claude/DeepSeek: native
+client availability, login-shell CLI discovery, doctor, preparation, editable
+PPTX generation, preview and host-side artifact verification. OpenSandbox Codex
+also restored the same PPTX into another sandbox and verified its hash. All owned
+probe sandboxes were deleted. Initial probe-driver environment/header failures
+remain separate. One initial Ali Codex preparation failed with `HTTPStatusError`
+before the probe; its response status was not captured, so its root cause is
+unresolved. A fresh owned sandbox passed the full probe without a product change.
+The initial failed receipt is retained and is not reclassified as a pass.
 
-### Matroska content detection found by the C29 rerun
+The seven application services loaded `8b79ea5`; API health, existing ingress,
+desktop/mobile pages, checkpoint restore, takeover, terminal command and replay
+are checked independently. The original project and shared infrastructure were
+not restarted. The named paused Job still uses unchanged `general-cpu`; its
+pre-existing expired deadline is not claimed to have been repaired or resumed.
+The cutover audit found no nonterminal or unconfirmed old `primary-full-cpu`
+Jobs. This is a specific safe cutover, not generic support for rescheduling
+multiple historical profile revisions; retaining old templates alone does not
+provide that capability.
 
-The C29 rerun's contract allowed Matroska, MP4 and JSON. Artifact collection
-rejected an allowed Matroska output because `MimeRegistry` lacked EBML detection
-and returned `application/octet-stream`. A locally generated 16×16 FFV1 Matroska
-file passed `ffprobe` while reproducing that incorrect MIME result. Matroska and
-WebM regressions failed before the fix; six malformed/unknown-header controls
-passed. Bounded EBML DocType parsing follows
-[RFC 8794](https://www.rfc-editor.org/rfc/rfc8794.html#section-11.2.6), preserves
-declared/content mismatch rejection, and passed 113 focused checks. Release and
-the fresh C29 real regression remain pending.
+Evidence paths:
 
-The failed C29 continuation was explicitly cancelled after preserving its
-collection errors, preventing redundant test repair. Its partial artifacts do
-not change the failed outcome. R03/R04/R05's earlier Reviewer CLI errors are
-also retained even when those attempts later completed successfully.
+- `.data/evidence/release-full-8b79ea5.json`: frozen source, catalog and bundles.
+- `.data/evidence/runtime-cli-real-v3/matrix.json`: six real image checks.
+- `.data/evidence/runtime-cli-images/`: registry/template publication, catalog
+  diff, frozen-recovery audit, rollout, terminal and cleanup receipts.
+- `.data/evidence/browser/live-8b79ea5/report.json`: real browser checks.
+- `.data/evidence/allocation-recovery/live-status.json`: all 184 current rows.
+- `.data/evidence/real-campaign/`: original, rerun and internal-failure receipts.
 
-### Deterministic artifact rejection and transient I/O
+## Remaining external gate
 
-The same C29 investigation showed that a deterministic MIME rejection was
-wrapped as a retryable collection failure. Five Gateway→Store→Worker regressions
-reproduced that behavior for MIME, declared/content mismatch and item/transfer/
-collection size limits. Typed content-validation errors now terminate with their
-specific public code and preserve the original accepted execution boundary.
+`seedream-5.0` returns `InvalidEndpoint.ClosedEndpoint`. D02 is a non-program
+failure. D17, D22, D31, D40, P01, P09, P20, P25, P26 and P27 remain unrun in the
+current affected gate. A restored endpoint or a verified configured replacement
+is required; old successful receipts do not prove that it currently works.
+The campaign must not be described as 184/184 passing until those cases finish.
 
-Independent review caught a transient-I/O edge: MIME probing previously swallowed
-text/ZIP `OSError` as an unknown format. Two additional red regressions reproduced
-the resulting permanent failure. Those I/O errors now propagate to collection
-retry; a replacement Worker collects the same execution with one submission.
-The completed focused suite passed 138 checks and independent review passed 20.
-Broader release checks and deployed regression are pending.
-
-### Grant lifetime boundary found by R09
-
-R09's Reviewer preparation returned a raw `ValueError`; its allocation was
-already RELEASED, but the Worker recorded submission unknown. Replaying the
-frozen request locally succeeded within one clock second and failed when parent
-and child issuance crossed the second boundary. The factory requested the full
-configured TTL after the parent's remaining TTL had decreased. Separately,
-sampling time again during signing could extend a child one second past the
-parent even after a successful scope check.
-
-The clock regressions produced three failures before correction. Child grants
-can explicitly inherit the parent's deadline, and validation/signing share one
-time sample. Explicit TTL and all scope checks remain strict. Focused checks
-passed 82 tests, extra expiry/scope checks passed 29, and independent review
-passed 42. Preparation-failure classification and deployed R09 verification are
-still pending.
-
-The grant/receipt preparation block now uses the existing pre-execution failure
-contract after confirmed sandbox retirement. Its regression failed on the raw
-grant `ValueError`, while five cancellation/cleanup/submission-boundary controls
-passed. The correction passed 147 focused tests. It preserves capacity when
-retirement fails and preserves accepted/possibly-started Runtime handling.
-Final broad checks and deployed R09 verification remain pending.
-
-### Appended-input completion after API restart
-
-The authorized in-flight API restart during the `75f4a19` rollout exposed R15's
-`UnboundLocalError: execution_id`. Recovery had reused the Runtime execution,
-but the shared completion loop only initialized its local execution identity in
-the new-submission branch. Applying recovered appended-input receipts therefore
-failed. Initializing from the persisted Turn identity fixes both journal replay
-and already-completed status recovery. Both regressions failed first; 78 focused
-checks passed with zero new Runtime submissions and the input marked applied.
-Deployed R15/input-recovery verification remains pending.
+Cleanup removes only completed owned test fixtures after process-reference
+checks. Failed receipts and live logs remain. Closed predeployment telemetry was gzip
+archived with decompressed SHA-256 verification; archived historical logs require
+offline decompression. The cleanup summary records each removed fixture and
+archive receipt under `.data/evidence/runtime-cli-images/cleanup-summary.json`.
+The registry currently contains 18
+current profile images plus three previous primary images retained for rollback
+and historical frozen allocation dependencies. These 21 tags are not obsolete
+merely because a newer primary image exists.

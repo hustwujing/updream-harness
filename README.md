@@ -29,13 +29,20 @@ See the [release record](docs/test-evidence/ali-release-90f51d5.md) for evidence
 loaded service versions and cleanup scope. Later documentation commits do not
 change the revision of those test or deployment receipts.
 
-The MediaWorker migration is deployed at `68d0274`: four affected product cases
+The MediaWorker migration baseline was deployed at `68d0274`: four affected product cases
 and four new real inference recovery/cancellation cases passed. Combined with
-172 retained successes, the matrix is now 180/180 `composite_verified`.
+172 retained successes, that baseline matrix reached 180/180 `composite_verified`.
 See the [migration and release report](docs/test-evidence/image-decompose-media-migration.md)
 and [all case results](docs/test-evidence/ali-media-68d0274-cases.md). The public
 repository is [hustwujing/updream-harness](https://github.com/hustwujing/updream-harness),
 on branch `sandbox-harness-platform-parallel-ali`.
+
+The current deployment is `8b79ea5`, with bounded allocation recovery, managed-file
+transfer and observer-restore fixes. Its affected-only 184-case composite gate is
+still incomplete: 173 cases meet expectations, while a closed upstream image
+endpoint blocks D02 plus ten unrun cases. K02 passed on the new images. Do not interpret the
+historical completed baselines as a pass for this current gate. See
+[allocation recovery and release evidence](docs/test-evidence/allocation-recovery.md).
 
 ## Services
 
