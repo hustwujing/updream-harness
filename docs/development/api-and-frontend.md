@@ -27,6 +27,10 @@ Turn has no remaining rows. Do not make reconnect correctness depend on Redis.
 
 ## Browser rules
 
+- OpenRaster, PSD and TIFF remain downloadable files; do not route their MIME
+  types into a browser `<img>` preview. A separately published PNG preview uses
+  the normal image path (`web/src/file-preview.js`).
+
 - `api.js` is the API/error mapping layer; do not scatter raw fetch contracts
   through components.
 - The Thread ID lives in the query string and browser history.
