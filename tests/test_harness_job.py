@@ -1,8 +1,10 @@
 import pytest
+import httpx
 from types import SimpleNamespace
 
 from sandbox_harness.harness_job import HarnessJobAdapter,JobGrantFactory,SandboxChildBackend
-from sandbox_harness.job_adapters import AdapterStatus,JobExecutionContext,PreAcceptFailure
+from sandbox_harness.job_adapters import (AdapterStatus,JobExecutionContext,PreAcceptFailure,
+    SubmissionOutcomeUnknown)
 from sandbox_harness.job_contracts import (JobGroupCreate,JobExpectedOutput,JobKind,JobRequest,
     JobState,OutputDisposition)
 from sandbox_harness.job_worker import JobWorker
@@ -99,6 +101,55 @@ async def test_child_harness_maps_sandbox_capacity_to_pre_accept_wait(tmp_path):
         assert raised.value.infrastructure and raised.value.retryable
         assert raised.value.retry_class=='capacity_wait'
         assert raised.value.error_code=='infrastructure_capacity_wait'
+    finally:await store.close()
+
+
+@pytest.mark.parametrize('phase',['configuration','submission'])
+async def test_child_start_failure_retains_correct_submission_boundary(tmp_path,phase):
+    store,adapter,_,job=await setup(tmp_path,AdapterStatus(False))
+    sandbox=Sandbox(id='child-boundary',harness=Harness.CODEX,image='image',
+        runtime_url='http://runtime',metadata={})
+    class Pool:
+        released=[]
+        backend=SimpleNamespace(runtime_route=lambda value:SandboxRuntimeRoute(
+            'http://gateway:29880','http://proxy:29881'))
+        async def acquire(self,**kwargs):return sandbox
+        async def release(self,value,**kwargs):self.released.append(value.id)
+    class Runtime:
+        starts=0
+        async def inject(self,*args,**kwargs):
+            if phase=='configuration':
+                raise httpx.HTTPStatusError('startup unavailable',
+                    request=httpx.Request('PUT','http://runtime/bootstrap/code-bundle'),
+                    response=httpx.Response(503))
+        async def start_execution(self,*args,**kwargs):
+            self.starts+=1
+            raise httpx.ReadError('accepted response lost')
+    async def token(*args):return 'token',SimpleNamespace(nonce='nonce')
+    pool=Pool();runtime=Runtime()
+    adapter.backend=SandboxChildBackend(pool=pool,runtime=runtime,store=store,
+        objects=ObjectStore(tmp_path/'objects'),settings=Settings(backend='fake',data_root=tmp_path,
+            runtime_image_codex='image'),
+        token_factory=token)
+    try:
+        attempt=await store.claim_job(job.id,'worker','node',30)
+        await store.mark_job_submission_started(job.id,'worker',attempt.generation)
+        context=JobExecutionContext(job=await store.get_job(job.id),
+            request=await store.get_job_request(job.id),generation=attempt.generation)
+        if phase=='configuration':
+            with pytest.raises(PreAcceptFailure) as raised:await adapter.submit(context)
+            assert raised.value.error_code=='child_preparation_failed'
+            assert raised.value.retryable and raised.value.retry_class=='bounded_pre_accept'
+            assert runtime.starts==0 and pool.released==[sandbox.id]
+            assert await adapter.scheduler.active_reservation(job.id) is None
+            assert await store.latest_job_acceptance(job.id) is None
+        else:
+            with pytest.raises(SubmissionOutcomeUnknown) as raised:await adapter.submit(context)
+            assert raised.value.external_execution_id==job.id+':1'
+            receipt=raised.value.acceptance_receipt
+            assert receipt['sandbox_id']==sandbox.id and receipt['reservation_id']
+            assert runtime.starts==1 and pool.released==[]
+            assert await adapter.scheduler.active_reservation(job.id) is not None
     finally:await store.close()
 
 

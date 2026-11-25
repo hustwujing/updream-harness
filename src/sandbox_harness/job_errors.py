@@ -83,6 +83,9 @@ JOB_ERROR_CONTRACTS={
         '请检查音频清晰度和使用授权后更换素材。','execution',side_effect='accepted'),
 
     # Controlled Operations and sandbox execution.
+    'child_preparation_failed':_contract('子任务执行环境准备失败，尚未开始执行',
+        '平台仅可按已冻结的提交前重试策略重试；持续失败时需检查执行环境。',
+        'submission',retryable=True,retry_class='bounded_pre_accept'),
     'audio_stream_missing':_contract('输入媒体没有可转写的音轨',
         '请提供含音轨的视频或独立音频文件后重新创建任务。','input_validation'),
     'media_probe_failed':_contract('无法读取输入媒体的流信息',

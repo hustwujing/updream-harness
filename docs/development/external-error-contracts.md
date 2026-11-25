@@ -55,6 +55,13 @@ not turn a temporary status outage into an immediate terminal `UNKNOWN` or
 submit a replacement. Permanent HTTP failures still follow the reconciliation
 error contract.
 
+Child Runtime configuration and input staging precede execution submission. A
+failure there is `child_preparation_failed` with no execution side effects after
+the allocated sandbox is retired. Once `start_execution` has been attempted,
+response loss preserves the sandbox, reservation and execution ID in
+`SubmissionOutcomeUnknown`; status/recovery uses that handle instead of deleting
+the sandbox or submitting a second execution.
+
 1. Validate frozen inputs before external submission. Raise `PreAcceptFailure`
    with a registered code, canonical phase and explicit retryability.
 2. Do not throw a raw `ValueError`, HTTP exception or SDK exception across the

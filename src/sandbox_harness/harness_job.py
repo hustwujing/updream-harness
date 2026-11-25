@@ -10,7 +10,7 @@ from typing import Any, Awaitable, Callable, Protocol
 from .domain import Harness
 from .grants import GrantAuthority,JobGrantRequest,TurnGrantRequest
 from .job_adapters import (AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExecutionContext,
-    PreAcceptFailure,SubmissionRecovery)
+    PreAcceptFailure,SubmissionRecovery,SubmissionOutcomeUnknown)
 from .job_contracts import JobState
 from .artifact_gateway import ArtifactEmission,ArtifactGateway
 from .scheduler import ResourceRequest, Scheduler
@@ -161,6 +161,16 @@ class HarnessJobAdapter(BaseJobAdapter):
             raise PreAcceptFailure(str(exc),infrastructure=True,retry_after_seconds=1,
                 error_code=exc.code,failed_phase='submission',retry_class='capacity_wait',
                 retryable=True) from exc
+        except SubmissionOutcomeUnknown as exc:
+            await self.scheduler.mark_running(reservation.id,reservation.node_id,
+                reservation.node_generation)
+            raise SubmissionOutcomeUnknown('Child execution acceptance requires reconciliation',
+                external_execution_id=exc.external_execution_id,acceptance_receipt={
+                    'executor':'harness','reservation_id':reservation.id,
+                    'node_id':reservation.node_id,'node_generation':reservation.node_generation,
+                    'runtime_profile_id':reservation.runtime_profile_id,
+                    'image_digest':reservation.image_digest,'gpu_ids':list(reservation.gpu_ids),
+                    **exc.acceptance_receipt}) from exc
         except BaseException:
             await self.scheduler.release(reservation.id,reservation.node_id,reservation.node_generation)
             raise
@@ -310,6 +320,7 @@ class SandboxChildBackend:
         except BaseException:
             await self.pool.release(sandbox,keep_attached=False)
             raise
+        execution_requested=False
         try:
             route=self.pool.backend.runtime_route(sandbox)
             await self.runtime.inject(sandbox,capability_token=token,gateway_url=route.gateway_url,
@@ -347,6 +358,7 @@ class SandboxChildBackend:
             if restoring:
                 message=('Continue the interrupted Job from its durable checkpoint. Preserve completed '
                     'work, do not repeat external side effects, and finish this frozen objective:\n\n'+message)
+            execution_requested=True
             accepted=await self.runtime.start_execution(sandbox,
                 message=message, attachments=[],native_thread_id=(
                     paused.native_thread_id if restoring else ''),reasoning_effort=str(
@@ -357,8 +369,24 @@ class SandboxChildBackend:
             return execution_id,{'sandbox_id':sandbox.id,
                 'sandbox_handle':sandbox.handle.to_mapping(),'capability_nonce':claims.nonce,
                 'runtime_acceptance':accepted}
-        except BaseException:
+        except Exception as exc:
+            if execution_requested:
+                self.sessions[context.job.id]=sandbox
+                raise SubmissionOutcomeUnknown('Child execution response unavailable',
+                    external_execution_id=execution_id,acceptance_receipt={
+                        'sandbox_id':sandbox.id,'sandbox_handle':sandbox.handle.to_mapping(),
+                        'capability_nonce':claims.nonce}) from exc
             await self.pool.release(sandbox,keep_attached=False)
+            retryable=isinstance(exc,(httpx.TimeoutException,httpx.TransportError))
+            if isinstance(exc,httpx.HTTPStatusError):
+                retryable=exc.response.status_code in {408,429,500,502,503,504}
+            raise PreAcceptFailure('Child runtime preparation failed before execution',
+                error_code='child_preparation_failed',failed_phase='submission',
+                retry_class='bounded_pre_accept' if retryable else 'none',
+                retryable=retryable) from exc
+        except BaseException:
+            if not execution_requested:
+                await self.pool.release(sandbox,keep_attached=False)
             raise
 
     async def recover_submission(self,context:JobExecutionContext,reservation)->SubmissionRecovery:
