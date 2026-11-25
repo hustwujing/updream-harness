@@ -82,6 +82,8 @@ class PreAcceptFailure(RuntimeError):
 
 class PreAcceptCancelled(RuntimeError):
     """Durable user cancellation observed before Runtime submission."""
+    def __init__(self,*,retain_allocation:bool=False):
+        super().__init__();self.retain_allocation=retain_allocation
 
 
 class SubmissionOutcomeUnknown(RuntimeError):

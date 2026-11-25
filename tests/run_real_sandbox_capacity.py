@@ -28,6 +28,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from sandbox_harness.catalog import HarnessCatalog
+from sandbox_harness.allocation_dispatch import AllocationClient,AllocationService
 from sandbox_harness.config import Settings
 from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate
 from sandbox_harness.harness_job import JobGrantFactory
@@ -45,7 +46,7 @@ from sandbox_harness.scheduler import NodeInventory,ResourceRequest,Scheduler
 from sandbox_harness.store import JobAttemptRow,Store
 
 ROOT=Path(__file__).resolve().parents[1]
-CASES=('RC01','RC02','RC03','RC04','RC05')
+CASES=('RC01','RC02','RC03','RC04','RC05','RC06')
 
 
 def append_audit(path:Path,value:dict):
@@ -57,9 +58,7 @@ def fixture(path):
     return raw,Settings.model_validate(raw['settings']),SandboxProfile(**raw['profile'])
 
 
-async def worker_main(path):
-    raw,settings,profile=fixture(path);store=Store(settings.database_url)
-    await store.initialize();backend=build_sandbox_backend(settings)
+def instrument_creates(backend,settings):
     audit=settings.data_root/'execution-audit.jsonl';create=backend.create
     async def counted_create(request):
         append_audit(audit,{'event':'create_requested','allocation_id':request.allocation_id})
@@ -69,8 +68,27 @@ async def worker_main(path):
                 'code':exc.code})
             raise
         append_audit(audit,{'event':'created','allocation_id':request.allocation_id,'sandbox_id':value.id})
+        gate=settings.data_root/'hold-create-response.json'
+        while gate.exists() and json.loads(gate.read_text()).get('job_id')==request.allocation_id.split('-g',1)[0]:
+            await asyncio.sleep(.05)
         return value
     backend.create=counted_create
+
+
+async def allocator_main(path):
+    raw,settings,profile=fixture(path);store=Store(settings.database_url)
+    await store.initialize();backend=build_sandbox_backend(settings);instrument_creates(backend,settings)
+    service=AllocationService(store,backend)
+    try:
+        while True:
+            await service.run_once();await asyncio.sleep(.05)
+    finally:await store.close();await backend.aclose()
+
+
+async def worker_main(path):
+    raw,settings,profile=fixture(path);store=Store(settings.database_url)
+    await store.initialize();backend=build_sandbox_backend(settings)
+    audit=settings.data_root/'execution-audit.jsonl'
     pool=SandboxPool(backend,{Harness.CODEX:profile.provider_ref},{Harness.CODEX:0},
         max_sandboxes=2,profile_resolver=build_profile_resolver(settings,backend),ttl_seconds=300)
     runtime=RuntimeClient(timeout_seconds=60,backend=backend,
@@ -101,6 +119,7 @@ async def worker_main(path):
     adapter=MediaRenderOperationAdapter(scheduler=scheduler,pool=pool,runtime=runtime,
         store=store,objects=ObjectStore(settings.data_root/'objects'),settings=settings,
         token_factory=JobGrantFactory(settings),profile_resolver=Profiles())
+    adapter.allocation_client=AllocationClient(store,backend,poll_seconds=.05)
     worker=JobWorker(store,{'media.render':adapter},node_id='capacity-node',
         worker_id='capacity-'+uuid.uuid4().hex,concurrency=1,lease_seconds=2,poll_seconds=.1)
     try:await worker.run()
@@ -147,7 +166,8 @@ async def create_job(store,objects,profile,digest,case,timeout,adapter='media.re
 async def run_case(case,raw,path,store,backend,profile):
     settings=Settings.model_validate(raw['settings']);scheduler=Scheduler(store)
     allocation=case.lower()+'-holder-'+uuid.uuid4().hex;held=None;process=None;log=None;reserved=None
-    evidence={'case':case,'passed':False,'scope':'real_provider_quota' if case!='RC05' else 'real_scheduler_capacity'}
+    evidence={'case':case,'passed':False,'scope':('real_provider_response_barrier' if case=='RC06'
+        else 'real_provider_quota' if case!='RC05' else 'real_scheduler_capacity')}
     def start_worker():
         nonlocal log
         raw['worker_generation']=raw.get('worker_generation',int(time.time()))+1
@@ -189,7 +209,7 @@ async def run_case(case,raw,path,store,backend,profile):
         assert first.accepted_at is None and await store.latest_job_acceptance(job.id) is None
         evidence['waiting_without_acceptance']=True
         events=[json.loads(line) for line in (settings.data_root/'execution-audit.jsonl').read_text().splitlines()] if (settings.data_root/'execution-audit.jsonl').exists() else []
-        own=[r for r in events if r.get('allocation_id')==job.id]
+        own=[r for r in events if r.get('allocation_id','').split('-g',1)[0]==job.id]
         assert not any(r['event'] in {'created','runtime_submitted'} for r in own)
         if case=='RC05':assert not own
         else:assert any(r['event']=='create_rejected' for r in own)
@@ -204,9 +224,22 @@ async def run_case(case,raw,path,store,backend,profile):
                 return row if row and row.generation>first.generation else None
             recovered=await wait_until(replaced);evidence['replacement_generation']=recovered.generation
         if case not in {'RC02','RC03'}:
+            if case=='RC06':
+                gate=settings.data_root/'hold-create-response.json'
+                gate.write_text(json.dumps({'job_id':job.id}))
             await backend.delete(held);held=None
             if reserved:
                 await scheduler.release(reserved.id,reserved.node_id,reserved.node_generation);reserved=None
+            if case=='RC06':
+                async def response_held():
+                    values=[json.loads(line) for line in audit.read_text().splitlines()]
+                    return any(r.get('allocation_id','').split('-g',1)[0]==job.id and r['event']=='created' for r in values)
+                audit=settings.data_root/'execution-audit.jsonl'
+                await wait_until(response_held)
+                old_pid=process.pid;process.kill();await asyncio.to_thread(process.wait);log.close()
+                process=start_worker();await wait_until(node_ready)
+                evidence['killed_worker_pid']=old_pid;evidence['create_response_held']=True
+                gate.unlink()
         async def terminal():
             value=await store.get_job(job.id)
             return value if value.state in {JobState.SUCCEEDED,JobState.FAILED,JobState.CANCELLED,JobState.UNKNOWN} else None
@@ -222,16 +255,18 @@ async def run_case(case,raw,path,store,backend,profile):
             return not await scheduler.active_reservation(job.id) and (not row or row['state']=='completed')
         await wait_until(cleaned)
         events=[json.loads(line) for line in (settings.data_root/'execution-audit.jsonl').read_text().splitlines()]
-        own=[r for r in events if r.get('allocation_id')==job.id]
+        own=[r for r in events if r.get('allocation_id','').split('-g',1)[0]==job.id]
         evidence['runtime_submissions']=sum(r['event']=='runtime_submitted' for r in own)
         assert evidence['runtime_submissions']==(0 if case in {'RC02','RC03'} else 1)
         if case in {'RC01','RC05'}:assert (await store.get_job(job.id)).generation==first.generation
+        evidence['created_sandboxes']=sum(r['event']=='created' for r in own)
         evidence['passed']=True
     except Exception as exc:
         evidence['error_type']=type(exc).__name__
     finally:
         if process and process.poll() is None:process.kill();await asyncio.to_thread(process.wait)
         if log:log.close()
+        (settings.data_root/'hold-create-response.json').unlink(missing_ok=True)
         if held:await backend.delete(held)
         if reserved:await scheduler.release(reserved.id,reserved.node_id,reserved.node_generation)
     return evidence
@@ -247,18 +282,25 @@ async def run(args):
     name='capacity_'+run_id;admin=create_async_engine(url.set(database='postgres'),isolation_level='AUTOCOMMIT')
     async with admin.connect() as db:await db.execute(text('CREATE DATABASE "'+name+'"'))
     updated=settings.model_copy(update={'database_url':url.set(database=name).render_as_string(hide_password=False),
-        'data_root':data_root,'namespace':'capacity-'+run_id,'redis_url':'','redis_prefix':'capacity-'+run_id+':'})
+        'data_root':data_root,'namespace':'capacity-'+run_id,'redis_url':'','redis_prefix':'capacity-'+run_id+':',
+        'job_allocation_dispatcher_enabled':True})
     raw={**raw,'settings':updated.model_dump(mode='json'),'node_cpu':16}
     path=data_root/'worker-fixture.json';fd=os.open(path,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
     with os.fdopen(fd,'w') as f:json.dump(raw,f)
     store=Store(updated.database_url);await store.initialize();backend=build_sandbox_backend(updated)
+    allocator_log=(data_root/'allocator.log').open('w')
+    allocator=subprocess.Popen([sys.executable,str(Path(__file__).resolve()),'--fixture',str(path),'--allocator'],
+        cwd=ROOT,env={**os.environ,'TMPDIR':str(data_root/'tmp'),'PYTHONDONTWRITEBYTECODE':'1'},
+        stdout=allocator_log,stderr=subprocess.STDOUT)
     report={'revision':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
-        'run_id':run_id,'timestamp':datetime.now(timezone.utc).isoformat(),'selected_cases':selected,
+        'run_id':run_id,'allocation_service_pid':allocator.pid,
+        'timestamp':datetime.now(timezone.utc).isoformat(),'selected_cases':selected,
         'cases':{},'database_removed':False,'source_state':{
             'dirty':bool(subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True)),
             'sha256':{name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in [
                 'tests/run_real_sandbox_capacity.py','src/sandbox_harness/job_worker.py',
-                'src/sandbox_harness/job_allocation.py','src/sandbox_harness/store.py']}}}
+                'src/sandbox_harness/job_allocation.py','src/sandbox_harness/allocation_dispatch.py',
+                'src/sandbox_harness/store.py']}}}
     try:
         for case in selected:
             started=time.monotonic();value=await run_case(case,raw,path,store,backend,profile)
@@ -269,6 +311,8 @@ async def run(args):
     except Exception as exc:
         report['run_error']=type(exc).__name__
     finally:
+        if allocator.poll() is None:allocator.terminate();await asyncio.to_thread(allocator.wait)
+        allocator_log.close()
         remaining=await backend.list_owned(SandboxScope(updated.namespace));report['remaining_owned']=[r.id for r in remaining]
         unresolved=await store.active_sandbox_allocations()
         report['unresolved_allocations']=[list(value) for value in sorted(unresolved)]
@@ -286,9 +330,11 @@ async def run(args):
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--fixture',required=True);p.add_argument('--worker',action='store_true')
+    p.add_argument('--allocator',action='store_true')
     p.add_argument('--cases',default=','.join(CASES));p.add_argument('--report',type=Path)
     args=p.parse_args()
     if args.worker:asyncio.run(worker_main(args.fixture));return
+    if args.allocator:asyncio.run(allocator_main(args.fixture));return
     if not args.report:p.error('--report is required')
     args.report.parent.mkdir(parents=True,exist_ok=True)
     result=asyncio.run(run(args));print(json.dumps({'passed':result['passed'],'report':str(args.report)}))

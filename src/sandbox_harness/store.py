@@ -750,6 +750,25 @@ class JobLeaseRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class SandboxAllocationRow(Base):
+    __tablename__ = 'sandbox_allocations'
+    id: Mapped[str] = mapped_column(String(64),primary_key=True)
+    namespace: Mapped[str] = mapped_column(String(64),index=True)
+    provider: Mapped[str] = mapped_column(String(64))
+    allocation_id: Mapped[str] = mapped_column(String(160))
+    job_id: Mapped[str] = mapped_column(String(32),index=True)
+    job_generation: Mapped[int] = mapped_column(Integer)
+    request_json: Mapped[str] = mapped_column(Text)
+    request_digest: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(24),index=True)
+    handle_json: Mapped[str] = mapped_column(Text,default='{}',server_default='{}')
+    error_code: Mapped[str] = mapped_column(String(80),default='',server_default='')
+    claim_owner: Mapped[str] = mapped_column(String(64),default='',server_default='')
+    claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class JobCleanupRow(Base):
     __tablename__ = "job_cleanups"
     __table_args__ = (UniqueConstraint("job_id","generation"),)
@@ -2703,9 +2722,23 @@ class Store:
                     or previous.outcome!='SUBMITTING' or previous.accepted_at is not None):
                 raise RuntimeError('stale_job_generation')
             receipt=json.loads(previous.acceptance_receipt_json)
-            if receipt.get('allocation_phase') not in {'allocating','preparing'} or not receipt.get('sandbox_handle'):
+            if (receipt.get('allocation_phase') not in {'allocating','preparing'}
+                    or (not receipt.get('sandbox_handle') and not await self._dispatched_allocation_absent(
+                        db,job_id,receipt))):
                 raise RuntimeError('job_allocation_phase_conflict')
             previous.acceptance_receipt_json=canonical_json({**receipt,'allocation_phase':'absent'})
+
+    async def _dispatched_allocation_absent(self,db,job_id,receipt):
+        identity=receipt.get('allocation_dispatch_id')
+        namespace=receipt.get('allocation_namespace')
+        provider=receipt.get('allocation_provider');allocation=receipt.get('allocation_id')
+        if not all(isinstance(value,str) and value for value in [identity,namespace,provider,allocation]):
+            return False
+        expected=hashlib.sha256(json.dumps([namespace,provider,allocation],separators=(',',':')).encode()).hexdigest()
+        if identity!=expected:raise RuntimeError('sandbox_allocation_identity_mismatch')
+        row=await db.get(SandboxAllocationRow,identity,with_for_update=True)
+        if row and row.job_id!=job_id:raise RuntimeError('sandbox_allocation_owner_mismatch')
+        return not row or row.state in {'REJECTED','CANCELLED','RELEASED'}
 
     async def job_deadline(self, job_id: str, timeout_seconds: int) -> datetime | None:
         async with self.connections() as db:
@@ -2765,11 +2798,20 @@ class Store:
 
     async def record_job_cleanup_receipt(self,cleanup_id:str,owner:str,receipt:dict)->None:
         """Fence the discovered handle before an unstarted allocation is deleted."""
+        async with self.connections() as db:
+            job_id=(await db.scalars(select(JobCleanupRow.job_id).where(
+                JobCleanupRow.id==cleanup_id))).one_or_none()
         async with self.connections.begin() as db:
+            job=await db.get(JobRow,job_id,with_for_update=True) if job_id else None
             row=await db.get(JobCleanupRow,cleanup_id,with_for_update=True)
             if not row or row.claim_owner!=owner or row.state!='running':
                 raise RuntimeError('job_cleanup_claim_lost')
             previous=json.loads(row.acceptance_receipt_json)
+            if receipt=={**previous,'allocation_phase':'absent'}:
+                if (not job or job.generation<row.generation
+                        or not await self._dispatched_allocation_absent(db,job.id,previous)):
+                    raise RuntimeError('job_cleanup_receipt_mismatch')
+                row.acceptance_receipt_json=canonical_json(receipt);row.updated_at=now();return
             if (any(receipt.get(key)!=value for key,value in previous.items())
                     or set(receipt)-set(previous)-{'sandbox_id','sandbox_handle'}):
                 raise RuntimeError('job_cleanup_receipt_mismatch')
@@ -4021,6 +4063,8 @@ class Store:
                 JobCleanupRow.job_id.in_(job_ids or [""])).with_for_update())).scalars().all())
             resource_rows=list((await db.execute(select(ResourceReservationRow).where(
                 ResourceReservationRow.job_id.in_(job_ids or [""])).with_for_update())).scalars().all())
+            allocations=list((await db.scalars(select(SandboxAllocationRow).where(
+                SandboxAllocationRow.job_id.in_(job_ids or [''])).with_for_update())).all())
             reservations=list((await db.execute(select(BudgetReservationRow).where(
                 BudgetReservationRow.group_id.in_(group_ids or [""])).with_for_update())).scalars().all())
             outboxes=list((await db.execute(select(JobOutboxRow).where(
@@ -4028,6 +4072,7 @@ class Store:
             if (any(JobState(job.state) not in TERMINAL_JOB_STATES for job in jobs)
                     or any(row.state!="completed" for row in cleanups)
                     or any(row.state!="released" for row in resource_rows)
+                    or any(row.state not in {'REJECTED','CANCELLED','RELEASED'} for row in allocations)
                     or any(row.consumed+row.released<row.reserved for row in reservations)
                     or any(row.state in {"ready","claimed","blocked"} for row in outboxes)):
                 raise RuntimeError("active_jobs_prevent_thread_delete")
@@ -4066,6 +4111,7 @@ class Store:
                     JobDisplayActivityRow.job_id.in_(job_ids)))
                 await db.execute(delete(JobArtifactRow).where(JobArtifactRow.job_id.in_(job_ids)))
                 await db.execute(delete(JobCleanupRow).where(JobCleanupRow.job_id.in_(job_ids)))
+                await db.execute(delete(SandboxAllocationRow).where(SandboxAllocationRow.job_id.in_(job_ids)))
                 await db.execute(delete(JobLeaseRow).where(JobLeaseRow.job_id.in_(job_ids)))
                 await db.execute(delete(JobAttemptRow).where(JobAttemptRow.job_id.in_(job_ids)))
                 await db.execute(delete(ResourceReservationRow).where(
@@ -4261,7 +4307,13 @@ class Store:
                 JobAttemptRow.acceptance_receipt_json!="{}"))).scalars().all())
             receipts.extend((await db.execute(select(JobCleanupRow.acceptance_receipt_json).where(
                 JobCleanupRow.state!="completed"))).scalars().all())
+            dispatched=(await db.scalars(select(SandboxAllocationRow.handle_json).where(
+                SandboxAllocationRow.state=='READY'))).all()
         result=[]
+        for encoded in dispatched:
+            try:result.append(SandboxHandle.from_mapping(json.loads(encoded)))
+            except (TypeError,ValueError) as exc:
+                raise RuntimeError('active_sandbox_handle_missing_or_invalid') from exc
         for sandbox_id,encoded in direct:
             try:
                 handle=SandboxHandle.from_mapping(json.loads(encoded))
@@ -4288,7 +4340,10 @@ class Store:
                 JobAttemptRow.acceptance_receipt_json!='{}'))).scalars())
             receipts.extend((await db.execute(select(JobCleanupRow.acceptance_receipt_json).where(
                 JobCleanupRow.state!='completed'))).scalars())
-        result=set()
+            dispatched=(await db.execute(select(SandboxAllocationRow.provider,
+                SandboxAllocationRow.allocation_id).where(SandboxAllocationRow.state.in_(
+                    ['PENDING','SENDING','READY','UNKNOWN'])))).all()
+        result=set(dispatched)
         for encoded in receipts:
             try:
                 value=json.loads(encoded)

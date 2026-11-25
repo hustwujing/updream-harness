@@ -10,6 +10,7 @@ stop_units=(
   sandbox-harness-parallel-ali-media-worker
   sandbox-harness-parallel-ali-controlled-worker
   sandbox-harness-parallel-ali-job-worker
+  sandbox-harness-parallel-ali-allocation-worker
   sandbox-harness-parallel-ali-image-decompose
   sandbox-harness-parallel-ali-gateway-aliyun
   sandbox-harness-parallel-ali-gateway-opensandbox

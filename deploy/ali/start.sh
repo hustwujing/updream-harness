@@ -70,6 +70,10 @@ fi
 start_transient sandbox-harness-parallel-ali-image-decompose root \
   "$root/deploy/ali/run-service.sh" image-decompose
 wait_port 127.0.0.1 8912
+if [[ "${SANDBOX_HARNESS_JOB_ALLOCATION_DISPATCHER_ENABLED:-false}" == "true" ]]; then
+  start_transient sandbox-harness-parallel-ali-allocation-worker sandbox-harness \
+    "$root/deploy/ali/run-service.sh" allocation-worker
+fi
 start_transient sandbox-harness-parallel-ali-job-worker sandbox-harness \
   "$root/deploy/ali/run-service.sh" job-worker
 start_transient sandbox-harness-parallel-ali-controlled-worker root \

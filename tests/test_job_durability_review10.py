@@ -289,7 +289,9 @@ async def test_resource_hold_covers_ttl_and_releases_exclusive_gpu_last(tmp_path
     finally:await store.close()
 
 
-async def test_thread_delete_blocks_generic_cleanup_then_removes_complete_job_history(tmp_path):
+@pytest.mark.parametrize('allocation_state',[None,'PENDING','SENDING','READY','UNKNOWN',
+    'REJECTED','CANCELLED','RELEASED'])
+async def test_thread_delete_blocks_generic_cleanup_then_removes_complete_job_history(tmp_path,allocation_state):
     store=Store("sqlite+aiosqlite:///"+str(tmp_path/"delete-jobs.db"));await store.initialize()
     profile=HarnessCatalog().resolve("codex","gpt-5.6","standard")
     thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
@@ -309,9 +311,24 @@ async def test_thread_delete_blocks_generic_cleanup_then_removes_complete_job_hi
             await store.delete_thread(thread.id,"owner")
         cleanup=(await store.claim_job_cleanups("cleanup",30,limit=1))[0]
         await store.finish_job_cleanup(cleanup["cleanup_id"],"cleanup",succeeded=True)
+        if allocation_state:
+            from sandbox_harness.store import SandboxAllocationRow
+            from sandbox_harness.domain import now
+            async with store.connections.begin() as db:
+                db.add(SandboxAllocationRow(id='a'*64,namespace='test',provider='fake',
+                    allocation_id=job.id,job_id=job.id,job_generation=attempt.generation,
+                    request_json='{}',request_digest='b'*64,state=allocation_state,
+                    created_at=now(),updated_at=now()))
+            if allocation_state not in {'REJECTED','CANCELLED','RELEASED'}:
+                with pytest.raises(RuntimeError,match='active_jobs_prevent_thread_delete'):
+                    await store.delete_thread(thread.id,'owner')
+                async with store.connections.begin() as db:
+                    row=await db.get(SandboxAllocationRow,'a'*64);row.state='RELEASED'
         await store.delete_thread(thread.id,"owner")
         assert await store.get_thread(thread.id) is None
         assert await store.get_job(job.id) is None and await store.get_job_group(group.id) is None
+        if allocation_state:
+            async with store.connections() as db:assert await db.get(SandboxAllocationRow,'a'*64) is None
     finally:await store.close()
 
 

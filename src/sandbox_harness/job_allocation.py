@@ -8,6 +8,7 @@ from .sandbox import Sandbox,SandboxCapacityUnavailable,SandboxNotFound,SandboxR
 from .sandbox_contracts import (SandboxCreateOutcomeUnknown,SandboxEndpointUnavailable,
     SandboxHandle,SandboxProfile,SandboxProfileUnavailable,SandboxProviderUnavailable)
 from .sandbox_factory import SandboxProfileResolver
+from .allocation_dispatch import AllocationAbsent,allocation_key
 
 
 class SandboxAllocationOwner:
@@ -49,7 +50,9 @@ class SandboxAllocationOwner:
         while True:
             await self._check_cancelled(context)
             try:
-                sandbox=await self.pool.reconcile_create(receipt['allocation_id'])
+                sandbox=(await self.allocation_client.resolve(context,receipt)
+                    if receipt.get('allocation_dispatch_id') else
+                    await self.pool.reconcile_create(receipt['allocation_id']))
                 if sandbox:
                     profile=self._validate_allocation(sandbox,receipt)
                     sandbox=replace(sandbox,profile=profile,
@@ -75,6 +78,19 @@ class SandboxAllocationOwner:
         self._validate_allocation(sandbox,receipt)
         return sandbox
 
+    async def release_prepared_allocation(self,sandbox,receipt):
+        try:
+            retire=getattr(self.pool,'retire',None)
+            if retire:await retire(sandbox)
+            else:await self.pool.release(sandbox,keep_attached=False)
+            pending=getattr(self.pool,'retirement_pending',None)
+            if pending and await pending(sandbox):raise RuntimeError('sandbox_deletion_pending')
+        except Exception as exc:
+            raise PreAcceptFailure('Sandbox cleanup must complete before capacity release',
+                error_code='child_preparation_failed',failed_phase='submission',
+                retryable=False,retain_capacity=True) from exc
+        if getattr(self,'allocation_client',None):await self.allocation_client.released(receipt)
+
 
     async def acquire_allocation(self,context,reservation,execution_id):
         harness=Harness(reservation.harness)
@@ -87,6 +103,14 @@ class SandboxAllocationOwner:
             'reservation_id':reservation.id,'reservation_generation':context.generation,
             'node_id':reservation.node_id,
             'node_generation':reservation.node_generation}
+        dispatch={}
+        if getattr(self,'allocation_client',None) and self.settings.job_allocation_dispatcher_enabled:
+            allocation['allocation_id']=context.job.id+'-g'+str(context.generation)
+            allocation.update(allocation_namespace=self.pool.backend.namespace,
+                allocation_dispatch_id=allocation_key(self.pool.backend.namespace,profile.provider,
+                    allocation['allocation_id']))
+            dispatch['create']=lambda request:self.allocation_client.create(context,request)
+            dispatch['allocation_id']=allocation['allocation_id']
         try:
             await self.store.record_job_submission_allocation(context.job.id,context.generation,
                 external_execution_id=execution_id,receipt=allocation)
@@ -102,7 +126,7 @@ class SandboxAllocationOwner:
                 external_execution_id=execution_id,receipt=allocation)
         async def owns_allocation():
             owned=getattr(self.pool,'owns_allocation',None)
-            return bool(owned and await owned(profile.provider,context.job.id))
+            return bool(owned and await owned(profile.provider,allocation['allocation_id']))
         async def mark_absent():
             allocation['allocation_phase']='absent'
             await self.store.record_job_submission_allocation(context.job.id,context.generation,
@@ -112,7 +136,7 @@ class SandboxAllocationOwner:
                 sandbox=await self.pool.acquire(thread_id=self._thread_id(context.job.id),
                     turn_id=context.job.id,harness=harness,environment={},image=image,
                     profile_id=reservation.runtime_profile_id,revision=release.revision,
-                    retain_unresolved_allocation=True,before_create=before_create)
+                    retain_unresolved_allocation=True,before_create=before_create,**dispatch)
             except SandboxCreateOutcomeUnknown:
                 sandbox=await self._reconcile_allocation(context,allocation,ready=True)
         except asyncio.CancelledError as exc:
@@ -148,9 +172,14 @@ class SandboxAllocationOwner:
         receipt=context.previous_acceptance_receipt
         if receipt.get('allocation_phase') in {'awaiting_capacity','absent'}:
             return SubmissionRecovery(safe_to_retry=True)
-        if receipt.get('allocation_phase')=='allocating':
+        if receipt.get('allocation_phase') in {'allocating','preparing'}:
             if not receipt.get('sandbox_handle'):
-                sandbox=await self._reconcile_allocation(context,receipt,ready=False)
+                try:sandbox=await self._reconcile_allocation(context,receipt,ready=False)
+                except AllocationAbsent:
+                    await self.store.mark_recovered_allocation_absent(context.job.id,context.generation,
+                        reservation.job_generation)
+                    await self.pool.release_absent_allocation(receipt['allocation_provider'],receipt['allocation_id'])
+                    return SubmissionRecovery(safe_to_retry=True)
                 await self.store.record_recovered_job_allocation(context.job.id,context.generation,
                     reservation.job_generation,sandbox.handle)
                 receipt={**receipt,'sandbox_id':sandbox.id,
@@ -160,6 +189,7 @@ class SandboxAllocationOwner:
             if await self.pool.retirement_pending(sandbox):
                 raise SandboxProviderUnavailable('Allocation deletion is pending',
                     provider=sandbox.handle.provider)
+            if getattr(self,'allocation_client',None):await self.allocation_client.released(receipt)
             await self.store.mark_recovered_allocation_absent(context.job.id,context.generation,
                 reservation.job_generation)
             return SubmissionRecovery(safe_to_retry=True)
@@ -171,7 +201,13 @@ class SandboxAllocationOwner:
         if self.pool.backend.provider!=receipt['allocation_provider']:
             raise SandboxProfileUnavailable('Allocation provider is not active',
                 provider=receipt['allocation_provider'])
-        sandbox=await self.pool.reconcile_create(receipt['allocation_id'])
+        try:
+            sandbox=(await self.allocation_client.resolve(context,receipt,cleanup=True)
+                if receipt.get('allocation_dispatch_id') else
+                await self.pool.reconcile_create(receipt['allocation_id']))
+        except AllocationAbsent:
+            await self.pool.release_absent_allocation(receipt['allocation_provider'],receipt['allocation_id'])
+            return {**receipt,'allocation_phase':'absent'}
         if not sandbox:
             raise SandboxCreateOutcomeUnknown('Allocation cleanup is awaiting visibility',
                 provider=receipt['allocation_provider'])

@@ -47,6 +47,7 @@ case "$component" in
       service.app:app --host 127.0.0.1 --port 8912 --no-access-log)
     ;;
   job-worker) command=("$root/.venv/bin/sandbox-harness-parallel-job-worker") ;;
+  allocation-worker) command=("$root/.venv/bin/python" -m sandbox_harness.allocation_service) ;;
   controlled-worker) command=("$root/.venv/bin/sandbox-harness-parallel-controlled-worker") ;;
   media-worker) command=("$root/.venv/bin/sandbox-harness-parallel-media-worker") ;;
   site-worker) command=("$root/.venv/bin/sandbox-harness-parallel-site-worker") ;;

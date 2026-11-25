@@ -1,8 +1,8 @@
 # Real sandbox capacity gate
 
 `tests/run_real_sandbox_capacity.py` exercises real creation and a Runtime image
-resize, without model calls. These five cases are separate from the original
-169-case product matrix, for 174 cases in the combined report.
+resize, without model calls. These six cases are separate from the original
+169-case product matrix, for 175 cases in the combined report.
 
 | Case | Boundary | Expected result |
 | --- | --- | --- |
@@ -11,12 +11,17 @@ resize, without model calls. These five cases are separate from the original
 | RC03 | Deadline expires during capacity wait | FAILED with no execution side effects, zero Runtime submissions |
 | RC04 | SIGKILL the isolated Worker during capacity wait | Replacement generation resumes; releasing the holder permits exactly one Runtime submission |
 | RC05 | Platform node resources are reserved while a real holder exists | Wait without a provider create call; confirmed deletion and reservation release permit one execution |
+| RC06 | Hold a real create response in the allocation service and SIGKILL the waiting JobWorker | The independent service persists the original response; replacement retires the unstarted sandbox, reallocates safely and submits Runtime exactly once |
 
 Use an exclusively owned provider Team/project with a one-instance quota. The
 Ali fixture uses its own Team, API key and template, reusing the validated Runtime
 image. A real HTTP 429 denies the second creation while the first sandbox stays
 accessible; deleting the first restores creation. This is separate evidence from
-an injected SDK error or a local Pool semaphore limit.
+an injected SDK error or a local Pool semaphore limit. RC06 additionally uses a
+response-delivery barrier around a real successful provider call; it is reported
+as a real-provider fault-injection case. Two sequential sandbox creations are
+expected in RC06 because recovery confirms retirement of the unstarted first
+allocation before replacing it; business execution still occurs exactly once.
 
 The mode-0600 host fixture JSON contains `settings` (serialized `Settings`),
 `profile` (frozen `SandboxProfile`), `image_digest`, and `provider_quota`. Set the

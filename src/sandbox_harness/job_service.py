@@ -9,6 +9,7 @@ import signal
 import time
 
 from .config import Settings, load_settings
+from .allocation_dispatch import AllocationClient
 from .domain import Harness
 from .harness_job import HarnessJobAdapter, JobGrantFactory, SandboxChildBackend
 from .image_decompose_adapter import ImageDecomposeAdapter
@@ -72,8 +73,10 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
         staging_root=settings.data_root / "tmp" / "runtime-downloads",backend=pool.backend)
     scheduler=Scheduler(store)
     resolver=profile_resolver(settings)
+    allocation_client=AllocationClient(store,pool.backend)
     child_backend=SandboxChildBackend(pool=pool,runtime=runtime,store=store,objects=objects,
-        settings=settings,token_factory=JobGrantFactory(settings),profile_resolver=resolver)
+        settings=settings,token_factory=JobGrantFactory(settings),profile_resolver=resolver,
+        allocation_client=allocation_client)
     harness_adapter=HarnessJobAdapter(scheduler,child_backend)
     media_catalog=MediaCatalog(settings.media_catalog_json,
         ark_assets_configured=bool(settings.ark_access_key and settings.ark_secret_key
@@ -82,7 +85,7 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
     media_adapter=MediaProviderJobAdapter(settings,store,objects,media_catalog)
     render_adapter=MediaRenderOperationAdapter(scheduler=scheduler,pool=pool,runtime=runtime,
         store=store,objects=objects,settings=settings,token_factory=JobGrantFactory(settings),
-        profile_resolver=resolver)
+        profile_resolver=resolver,allocation_client=allocation_client)
     decompose_adapter=ImageDecomposeAdapter(settings,store,objects)
     catalog_raw=settings.job_catalog_path.read_text()
     job_catalog=JobCatalog.from_json(catalog_raw,expected_digest=(settings.job_catalog_digest

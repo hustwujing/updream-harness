@@ -286,9 +286,10 @@ class SandboxChildBackend(SandboxAllocationOwner):
     allocation_poll_seconds=1.0
     def __init__(self,*,pool,runtime,store,objects,settings,
                  token_factory:Callable[[JobExecutionContext,Any,str],Awaitable[tuple[str,Any]]],
-                 profile_resolver=None):
+                 profile_resolver=None,allocation_client=None):
         self.pool=pool;self.runtime=runtime;self.store=store;self.objects=objects
         self.settings=settings;self.token_factory=token_factory;self.profile_resolver=profile_resolver
+        self.allocation_client=allocation_client
         self.sessions={}
         self.collectors={}
         self.artifact_gateway=ArtifactGateway(store,objects,
@@ -351,7 +352,7 @@ class SandboxChildBackend(SandboxAllocationOwner):
                 'child_harness',context.job.id)
             restoring=bool(paused and paused.checkpoint_ref and paused.state.value=='RESUMED')
         except BaseException:
-            await self.pool.release(sandbox,keep_attached=False)
+            await self.release_prepared_allocation(sandbox,allocation)
             raise
         execution_requested=False
         try:
@@ -403,7 +404,7 @@ class SandboxChildBackend(SandboxAllocationOwner):
                 execution_id=execution_id,input_id=context.job.id)
             self.sessions[context.job.id]=sandbox
             self._ensure_collector(context,sandbox,execution_id)
-            return execution_id,{'sandbox_id':sandbox.id,
+            return execution_id,{**allocation,'sandbox_id':sandbox.id,
                 'sandbox_handle':sandbox.handle.to_mapping(),'capability_nonce':claims.nonce,
                 'runtime_acceptance':accepted}
         except PreAcceptCancelled:raise
@@ -413,10 +414,10 @@ class SandboxChildBackend(SandboxAllocationOwner):
             if execution_requested:
                 self.sessions[context.job.id]=sandbox
                 raise SubmissionOutcomeUnknown('Child execution response unavailable',
-                    external_execution_id=execution_id,acceptance_receipt={
+                    external_execution_id=execution_id,acceptance_receipt={**allocation,
                         'sandbox_id':sandbox.id,'sandbox_handle':sandbox.handle.to_mapping(),
                         'capability_nonce':claims.nonce}) from exc
-            await self.pool.release(sandbox,keep_attached=False)
+            await self.release_prepared_allocation(sandbox,allocation)
             retryable=isinstance(exc,(httpx.TimeoutException,httpx.TransportError))
             if isinstance(exc,httpx.HTTPStatusError):
                 retryable=exc.response.status_code in {408,429,500,502,503,504}
@@ -429,7 +430,7 @@ class SandboxChildBackend(SandboxAllocationOwner):
             raise SubmissionInterrupted(execution_id,allocation) from exc
         except BaseException:
             if not execution_requested:
-                await self.pool.release(sandbox,keep_attached=False)
+                await self.release_prepared_allocation(sandbox,allocation)
             raise
 
     async def recover_submission(self,context:JobExecutionContext,reservation)->SubmissionRecovery:
@@ -454,15 +455,16 @@ class SandboxChildBackend(SandboxAllocationOwner):
             try:detail=str(exc.response.json().get('detail') or '')
             except (ValueError,AttributeError):detail=''
             if exc.response.status_code!=503 or detail!='Runtime Code Bundle is not active':raise
-            await self.pool.release(sandbox,keep_attached=False)
+            await self.release_prepared_allocation(sandbox,context.previous_acceptance_receipt)
             return SubmissionRecovery(safe_to_retry=True)
         if not value:
-            await self.pool.release(sandbox,keep_attached=False)
+            await self.release_prepared_allocation(sandbox,context.previous_acceptance_receipt)
             return SubmissionRecovery(safe_to_retry=True)
         self.sessions[context.job.id]=sandbox
         self._ensure_collector(context,sandbox,execution_id)
         return SubmissionRecovery(submission=AdapterSubmission(external_execution_id=execution_id,
-            acceptance_receipt={"executor":"harness","reservation_id":reservation.id,
+            acceptance_receipt={**context.previous_acceptance_receipt,
+                "executor":"harness","reservation_id":reservation.id,
                 "node_id":reservation.node_id,"node_generation":reservation.node_generation,
                 "runtime_profile_id":reservation.runtime_profile_id,
                 "image_digest":reservation.image_digest,"gpu_ids":list(reservation.gpu_ids),
@@ -661,7 +663,7 @@ class SandboxChildBackend(SandboxAllocationOwner):
                       receipt:dict[str,Any])->None:
         sandbox=None;identity=str(receipt.get('sandbox_id',''))
         unstarted=receipt.get('allocation_phase') in {'allocating','absent'}
-        if unstarted:
+        if receipt.get('allocation_profile') and receipt.get('sandbox_handle'):
             sandbox=self._unstarted_allocation(context,receipt)
         elif identity:
             try:sandbox=await self._sandbox(context,receipt)
@@ -682,12 +684,14 @@ class SandboxChildBackend(SandboxAllocationOwner):
                         'X-Updream-Sandbox-Id':sandbox.id if sandbox else identity})
                 response.raise_for_status()
         if sandbox:
-            if unstarted:
-                await self.pool.retire(sandbox)
+            retire=getattr(self.pool,'retire',None)
+            if retire:
+                await retire(sandbox)
                 if await self.pool.retirement_pending(sandbox):
                     raise SandboxProviderUnavailable('Allocation deletion is pending',
                         provider=sandbox.handle.provider)
             else:await self.pool.release(sandbox,keep_attached=False)
+        if self.allocation_client and identity:await self.allocation_client.released(receipt)
         self.sessions.pop(context.job.id,None)
 
 

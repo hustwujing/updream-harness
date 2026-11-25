@@ -21,10 +21,11 @@ from .profiles import ProviderRelease
 
 class MediaRenderOperationAdapter(SandboxAllocationOwner,BaseJobAdapter):
     def __init__(self,*,scheduler,pool,runtime,store,objects,settings,token_factory,
-                 profile_resolver=None):
+                 profile_resolver=None,allocation_client=None):
         self.scheduler=scheduler;self.pool=pool;self.runtime=runtime;self.store=store
         self.objects=objects;self.settings=settings;self.token_factory=token_factory
         self.profile_resolver=profile_resolver;self.sessions={}
+        self.allocation_client=allocation_client
         self.artifacts=ArtifactGateway(store,objects,settings.data_root/'tmp'/'operation-job-artifacts',
             maximum_bytes=settings.max_artifact_bytes)
 
@@ -252,6 +253,7 @@ class MediaRenderOperationAdapter(SandboxAllocationOwner,BaseJobAdapter):
                         raise SandboxProviderUnavailable('Allocation deletion is pending',
                             provider=sandbox.handle.provider)
                 else:await self.pool.release(sandbox,keep_attached=False)
+                if self.allocation_client:await self.allocation_client.released(receipt)
             self.sessions.pop(context.job.id,None)
 
     async def release_capacity(self,context:JobExecutionContext)->None:

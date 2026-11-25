@@ -101,18 +101,28 @@ class SandboxPool:
         async with self._lock:return self.sandbox_key(sandbox) in self._retiring
 
     async def _create_for_owner(self,request:SandboxCreateRequest,thread_id:str,
-                                retain_unresolved:bool,before_create=None)->Sandbox:
+                                retain_unresolved:bool,before_create=None,create=None)->Sandbox:
         key=(request.profile.provider,request.allocation_id)
         if before_create:await before_create(request)
         if retain_unresolved:
             async with self._lock:
                 self._pending_allocations[key]=(thread_id,request.profile)
-        try:return await self.backend.create(request)
+        try:return await (create(request) if create else self.backend.create(request))
         except (SandboxCreateOutcomeUnknown,asyncio.CancelledError):raise
-        except BaseException:
-            if retain_unresolved:
+        except BaseException as exc:
+            if retain_unresolved and not getattr(exc,'retain_allocation',False):
                 async with self._lock:self._pending_allocations.pop(key,None)
             raise
+
+    async def release_absent_allocation(self,provider:str,allocation_id:str)->None:
+        """Release a pending slot only after its durable owner proves absence."""
+        async with self._lock:
+            key=(provider,allocation_id)
+            if any(value.handle.provider==provider and value.handle.allocation_id==allocation_id
+                    for value in self._attached.values()):
+                raise RuntimeError('sandbox_allocation_is_attached')
+            if self._pending_allocations.pop(key,None) is not None:
+                self._user_slots.release();self._capacity_changed.set()
 
     async def execution_available(self) -> bool:
         async with self._lock:
@@ -276,12 +286,15 @@ class SandboxPool:
                       environment: dict[str, str], image: str | None = None,
                       profile_id: str | None = None, revision: str | None = None,
                       retain_unresolved_allocation:bool=False,
-                      before_create:Callable[[SandboxCreateRequest],Awaitable[None]]|None=None) -> Sandbox:
+                      before_create:Callable[[SandboxCreateRequest],Awaitable[None]]|None=None,
+                      create:Callable[[SandboxCreateRequest],Awaitable[Sandbox]]|None=None,
+                      allocation_id:str|None=None) -> Sandbox:
         async with self._thread_lock(thread_id):
             desired_image = image or self.images[harness]
             desired_profile=self.profile_resolver.resolve(harness,desired_image,
                 profile_id=profile_id,revision=revision)
-            pending_key=(desired_profile.provider,turn_id)
+            allocation_id=allocation_id or turn_id
+            pending_key=(desired_profile.provider,allocation_id)
             slot_reserved = False
             async with self._lock:
                 if self._closed:
@@ -357,8 +370,8 @@ class SandboxPool:
                     except SandboxNotFound:
                         sandbox=await self._create_for_owner(SandboxCreateRequest(harness=harness,
                             profile=desired_profile,environment=environment,
-                            ttl_seconds=self.ttl_seconds,allocation_id=turn_id),
-                            thread_id,retain_unresolved_allocation,before_create)
+                            ttl_seconds=self.ttl_seconds,allocation_id=allocation_id),
+                            thread_id,retain_unresolved_allocation,before_create,create)
                     except asyncio.CancelledError:
                         cleanup=asyncio.create_task(self._delete_tracked(sandbox,user_slot=False))
                         try:await asyncio.shield(cleanup)
@@ -370,8 +383,8 @@ class SandboxPool:
                 else:
                     sandbox=await self._create_for_owner(SandboxCreateRequest(harness=harness,
                         profile=desired_profile,environment=environment,
-                        ttl_seconds=self.ttl_seconds,allocation_id=turn_id),
-                        thread_id,retain_unresolved_allocation,before_create)
+                        ttl_seconds=self.ttl_seconds,allocation_id=allocation_id),
+                        thread_id,retain_unresolved_allocation,before_create,create)
                 sandbox.thread_id = thread_id
                 sandbox.turn_id = turn_id
                 sandbox.reused = False

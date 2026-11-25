@@ -18,6 +18,17 @@ completed result before returning acceptance. A lost response is not permission
 to repeat the RPC. Cleanup confirms deletion before capacity release, and
 preparation recovery persists absence before releasing the original reservation.
 
+When `SANDBOX_HARNESS_JOB_ALLOCATION_DISPATCHER_ENABLED=true`, run
+`python -m sandbox_harness.allocation_service` independently of the JobWorker.
+`allocation_dispatch.py` stores provider create requests and responses in
+`sandbox_allocations`. Job deadlines and Worker replacement stop waiting without
+cancelling that service's in-flight create. Its own lost SENDING lease remains
+UNKNOWN and is reconciled without another create. Keep this service in the same
+product's isolated database/namespace and deployment start/stop/release controls.
+New dispatched provider allocation IDs include attempt generation, while retries
+within a capacity wait retain one ID. Frozen handles and exact identities fence
+cleanup; a superseded generation must never release a replacement allocation.
+
 ## Pause Is A Durable Saga
 
 Never implement user pause by only cancelling a process. Commit the Thread control generation and participant set first, quiesce each Harness, save its native session identity and workspace checkpoint, then release the sandbox. A service restart must claim the existing generation and finish it; it must not resume business execution while the desired state is paused.
