@@ -5,6 +5,8 @@
 Required when adding an upstream, changing model protocol, introducing an exact
 Harness/model route or changing discovery/probe behavior.
 
+Sandbox infrastructure providers use [Adding a Sandbox Provider](add-sandbox-provider.md).
+
 ## Existing route model
 
 `ModelRoutes` resolves an exact `(Harness, model)` override from

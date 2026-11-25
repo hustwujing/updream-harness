@@ -12,6 +12,8 @@ sandbox.
 The configured `SandboxBackend` supports OpenSandbox and Ali Sandbox. Lifecycle,
 submission, recovery and cleanup state belongs to the platform database; a
 provider failure never falls back to a host Agent.
+To add another sandbox backend, follow
+[Adding a Sandbox Provider](docs/development/add-sandbox-provider.md).
 
 ## Verified Ali baseline
 

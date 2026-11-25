@@ -22,6 +22,7 @@ baseline; subsequent documentation edits do not relabel that release evidence.
 
 | Task | Required guidance |
 | --- | --- |
+| Add a sandbox infrastructure provider or change its lifecycle protocol | [Adding a Sandbox Provider](add-sandbox-provider.md), [Sandbox and Harness](sandbox-and-harness.md), [Recovery and observability](recovery-and-observability.md) |
 | Thread, Turn, input, event, lease or database change | [State and data contracts](state-and-data-contracts.md), [Lifecycle changes](change-lifecycle.md), [Database migrations](database-migration.md) |
 | Recovery, cancellation, cleanup, pool or checkpoint change | [State and data contracts](state-and-data-contracts.md), [Recovery and observability](recovery-and-observability.md), [Lifecycle changes](change-lifecycle.md) |
 | Sandbox allocation dispatcher, admission saturation or provider quota exhaustion | [Recovery and observability](recovery-and-observability.md), [Testing and real cases](testing-and-real-cases.md), [Real capacity gate](../test-evidence/sandbox-capacity-gate.md) |

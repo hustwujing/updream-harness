@@ -5,6 +5,10 @@
 Read this for Runtime APIs, native protocol adapters, images, workspace,
 background jobs, interactions, attachments or outputs.
 
+For a new sandbox infrastructure backend, start with
+[Adding a Sandbox Provider](add-sandbox-provider.md), which covers registration,
+capability gates, release identity, networking and real lifecycle acceptance.
+
 ## Runtime contract
 
 The host starts `sandbox-harness-runtime` in an immutable image digest. Runtime
