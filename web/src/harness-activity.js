@@ -1,4 +1,4 @@
-import {executionActivityCategory,executionActivityCategoryLabel,groupExecutionActivities} from './execution-activities';
+import {executionActivityCategory,executionActivityCategoryLabel,executionActivityDetail,groupExecutionActivities} from './execution-activities';
 
 const activeStates=new Set(['CREATED','QUEUED','RUNNING','WAITING_EXTERNAL','CANCELLING','PAUSING']);
 
@@ -16,7 +16,9 @@ function normalize(row){
 
 function friendlyRow(row,now){
  if(row.kind==='activity_group'){
-  return {...row,title:row.summary,detail:`${row.operation_count} 项操作`,
+  const latest=[...row.activities].reverse().map(activity=>executionActivityDetail(activity,{limit:72}))
+   .find(value=>value.kind!=='status'&&!/^\d+ 项文件操作$/.test(value.preview));
+  return {...row,title:row.summary,detail:[latest?.preview,`${row.operation_count} 项操作`].filter(Boolean).join(' · '),
    duration_ms:row.activities.reduce((total,activity)=>total+elapsed(activity,now),0)};
  }
  if(row.kind==='tool'){

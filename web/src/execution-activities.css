@@ -60,3 +60,36 @@
 .execution-activity-children small {
   color: #868680;
 }
+
+.execution-activity-detail {
+  min-width: 0;
+  color: #6f7771;
+  font-size: 8px;
+}
+
+.execution-activity-detail > summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  list-style: none;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.execution-activity-detail > summary::-webkit-details-marker { display: none; }
+.execution-activity-detail > summary::after { content: ' 展开'; color: #8b938d; }
+.execution-activity-detail[open] > summary::after { content: ' 收起'; }
+
+.execution-activity-detail > pre {
+  max-height: 180px;
+  margin: 5px 0 2px;
+  overflow: auto;
+  border: 1px solid #e4e8e3;
+  border-radius: 4px;
+  padding: 7px;
+  background: #f7f9f6;
+  color: #455048;
+  font: 8px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

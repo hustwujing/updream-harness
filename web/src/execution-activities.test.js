@@ -1,7 +1,29 @@
 import {describe,expect,it} from 'vitest';
-import {activityCursor,groupExecutionActivities,mergeExecutionActivities} from './execution-activities';
+import {activityCursor,executionActivityDetail,groupExecutionActivities,mergeExecutionActivities} from './execution-activities';
 
 describe('execution activity projection',()=>{
+ it('shows the concrete command with a bounded one-line preview',()=>{
+  const command="python - <<'PY'\nprint('render')\nPY";
+  const detail=executionActivityDetail({status:'completed',summary:'commandExecution',
+   payload:{detail:{command}}},{limit:24});
+  expect(detail).toEqual({kind:'command',preview:"python - <<'PY' print...",full:command});
+ });
+ it('describes file actions, images, external tools, queries, and missing payloads factually',()=>{
+  expect(executionActivityDetail({status:'completed',summary:'commandExecution',payload:{detail:{
+   commandActions:[{type:'read',path:'/workspace/project/source.pdf'},
+    {type:'write',path:'/workspace/outputs/report.pptx'}]}}}).preview).toBe(
+      '读取 /workspace/project/source.pdf · 写入 /workspace/outputs/report.pptx');
+  expect(executionActivityDetail({status:'completed',summary:'imageView',
+   payload:{detail:{path:'/workspace/project/contact.png'}}}).preview).toBe(
+      '查看 /workspace/project/contact.png');
+  expect(executionActivityDetail({status:'completed',summary:'mcpToolCall',
+   payload:{detail:{server:'browser',tool:'screenshot'}}}).preview).toBe('browser · screenshot');
+  expect(executionActivityDetail({status:'completed',summary:'dynamicToolCall',
+   payload:{detail:{query:{kind:'artifact',id:'a1'}}}}).preview).toBe(
+      '查询 {"kind":"artifact","id":"a1"}');
+  expect(executionActivityDetail({status:'failed',summary:'unknown',payload:{}})).toEqual(
+   {kind:'status',preview:'执行失败',full:''});
+ });
  it('updates one semantic activity in place as its raw cursor advances',()=>{
   const started={id:'activity-1',sequence:10,cursor_sequence:10,status:'in_progress',raw_count:1};
   const completed={...started,cursor_sequence:42,status:'completed',raw_count:33};

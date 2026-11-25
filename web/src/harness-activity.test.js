@@ -25,7 +25,8 @@ describe('friendly harness timeline',()=>{
   ],running,Date.parse('2026-11-19T10:00:10Z'));
   expect(rows.map(row=>[row.title,row.operation_count,row.status])).toEqual([
    ['读取资料',2,'completed'],['执行处理命令',1,'in_progress']]);
-  expect(rows[0].detail).toBe('2 项操作');
+  expect(rows[0].detail).toBe('读取 brief.txt · 2 项操作');
+  expect(rows[1].detail).toBe('1 项操作');
   expect(rows[0].duration_ms).toBe(3000);
   expect(currentHarnessStage(rows,running).title).toBe('执行处理命令');
  });

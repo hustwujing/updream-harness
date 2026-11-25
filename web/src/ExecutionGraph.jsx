@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { apiUrl, getExecutionGraph, listJobActivities } from "./api";
 import { formatDuration } from "./activity-time";
-import {activityCursor,groupExecutionActivities,mergeExecutionActivities} from "./execution-activities";
+import {activityCursor,executionActivityDetail,groupExecutionActivities,mergeExecutionActivities} from "./execution-activities";
 import "./execution-activities.css";
 import HarnessRunDetails,{formatCompactTokens,tokenUsageTotal} from "./HarnessRunDetails";
 import "./role-icons.css";
@@ -183,8 +183,12 @@ function readPositions(key) {
   }
 }
 function displayActivityTitle(value){const name=String(value.summary||value.payload?.name||value.kind||'执行步骤'),labels={commandexecution:'执行命令',bash:'执行命令',read:'读取文件',write:'写入文件',edit:'修改文件',filechange:'修改文件',imageview:'查看图片',mcptoolcall:'调用外部工具',dynamictoolcall:'调用工具',plan:'更新执行计划'};return labels[name.toLowerCase()]||name}
-function fileName(value){const parts=String(value||'').split(/[\\/]/).filter(Boolean);return parts.at(-1)||''}
-function displayActivityDetail(value){const detail=value.payload?.detail||{},description=detail.description,path=detail.file_path||detail.filePath||detail.path,query=detail.query,actions=detail.commandActions;if(description)return description;if(Array.isArray(actions)&&actions.length){const names=actions.map(action=>fileName(action?.path||action?.name)).filter(Boolean);return names.length?names.slice(0,3).join('、'):`${actions.length} 项文件操作`}if(path)return fileName(path);if(query)return '已提交结构化查询';if(value.status==='completed')return '已完成';if(value.status==='failed')return '执行失败';return '执行中'}
+function ActivityDetail({activity}){const value=executionActivityDetail(activity,{limit:140});
+ return value.full&&value.full.replace(/\s+/g,' ').trim()!==value.preview?<details className="execution-activity-detail">
+  <summary>{value.preview}</summary><pre>{value.full}</pre></details>:<small title={value.full||value.preview}>{value.preview}</small>}
+function activityGroupDetail(value){const latest=[...value.activities].reverse().map(activity=>executionActivityDetail(activity,{limit:100}))
+ .find(detail=>detail.kind!=='status'&&!/^\d+ 项文件操作$/.test(detail.preview));
+ return [latest?.preview,`${value.operation_count} 项操作`,value.status==='in_progress'?'正在执行':'已完成'].filter(Boolean).join(' · ')}
 class DetailBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -601,11 +605,11 @@ export default function ExecutionGraph({ thread, items = [] }) {
             <details className="execution-activity-group" key={value.id}>
               <summary>
                 <span className={value.status==='in_progress'&&!terminal.has(selected.state)?'activity-pulse':''}/>
-                <div><b>{value.summary}</b><small>{value.operation_count} 项操作 · {value.status==='in_progress'?'正在执行':'已完成'}</small></div>
+                <div><b>{value.summary}</b><small>{activityGroupDetail(value)}</small></div>
                 <time>{value.raw_count} 条事件</time>
               </summary>
               <div className="execution-activity-children">{value.activities.map(activity=><div key={activity.id||activity.sequence}>
-                <b>{displayActivityTitle(activity)}</b><small>{displayActivityDetail(activity)}</small>
+                <b>{displayActivityTitle(activity)}</b><ActivityDetail activity={activity}/>
               </div>)}</div>
             </details>
           ) : (
@@ -620,9 +624,7 @@ export default function ExecutionGraph({ thread, items = [] }) {
               />
               <div>
                 <b>{displayActivityTitle(value)}</b>
-                <small>
-                  {displayActivityDetail(value)}
-                </small>
+                <ActivityDetail activity={value}/>
               </div>
               <time>{value.raw_count>1?`${value.raw_count} 条事件`:value.sequence?`#${value.sequence}`:""}</time>
             </article>

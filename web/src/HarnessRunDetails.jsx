@@ -3,7 +3,7 @@ import {CircleAlert,CircleCheck,Clock3,LoaderCircle,MapPin} from 'lucide-react';
 import {apiUrl} from './api';
 import {formatDuration} from './activity-time';
 import {buildHarnessTimeline,currentHarnessStage} from './harness-activity';
-import {executionActivityCategory,executionActivityCategoryLabel} from './execution-activities';
+import {executionActivityCategory,executionActivityCategoryLabel,executionActivityDetail} from './execution-activities';
 import './harness-run-details.css';
 import './harness-token-usage.css';
 
@@ -22,16 +22,9 @@ function useAnimatedToken(nodeId,target){
  },[nodeId,value]);return display
 }
 function AnimatedToken({nodeId,kind,value}){const display=useAnimatedToken(nodeId,value);return <strong data-token-kind={kind} data-token-value={Math.round(display)} title={`${Math.round(Number(value||0)).toLocaleString()} tokens`}>{formatCompactTokens(display)}</strong>}
-function fileName(value){const parts=String(value||'').split(/[\\/]/).filter(Boolean);return parts.at(-1)||''}
-function childDetail(activity){
- const detail=activity.payload?.detail||{},actions=detail.commandActions;
- if(Array.isArray(actions)&&actions.length){
-  const names=actions.map(action=>fileName(action?.path||action?.name)).filter(Boolean);
-  return names.length?names.slice(0,3).join('、'):`${actions.length} 项操作`;
- }
- const path=detail.file_path||detail.filePath||detail.path;
- return path?fileName(path):activity.status==='failed'?'失败':activity.status==='in_progress'?'执行中':'已完成';
-}
+function ActivityDetail({activity}){const value=executionActivityDetail(activity,{limit:120});
+ return value.full&&value.full.replace(/\s+/g,' ').trim()!==value.preview?<details className="execution-activity-detail">
+  <summary>{value.preview}</summary><pre>{value.full}</pre></details>:<small title={value.full||value.preview}>{value.preview}</small>}
 function totalElapsed(node,now){
  if(node.ended_at)return Number(node.duration_ms||Math.max(0,Date.parse(node.ended_at)-Date.parse(node.started_at))||0);
  return node.started_at?Math.max(0,now-Date.parse(node.started_at)):0;
@@ -70,7 +63,7 @@ export default function HarnessRunDetails({node,activities=[],progress=null,now=
    {timeline.length?timeline.map(stage=>stage.kind==='activity_group'?<details className="harness-timeline-group" key={stage.id}>
     <summary><StageIcon status={stage.status} active={active}/><div><b>{stage.title}</b><small>{stage.detail}</small></div><time>{formatDuration(stage.duration_ms)}</time></summary>
     <div className="harness-timeline-children">{stage.activities.map(activity=><div key={activity.id||activity.sequence}>
-     <b>{executionActivityCategoryLabel(executionActivityCategory(activity))}</b><small>{childDetail(activity)}</small>
+     <b>{executionActivityCategoryLabel(executionActivityCategory(activity))}</b><ActivityDetail activity={activity}/>
     </div>)}</div>
    </details>:<article className={`harness-timeline-stage ${stage.status}`} key={stage.id||stage.sequence}>
     <StageIcon status={stage.status} active={active}/><div><b>{stage.title}</b>{stage.detail&&<small>{stage.detail}</small>}</div><time>{formatDuration(stage.duration_ms)}</time>
