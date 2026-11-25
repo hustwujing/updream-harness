@@ -20,3 +20,9 @@ def test_local_model_budget_exhaustion_is_not_reported_as_provider_rate_limit():
         'API Error: 429 {"detail":"model_token_budget_exhausted"}')
     assert code=='model_token_budget_exhausted'
     assert '上下文' in message and '模型服务限流' not in message
+
+
+def test_local_model_request_limit_has_actionable_payload_free_message():
+    code,message=public_failure('model_request_too_large','private body and http://private')
+    assert code=='model_request_too_large'
+    assert '图片' in message and '上限' in message and 'private' not in message

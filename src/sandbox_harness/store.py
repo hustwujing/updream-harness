@@ -5021,14 +5021,16 @@ class Store:
 
     async def latest_model_activity_error(self,turn_id:str)->str:
         async with self.connections() as db:
-            rows=list((await db.execute(select(ItemRow).where(
+            row=(await db.execute(select(ItemRow).join(EventRow,
+                (EventRow.item_id==ItemRow.id)&(EventRow.turn_id==ItemRow.turn_id)).where(
                 ItemRow.turn_id==turn_id,ItemRow.type==ItemType.PLAN.value,
-                ItemRow.status=='failed').order_by(ItemRow.sequence.desc()).limit(8))).scalars().all())
-        for row in rows:
-            try:value=json.loads(row.payload_json or '{}')
-            except (TypeError,ValueError):continue
-            code=value.get('error_code') if isinstance(value,dict) else ''
-            if isinstance(code,str) and re.fullmatch(r'[a-z][a-z0-9_.-]{0,159}',code):return code
+                EventRow.source_execution_id.startswith('gateway:')
+                ).order_by(ItemRow.sequence.desc()).limit(1))).scalar_one_or_none()
+        if row is None or row.status!='failed':return ''
+        try:value=json.loads(row.payload_json or '{}')
+        except (TypeError,ValueError):return ''
+        code=value.get('error_code') if isinstance(value,dict) and value.get('model_request_id') else ''
+        if isinstance(code,str) and re.fullmatch(r'[a-z][a-z0-9_.-]{0,159}',code):return code
         return ''
 
     async def runtime_event_recorded(self, turn_id: str, execution_id: str, source_sequence: int) -> bool:

@@ -49,6 +49,9 @@ Logical input remains visible for context and throughput analysis. Codex uses
 an explicit native local-compaction threshold; Claude Code and DeepSeek Harness
 retain their native Session compaction. A local budget exhaustion is reported
 as such and is never relabeled as upstream rate limiting.
+Native model requests use a separate bounded 64 MiB ingress budget for inline
+image history; other capability requests retain the 16 MiB default. Local
+oversize failures have a durable model activity and an actionable public reason.
 
 The Media Worker is a separate systemd service. API creates and queries Jobs;
 the Worker alone submits external Provider requests, persists external IDs,

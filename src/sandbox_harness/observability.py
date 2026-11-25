@@ -111,6 +111,8 @@ def add_link(header):
 
 def failure_origin(code, status=None):
     if code in {"cancelled","CancelledError"}:return "user"
+    if code in {"model_request_too_large","model_request_body_timeout"}:return "infrastructure"
+    if code=="model_request_invalid":return "program"
     if status and status>=400 or code in {"model_service_overloaded","model_rate_limited"}:return "provider"
     if code=="model_response_failed":return "model"
     if code in {"AttributeError","NameError","AssertionError","TypeError"}:return "program"

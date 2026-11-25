@@ -50,10 +50,22 @@ returns 502 for `/responses/compact`. Claude Code owns its automatic
 compaction. DeepSeek owns its Session state and must not receive unsupported
 Responses `context_management` fields.
 
-A Gateway-local rejection starts and terminalizes the same durable model
-activity as an upstream request. Broker may restore
-`model_token_budget_exhausted` only when a generic native 429 corresponds to
-that durable activity. Never rewrite a genuine upstream 429.
+Model ingress uses `gateway_model_request_max_bytes` (64 MiB default/maximum)
+independently from general capability and public HTTP request limits (16 MiB
+defaults). Both declared size and streamed bytes are bounded; authentication,
+idle/total timeouts and token budgets still apply. Do not rewrite image content
+to fit the transport budget.
+
+After capability and model-route validation, generation/compaction ingress
+starts and terminalizes the same durable model activity as an upstream request,
+including malformed bodies, size rejection, timeout and cancellation. Oversize
+ingress uses `model_request_too_large` with no upstream call/token reservation.
+Broker restores local budget/size errors only from the latest Gateway-origin
+model activity and a corresponding ambiguous native failure. A later pending,
+successful or upstream-failed request fences older local errors; native steps
+and Child timeline data cannot supply this authority. Never rewrite a genuine
+upstream 429/413. Tests: `test_gateway_model_ingress.py`,
+`test_model_activity.py`, `test_broker.py`.
 
 ## Model routes and discovery
 

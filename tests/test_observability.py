@@ -415,3 +415,13 @@ async def test_reused_runtime_configuration_logs_the_new_turn_not_the_previous_o
             assert response.status_code==200
     logs=[row for row in rows(telemetry) if row['event_name']=='http.request.completed' and row['attributes']['http.route']=='/v1/configure']
     assert [row['attributes']['updream.turn_id'] for row in logs]==['a'*32,'b'*32]
+
+
+@pytest.mark.parametrize(('code','status','origin'),[
+    ('model_request_too_large',413,'infrastructure'),
+    ('model_request_body_timeout',408,'infrastructure'),
+    ('model_request_invalid',422,'program'),
+    ('',413,'provider'),
+])
+def test_local_model_ingress_failure_origin_preserves_upstream_distinction(code,status,origin):
+    assert obs.failure_origin(code,status)==origin

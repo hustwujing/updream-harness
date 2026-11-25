@@ -8,6 +8,8 @@ def public_failure(code: str, detail: str) -> tuple[str, str]:
         return code, '沙箱容量暂时不足，本轮未能启动执行环境。请稍后继续；这不是模型限流。'
     if code == 'model_token_budget_exhausted':
         return code, '本轮模型上下文与输出预算已达到上限。请精简长工具输出或图片预览后继续；这是本地预算限制，并非上游 429。'
+    if code == 'model_request_too_large':
+        return code, '本轮发送给模型的内容超过大小上限。请减少图片预览或长工具输出后继续；已保存的成果仍可在工作区查看。'
     if re.search(r'\b503\b', text) or 'servers are currently overloaded' in text:
         return 'model_service_overloaded', '模型服务繁忙（503），本轮未能完成。已保存的阶段文件可在工作区查看，稍后可以继续。'
     if re.search(r'\b429\b', text):

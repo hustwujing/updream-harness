@@ -1,7 +1,8 @@
 import json
+import pytest
 from types import SimpleNamespace
 from sandbox_harness.model_activity import OutputProbe,ModelActivity
-from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate,TurnState
+from sandbox_harness.domain import EventKind,Harness,RuntimeEvent,ThreadCreate,TurnCreate,TurnState
 from sandbox_harness.store import Store
 from sandbox_harness.catalog import HarnessCatalog
 
@@ -69,6 +70,28 @@ async def test_latest_model_activity_error_returns_only_stable_failed_model_step
         activity=ModelActivity(store,SimpleNamespace(thread_id=thread.id,turn_id=turn.id,model='gpt-5.6'))
         await activity.start();await activity.finish(429,'model_token_budget_exhausted')
         assert await store.latest_model_activity_error(turn.id)=='model_token_budget_exhausted'
+    finally:await store.close()
+
+
+@pytest.mark.parametrize('later_state',['pending','success','upstream_failure'])
+async def test_later_model_request_fences_older_local_ingress_failure(tmp_path,later_state):
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'latest-ingress.db'));await store.initialize()
+    try:
+        profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,title='test'),profile,'owner')
+        turn,_,_=await store.create_turn(thread.id,TurnCreate(message='hello',idempotency_key='latest-ingress'),profile,'owner')
+        claims=SimpleNamespace(thread_id=thread.id,turn_id=turn.id,model='gpt-5.6')
+        local=ModelActivity(store,claims);await local.start();await local.finish(413,'model_request_too_large')
+        assert await store.latest_model_activity_error(turn.id)=='model_request_too_large'
+        later=ModelActivity(store,claims);await later.start()
+        if later_state!='pending':await later.finish(200 if later_state=='success' else 413)
+        # A native step may carry similar keys; only Gateway provenance is authoritative.
+        await store.persist_runtime_event(thread.id,turn.id,
+            RuntimeEvent(kind=EventKind.STEP_STARTED,payload={'name':'native step',
+                'model_request_id':'not-a-gateway-request','error_code':'model_request_too_large',
+                'is_error':True}), 'native-execution')
+        assert await store.latest_model_activity_error(turn.id)==''
+        if later_state=='pending':await later.finish(499,'cancelled')
     finally:await store.close()
 
 

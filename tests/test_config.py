@@ -84,3 +84,12 @@ def test_public_proxy_connect_timeout_is_bounded():
     for value in (0,61):
         with pytest.raises(ValidationError):
             Settings(backend='fake',public_proxy_connect_timeout_seconds=value)
+
+
+def test_model_body_budget_is_separately_configurable_and_bounded(monkeypatch):
+    monkeypatch.setenv('SANDBOX_HARNESS_GATEWAY_MODEL_REQUEST_MAX_BYTES','33554432')
+    settings=Settings(_env_file=None)
+    assert settings.gateway_model_request_max_bytes==32*1024*1024
+    assert settings.gateway_request_max_bytes==16*1024*1024
+    for value in (1023,64*1024*1024+1):
+        with pytest.raises(ValueError):Settings(_env_file=None,gateway_model_request_max_bytes=value)

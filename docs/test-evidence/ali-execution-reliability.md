@@ -69,6 +69,13 @@ on mutable provider metadata.
   selector preserves the requested formats without widening authorization.
   That interrupted gate drained to 50 successes, one failure and 118 unstarted
   cases; it is not final release acceptance.
+- **S29:** the next fresh gate on `2bb6b54` hit a local Gateway 413 while the
+  Primary inspected multiple video contact sheets. The Provider video was
+  already valid. Model image history exceeded the shared 16 MiB limit, before
+  model activity creation, so the public result only said `other`. The new
+  model-specific bounded ingress and durable error observation are described
+  in the [model ingress design](../superpowers/specs/2026-11-25-model-ingress-budget-design.md).
+  That gate drained to 38 successes, one failure and 130 unstarted cases.
 
 ## Validation layers
 

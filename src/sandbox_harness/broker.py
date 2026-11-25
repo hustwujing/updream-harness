@@ -46,9 +46,12 @@ class RuntimeDiagnosticState:
 
 
 async def reconcile_native_model_error(store,turn_id:str,error_code:str,error_detail:str)->tuple[str,str]:
-    if error_code not in {'model_rate_limited','harness_failed'}:return error_code,error_detail
+    if error_code not in {'model_rate_limited','harness_failed','other'}:return error_code,error_detail
     observed=await store.latest_model_activity_error(turn_id)
-    if observed=='model_token_budget_exhausted':return observed,observed
+    if observed=='model_token_budget_exhausted' and error_code in {'model_rate_limited','harness_failed'}:
+        return observed,observed
+    if observed=='model_request_too_large' and error_code in {'harness_failed','other'}:
+        return observed,observed
     return error_code,error_detail
 
 

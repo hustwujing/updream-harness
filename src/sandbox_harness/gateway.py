@@ -889,7 +889,10 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
     async def proxy(path: str, request: Request):
         route = "/" + path
-        claims = await authorize_runtime_request(request, route)
+        # Native model history can contain multiple inline image previews. Read
+        # it under its own bound after authorization and activity creation.
+        claims = await authorize_runtime_request(request, route,
+            streaming_body=route.startswith("/v1/models/"))
         prefix = next((candidate for candidate in sorted(upstreams, key=len, reverse=True) if route == candidate or route.startswith(candidate + "/")), None)
         if not prefix:
             raise HTTPException(404, "Gateway route is not configured")
@@ -912,9 +915,6 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             headers["authorization"] = "Bearer " + credential
             if prefix.endswith(("claude", "deepseek")):
                 headers["x-api-key"] = credential
-        body = await bounded_request_body(request,settings.gateway_request_max_bytes,
-            settings.gateway_body_idle_timeout_seconds,
-            settings.gateway_body_total_timeout_seconds)
         endpoint_kind=(model_endpoint_kind(harness,suffix)
             if prefix.startswith("/v1/models/") else None)
         if prefix.startswith("/v1/models/") and endpoint_kind is None:
@@ -922,17 +922,31 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         observe_model=endpoint_kind in {"generation","compaction"}
         activity = ModelActivity(activity_store, claims) if observe_model else None
         reservation_id = ""
+        if activity:await activity.start()
+        try:
+            body = await bounded_request_body(request,
+                settings.gateway_model_request_max_bytes if prefix.startswith("/v1/models/")
+                    else settings.gateway_request_max_bytes,
+                settings.gateway_body_idle_timeout_seconds,
+                settings.gateway_body_total_timeout_seconds)
+            if prefix.startswith("/v1/models/"):
+                try:
+                    payload = json.loads(body)
+                except (TypeError, ValueError):
+                    raise HTTPException(422, "Model request must be JSON")
+                if not isinstance(payload, dict):
+                    raise HTTPException(422, "Model request must be an object")
+                payload["model"] = claims.model
+                payload=normalize_model_request(payload,harness=harness,model=claims.model,suffix=suffix)
+        except BaseException as exc:
+            status=exc.status_code if isinstance(exc,HTTPException) else None
+            code=("model_request_too_large" if status==413 and prefix.startswith("/v1/models/")
+                else "model_request_invalid" if status in {400,422}
+                else "model_request_body_timeout" if status==408 else type(exc).__name__)
+            if activity:await activity.finish(status,error_code=code)
+            if code=="model_request_too_large":raise HTTPException(413,code) from exc
+            raise
         if prefix.startswith("/v1/models/"):
-            try:
-                payload = json.loads(body)
-            except (TypeError, ValueError):
-                raise HTTPException(422, "Model request must be JSON")
-            if not isinstance(payload, dict):
-                raise HTTPException(422, "Model request must be an object")
-            payload["model"] = claims.model
-            payload=normalize_model_request(payload,harness=harness,model=claims.model,suffix=suffix)
-            if activity:
-                await activity.start()
             try:
                 requested_output = model_token_reservation(payload,suffix,endpoint_kind,
                     int(request.state.capability_security["token_remaining"]),
@@ -945,11 +959,15 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
                 try:
                     await activity_store.reserve_model_tokens(claims,reservation_id,requested_output)
                 except ValueError as exc:
-                    if str(exc)=="model_token_budget_exhausted":
-                        await activity.finish(429,error_code=str(exc))
-                        raise HTTPException(429,str(exc))
-                    raise HTTPException(409,str(exc))
+                    code=str(exc)
+                    if code=="model_token_budget_exhausted":status=429
+                    elif code in {"capability_revoked","capability_expired","capability_identity_conflict",
+                            "model_token_reservation_invalid","model_token_reservation_conflict"}:status=409
+                    else:status=503;code="capability_authority_unavailable"
+                    await activity.finish(status,error_code=code)
+                    raise HTTPException(status,code) from exc
                 except Exception as exc:
+                    await activity.finish(503,error_code="capability_authority_unavailable")
                     raise HTTPException(503,"capability_authority_unavailable") from exc
             body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
         upstream = client.build_request(request.method, suffix, params=request.query_params, headers=headers, content=body)

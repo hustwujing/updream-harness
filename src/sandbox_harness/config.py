@@ -100,6 +100,7 @@ class Settings(BaseSettings):
     model_cache_read_budget_percent: int = Field(default=10,ge=0,le=100)
     model_cache_write_budget_percent: int = Field(default=125,ge=0,le=500)
     gateway_request_max_bytes: int = Field(default=16 * 1024 * 1024, ge=1024, le=64 * 1024 * 1024)
+    gateway_model_request_max_bytes: int = Field(default=64 * 1024 * 1024, ge=1024, le=64 * 1024 * 1024)
     gateway_body_idle_timeout_seconds: float = Field(default=15, ge=1, le=120)
     gateway_body_total_timeout_seconds: float = Field(default=120, ge=5, le=600)
     public_proxy_request_max_bytes: int = Field(default=16 * 1024 * 1024, ge=1024, le=64 * 1024 * 1024)

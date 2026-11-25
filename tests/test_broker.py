@@ -1208,3 +1208,18 @@ async def test_stale_broker_cleanup_does_not_publish_a_false_failure(tmp_path, m
         for sandbox in await pool.list_owned():
             await backend.delete(sandbox)
         await broker.close(); await pool.close(); await store.close()
+
+
+@pytest.mark.parametrize('native_code',['other','harness_failed'])
+async def test_local_model_ingress_error_uses_durable_evidence(native_code):
+    class StoreStub:
+        async def latest_model_activity_error(self,turn_id):return 'model_request_too_large'
+    assert await reconcile_native_model_error(StoreStub(),'turn',native_code,'native failed')==(
+        'model_request_too_large','model_request_too_large')
+
+
+async def test_genuine_upstream_error_is_not_rewritten_as_local_ingress_failure():
+    class StoreStub:
+        async def latest_model_activity_error(self,turn_id):return 'model_request_too_large'
+    assert await reconcile_native_model_error(StoreStub(),'turn','model_service_overloaded','upstream 503')==(
+        'model_service_overloaded','upstream 503')
