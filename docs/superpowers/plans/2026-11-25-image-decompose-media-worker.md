@@ -50,6 +50,8 @@ README/development architecture and release guidance.
 - [x] Add real cases for output contracts, killing MediaWorker after acceptance, cancellation and a deliberately lost real response; keep test resource ownership explicit.
 - [x] Remove superseded direct-client code and old receipt/cache recovery tests, retaining their relevant assertions in the new suites.
 - [x] Run full Python/shared PostgreSQL checks; record source revision and exact affected case list.
-- [ ] Deploy affected Ali services and run C09/K07 plus affected media/continuation cases; investigate failures while the batch runs.
-- [ ] Verify health, output bytes, execution counts, cleanup and no duplicate continuation; obtain independent branch review.
-- [ ] Update docs, scan credentials, push, and deliver results with any remaining limitations.
+- [x] Deploy affected Ali services and run C09/K07 plus affected media/continuation cases; investigate failures while the batch runs.
+- [x] Verify health, output bytes, execution counts, cleanup and no duplicate continuation; obtain independent branch review.
+- [x] Prepare updated docs, scan credentials and record results with remaining limitations.
+
+Final publication uses the authorized GitHub branch; verify and record its remote HEAD in the release receipt after pushing. The implementation and deployed release remain `68d0274`.

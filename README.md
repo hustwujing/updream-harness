@@ -29,6 +29,14 @@ See the [release record](docs/test-evidence/ali-release-90f51d5.md) for evidence
 loaded service versions and cleanup scope. Later documentation commits do not
 change the revision of those test or deployment receipts.
 
+The MediaWorker migration is deployed at `68d0274`: four affected product cases
+and four new real inference recovery/cancellation cases passed. Combined with
+172 retained successes, the matrix is now 180/180 `composite_verified`.
+See the [migration and release report](docs/test-evidence/image-decompose-media-migration.md)
+and [all case results](docs/test-evidence/ali-media-68d0274-cases.md). The public
+repository is [hustwujing/updream-harness](https://github.com/hustwujing/updream-harness),
+on branch `sandbox-harness-platform-parallel-ali`.
+
 ## Services
 
 ```text

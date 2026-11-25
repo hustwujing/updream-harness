@@ -74,5 +74,44 @@ The combined case inventory becomes 180 after adding DM01–DM04.
   check is included in the ten-test isolated PostgreSQL gate above.
 - Frontend tests: 27 passed. UI implementation was unchanged.
 
-Release validation and the four deployed product reruns are pending at this
-checkpoint. Do not treat this document as a completed deployment receipt.
+## Deployed verification and cleanup
+
+Implementation commit `68d0274` is deployed to the isolated Ali API, JobWorker,
+MediaWorker and Gateway. The additive source-Job schema upgrade is present.
+Health, desktop/mobile pages and the existing `/sandbox-harness-platform-parallel-ali/`
+ingress passed. Real sandbox takeover, checkpoint restore, terminal execution,
+command-file bytes and WebSocket replay passed on that release.
+
+C09, K07, P20 and K14 all passed. The four product cases contain 13 successful
+Durable Jobs and seven successful MediaJobs. K07's one infrastructure-capacity
+wait completed within the same attempt; no unresolved internal program error
+was hidden by a successful top-level case. C09's final PNG is 512×512, and its
+ORA was independently opened and verified to contain three decodable layers
+on a 512×512 canvas. Every final file matched its persisted size and SHA-256.
+
+The eight current regressions passed with a mean duration of 160.27 seconds.
+The [complete 180-case result table](ali-media-68d0274-cases.md) retains the actual
+revision for every historical success. This is composite coverage, not a new
+180-case run on one revision.
+
+Release receipts are `.data/evidence/release-full-68d0274.json`,
+`.data/evidence/decompose-rollout-68d0274.json`,
+`.data/evidence/decompose-product-internal-audit-68d0274.json` and
+`.data/evidence/release/ali-media-68d0274.json`. Runtime Code Bundle is
+`454e70b86df6856057a69b043e049716837d3a8e2a55c2ef9c01d186611d8b6f`;
+Content Bundle is `d7391229092a59483601be9a5750e88d8d538fe5da2fa325534dd49590f9dd70`.
+The existing verified runtime images were reused; this host-code release did
+not require new images.
+
+After verification, four owned terminal inference jobs and eight named pytest
+temporary/cache directories were removed, totaling 995,082,240 allocated bytes.
+Selected artifacts, isolated database receipts and sanitized reports remain
+available. The seven historical unknown sandbox allocations were not modified
+or reported as reclaimed. Cleanup evidence is
+`.data/evidence/decompose-cleanup-68d0274.json`.
+
+The repository is public at
+[hustwujing/updream-harness](https://github.com/hustwujing/updream-harness).
+Code and subsequent documentation commits use branch
+`sandbox-harness-platform-parallel-ali`; documentation-only commits do not
+change the deployed `68d0274` receipts.
