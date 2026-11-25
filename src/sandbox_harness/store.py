@@ -4589,6 +4589,7 @@ class Store:
                     pending = await db.get(TurnInputRow, input_id, with_for_update=True)
                     if not pending or pending.turn_id != turn_id or pending.status != "pending":
                         raise RuntimeError("input_not_pending")
+                    await self._freeze_input_artifacts_locked(db,pending)
                     pending.status = "delivered"
                     pending.delivery_mode = "deferred_safe_point"
                     pending.updated_at = now()
@@ -4695,6 +4696,34 @@ class Store:
             # only when its execution identity is durably assigned.
         return self.input_view(row)
 
+    @staticmethod
+    def input_artifact_id(input_id:str,name:str)->str:
+        return hashlib.sha256(("turn-input-artifact:"+input_id+":"+name).encode()).hexdigest()[:32]
+
+    async def _freeze_input_artifacts_locked(self,db,row)->None:
+        for attachment in json.loads(row.attachments_json):
+            identity=self.input_artifact_id(row.id,attachment['name'])
+            if await db.get(ArtifactRow,identity) is None:
+                db.add(ArtifactRow(id=identity,turn_id=row.turn_id,
+                    path='input/inbox/'+attachment['name'],sha256=attachment['sha256'],
+                    size=attachment['size'],mime=attachment['mime'],
+                    object_ref=attachment['object_ref'],created_at=now()))
+
+    async def prepare_turn_input_artifacts(self,input_id:str,*,turn_id:str,
+            execution_id:str,lease_owner:str,recovery_generation:int)->bool:
+        """Bind materialized inputs before the Runtime can consume their message."""
+        async with self.event_lock(turn_id):
+            async with self.connections.begin() as db:
+                turn=await db.get(TurnRow,turn_id,with_for_update=True)
+                self.require_lease_row(turn,lease_owner,recovery_generation)
+                if (turn.state!=TurnState.RUNNING.value or turn.cancel_requested
+                        or not execution_id or turn.runtime_execution_id!=execution_id):
+                    return False
+                row=await db.get(TurnInputRow,input_id,with_for_update=True)
+                if not row or row.turn_id!=turn_id or row.status!='pending':return False
+                await self._freeze_input_artifacts_locked(db,row)
+        return True
+
     async def set_input_status(self, input_id: str, status: str,
                                delivery_mode: str | None = None, *,
                                execution_id: str = "", lease_owner: str | None = None,
@@ -4716,8 +4745,8 @@ class Store:
         event = None
         async with self.event_lock(turn_id):
             async with self.connections.begin() as db:
-                row = await db.get(TurnInputRow, input_id, with_for_update=True)
                 turn = await db.get(TurnRow, turn_id, with_for_update=True)
+                row = await db.get(TurnInputRow, input_id, with_for_update=True)
                 if not row or not turn:
                     return False
                 if lease_owner is not None:
@@ -4731,16 +4760,7 @@ class Store:
                 if TurnState(turn.state) in TERMINAL and status not in {"applied", "failed"}:
                     return False
                 if status == "applied":
-                    for attachment in json.loads(row.attachments_json):
-                        path="input/inbox/"+attachment["name"]
-                        existing_artifact=(await db.execute(select(ArtifactRow).where(
-                            ArtifactRow.turn_id==turn_id,ArtifactRow.path==path,
-                            ArtifactRow.sha256==attachment["sha256"]))).scalar_one_or_none()
-                        if existing_artifact is None:
-                            db.add(ArtifactRow(id=identifier(),turn_id=turn_id,path=path,
-                                sha256=attachment["sha256"],size=attachment["size"],
-                                mime=attachment["mime"],object_ref=attachment["object_ref"],
-                                created_at=now()))
+                    await self._freeze_input_artifacts_locked(db,row)
                 row.status = status
                 row.updated_at = now()
                 if delivery_mode:
@@ -5504,6 +5524,9 @@ class Store:
 
     async def turn_input_artifacts(self,turn_id:str,owner_id:str|None=None)->list[dict]:
         async with self.connections() as db:
+            if owner_id is not None and not (await db.execute(select(TurnRow.id).join(
+                    ThreadRow,ThreadRow.id==TurnRow.thread_id).where(TurnRow.id==turn_id,
+                    ThreadRow.owner_id==owner_id))).scalar_one_or_none():return []
             query=select(TurnProjectFileRow).join(TurnRow,
                 TurnRow.id==TurnProjectFileRow.turn_id).join(ThreadRow,
                 ThreadRow.id==TurnRow.thread_id).where(TurnProjectFileRow.turn_id==turn_id)
@@ -5512,16 +5535,34 @@ class Store:
             artifacts=(await db.execute(select(ArtifactRow).where(ArtifactRow.turn_id==turn_id,
                 ArtifactRow.path.like("input/%")).order_by(
                     ArtifactRow.created_at,ArtifactRow.id))).scalars().all()
-        by_path={row.path.removeprefix("input/"):row for row in artifacts}
-        values=[{"artifact":Artifact.model_validate({key:getattr(by_path[row.path],key)
-                    for key in Artifact.model_fields}),"project_file_id":row.project_file_id,
-                "project_path":row.path,"source_type":row.source_type}
-            for row in snapshots if row.path in by_path]
-        snapshot_paths={row.path for row in snapshots}
-        values.extend({"artifact":Artifact.model_validate({key:getattr(artifact,key)
-                for key in Artifact.model_fields}),"project_file_id":"",
-            "project_path":path,"source_type":"attachment"}
-            for path,artifact in by_path.items() if path not in snapshot_paths)
+            inputs=(await db.scalars(select(TurnInputRow).where(TurnInputRow.turn_id==turn_id)
+                .order_by(TurnInputRow.sequence))).all()
+        by_id={row.id:row for row in artifacts}
+        by_identity={}
+        for artifact in artifacts:
+            by_identity.setdefault((artifact.path,artifact.sha256),[]).append(artifact)
+        sequence_by_id={}
+        for pending in inputs:
+            for attachment in json.loads(pending.attachments_json):
+                artifact=by_id.get(self.input_artifact_id(pending.id,attachment['name']))
+                if artifact is None and pending.status=='applied':
+                    legacy=by_identity.get(('input/inbox/'+attachment['name'],attachment['sha256']),[])
+                    artifact=legacy[-1] if legacy else None
+                if artifact:sequence_by_id[artifact.id]=pending.sequence
+        snapshots_by_path={row.path:row for row in snapshots}
+        # Keep every immutable ID for existing Child grants. Path lookup in the
+        # Runtime chooses the last row, so aliases follow input sequence, even
+        # when an earlier input is prepared again after worker replacement.
+        ordered=sorted(artifacts,key=lambda row:(row.path,sequence_by_id.get(row.id,0),
+            row.created_at,row.id))
+        values=[]
+        for artifact in ordered:
+            path=artifact.path.removeprefix('input/')
+            snapshot=snapshots_by_path.get(path)
+            values.append({'artifact':Artifact.model_validate({key:getattr(artifact,key)
+                    for key in Artifact.model_fields}),
+                'project_file_id':snapshot.project_file_id if snapshot else '',
+                'project_path':path,'source_type':snapshot.source_type if snapshot else 'attachment'})
         return values
 
     async def project_file_history(self, thread_id: str, path: str, owner_id: str) -> list[ProjectFile]:

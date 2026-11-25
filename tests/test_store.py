@@ -9,6 +9,75 @@ from sandbox_harness.store import MediaJobRow, Store, ThreadRow, TurnRow, valid_
 import pytest
 
 
+async def test_prepared_input_artifacts_survive_replay_and_aliases_follow_input_sequence(tmp_path):
+    from sqlalchemy import select,update
+    from sandbox_harness.store import ArtifactRow
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'input-bindings.db'));await store.initialize()
+    try:
+        profile=HarnessCatalog().resolve('codex','gpt-5.6','standard');owner='owner'
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            title='Live bindings'),profile,owner)
+        turn,_,_=await store.create_turn(thread.id,TurnCreate(message='start',
+            idempotency_key='binding-turn'),profile,owner)
+        lease=await store.claim_turn(turn.id,'worker',60)
+        assert await store.freeze_turn_project_files(turn.id,thread.id,
+            lease_owner='worker',recovery_generation=lease.recovery_generation)==[]
+        await store.set_turn_state(turn.id,TurnState.RUNNING)
+        await store.start_runtime_execution(turn.id,'execution','worker',lease.recovery_generation)
+        async def prepare(identity,**updates):
+            values=dict(turn_id=turn.id,execution_id='execution',lease_owner='worker',
+                recovery_generation=lease.recovery_generation);values.update(updates)
+            return await store.prepare_turn_input_artifacts(identity,**values)
+        inputs=[];identities=[]
+        for position,digest in enumerate(['a'*64,'b'*64,'a'*64]):
+            attachment=Attachment(name='same.png',object_ref='sha256:'+digest,sha256=digest,
+                size=10,mime='image/png')
+            value,_=await store.create_turn_input(turn.id,TurnInputCreate(message='replace',
+                idempotency_key='replacement-'+str(position),attachments=[attachment]),owner)
+            inputs.append(value)
+            assert await prepare(value.id)
+            assert (await store.get_turn_input(value.id)).status=='pending'
+            bound=await store.turn_input_artifacts(turn.id,owner)
+            assert len(bound)==position+1 and bound[-1]['artifact'].sha256==digest
+            identities.append(bound[-1]['artifact'].id)
+        assert len(set(identities))==3
+        # Revisit older materialization after a crash without replaying input delivery.
+        assert await prepare(inputs[0].id)
+        bound=await store.turn_input_artifacts(turn.id,owner)
+        assert bound[-1]['artifact'].id==identities[-1]
+        assert {r['artifact'].id for r in bound}==set(identities)
+        assert [r['artifact'].sha256 for r in bound if r['artifact'].id==identities[0]]==['a'*64]
+        assert await store.turn_input_artifacts(turn.id,'another-owner')==[]
+        assert not await prepare(inputs[-1].id,execution_id='old-execution')
+        assert not await prepare(inputs[-1].id,execution_id='')
+        with pytest.raises(RuntimeError,match='stale_turn_lease'):
+            await prepare(inputs[-1].id,lease_owner='stale-worker')
+        with pytest.raises(RuntimeError,match='stale_turn_lease'):
+            await prepare(inputs[-1].id,recovery_generation=lease.recovery_generation+1)
+        await store.release_turn_lease(turn.id,'worker',lease.recovery_generation)
+        replacement=await store.claim_turn(turn.id,'replacement',60)
+        assert await prepare(inputs[-1].id,lease_owner='replacement',
+            recovery_generation=replacement.recovery_generation)
+        await store.set_input_status(inputs[-1].id,'applied',execution_id='execution',
+            lease_owner='replacement',recovery_generation=replacement.recovery_generation)
+        assert (await store.turn_input_artifacts(turn.id,owner))[-1]['artifact'].id==identities[-1]
+        # Legacy applied attachments used random IDs. Replaying an earlier
+        # input must preserve both that ID's grant and the latest path alias.
+        async with store.connections.begin() as db:
+            await db.execute(update(ArtifactRow).where(ArtifactRow.id==identities[-1]).values(id='f'*32))
+        assert await prepare(inputs[0].id,lease_owner='replacement',
+            recovery_generation=replacement.recovery_generation)
+        assert (await store.turn_input_artifacts(turn.id,owner))[-1]['artifact'].id=='f'*32
+        assert await store.freeze_turn_project_files(turn.id,thread.id,
+            lease_owner='replacement',recovery_generation=replacement.recovery_generation)==[]
+        await store.request_turn_cancel(turn.id)
+        assert not await prepare(inputs[0].id,lease_owner='replacement',
+            recovery_generation=replacement.recovery_generation)
+        async with store.connections() as db:
+            assert len((await db.scalars(select(ArtifactRow).where(ArtifactRow.turn_id==turn.id))).all())==3
+    finally:await store.close()
+
+
 async def test_active_sandbox_gate_rejects_legacy_nonterminal_row_without_handle(tmp_path):
     store=Store("sqlite+aiosqlite:///"+str(tmp_path/"legacy-handle.db"));await store.initialize()
     try:

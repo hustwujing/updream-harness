@@ -265,6 +265,8 @@ async def test_job_execution_catalog_is_filtered_to_the_signed_grant(tmp_path,mo
         async def turn_input_artifacts(self,turn_id,owner_id):
             return [{'artifact':SimpleNamespace(id=artifact_id,sha256='1'*64,size=12,mime='image/png'),
                 'project_file_id':'project-file','project_path':'assets/source.png','source_type':'upload'},
+                {'artifact':SimpleNamespace(id='1'*32,sha256='3'*64,size=14,mime='image/png'),
+                'project_file_id':'new-version','project_path':'assets/source.png','source_type':'upload'},
                 {'artifact':SimpleNamespace(id='0'*32,sha256='2'*64,size=13,mime='text/plain'),
                 'project_file_id':'private','project_path':'assets/private.txt','source_type':'upload'}]
     metadata={'operations':[{'id':'artifact.inspect'},{'id':'private.operation'}],

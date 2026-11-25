@@ -142,3 +142,18 @@ adapters without provider/case branches. Missing/excess-output regressions first
 failed with `WAITING_EXTERNAL`; the focused suite now passes 97 tests. Campaign
 classification remains strict. Real C09 retest and final release evidence are
 pending; see the cardinality validation plan for scope and checks.
+
+### Live input Artifact availability
+
+The resumed run also exposed R06: a newly materialized attachment was absent
+from the delegation catalog until input completion. A Broker regression reads
+the catalog from inside Runtime append and first failed with zero inputs.
+Prebinding now makes the authorized immutable identity available before the
+Harness consumes its message, with lease/execution/cancel fencing and unchanged
+input delivery semantics. Review additionally caught old Child grants losing
+same-name versions; all immutable IDs are now retained and aliases follow input
+sequence. This is a platform failure, correcting the runner's initial
+`optimizable_prompt` label in a separate failure audit. The drained campaign has
+68 successes, C09/R06 failures and99 unrun cases; those68 successes are preserved
+under the user's scoped-retest policy. See the live-input binding plan and raw
+`.data/evidence/real-campaign/resume-3006bd2/` receipts.

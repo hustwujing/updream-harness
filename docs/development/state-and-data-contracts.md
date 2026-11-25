@@ -218,3 +218,20 @@ owned by another Turn is a program error.
 - Cancellation races in `test_cancel_boundaries.py`.
 - Owner boundaries in `test_user_isolation.py` and `test_thread_read.py`.
 - Runtime receipt/replay behavior when the change crosses that boundary.
+
+## Live input attachment bindings
+
+After materializing a pending TurnInput's authorized attachments, Broker calls
+`prepare_turn_input_artifacts` before Runtime append. The Store checks the active
+Turn lease/generation, execution identity, cancellation and input identity.
+Deferred execution freezes the same bindings in `start_runtime_execution`.
+This publishes immutable input Artifact identities without asserting input
+receipt or completion; those remain separate Runtime-backed transitions.
+
+Bindings have stable IDs per input/name. Repeated preparation and applied
+receipts cannot duplicate them. `turn_input_artifacts` retains every immutable
+ID so an existing Child grant still sees its original version, while path lookup
+selects the latest prepared input in input-sequence order. Initial Turn project
+snapshots are never replaced by mutable Thread files. Owner checks also apply
+to attachment-only catalog rows. Broker, Store and Gateway tests cover live and
+deferred consumption, recovery, same-name replacements and old grants.

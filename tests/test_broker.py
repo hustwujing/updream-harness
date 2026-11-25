@@ -637,11 +637,19 @@ async def test_broker_rejects_switching_harness_inside_a_conversation(tmp_path):
 
 
 async def test_broker_drains_appended_inputs_in_same_sandbox_session(tmp_path):
+    from sandbox_harness.domain import Attachment
     settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "append.db"),
         backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9", session_keepalive_seconds=0)
     store = Store(settings.database_url); await store.initialize(); objects = ObjectStore(tmp_path / "objects")
     backend = FakeSandboxBackend(); pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
-    runtime = AppendedInputRuntime(); catalog = HarnessCatalog(); broker = Broker(settings, store, objects, pool, runtime, catalog)
+    class InspectingDeferredInput(AppendedInputRuntime):
+        async def run(self,sandbox,**kwargs):
+            if self.messages:
+                inputs=await store.turn_input_artifacts(turn.id,owner)
+                assert len(inputs)==1 and inputs[0]['project_path']=='inbox/deferred.png'
+            async for value in super().run(sandbox,**kwargs):yield value
+    runtime = InspectingDeferredInput();runtime.project_files=[]
+    catalog = HarnessCatalog(); broker = Broker(settings, store, objects, pool, runtime, catalog)
     owner = "a" * 64
     try:
         profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
@@ -652,8 +660,12 @@ async def test_broker_drains_appended_inputs_in_same_sandbox_session(tmp_path):
             if (await store.get_turn(turn.id)).state == TurnState.RUNNING:
                 break
             await asyncio.sleep(.01)
+        reference,digest=objects.put(b'deferred image')
+        attachment=Attachment(name='deferred.png',object_ref=reference,sha256=digest,
+            size=len(b'deferred image'),mime='image/png')
         appended, _ = await store.create_turn_input(turn.id,
-            TurnInputCreate(message="second", idempotency_key="append-second-key"), owner)
+            TurnInputCreate(message="second", idempotency_key="append-second-key",
+                attachments=[attachment]), owner)
         runtime.release.set()
         for _ in range(200):
             current = await store.get_turn(turn.id)
@@ -670,11 +682,21 @@ async def test_broker_drains_appended_inputs_in_same_sandbox_session(tmp_path):
 
 
 async def test_broker_delivers_live_input_and_marks_it_applied_at_turn_boundary(tmp_path):
+    from sandbox_harness.domain import Attachment
     settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "live.db"),
         backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9", session_keepalive_seconds=0)
     store = Store(settings.database_url); await store.initialize(); objects = ObjectStore(tmp_path / "objects")
     backend = FakeSandboxBackend(); pool = SandboxPool(backend, {h: "" for h in Harness}, {h: 0 for h in Harness})
-    runtime = LiveInputRuntime(); catalog = HarnessCatalog(); broker = Broker(settings, store, objects, pool, runtime, catalog)
+    class InspectingLiveInput(LiveInputRuntime):
+        async def append_input(self,sandbox,**kwargs):
+            inputs=await store.turn_input_artifacts(turn.id,owner)
+            assert len(inputs)==1 and inputs[0]['project_path']=='inbox/replacement.png'
+            assert inputs[0]['artifact'].sha256==attachment.sha256
+            assert (await store.get_turn_input(kwargs['input_id'])).status=='pending'
+            self.bound_artifact_id=inputs[0]['artifact'].id
+            return await super().append_input(sandbox,**kwargs)
+    runtime = InspectingLiveInput();runtime.project_files=[]
+    catalog = HarnessCatalog(); broker = Broker(settings, store, objects, pool, runtime, catalog)
     owner = "a" * 64
     try:
         profile = catalog.resolve("claude", "claude-4.6-sonnet", "standard")
@@ -684,8 +706,12 @@ async def test_broker_delivers_live_input_and_marks_it_applied_at_turn_boundary(
         for _ in range(100):
             if (await store.get_turn(turn.id)).state == TurnState.RUNNING: break
             await asyncio.sleep(.01)
+        reference,digest=objects.put(b'replacement image')
+        attachment=Attachment(name='replacement.png',object_ref=reference,sha256=digest,
+            size=len(b'replacement image'),mime='image/png')
         appended, _ = await store.create_turn_input(turn.id,
-            TurnInputCreate(message="steer", idempotency_key="live-steer-key"), owner)
+            TurnInputCreate(message="steer", idempotency_key="live-steer-key",
+                attachments=[attachment]), owner)
         assert await broker.try_deliver_input(appended)
         for _ in range(200):
             current = await store.get_turn(turn.id)
@@ -694,7 +720,11 @@ async def test_broker_delivers_live_input_and_marks_it_applied_at_turn_boundary(
         assert current.state == TurnState.COMPLETED and runtime.live_inputs == ["steer"]
         recorded = (await store.list_turn_inputs(turn.id))[0]
         assert recorded.status == "applied" and recorded.delivery_mode == "native_stream"
+        inputs=await store.turn_input_artifacts(turn.id,owner)
+        assert len(inputs)==1 and inputs[0]['artifact'].id==runtime.bound_artifact_id
     finally:
+        runtime.release.set()
+        await broker.close()
         await pool.close(); await store.close()
 
 

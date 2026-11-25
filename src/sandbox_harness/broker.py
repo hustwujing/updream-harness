@@ -388,6 +388,10 @@ class Broker:
             )
             await self._materialize_project_files(sandbox, project_files)
             await self._materialize_attachments(sandbox, value.attachments)
+            prepared=await self.store.prepare_turn_input_artifacts(value.id,
+                turn_id=turn.id,execution_id=turn.runtime_execution_id,
+                lease_owner=self.instance_id,recovery_generation=self.leases.get(turn.id))
+            if not prepared:return False
             delivery_mode = await self.runtime.append_input(sandbox, message=value.message,
                 attachments=value.attachments, reasoning_effort=turn.reasoning_effort,
                 execution_id=turn.runtime_execution_id, input_id=value.id)
