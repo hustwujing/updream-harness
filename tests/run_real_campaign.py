@@ -154,7 +154,10 @@ def classify_job_failures(rows):
         or (outcomes[0] if outcomes else None))
 
 
-def combine_job_outcome(classification,reason,job_outcome):
+def combine_job_outcome(classification,reason,job_outcome,validation_errors=()):
+    if classification=='success' and validation_errors:
+        return 'program_failure','artifact_contract:'+','.join(validation_errors[:12])
+    if classification=='program_failure':return classification,reason
     if job_outcome and (classification!='success' or job_outcome[0]=='program_failure'):
         return job_outcome
     return classification,reason
@@ -465,15 +468,12 @@ async def primary_case(client,case,args,running):
     artifacts=[row for row in items if row.get("type")=="artifact"]
     classification,reason=classify(final,artifacts,media_jobs)
     job_outcome=classify_job_failures(job_failures)
-    classification,reason=combine_job_outcome(classification,reason,job_outcome)
     if final.get('state') in {'AWAITING_USER','WAITING_USER'}:
         response=await client.get(f"api/threads/{thread['id']}/interactions");response.raise_for_status()
         reason=waiting_interaction_reason(response.json(),final['id'])
     validation_errors,validation=await validate_artifacts(
         client,case,artifacts,asset_root=args.asset_root) if artifacts else ([],[])
-    if classification=="success" and validation_errors:
-        classification,reason=(job_outcome or (
-            "program_failure","artifact_contract:"+",".join(validation_errors[:12])))
+    classification,reason=combine_job_outcome(classification,reason,job_outcome,validation_errors)
     return {"classification":classification,"reason":reason,"thread_id":thread["id"],
         "turn_id":turn["id"],"state":final["state"],"error_code":final.get("error_code",""),
         "artifact_count":len(artifacts),"artifact_names":[row.get("summary","") for row in artifacts],

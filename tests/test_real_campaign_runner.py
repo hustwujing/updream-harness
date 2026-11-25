@@ -407,8 +407,15 @@ def test_completed_primary_can_recover_from_non_program_job_failure():
     outcome=campaign.classify_job_failures([{'state':'FAILED','result':{
         'error_code':'model_rate_limited'}}])
     assert campaign.combine_job_outcome('success','',outcome)==('success','')
-    assert campaign.combine_job_outcome('program_failure','generic',outcome)==(
-        'non_program_failure','model_rate_limited')
+    assert campaign.combine_job_outcome('program_failure','runtime_execution_failed',outcome)==(
+        'program_failure','runtime_execution_failed')
+
+
+def test_non_program_child_failure_cannot_hide_invalid_final_artifact():
+    campaign=campaign_module()
+    assert campaign.combine_job_outcome('success','',
+        ('non_program_failure','model_rate_limited'),['image_dimensions'])==(
+            'program_failure','artifact_contract:image_dimensions')
 
 
 def test_waiting_user_report_includes_the_actual_pending_prompt():
