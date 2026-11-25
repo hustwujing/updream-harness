@@ -45,9 +45,12 @@ def catalog() -> JobCatalog:
 def job(local_id: str, descriptor: str = "free.compute") -> JobRequest:
     kind=JobKind.PROVIDER if descriptor=="image.generate" else JobKind.OPERATION
     digest={"free.compute":"a"*64,"inline.inspect":"b"*64,"image.generate":"c"*64}[descriptor]
+    outputs=() if descriptor=='inline.inspect' else (JobExpectedOutput(
+        artifact_role='images' if kind==JobKind.PROVIDER else 'result'),)
     return JobRequest(local_job_id=local_id,kind=kind,adapter=descriptor,
         descriptor_id=descriptor,descriptor_version="1",descriptor_digest=digest,
-        idempotency_key=f"job-{local_id}-key",parameters={"prompt":"one"} if kind==JobKind.PROVIDER else {})
+        idempotency_key=f"job-{local_id}-key",parameters={"prompt":"one"} if kind==JobKind.PROVIDER else {},
+        expected_outputs=outputs)
 
 
 async def setup(tmp_path):
@@ -77,6 +80,15 @@ async def test_free_durable_group_auto_commits_but_inline_operation_is_rejected(
                 thread_id="a"*32,origin_turn_id="b"*32,
                 idempotency_key="inline-group-key",jobs=[job("inline","inline.inspect")]))
     finally:await store.close()
+
+
+def test_artifact_producing_descriptor_requires_an_explicit_output_contract():
+    coordinator=JobCoordinator(SimpleNamespace(),catalog())
+    for request in (job('empty-operation').model_copy(update={'expected_outputs':()}),
+            job('empty-provider','image.generate').model_copy(update={'expected_outputs':()})):
+        with pytest.raises(ValueError,match='requires expected outputs'):
+            coordinator._normalize(JobGroupCreate(thread_id='a'*32,origin_turn_id='b'*32,
+                idempotency_key='missing-output-'+request.local_job_id,jobs=(request,)))
 
 
 def test_child_group_scope_allows_only_pre_authorized_tools():

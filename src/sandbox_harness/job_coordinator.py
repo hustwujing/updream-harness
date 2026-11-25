@@ -103,6 +103,8 @@ class JobCoordinator:
                     raise ValueError('Job parameter schema violation'+(' at '+path if path else '')) from exc
                 if not {item.artifact_role for item in request.input_artifacts}<=set(descriptor.input_roles):
                     raise ValueError('Job input artifact role is outside Descriptor')
+                if descriptor.output_roles and not request.expected_outputs:
+                    raise ValueError('Artifact-producing Descriptor requires expected outputs')
                 if not {item.artifact_role for item in request.expected_outputs}<=set(descriptor.output_roles):
                     raise ValueError('Job output artifact role is outside Descriptor')
                 if request.kind==JobKind.OPERATION:

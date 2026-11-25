@@ -23,9 +23,12 @@ def settings(tmp_path):
 
 
 def request(local_id,kind,descriptor,digest,parameters):
+    output_roles={'image.generate':'generated_images','media.render':'rendered_media'}
+    expected=([{'artifact_role':output_roles[descriptor],'min_items':1}]
+        if descriptor in output_roles else [])
     return {'local_job_id':local_id,'kind':kind,'adapter':descriptor,'descriptor_id':descriptor,
         'descriptor_version':'1','descriptor_digest':digest,'idempotency_key':'job-'+local_id+'-key',
-        'parameters':parameters}
+        'parameters':parameters,'expected_outputs':expected}
 
 
 def test_job_group_api_edits_confirms_once_and_enforces_owner(tmp_path):
