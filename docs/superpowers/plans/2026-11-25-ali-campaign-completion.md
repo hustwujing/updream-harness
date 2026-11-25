@@ -57,8 +57,9 @@ Ali services while tests are active to verify recovery; do not wait for drain.
   mutator set. Verify ordinary handlers bypass the lock and mutators retain it.
 - [ ] Add a separate real resource-exhaustion gate: fill an isolated configured
   sandbox/Job capacity, verify waiting without duplicate creation, release and
-  automatic progress, cancellation/deadline and Worker replacement. Exercise
-  bounded memory and disk exhaustion inside exclusively owned test sandboxes.
+  automatic progress, cancellation/deadline and Worker replacement. The user
+  clarified the additional boundary as provider inability to create a sandbox;
+  exercise an isolated real provider instance quota.
   Record configured-capacity exhaustion separately from provider quota failures
   and internal sandbox limits; never claim one proves another.
 - [ ] Include added case counts and receipts separately from the original 169
