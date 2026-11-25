@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -60,6 +61,10 @@ class SubmissionOutcomeUnknown(RuntimeError):
         super().__init__(message)
         self.external_execution_id = external_execution_id
         self.acceptance_receipt = acceptance_receipt or {"outcome": "unknown"}
+
+
+class SubmissionInterrupted(asyncio.CancelledError):
+    """Cancellation after submission: durable allocation still owns capacity."""
 
 
 class ExternalJobFailure(RuntimeError):

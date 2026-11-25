@@ -101,11 +101,19 @@ async def test_scheduler_reacquires_released_reservation_for_same_attempt(tmp_pa
         await scheduler.register_node(node(generation=2))
         first=await scheduler.reserve('1'*32,1,request())
         assert await scheduler.release(first.id,first.node_id,first.node_generation)
+        assert await scheduler.reservation_released(first.id,first.node_id,first.node_generation,
+            job_id='1'*32,job_generation=1)
+        for job_id,generation in [('2'*32,1),('1'*32,2)]:
+            with pytest.raises(RuntimeError,match='stale_resource_reservation'):
+                await scheduler.reservation_released(first.id,first.node_id,first.node_generation,
+                    job_id=job_id,job_generation=generation)
 
         second=await scheduler.reserve('1'*32,1,request())
 
         assert second.id==first.id
         assert second.state=='reserved'
+        assert not await scheduler.reservation_released(second.id,second.node_id,second.node_generation,
+            job_id='1'*32,job_generation=1)
         async with scheduler.hold(second.id,second.node_id,second.node_generation):
             assert (await scheduler.mark_running(
                 second.id,second.node_id,second.node_generation)).state=='running'

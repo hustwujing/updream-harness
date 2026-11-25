@@ -248,3 +248,13 @@ class Scheduler:
                 raise RuntimeError("stale_resource_reservation")
             if row.state=="released":return False
             row.state="released";row.released_at=now();row.expires_at=now();return True
+
+    async def reservation_released(self,reservation_id:str,node_id:str,node_generation:int,*,
+                                   job_id:str,job_generation:int)->bool:
+        """Check exact reservation identity for an idempotent cleanup, without renewing it."""
+        async with self.store.connections() as db:
+            row=await db.get(ResourceReservationRow,reservation_id)
+            if (not row or row.node_id!=node_id or row.node_generation!=node_generation
+                    or row.job_id!=job_id or row.job_generation!=job_generation):
+                raise RuntimeError('stale_resource_reservation')
+            return row.state=='released'

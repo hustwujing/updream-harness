@@ -1,5 +1,6 @@
 import pytest
 import httpx
+import asyncio
 from types import SimpleNamespace
 
 from sandbox_harness.harness_job import HarnessJobAdapter,JobGrantFactory,SandboxChildBackend
@@ -104,7 +105,7 @@ async def test_child_harness_maps_sandbox_capacity_to_pre_accept_wait(tmp_path):
     finally:await store.close()
 
 
-@pytest.mark.parametrize('phase',['configuration','submission'])
+@pytest.mark.parametrize('phase',['configuration','submission','cancelled_submission'])
 async def test_child_start_failure_retains_correct_submission_boundary(tmp_path,phase):
     store,adapter,_,job=await setup(tmp_path,AdapterStatus(False))
     sandbox=Sandbox(id='child-boundary',harness=Harness.CODEX,image='image',
@@ -124,6 +125,7 @@ async def test_child_start_failure_retains_correct_submission_boundary(tmp_path,
                     response=httpx.Response(503))
         async def start_execution(self,*args,**kwargs):
             self.starts+=1
+            if phase=='cancelled_submission':raise asyncio.CancelledError()
             raise httpx.ReadError('accepted response lost')
     async def token(*args):return 'token',SimpleNamespace(nonce='nonce')
     pool=Pool();runtime=Runtime()
@@ -143,13 +145,47 @@ async def test_child_start_failure_retains_correct_submission_boundary(tmp_path,
             assert runtime.starts==0 and pool.released==[sandbox.id]
             assert await adapter.scheduler.active_reservation(job.id) is None
             assert await store.latest_job_acceptance(job.id) is None
-        else:
+        elif phase=='submission':
             with pytest.raises(SubmissionOutcomeUnknown) as raised:await adapter.submit(context)
             assert raised.value.external_execution_id==job.id+':1'
             receipt=raised.value.acceptance_receipt
             assert receipt['sandbox_id']==sandbox.id and receipt['reservation_id']
             assert runtime.starts==1 and pool.released==[]
             assert await adapter.scheduler.active_reservation(job.id) is not None
+        else:
+            with pytest.raises(asyncio.CancelledError):await adapter.submit(context)
+            assert runtime.starts==1 and pool.released==[]
+            assert await adapter.scheduler.active_reservation(job.id) is not None
+            async def cleanup(context,execution_id,receipt):
+                assert execution_id==job.id+':1' and receipt['sandbox_id']==sandbox.id
+                assert await adapter.scheduler.active_reservation(job.id) is not None
+                await pool.release(sandbox)
+            adapter.backend.cleanup=cleanup
+            worker=JobWorker(store,{'child-harness':adapter},node_id='node',worker_id='worker')
+            await worker._timeout(adapter,context,'',submission_started=True)
+            assert await worker.run_cleanup_once()==1
+            assert pool.released==[sandbox.id]
+            assert await store.pending_job_cleanup_ids()==set()
+            assert await adapter.scheduler.active_reservation(job.id) is None
+    finally:await store.close()
+
+
+async def test_terminal_preparation_failure_finishes_provisional_cleanup(tmp_path):
+    store,adapter,backend,job=await setup(tmp_path,AdapterStatus(False))
+    async def preparation_failed(context,reservation):
+        await store.record_job_submission_allocation(context.job.id,context.generation,
+            external_execution_id='provisional',receipt={'sandbox_id':'sandbox-1',
+                'reservation_id':reservation.id,'node_id':reservation.node_id,
+                'node_generation':reservation.node_generation})
+        raise PreAcceptFailure('preparation failed',error_code='child_preparation_failed')
+    backend.start=preparation_failed
+    try:
+        worker=JobWorker(store,{'child-harness':adapter},node_id='scheduler',worker_id='worker')
+        await worker.run_once()
+        assert (await store.get_job(job.id)).state==JobState.FAILED
+        assert backend.cleaned==['provisional']
+        assert await store.pending_job_cleanup_ids()==set()
+        assert await adapter.scheduler.active_reservation(job.id) is None
     finally:await store.close()
 
 

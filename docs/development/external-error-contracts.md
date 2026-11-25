@@ -62,6 +62,13 @@ response loss preserves the sandbox, reservation and execution ID in
 `SubmissionOutcomeUnknown`; status/recovery uses that handle instead of deleting
 the sandbox or submitting a second execution.
 
+Cancellation after an execution request propagates as cancellation and retains
+the provisional reservation for durable cleanup or worker takeover. Terminal
+cleanup may revisit an already released reservation only after validating its
+Job, attempt generation, node and node generation. It still performs capability
+revocation and sandbox deletion; it does not renew or reactivate that reservation.
+Nonterminal cleanup keeps the normal reservation hold.
+
 1. Validate frozen inputs before external submission. Raise `PreAcceptFailure`
    with a registered code, canonical phase and explicit retryability.
 2. Do not throw a raw `ValueError`, HTTP exception or SDK exception across the

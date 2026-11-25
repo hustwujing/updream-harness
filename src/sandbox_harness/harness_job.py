@@ -10,8 +10,8 @@ from typing import Any, Awaitable, Callable, Protocol
 from .domain import Harness
 from .grants import GrantAuthority,JobGrantRequest,TurnGrantRequest
 from .job_adapters import (AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExecutionContext,
-    PreAcceptFailure,SubmissionRecovery,SubmissionOutcomeUnknown)
-from .job_contracts import JobState
+    PreAcceptFailure,SubmissionRecovery,SubmissionOutcomeUnknown,SubmissionInterrupted)
+from .job_contracts import JobState,TERMINAL_JOB_STATES
 from .artifact_gateway import ArtifactEmission,ArtifactGateway
 from .scheduler import ResourceRequest, Scheduler
 from .sandbox import SandboxCapacityUnavailable,SandboxNotFound,SandboxRateLimited
@@ -171,6 +171,9 @@ class HarnessJobAdapter(BaseJobAdapter):
                     'runtime_profile_id':reservation.runtime_profile_id,
                     'image_digest':reservation.image_digest,'gpu_ids':list(reservation.gpu_ids),
                     **exc.acceptance_receipt}) from exc
+        except SubmissionInterrupted:
+            # The fenced provisional receipt owns cleanup or takeover after cancellation.
+            raise
         except BaseException:
             await self.scheduler.release(reservation.id,reservation.node_id,reservation.node_generation)
             raise
@@ -222,6 +225,11 @@ class HarnessJobAdapter(BaseJobAdapter):
         if not reservation_id:
             await self.backend.cleanup(context,external_execution_id,receipt);return
         node_id=str(receipt.get('node_id',''));generation=int(receipt.get('node_generation') or 0)
+        if context.job.state in TERMINAL_JOB_STATES and await self.scheduler.reservation_released(
+                reservation_id,node_id,generation,job_id=context.job.id,
+                job_generation=context.generation):
+            # Idempotent cleanup may still need to revoke access after retirement.
+            await self.backend.cleanup(context,external_execution_id,receipt);return
         async with self.scheduler.hold(reservation_id,node_id,generation):
             await self.backend.cleanup(context,external_execution_id,receipt)
 
@@ -384,6 +392,12 @@ class SandboxChildBackend:
                 error_code='child_preparation_failed',failed_phase='submission',
                 retry_class='bounded_pre_accept' if retryable else 'none',
                 retryable=retryable) from exc
+        except asyncio.CancelledError as exc:
+            if execution_requested:
+                self.sessions[context.job.id]=sandbox
+                raise SubmissionInterrupted() from exc
+            await self.pool.release(sandbox,keep_attached=False)
+            raise
         except BaseException:
             if not execution_requested:
                 await self.pool.release(sandbox,keep_attached=False)
