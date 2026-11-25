@@ -782,8 +782,14 @@ async def case_k12(client,args):
         'Skill, and write exactly /workspace/outputs/quality.md with observed counts.'),
         outputs=[output('quality_report','quality.md')]),
         harness_job(121,args,skills=['query-validation'],objective=(
-        'Use the injected Skill to validate a deterministic PostgreSQL query and write exactly '
-        '/workspace/outputs/query.md with concrete correctness and performance findings.'),
+        'Use the injected Skill to validate this exact PostgreSQL query: '
+        'WITH sales(id, amount) AS (VALUES (1, 100), (2, NULL), (2, 200), (3, 50)) '
+        'SELECT id, SUM(amount) AS total FROM sales GROUP BY id ORDER BY total DESC, id ASC; '
+        'Save the supplied SQL in scratch and apply the Skill tooling. The VALUES clause is '
+        'the complete input fixture; no database connection or additional attachment is needed. '
+        'Explain NULL handling, grouping, deterministic ordering and scaling implications; '
+        'distinguish static analysis from measured plans and do not invent EXPLAIN results. '
+        'Write exactly /workspace/outputs/query.md with concrete findings.'),
         outputs=[output('query_report','query.md')])]
     prepared=require(await prepare(client,thread,turn,jobs,'K12')).json()
     if prepared.get('mode')!='committed':raise AssertionError('K12 unexpectedly required confirmation')
