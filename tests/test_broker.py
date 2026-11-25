@@ -729,6 +729,7 @@ async def test_broker_delivers_live_input_and_marks_it_applied_at_turn_boundary(
 
 
 async def test_broker_reattaches_expired_running_turn_and_replays_runtime_journal(tmp_path):
+    from sandbox_harness.profiles import ProviderRelease
     settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "recover.db"),
         backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9",
         session_keepalive_seconds=0, recovery_scan_seconds=300)
@@ -739,13 +740,15 @@ async def test_broker_reattaches_expired_running_turn_and_replays_runtime_journa
         async def find(self,metadata):
             raise AssertionError("durable sandbox ID recovery must not query provider metadata")
     frozen_image="registry/runtime@sha256:"+"1"*64
+    frozen_revision='immutable-release-before-restart'
     frozen_bundle="2"*64;frozen_code="3"*64
     frozen_resolver=SandboxProfileResolver(provider="fake",
         runtime_contract="sandbox-harness-runtime/v1",runtime_bundle_digest=frozen_bundle,
         runtime_code_bundle_digest=frozen_code)
     current_resolver=SandboxProfileResolver(provider="fake",
         runtime_contract="sandbox-harness-runtime/v1",runtime_bundle_digest="4"*64,
-        runtime_code_bundle_digest="5"*64)
+        runtime_code_bundle_digest="5"*64,releases={Harness.CLAUDE:ProviderRelease(
+            ref=frozen_image,revision='different-current-release',artifact_digest='1'*64)})
     backend = DurableIdBackend(); pool = SandboxPool(backend,
         {h:frozen_image for h in Harness},{h:0 for h in Harness},profile_resolver=current_resolver)
     catalog = HarnessCatalog(); owner = "a" * 64
@@ -760,7 +763,7 @@ async def test_broker_reattaches_expired_running_turn_and_replays_runtime_journa
     execution_id = turn.id + ":" + turn.id
     await store.start_runtime_execution(turn.id, execution_id, "dead-broker", old.recovery_generation)
     sandbox = await backend.create(SandboxCreateRequest(harness=Harness.CLAUDE,
-        profile=frozen_resolver.resolve(Harness.CLAUDE,frozen_image),environment={},
+        profile=frozen_resolver.resolve(Harness.CLAUDE,frozen_image,revision=frozen_revision),environment={},
         ttl_seconds=3600,allocation_id=turn.id))
     await store.set_turn_state(turn.id, TurnState.RUNNING, sandbox_id=sandbox.id,
         sandbox_handle_json=sandbox_handle_json(sandbox),lease_owner="dead-broker",

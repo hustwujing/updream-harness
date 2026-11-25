@@ -87,13 +87,15 @@ class Broker:
 
     def _sandbox_profile_for_turn(self,turn:TurnView):
         current=self.pool.profile_resolver
+        handle=self._turn_handle(turn)
         resolver=SandboxProfileResolver(provider=self.pool.backend.provider,
             runtime_contract=current.runtime_contract,
             runtime_bundle_digest=turn.runtime_bundle_digest or current.runtime_bundle_digest,
             runtime_code_bundle_digest=(turn.runtime_code_bundle_digest
                 or current.runtime_code_bundle_digest))
         return resolver.resolve(turn.harness,
-            turn.runtime_image_digest or self.settings.image_for(turn.harness.value))
+            turn.runtime_image_digest or self.settings.image_for(turn.harness.value),
+            revision=handle.revision)
 
     @asynccontextmanager
     async def thread_lock(self, thread_id: str):

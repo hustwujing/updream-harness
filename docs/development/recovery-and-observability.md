@@ -23,6 +23,11 @@ active Turns and reconciles by namespace plus Turn metadata.
   recorded Runtime execution after its durable sequence.
 - A missing Runtime execution after work began fails explicitly; the request is
   not replayed.
+- Primary adoption reconstructs compatibility with the release revision in the
+  durable SandboxHandle plus the Turn's frozen provider reference and Bundle
+  digests. A provider reference is not a release revision, and the current
+  release mapping must not replace the revision of an already running sandbox.
+  The Pool still verifies the full compatibility key before reattachment.
 - `CLEANING` resumes the persisted `pending_final_state`, capability revocation
   and exact sandbox deletion.
 

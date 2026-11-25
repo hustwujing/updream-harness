@@ -157,3 +157,16 @@ sequence. This is a platform failure, correcting the runner's initial
 68 successes, C09/R06 failures and99 unrun cases; those68 successes are preserved
 under the user's scoped-retest policy. See the live-input binding plan and raw
 `.data/evidence/real-campaign/resume-3006bd2/` receipts.
+
+### Primary release revision recovery
+
+An API restart from D08 exposed D06/R17 Primary reattachment rejecting the
+existing sandbox: recovery reconstructed revision from provider_ref instead of
+the durable Handle revision used by the original allocation. The generic fix
+uses the recorded revision and still checks the full compatibility key. The
+existing recovery regression was strengthened to change both current release
+and Bundle configuration; its red run failed in adoption and the focused suite
+passes111. D06's Child SIGKILL protocol had already passed with one external
+execution across two attempts. Real scope is D06/R17 plus the D08 restart
+trigger; unaffected successes are preserved. See the Primary release recovery
+plan and `.data/tmp/profile-revision-*.log`.
