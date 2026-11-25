@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import asdict,replace
 from datetime import timedelta
 import hashlib
@@ -194,8 +195,17 @@ class AllocationService:
         self.store=store;self.backend=backend;self.owner=owner or 'allocator-'+uuid.uuid4().hex
         self.lease_seconds=lease_seconds
 
+    @asynccontextmanager
+    async def _transaction(self):
+        # SQLite cannot upgrade concurrent local read transactions to writers.
+        # PostgreSQL row locks additionally fence independent service processes.
+        # No provider request or capacity wait runs inside this local lock.
+        async with self.store.job_lock('allocation-ledger'):
+            async with self.store.connections.begin() as db:
+                yield db
+
     async def _finish(self,identity,state,*,handle=None,error_code=''):
-        async with self.store.connections.begin() as db:
+        async with self._transaction() as db:
             row=await db.get(SandboxAllocationRow,identity,with_for_update=True)
             if not row or row.claim_owner!=self.owner:
                 raise RuntimeError('stale_allocation_claim')
@@ -218,7 +228,7 @@ class AllocationService:
         async def heartbeat():
             while True:
                 await asyncio.sleep(max(.05,self.lease_seconds/3))
-                async with self.store.connections.begin() as db:
+                async with self._transaction() as db:
                     row=await db.get(SandboxAllocationRow,identity,with_for_update=True)
                     if not row or row.claim_owner!=self.owner or row.state!='SENDING':return
                     row.claim_expires_at=now()+timedelta(seconds=self.lease_seconds)
@@ -240,7 +250,7 @@ class AllocationService:
             task.cancel();await asyncio.gather(task,return_exceptions=True)
 
     async def _expire_creates(self):
-        async with self.store.connections.begin() as db:
+        async with self._transaction() as db:
             stale=(await db.scalars(select(SandboxAllocationRow).where(
                 SandboxAllocationRow.namespace==self.backend.namespace,
                 SandboxAllocationRow.provider==self.backend.provider,
@@ -262,7 +272,7 @@ class AllocationService:
                 current=await db.get(SandboxAllocationRow,identity)
                 if not current:continue
                 job_id=current.job_id
-            async with self.store.connections.begin() as db:
+            async with self._transaction() as db:
                 job=await db.get(JobRow,job_id,with_for_update=True)
                 row=await db.get(SandboxAllocationRow,identity,with_for_update=True)
                 if not row or row.state!='PENDING':continue
@@ -284,7 +294,7 @@ class AllocationService:
     async def _claim_reconciliations(self,limit):
         if limit<=0:return []
         timestamp=now()
-        async with self.store.connections.begin() as db:
+        async with self._transaction() as db:
             rows=(await db.scalars(select(SandboxAllocationRow).where(
                 SandboxAllocationRow.namespace==self.backend.namespace,
                 SandboxAllocationRow.provider==self.backend.provider,SandboxAllocationRow.state=='UNKNOWN',
@@ -315,7 +325,7 @@ class AllocationService:
                     handle=replace(sandbox.handle,revision=request.profile.revision)
                 else:error_code='allocation_identity_mismatch'
         except (SandboxProviderError,TimeoutError):error_code='allocation_observation_unavailable'
-        async with self.store.connections.begin() as db:
+        async with self._transaction() as db:
             row=await db.get(SandboxAllocationRow,value['id'],with_for_update=True)
             if (not row or row.state!='UNKNOWN' or row.reconcile_token!=value['reconcile_token']
                     or not row.reconcile_expires_at or utc_datetime(row.reconcile_expires_at)<=now()):return
