@@ -129,6 +129,7 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
     await store.initialize()
     validate=getattr(pool.backend,"validate_active_providers",None)
     if validate:validate(await store.active_sandbox_providers())
+    await pool.restore_allocation_capacity(await store.job_sandbox_capacity())
     await node.run_once()
     try:
         live_job_ids=await store.pending_job_cleanup_ids()

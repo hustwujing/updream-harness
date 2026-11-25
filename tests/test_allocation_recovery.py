@@ -161,7 +161,8 @@ async def test_replacement_budget_is_durable_and_runtime_submission_is_never_rep
 
 
 @pytest.mark.parametrize('capacity',['available','local_full','node_full','provider_full'])
-async def test_worker_replacement_requires_extra_capacity_and_keeps_late_cleanup_isolated(tmp_path,capacity):
+@pytest.mark.parametrize('restart',[False,True])
+async def test_worker_replacement_requires_extra_capacity_and_keeps_late_cleanup_isolated(tmp_path,capacity,restart):
     from types import SimpleNamespace
     from sqlalchemy import select
     from sandbox_harness.config import Settings
@@ -217,6 +218,12 @@ async def test_worker_replacement_requires_extra_capacity_and_keeps_late_cleanup
         await asyncio.wait_for(worker.process(first),5)
         assert (await store.get_job(context.job.id)).state==JobState.QUEUED
         assert runtime.starts==0 and pool._user_slots._value==(0 if capacity=='local_full' else 1)
+        if restart:
+            await pool.close()
+            pool=SandboxPool(provider,{Harness.CODEX:'image'},{Harness.CODEX:0},
+                max_sandboxes=1 if capacity=='local_full' else 2)
+            await pool.restore_allocation_capacity(await store.job_sandbox_capacity())
+            child.pool=pool
         second=await store.claim_job(context.job.id,'job-worker','node',30)
         await asyncio.wait_for(worker.process(second),5)
         if capacity!='available':
@@ -245,6 +252,12 @@ async def test_worker_replacement_requires_extra_capacity_and_keeps_late_cleanup
             assert child.collectors[context.job.id] is collector and not collector.done()
             assert pool._user_slots._value==1
             collected.set();await collector
+            if restart:
+                await pool.close(preserve_sandbox_keys={pool.sandbox_key(current)})
+                pool=SandboxPool(provider,{Harness.CODEX:'image'},{Harness.CODEX:0},max_sandboxes=1)
+                await pool.restore_allocation_capacity(await store.job_sandbox_capacity())
+                assert pool._user_slots._value==0
+                child.pool=pool;child.sessions.clear()
             runtime.completed=True
             third=await store.claim_job(context.job.id,'job-worker','node',30)
             await asyncio.wait_for(worker.process(third),5)

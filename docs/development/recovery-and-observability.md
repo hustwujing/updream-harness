@@ -45,6 +45,15 @@ and JobWorker have separate Pools. `job_worker_concurrency` bounds each
 AllocationWorker's create lane; durable Scheduler reservations independently
 limit registered Job resources. A Pool waits for a local slot before submitting
 a create request, so this wait is not an uncertain cloud creation outcome.
+JobWorker restores charged allocation identities and frozen profile keys from
+the ledger and legacy cleanup receipts before admission. UNKNOWN, late READY
+and accepted executions therefore retain their slots across process loss.
+Adoption consumes the retained slot; confirmed deletion/absence releases it.
+If a configured limit is reduced below existing ownership, capacity stays closed
+until enough retained allocations have been retired. This does not turn the
+per-process Pool setting into a global provider quota. Verify restart, accepted
+reattachment and lowered-limit debt in `test_allocation_capacity_restore.py` and
+`test_allocation_recovery.py`.
 
 New dispatched allocations freeze a 90-second recovery window and a 300-second
 provisioning TTL, configurable through `allocation_recovery_seconds` and

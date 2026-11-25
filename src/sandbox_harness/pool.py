@@ -31,6 +31,8 @@ class SandboxPool:
         self.ttl_seconds=ttl_seconds
         # Only callers with a durable, lease-fenced cleanup owner opt in.
         self._pending_allocations:dict[tuple[str,str],tuple[str,SandboxProfile]]={}
+        self._retained_allocations:dict[tuple[str,str],str]={}
+        self._capacity_debt=0
         user_capacity = self.max_sandboxes - sum(targets.values())
         if user_capacity < 1:
             raise ValueError("Sandbox maximum must leave at least one user slot")
@@ -93,9 +95,34 @@ class SandboxPool:
 
     async def owns_allocation(self,provider:str,allocation_id:str)->bool:
         async with self._lock:
-            return (provider,allocation_id) in self._pending_allocations or any(
+            return ((provider,allocation_id) in self._pending_allocations
+                or (provider,allocation_id) in self._retained_allocations or any(
                 value.handle.provider==provider and value.handle.allocation_id==allocation_id
-                for value in self._attached.values())
+                for value in self._attached.values()))
+
+    async def restore_allocation_capacity(self,allocations)->None:
+        """Restore durable Job ownership before admitting work after process loss."""
+        async with self._lock:
+            if self._closed:raise RuntimeError('sandbox_pool_closed')
+            for value in allocations:
+                key=(value['provider'],value['allocation_id']);profile_key=value['profile_key']
+                existing=self._retained_allocations.get(key)
+                if existing:
+                    if existing!=profile_key:raise RuntimeError('sandbox_allocation_profile_conflict')
+                    continue
+                if key in self._pending_allocations or any(
+                        (sandbox.handle.provider,sandbox.handle.allocation_id)==key
+                        for sandbox in [*self._attached.values(),
+                            *(sandbox for sandbox,_ in self._retiring.values())]):continue
+                self._retained_allocations[key]=profile_key
+                if self._user_slots.locked():self._capacity_debt+=1
+                else:await self._user_slots.acquire()
+
+    def _release_user_slot(self):
+        # A reduced configured limit cannot discard existing durable ownership.
+        if self._capacity_debt:self._capacity_debt-=1
+        else:self._user_slots.release()
+        self._capacity_changed.set()
 
     async def retirement_pending(self,sandbox:Sandbox)->bool:
         async with self._lock:return self.sandbox_key(sandbox) in self._retiring
@@ -121,8 +148,9 @@ class SandboxPool:
             if any(value.handle.provider==provider and value.handle.allocation_id==allocation_id
                     for value in self._attached.values()):
                 raise RuntimeError('sandbox_allocation_is_attached')
-            if self._pending_allocations.pop(key,None) is not None:
-                self._user_slots.release();self._capacity_changed.set()
+            pending=self._pending_allocations.pop(key,None)
+            retained=self._retained_allocations.pop(key,None)
+            if pending is not None or retained is not None:self._release_user_slot()
 
     async def execution_available(self) -> bool:
         async with self._lock:
@@ -158,6 +186,11 @@ class SandboxPool:
                 user_slot = True
             pending_key=(sandbox.handle.provider,sandbox.handle.allocation_id)
             pending=self._pending_allocations.get(pending_key)
+            retained=self._retained_allocations.get(pending_key)
+            if retained:
+                if retained!=sandbox.compatibility_key:
+                    raise SandboxProfileUnavailable('Retained allocation profile mismatch',provider=sandbox.handle.provider)
+                self._retained_allocations.pop(pending_key);user_slot=True
             if pending:
                 if pending[1].compatibility_key!=sandbox.compatibility_key:
                     raise SandboxProfileUnavailable('Pending allocation profile mismatch',
@@ -205,7 +238,7 @@ class SandboxPool:
             async with self._lock:
                 retired = self._retiring.pop(key, None)
             if retired and retired[1]:
-                self._user_slots.release()
+                self._release_user_slot()
                 self._capacity_changed.set()
         finally:
             async with self._lock:
@@ -338,7 +371,7 @@ class SandboxPool:
                         expiry = self._expiry.pop(thread_id, None)
                     if expiry:
                         expiry.cancel()
-                    self._user_slots.release()
+                    self._release_user_slot()
                     self._capacity_changed.set()
                     attached = None
                 except BaseException as exc:
@@ -347,7 +380,7 @@ class SandboxPool:
                     raise
 
             async with self._lock:
-                if pending_key in self._pending_allocations:
+                if pending_key in self._pending_allocations or pending_key in self._retained_allocations:
                     raise SandboxCreateOutcomeUnknown('Allocation requires reconciliation',
                         provider=desired_profile.provider)
             await self._reserve_user_slot(wait_for_capacity=wait_for_capacity)
@@ -405,7 +438,7 @@ class SandboxPool:
             except BaseException:
                 async with self._lock:pending=pending_key in self._pending_allocations
                 if not pending:
-                    self._user_slots.release()
+                    self._release_user_slot()
                     self._capacity_changed.set()
                 raise
             self._schedule_refill(harness)
@@ -430,11 +463,14 @@ class SandboxPool:
                     return existing
                 pending_key=(sandbox.handle.provider,sandbox.handle.allocation_id)
                 pending=self._pending_allocations.get(pending_key)
+                retained=self._retained_allocations.get(pending_key)
+                if retained and retained!=expected_profile.compatibility_key:
+                    raise SandboxProfileUnavailable('Retained allocation profile mismatch',provider=sandbox.handle.provider)
                 if pending and (pending[0]!=thread_id or
                         pending[1].compatibility_key!=expected_profile.compatibility_key):
                     raise SandboxProfileUnavailable('Pending allocation owner/profile mismatch',
                         provider=sandbox.handle.provider)
-            if not pending:await self._reserve_user_slot()
+            if not pending and not retained:await self._reserve_user_slot()
             try:
                 await self._bind(sandbox,thread_id=thread_id,turn_id=turn_id)
                 sandbox.thread_id = thread_id
@@ -445,10 +481,11 @@ class SandboxPool:
                         raise RuntimeError("sandbox_pool_closed")
                     self._attached[thread_id] = sandbox
                     self._pending_allocations.pop(pending_key,None)
+                    self._retained_allocations.pop(pending_key,None)
                 return sandbox
             except BaseException:
-                if not pending:
-                    self._user_slots.release()
+                if not pending and not retained:
+                    self._release_user_slot()
                     self._capacity_changed.set()
                 raise
 
@@ -485,7 +522,7 @@ class SandboxPool:
                 expiry = self._expiry.pop(sandbox.thread_id, None)
             if expiry:
                 expiry.cancel()
-            self._user_slots.release()
+            self._release_user_slot()
             self._capacity_changed.set()
 
     async def discard_thread(self, thread_id: str) -> None:

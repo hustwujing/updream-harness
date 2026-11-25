@@ -4459,6 +4459,43 @@ class Store:
             result.append(handle)
         return result
 
+    async def job_sandbox_capacity(self)->list[dict]:
+        """Allocation identities still charged to the JobWorker Pool after restart."""
+        from .sandbox_contracts import SandboxProfile
+        async with self.connections() as db:
+            rows=(await db.scalars(select(SandboxAllocationRow))).all()
+            completed=select(JobCleanupRow.id).where(JobCleanupRow.job_id==JobAttemptRow.job_id,
+                JobCleanupRow.generation==JobAttemptRow.generation,
+                JobCleanupRow.state=='completed').correlate(JobAttemptRow).exists()
+            receipts=list((await db.scalars(select(JobAttemptRow.acceptance_receipt_json).join(
+                JobRow,JobRow.id==JobAttemptRow.job_id).where(
+                JobRow.state.not_in([state.value for state in TERMINAL_JOB_STATES]),
+                or_(JobAttemptRow.outcome=='SUBMITTING',JobAttemptRow.accepted_at.is_not(None)),
+                ~completed))).all())
+            receipts.extend((await db.scalars(select(JobCleanupRow.acceptance_receipt_json).where(
+                JobCleanupRow.state!='completed'))).all())
+        result={};inactive=set()
+        for row in rows:
+            if row.state not in {'PENDING','SENDING','UNKNOWN','READY'}:
+                inactive.add(row.id);continue
+            profile=SandboxProfile(**json.loads(row.request_json)['profile'])
+            result[(row.provider,row.allocation_id)]=profile.compatibility_key
+        for encoded in receipts:
+            value=json.loads(encoded);phase=value.get('allocation_phase')
+            if phase in {'reserving_resources','awaiting_capacity','absent'}:continue
+            if value.get('allocation_dispatch_id') in inactive:continue
+            if value.get('allocation_profile'):
+                profile=SandboxProfile(**value['allocation_profile'])
+                key=(value['allocation_provider'],value['allocation_id']);profile_key=profile.compatibility_key
+            elif value.get('sandbox_handle'):
+                handle=SandboxHandle.from_mapping(value['sandbox_handle'])
+                key=(handle.provider,handle.allocation_id);profile_key=handle.profile_key
+            else:continue
+            if key in result and result[key]!=profile_key:raise RuntimeError('sandbox_allocation_profile_conflict')
+            result[key]=profile_key
+        return [{'provider':provider,'allocation_id':identity,'profile_key':profile}
+            for (provider,identity),profile in sorted(result.items())]
+
     async def active_sandbox_allocations(self)->set[tuple[str,str]]:
         async with self.connections() as db:
             receipts=list((await db.execute(select(JobAttemptRow.acceptance_receipt_json).join(
