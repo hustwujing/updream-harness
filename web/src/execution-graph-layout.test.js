@@ -1,11 +1,14 @@
 import {describe,expect,it} from 'vitest';
 
-import {defaultCollapsedGroups,executionGraphView} from './execution-graph-layout';
+import {defaultCollapsedGroups,executionGraphView,GRAPH_NODE_HEIGHT,GRAPH_NODE_WIDTH} from './execution-graph-layout';
 
 const node=(id,type,turn_id,started_at='2026-11-18T00:00:00Z')=>({id,type,turn_id,started_at,state:'SUCCEEDED'});
 const edge=(from,to,kind='contains')=>({from,to,kind});
 
 describe('execution graph layout',()=>{
+ it('uses compact stable node dimensions',()=>{
+  expect([GRAPH_NODE_WIDTH,GRAPH_NODE_HEIGHT]).toEqual([170,82]);
+ });
  it('lays out a factual branch and join from left to right',()=>{
   const graph={nodes:[node('input','user_turn','turn'),node('primary','primary_harness','turn'),node('group','job_group','turn'),node('a','job','turn'),node('b','job','turn'),node('review','job','turn')],edges:[edge('input','primary','submitted_by'),edge('primary','group','submitted_by'),edge('group','a'),edge('group','b'),edge('a','review','reviewed_by'),edge('b','review','reviewed_by')]};
   const view=executionGraphView(graph,{turnId:'turn'}),byId=new Map(view.nodes.map(value=>[value.id,value]));
@@ -53,8 +56,15 @@ describe('execution graph layout',()=>{
   const graph={nodes,edges:nodes.slice(1).map((value,index)=>edge(`n${index}`,value.id))};
   const view=executionGraphView(graph,{turnId:'turn',maxWidth:700}),byId=new Map(view.nodes.map(value=>[value.id,value]));
   expect(view.width).toBeLessThanOrEqual(700);
-  expect(byId.get('n0').band).toBe(0);expect(byId.get('n1').band).toBe(0);
-  expect(byId.get('n2').band).toBe(1);expect(byId.get('n2').x).toBeGreaterThan(byId.get('n3').x);
+  expect(byId.get('n0').band).toBe(0);expect(byId.get('n2').band).toBe(0);
+  expect(byId.get('n3').band).toBe(1);expect(byId.get('n3').x).toBeGreaterThan(byId.get('n4').x);
   expect(Math.max(...view.nodes.map(value=>value.x+value.width))).toBeLessThanOrEqual(view.width);
+ });
+ it('fits four sequential ranks in a representative desktop canvas',()=>{
+  const nodes=Array.from({length:5},(_,index)=>node(`desktop-${index}`,index===0?'primary_harness':'job','turn'));
+  const graph={nodes,edges:nodes.slice(1).map((value,index)=>edge(`desktop-${index}`,value.id))};
+  const view=executionGraphView(graph,{turnId:'turn',maxWidth:920});
+  expect(view.nodes.filter(value=>value.band===0)).toHaveLength(4);
+  expect(view.nodes.find(value=>value.id==='desktop-4').band).toBe(1);
  });
 });

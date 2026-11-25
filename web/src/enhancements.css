@@ -504,3 +504,5 @@ body[data-network-access="restricted"] .topbar>div:nth-child(2)>span::after{cont
 .job-wait-step small{margin-top:2px;color:#858b86;font-size:9px;line-height:1.35}
 .job-wait-step.running b{color:#3f5e49}.job-wait-spinner{animation:activity-spin .8s linear infinite}
 @media(max-width:700px){.job-wait-steps{margin-left:0}}
+@media(min-width:701px){.execution-graph-canvas .execution-node{grid-template-rows:16px 20px 16px;padding:15px 8px 6px}.execution-graph-canvas .execution-node .execution-location{top:4px;right:6px}}
+@media(max-width:700px){.execution-graph-canvas .execution-node{min-height:92px}}

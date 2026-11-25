@@ -1,7 +1,7 @@
 import dagre from '@dagrejs/dagre';
 
-export const GRAPH_NODE_WIDTH=190;
-export const GRAPH_NODE_HEIGHT=92;
+export const GRAPH_NODE_WIDTH=170;
+export const GRAPH_NODE_HEIGHT=82;
 
 const terminal=new Set(['COMPLETED','FAILED','CANCELLED','PAUSED','WAITING_USER','SUCCEEDED','BLOCKED','UNKNOWN','TERMINAL','CONTINUED','CONFIRMED','REJECTED','EXPIRED','PUBLISHED','REVIEW_BLOCKED','OPTIONAL_WARNING','REQUIRED_UNAVAILABLE','responded','expired']);
 
@@ -38,7 +38,7 @@ function hiddenByCollapsedGroups(graph,component,collapsedGroups){
 
 function wrapRanks(nodes,maxWidth){
  if(!Number.isFinite(maxWidth))return null;
- const gap=76,margin=24,columns=Math.max(1,Math.floor((maxWidth-margin*2+gap)/(GRAPH_NODE_WIDTH+gap)));
+ const gap=52,margin=24,columns=Math.max(1,Math.floor((maxWidth-margin*2+gap)/(GRAPH_NODE_WIDTH+gap)));
  const ranks=[...new Set(nodes.map(node=>node.x))].sort((a,b)=>a-b);
  if(ranks.length<=columns)return null;
  const byRank=new Map(ranks.map(value=>[value,nodes.filter(node=>node.x===value)]));
@@ -48,7 +48,7 @@ function wrapRanks(nodes,maxWidth){
  bands.forEach((band,bandIndex)=>{
   const spans=band.map(rank=>{const values=byRank.get(rank),minimum=Math.min(...values.map(node=>node.y)),maximum=Math.max(...values.map(node=>node.y+node.height));return {rank,values,minimum,span:maximum-minimum}}),height=Math.max(...spans.map(value=>value.span));
   spans.forEach((entry,index)=>{const slot=bandIndex%2?columns-1-index:index,x=margin+slot*(GRAPH_NODE_WIDTH+gap);for(const node of entry.values)positioned.push({...node,x,y:top+node.y-entry.minimum,band:bandIndex})});
-  top+=height+80;
+  top+=height+64;
  });
  return {nodes:positioned,width:Math.min(maxWidth,margin*2+columns*GRAPH_NODE_WIDTH+(columns-1)*gap),height:Math.max(360,top-80+margin)};
 }
@@ -60,7 +60,7 @@ export function executionGraphView(graph,{turnId='',collapsedGroups=new Set(),ma
  const selectedNodes=allNodes.filter(node=>component.has(node.id)&&!hidden.has(node.id)),ids=new Set(selectedNodes.map(node=>node.id));
  const selectedEdges=allEdges.filter(edge=>ids.has(edge.from)&&ids.has(edge.to));
  const layoutGraph=new dagre.graphlib.Graph().setDefaultEdgeLabel(()=>({}));
- layoutGraph.setGraph({rankdir:'LR',ranksep:76,nodesep:28,edgesep:16,marginx:24,marginy:24});
+ layoutGraph.setGraph({rankdir:'LR',ranksep:52,nodesep:22,edgesep:14,marginx:24,marginy:24});
  for(const node of selectedNodes)layoutGraph.setNode(node.id,{width:GRAPH_NODE_WIDTH,height:GRAPH_NODE_HEIGHT});
  for(const edge of selectedEdges)layoutGraph.setEdge(edge.from,edge.to);
  dagre.layout(layoutGraph);
