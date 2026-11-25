@@ -53,6 +53,8 @@ JOB_ERROR_CONTRACTS={
         '需要管理员检查 Provider 凭据，当前任务不应由用户重复提交。','authorization'),
     'provider_permission_denied':_contract('外部服务账号没有所需能力',
         '需要管理员开通能力或选择其他已启用的 Provider。','authorization'),
+    'provider_endpoint_unavailable':_contract('外部服务端点已关闭或不可用',
+        '需要管理员恢复端点或更换已验证可用的配置；不要修改用户输入或自动重复提交。','submission'),
     'provider_rate_limited':_contract('外部服务正在限流',
         '平台会对原任务退避重试，请勿创建重复任务。','submission',retryable=True,
         retry_class='backoff'),

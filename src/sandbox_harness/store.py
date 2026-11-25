@@ -6420,6 +6420,8 @@ class Store:
             credits = None
         error=(job_error_payload(row.error_code,detail=row.error_detail)
             if row.error_code else {})
+        if row.provider_job_id and error.get('side_effect_state') in {'none','possible'}:
+            error['side_effect_state']='accepted'
         return MediaJobView(id=row.id, thread_id=row.thread_id, turn_id=row.turn_id or "", kind=row.kind,
             model=row.model, generation_mode=row.generation_mode or "",
             references=[] if row.source_job_id else json.loads(row.references_json or "[]"),

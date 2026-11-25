@@ -155,3 +155,18 @@ Adapters with accepted-handle collection cover worker death between collection
 attempts and exhaustion. Reviewer adapters instead cover malformed verdict and
 schema failures as immediate terminal outcomes. Readiness-enabled Descriptors
 cover unhealthy rejection and healthy re-enablement without a process restart.
+
+## Explicitly unavailable Provider endpoints
+
+An explicit closed endpoint rejection is `provider_endpoint_unavailable`:
+submission phase, no automatic retry, and administrator recovery/configuration
+advice. It is neither invalid user input nor an uncertain submission. Provider
+wire codes are translated by `media_errors.classify_provider_error`; shared
+workers consume only the canonical error contract. A real upstream execution
+handle remains accepted even when a later lookup fails. A local MediaJob ID
+alone does not prove that the upstream accepted execution.
+
+`tests/test_provider_endpoint_failure.py` covers wire translation, exactly one
+rejected submission and the canonical side-effect state through the Media
+adapter and generic Job error normalization. Endpoint recovery itself requires
+separate live Provider evidence; static model preflight does not establish it.

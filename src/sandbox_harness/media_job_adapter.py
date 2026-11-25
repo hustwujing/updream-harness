@@ -9,6 +9,7 @@ from .domain import MediaDraftCreate,now
 from .job_adapters import (AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExecutionContext,
     PreAcceptFailure)
 from .job_contracts import JobState
+from .job_errors import normalize_job_error
 from .provider_preflight import CAPABILITY_SCOPES,ProviderPreflight,ProviderPreflightError
 
 
@@ -52,8 +53,10 @@ class MediaProviderJobAdapter(BaseJobAdapter):
         if not value:raise RuntimeError('accepted_media_job_missing')
         if value.status=='succeeded':return AdapterStatus(True,JobState.SUCCEEDED,{
             'media_job_id':value.id,'provider':value.provider,'credits_consumed':value.credits_consumed})
-        if value.status=='failed':return AdapterStatus(True,JobState.FAILED,{
-            'media_job_id':value.id,'error_code':value.error_code,'error_detail':value.error_detail})
+        if value.status=='failed':return AdapterStatus(True,JobState.FAILED,normalize_job_error({
+            'media_job_id':value.id,'error_code':value.error_code,'error_detail':value.error_detail,
+            'failed_phase':value.failed_phase,'retryable':value.retryable,
+            'retry_class':value.retry_class,'side_effect_state':value.side_effect_state}))
         if value.status=='cancelled':return AdapterStatus(True,JobState.CANCELLED,{'media_job_id':value.id})
         if value.status=='unknown':return AdapterStatus(True,JobState.UNKNOWN,{
             'media_job_id':value.id,'error_code':value.error_code,'error_detail':value.error_detail})
