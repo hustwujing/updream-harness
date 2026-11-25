@@ -81,6 +81,7 @@ class Broker:
         self.instance_id = "broker-" + __import__("uuid").uuid4().hex
         self.leases: dict[str, int] = {}
         self.heartbeats: dict[str, asyncio.Task] = {}
+        self.cancellation_handlers: set[str] = set()
         self.recovery_task: asyncio.Task | None = None
         self.reaper_task: asyncio.Task | None = None
         self.closing = False
@@ -200,13 +201,13 @@ class Broker:
             self.recovery_task.cancel()
         if self.reaper_task:
             self.reaper_task.cancel()
-        for task in list(self.tasks.values()):
+        for turn_id,task in list(self.tasks.items()):
             # A pause is already represented by task cancellation. Cancelling it a
             # second time interrupts the checkpoint transaction during shutdown.
-            if not task.cancelling():
+            if not task.cancelling() and turn_id not in self.cancellation_handlers:
                 task.cancel()
         for task in list(self.reconciliation_tasks.values()):
-            task.cancel()
+            if not task.cancelling():task.cancel()
         values = ([task for task in (self.recovery_task, self.reaper_task) if task]
             + list(self.tasks.values()) + list(self.reconciliation_tasks.values()))
         if values:
@@ -269,7 +270,7 @@ class Broker:
     async def _reconcile_turn(self, turn) -> None:
         if self.closing or turn.id in self.tasks:
             return
-        claimed = await self.store.claim_turn(turn.id, self.instance_id, self.settings.turn_lease_seconds)
+        claimed = await self._claim_turn_safely(turn.id)
         if not claimed:
             return
         self.leases[turn.id] = claimed.recovery_generation
@@ -527,7 +528,8 @@ class Broker:
         turn = await self.store.request_turn_cancel(turn_id)
         await self.store.append_event(turn_id, EventKind.WARNING, {"code": "cancel_requested"})
         task = self.tasks.get(turn_id)
-        if task and not task.cancelling() and turn.state != TurnState.CLEANING:
+        if (task and not task.cancelling() and turn_id not in self.cancellation_handlers
+                and turn.state != TurnState.CLEANING):
             task.cancel()
         if turn.state == TurnState.CANCELLED:
             await self.store.append_event(turn_id, EventKind.STATE, {"state": turn.state.value})
@@ -544,7 +546,8 @@ class Broker:
             await self.store.append_event(participant.participant_id, EventKind.WARNING,
                 {"code": "pause_requested", "generation": control.generation})
             task = self.tasks.get(participant.participant_id)
-            if task and not task.cancelling():
+            if (task and not task.cancelling()
+                    and participant.participant_id not in self.cancellation_handlers):
                 task.cancel()
         return await self.store.get_thread_control(thread_id, owner_id)
 
@@ -562,17 +565,17 @@ class Broker:
     async def _heartbeat(self, turn_id: str, generation: int) -> None:
         while True:
             await asyncio.sleep(self.settings.turn_heartbeat_seconds)
-            renewed = await self.store.renew_turn_lease(
+            renewed = await self._database_call(self.store.renew_turn_lease(
                 turn_id, self.instance_id, generation, self.settings.turn_lease_seconds,
-            )
+            ))
             if not renewed:
                 event("turn.lease.lost",level=logging.WARNING,turn_id=turn_id,generation=generation)
                 task = self.tasks.get(turn_id)
                 task = task or self.reconciliation_tasks.get(turn_id)
-                if task:
+                if task and not task.cancelling() and turn_id not in self.cancellation_handlers:
                     task.cancel()
                 return
-            turn = await self.store.get_turn(turn_id)
+            turn = await self._database_call(self.store.get_turn(turn_id))
             sandbox = self.active_sandboxes.get(turn_id)
             if sandbox and turn and turn.state != TurnState.CLEANING:
                 try:
@@ -581,7 +584,7 @@ class Broker:
                     event("sandbox.renew.not_found",level=logging.ERROR,turn_id=turn_id,sandbox_id=sandbox.id)
                     task = self.tasks.get(turn_id)
                     task = task or self.reconciliation_tasks.get(turn_id)
-                    if task:
+                    if task and not task.cancelling() and turn_id not in self.cancellation_handlers:
                         task.cancel()
                     return
                 except Exception as exc:
@@ -590,15 +593,45 @@ class Broker:
             task = self.tasks.get(turn_id)
             task = task or self.reconciliation_tasks.get(turn_id)
             if (turn and turn.cancel_requested and turn.state != TurnState.CLEANING
+                    and turn_id not in self.cancellation_handlers
                     and task and not task.cancelling()):
                 task.cancel()
 
+    @staticmethod
+    async def _database_call(operation):
+        """Finish a database operation before propagating even repeated cancellation."""
+        task=asyncio.create_task(operation)
+        cancelled=False
+        while not task.done():
+            try:await asyncio.shield(task)
+            except asyncio.CancelledError:cancelled=True
+            except Exception:
+                if not cancelled:raise
+                break
+        if cancelled:
+            # Retrieve any exception before preserving the caller's cancellation.
+            if not task.cancelled():task.exception()
+            raise asyncio.CancelledError()
+        return task.result()
+
     async def _release_turn_lease_safely(self,turn_id:str,generation:int)->None:
-        release=asyncio.create_task(self.store.release_turn_lease(
-            turn_id,self.instance_id,generation),name="turn-lease-release-"+turn_id)
-        try:await asyncio.shield(release)
-        except asyncio.CancelledError:
-            await release
+        async def release_and_forget():
+            await self.store.release_turn_lease(turn_id,self.instance_id,generation)
+            if self.leases.get(turn_id)==generation:self.leases.pop(turn_id,None)
+        await self._database_call(release_and_forget())
+
+    async def _claim_turn_safely(self,turn_id:str):
+        async def claim_and_record():
+            claimed=await self.store.claim_turn(
+                turn_id,self.instance_id,self.settings.turn_lease_seconds)
+            if claimed:self.leases[turn_id]=claimed.recovery_generation
+            return claimed
+        try:return await self._database_call(claim_and_record())
+        except BaseException:
+            generation=self.leases.get(turn_id)
+            if generation is not None:
+                await self._release_turn_lease_safely(turn_id,generation)
+                self.leases.pop(turn_id,None)
             raise
 
     async def _record_runtime_event(self, thread_id: str, turn_id: str, value: RuntimeEvent,
@@ -766,37 +799,32 @@ class Broker:
 
     @observed("turn.process", new_trace=True)
     async def _process(self, turn_id: str) -> None:
-        claimed = await self.store.claim_turn(
-            turn_id, self.instance_id, self.settings.turn_lease_seconds,
-        )
+        try:
+            claimed=await self._claim_turn_safely(turn_id)
+            turn=(await self._database_call(self.store.get_turn(turn_id))) if claimed else None
+            thread=(await self._database_call(self.store.get_thread(turn.thread_id))) if turn else None
+        except BaseException:
+            try:
+                generation=self.leases.get(turn_id)
+                if generation is not None:
+                    await self._release_turn_lease_safely(turn_id,generation)
+            finally:self.tasks.pop(turn_id,None)
+            raise
         if not claimed:
             self.tasks.pop(turn_id, None)
             return
         generation = claimed.recovery_generation
+        if not turn or not thread:
+            await self._release_turn_lease_safely(turn_id,generation)
+            self.leases.pop(turn_id,None)
+            self.tasks.pop(turn_id,None)
+            return
         enrich(thread_id=claimed.thread_id,turn_id=turn_id,harness=claimed.harness,model=claimed.model,reasoning_effort=claimed.reasoning_effort,generation=generation)
         add_link(claimed.submit_traceparent);add_link(claimed.last_traceparent)
         event("turn.lease.claimed",generation=generation)
         self.leases[turn_id] = generation
         heartbeat = asyncio.create_task(self._heartbeat(turn_id, generation), name="turn-heartbeat-" + turn_id)
         self.heartbeats[turn_id] = heartbeat
-        turn = await self.store.get_turn(turn_id)
-        if not turn:
-            heartbeat.cancel()
-            await asyncio.gather(heartbeat, return_exceptions=True)
-            self.heartbeats.pop(turn_id, None)
-            await self._release_turn_lease_safely(turn_id,generation)
-            self.leases.pop(turn_id, None)
-            self.tasks.pop(turn_id, None)
-            return
-        thread = await self.store.get_thread(turn.thread_id)
-        if not thread:
-            heartbeat.cancel()
-            await asyncio.gather(heartbeat, return_exceptions=True)
-            self.heartbeats.pop(turn_id, None)
-            await self._release_turn_lease_safely(turn_id,generation)
-            self.leases.pop(turn_id, None)
-            self.tasks.pop(turn_id, None)
-            return
         sandbox = None
         extra_sandboxes = []
         final_state = TurnState.FAILED
@@ -1035,6 +1063,7 @@ class Broker:
                         await self.store.append_event(turn.id, EventKind.WARNING,
                             {"code": "partial_workspace_save_failed", "detail": "本轮中间文件未能完整保存。"})
         except asyncio.CancelledError:
+            self.cancellation_handlers.add(turn_id)
             if self.closing:
                 enrich(outcome="abandoned")
                 event("turn.processing.abandoned",turn_id=turn.id,reason="broker_shutdown")
@@ -1209,6 +1238,7 @@ class Broker:
                 heartbeat.cancel()
                 await asyncio.gather(heartbeat, return_exceptions=True)
                 self.heartbeats.pop(turn_id, None)
+                self.cancellation_handlers.discard(turn_id)
                 self.active_sandboxes.pop(turn_id, None)
                 self.leases.pop(turn_id, None)
                 self.tasks.pop(turn_id, None)

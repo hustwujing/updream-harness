@@ -134,3 +134,114 @@ async def test_queued_stop_is_atomic_with_claim_and_completion_cannot_override_s
             await store.request_turn_cancel(first.id)
     finally:
         await one.close();await two.close();await pool.close();await store.close()
+
+
+async def test_heartbeat_cancellation_finishes_inflight_database_read(tmp_path,monkeypatch):
+    import aiosqlite
+    store,pool,_,(owner,other)=await setup(tmp_path)
+    entered=asyncio.Event();release=asyncio.Event();task=None
+    execute=aiosqlite.Cursor.execute
+    async def blocked(cursor,sql,parameters=None):
+        result=await execute(cursor,sql,parameters)
+        if sql.lstrip().startswith('SELECT') and 'FROM turns' in sql:
+            entered.set();await release.wait()
+        return result
+    try:
+        _,turn,_=await seed(store)
+        claim=await store.claim_turn(turn.id,owner.instance_id,30)
+        monkeypatch.setattr(aiosqlite.Cursor,'execute',blocked)
+        task=asyncio.create_task(owner._heartbeat(turn.id,claim.recovery_generation))
+        await asyncio.wait_for(entered.wait(),2)
+        task.cancel();await asyncio.sleep(.02)
+        assert not task.done(), 'Cancellation cut through an active database read'
+        task.cancel();await asyncio.sleep(.02)
+        assert not task.done(), 'Repeated cancellation cut through the protected read'
+        release.set()
+        with pytest.raises(asyncio.CancelledError):await task
+        await store.release_turn_lease(turn.id,owner.instance_id,claim.recovery_generation)
+    finally:
+        release.set()
+        if task:await asyncio.gather(task,return_exceptions=True)
+        await owner.close();await other.close();await pool.close();await store.close()
+
+
+@pytest.mark.parametrize('signal',['heartbeat','api_cancel'])
+async def test_cancel_handler_is_not_cancelled_again(tmp_path,monkeypatch,signal):
+    store,pool,_,(owner,other)=await setup(tmp_path)
+    entered=asyncio.Event();release=asyncio.Event();task=None
+    owns=store.owns_turn_lease
+    async def blocked(*args,**kwargs):
+        value=await owns(*args,**kwargs)
+        entered.set();await release.wait()
+        return value
+    try:
+        _,turn,second=await seed(store)
+        await store.request_turn_cancel(second.id)
+        claim=await store.claim_turn(turn.id,'previous-worker',30)
+        await store.request_turn_cancel(turn.id)
+        await store.release_turn_lease(turn.id,'previous-worker',claim.recovery_generation)
+        monkeypatch.setattr(store,'owns_turn_lease',blocked)
+        owner._schedule(turn.id);task=owner.tasks[turn.id]
+        await asyncio.wait_for(entered.wait(),2)
+        if signal=='api_cancel':await owner.cancel(turn.id)
+        await asyncio.sleep(.08)
+        assert task.cancelling()==0, 'Heartbeat interrupted an existing cancellation handler'
+        release.set();await task
+        assert (await store.get_turn(turn.id)).state==TurnState.CANCELLED
+    finally:
+        release.set()
+        if task:await asyncio.gather(task,return_exceptions=True)
+        await owner.close();await other.close();await pool.close();await store.close()
+
+
+@pytest.mark.parametrize('stage',['claim_turn','get_turn','get_thread'])
+async def test_cancelled_startup_settles_database_and_releases_claim(tmp_path,monkeypatch,stage):
+    store,pool,runtime,(owner,other)=await setup(tmp_path)
+    entered=asyncio.Event();release=asyncio.Event();task=None
+    original=getattr(store,stage)
+    async def blocked(*args,**kwargs):
+        result=await original(*args,**kwargs)
+        entered.set();await release.wait()
+        return result
+    try:
+        _,turn,_=await seed(store)
+        monkeypatch.setattr(store,stage,blocked)
+        owner._schedule(turn.id);task=owner.tasks[turn.id]
+        await asyncio.wait_for(entered.wait(),2)
+        task.cancel();await asyncio.sleep(.02)
+        assert not task.done(), 'Startup database call was abandoned'
+        release.set()
+        with pytest.raises(asyncio.CancelledError):await task
+        assert not owner.leases and not owner.heartbeats and not owner.tasks
+        assert not await store.owns_turn_lease(turn.id,owner.instance_id,1)
+        assert runtime.messages==[]
+    finally:
+        release.set()
+        if task:await asyncio.gather(task,return_exceptions=True)
+        await owner.close();await other.close();await pool.close();await store.close()
+
+
+async def test_repeated_cancel_during_startup_release_forgets_completed_task(tmp_path,monkeypatch):
+    store,pool,_,(owner,other)=await setup(tmp_path)
+    reading=asyncio.Event();finish_read=asyncio.Event()
+    releasing=asyncio.Event();finish_release=asyncio.Event();task=None
+    read=store.get_turn;release=store.release_turn_lease
+    async def blocked_read(*args,**kwargs):
+        value=await read(*args,**kwargs);reading.set();await finish_read.wait();return value
+    async def blocked_release(*args,**kwargs):
+        await release(*args,**kwargs);releasing.set();await finish_release.wait()
+    try:
+        _,turn,_=await seed(store)
+        monkeypatch.setattr(store,'get_turn',blocked_read)
+        monkeypatch.setattr(store,'release_turn_lease',blocked_release)
+        owner._schedule(turn.id);task=owner.tasks[turn.id]
+        await asyncio.wait_for(reading.wait(),2)
+        task.cancel();finish_read.set()
+        await asyncio.wait_for(releasing.wait(),2)
+        task.cancel();await asyncio.sleep(.02);finish_release.set()
+        with pytest.raises(asyncio.CancelledError):await task
+        assert not owner.tasks and not owner.leases and not owner.heartbeats
+    finally:
+        finish_read.set();finish_release.set()
+        if task:await asyncio.gather(task,return_exceptions=True)
+        await owner.close();await other.close();await pool.close();await store.close()
