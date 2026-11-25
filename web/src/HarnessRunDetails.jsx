@@ -3,7 +3,7 @@ import {CircleAlert,CircleCheck,Clock3,LoaderCircle,MapPin} from 'lucide-react';
 import {apiUrl} from './api';
 import {formatDuration} from './activity-time';
 import {buildHarnessTimeline,currentHarnessStage} from './harness-activity';
-import {executionActivityCategory,executionActivityCategoryLabel,executionActivityDetail} from './execution-activities';
+import {executionActivityCategory,executionActivityCategoryLabel,executionActivityDetail,executionActivityHasFullDetail} from './execution-activities';
 import './harness-run-details.css';
 import './harness-token-usage.css';
 
@@ -23,7 +23,7 @@ function useAnimatedToken(nodeId,target){
 }
 function AnimatedToken({nodeId,kind,value}){const display=useAnimatedToken(nodeId,value);return <strong data-token-kind={kind} data-token-value={Math.round(display)} title={`${Math.round(Number(value||0)).toLocaleString()} tokens`}>{formatCompactTokens(display)}</strong>}
 function ActivityDetail({activity}){const value=executionActivityDetail(activity,{limit:120});
- return value.full&&value.full.replace(/\s+/g,' ').trim()!==value.preview?<details className="execution-activity-detail">
+ return executionActivityHasFullDetail(value)?<details className="execution-activity-detail">
   <summary>{value.preview}</summary><pre>{value.full}</pre></details>:<small title={value.full||value.preview}>{value.preview}</small>}
 function totalElapsed(node,now){
  if(node.ended_at)return Number(node.duration_ms||Math.max(0,Date.parse(node.ended_at)-Date.parse(node.started_at))||0);

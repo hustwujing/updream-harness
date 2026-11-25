@@ -75,6 +75,8 @@ export function executionActivityDetail(row,{limit=160}={}){
  return {kind:'status',preview,full:''};
 }
 
+export function executionActivityHasFullDetail(value){return Boolean(value?.full&&value.full!==value.preview)}
+
 export function groupExecutionActivities(rows){
  const groups=new Map(),visible=[];
  for(const row of rows){

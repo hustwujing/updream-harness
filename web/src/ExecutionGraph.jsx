@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { apiUrl, getExecutionGraph, listJobActivities } from "./api";
 import { formatDuration } from "./activity-time";
-import {activityCursor,executionActivityDetail,groupExecutionActivities,mergeExecutionActivities} from "./execution-activities";
+import {activityCursor,executionActivityDetail,executionActivityHasFullDetail,groupExecutionActivities,mergeExecutionActivities} from "./execution-activities";
 import "./execution-activities.css";
 import HarnessRunDetails,{formatCompactTokens,tokenUsageTotal} from "./HarnessRunDetails";
 import "./role-icons.css";
@@ -184,7 +184,7 @@ function readPositions(key) {
 }
 function displayActivityTitle(value){const name=String(value.summary||value.payload?.name||value.kind||'执行步骤'),labels={commandexecution:'执行命令',bash:'执行命令',read:'读取文件',write:'写入文件',edit:'修改文件',filechange:'修改文件',imageview:'查看图片',mcptoolcall:'调用外部工具',dynamictoolcall:'调用工具',plan:'更新执行计划'};return labels[name.toLowerCase()]||name}
 function ActivityDetail({activity}){const value=executionActivityDetail(activity,{limit:140});
- return value.full&&value.full.replace(/\s+/g,' ').trim()!==value.preview?<details className="execution-activity-detail">
+ return executionActivityHasFullDetail(value)?<details className="execution-activity-detail">
   <summary>{value.preview}</summary><pre>{value.full}</pre></details>:<small title={value.full||value.preview}>{value.preview}</small>}
 function activityGroupDetail(value){const latest=[...value.activities].reverse().map(activity=>executionActivityDetail(activity,{limit:100}))
  .find(detail=>detail.kind!=='status'&&!/^\d+ 项文件操作$/.test(detail.preview));

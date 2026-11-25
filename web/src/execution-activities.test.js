@@ -1,5 +1,5 @@
 import {describe,expect,it} from 'vitest';
-import {activityCursor,executionActivityDetail,groupExecutionActivities,mergeExecutionActivities} from './execution-activities';
+import {activityCursor,executionActivityDetail,executionActivityHasFullDetail,groupExecutionActivities,mergeExecutionActivities} from './execution-activities';
 
 describe('execution activity projection',()=>{
  it('shows the concrete command with a bounded one-line preview',()=>{
@@ -7,6 +7,8 @@ describe('execution activity projection',()=>{
   const detail=executionActivityDetail({status:'completed',summary:'commandExecution',
    payload:{detail:{command}}},{limit:24});
   expect(detail).toEqual({kind:'command',preview:"python - <<'PY' print...",full:command});
+  expect(executionActivityHasFullDetail({kind:'command',preview:"python - <<'PY' print('render') PY",full:command})).toBe(true);
+  expect(executionActivityHasFullDetail({kind:'path',preview:'查看 /workspace/a.png',full:'查看 /workspace/a.png'})).toBe(false);
  });
  it('describes file actions, images, external tools, queries, and missing payloads factually',()=>{
   expect(executionActivityDetail({status:'completed',summary:'commandExecution',payload:{detail:{
