@@ -71,6 +71,11 @@ cannot resubmit. Terminal business state atomically creates a cleanup
 obligation. The cleanup lease is independently heartbeated and retried across
 restart; cleanup degradation is visible without changing a successful result.
 Scheduler ownership is released only after external absence is confirmed.
+JobWorker admission saturation must not stop cleanup or accepted-execution
+recovery. One independent cleanup batch and a bounded observation capacity
+(`job_recovery_concurrency`, default one) keep these paths progressing. Recovery
+observations cannot submit work, and round-robin ordering uses the Job's update
+time. Only acceptance newer than the latest applicable resume boundary is valid.
 Reservation expiry is diagnostic, not permission to double-allocate a live
 exclusive GPU; the durable cleanup obligation is the recovery authority.
 

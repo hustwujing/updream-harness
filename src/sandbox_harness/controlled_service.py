@@ -78,6 +78,7 @@ async def serve(settings:Settings,*,stop_event:asyncio.Event|None=None)->None:
         settings=settings,gpu_health=gpu_provider)
     worker=JobWorker(store,{'image.segment':adapter,'audio.transcribe':adapter},
         node_id=settings.controlled_node_id,concurrency=settings.controlled_worker_concurrency,
+        recovery_concurrency=settings.job_recovery_concurrency,
         lease_seconds=settings.job_lease_seconds)
     cpu_total=max(1,min(os.cpu_count() or 1,settings.controlled_node_cpu_limit))
     memory_total=max(4096,min(int(os.sysconf('SC_PAGE_SIZE')*os.sysconf('SC_PHYS_PAGES')//(1024*1024)),

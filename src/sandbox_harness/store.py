@@ -2327,7 +2327,9 @@ class Store:
 
     async def claim_available_jobs(self, worker_id: str, node_id: str, lease_seconds: int,
                                    *, limit: int = 1,
-                                   adapters: set[str] | None = None) -> list[JobAttemptReceipt]:
+                                   adapters: set[str] | None = None,
+                                   accepted_only: bool = False) -> list[JobAttemptReceipt]:
+        if adapters is not None and not adapters:return []
         timestamp = now()
         async with self.connections() as db:
             query = (select(JobRow.id)
@@ -2342,10 +2344,22 @@ class Store:
                         JobState.RUNNING.value, JobState.WAITING_EXTERNAL.value,
                         JobState.CANCELLING.value]))),
                     or_(JobLeaseRow.job_id.is_(None), JobLeaseRow.expires_at < timestamp)))
-            if adapters:
+            if adapters is not None:
                 query = query.where(JobRow.adapter.in_(adapters))
+            if accepted_only:
+                superseded=select(PauseParticipantRow.id).where(
+                    PauseParticipantRow.participant_id==JobAttemptRow.job_id,
+                    PauseParticipantRow.kind=='child_harness',
+                    PauseParticipantRow.state==PauseParticipantState.RESUMED.value,
+                    PauseParticipantRow.updated_at>=JobAttemptRow.accepted_at).correlate(JobAttemptRow).exists()
+                accepted=select(JobAttemptRow.id).where(JobAttemptRow.job_id==JobRow.id,
+                    JobAttemptRow.accepted_at.is_not(None),JobAttemptRow.external_execution_id!='',
+                    ~superseded).correlate(JobRow).exists()
+                query=query.where(accepted,JobRow.state.in_([JobState.RUNNING.value,
+                    JobState.WAITING_EXTERNAL.value,JobState.PAUSING.value,JobState.CANCELLING.value]))
             identities = (await db.execute(query.order_by(
-                JobRow.created_at, JobRow.id).limit(limit * 3))).scalars().all()
+                JobRow.updated_at if accepted_only else JobRow.created_at,
+                JobRow.id).limit(limit * 3))).scalars().all()
         result = []
         for identity in identities:
             if len(result) >= limit:

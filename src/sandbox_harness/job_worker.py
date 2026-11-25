@@ -26,11 +26,12 @@ class JobDeadlineExceeded(TimeoutError):
 class JobWorker:
     def __init__(self, store, adapters: dict[str, JobAdapter], *, node_id: str,
                  concurrency: int = 4, lease_seconds: int = 60, worker_id: str = "",
-                 poll_seconds: float = 1.0, review_dispatcher=None):
+                 poll_seconds: float = 1.0, review_dispatcher=None, recovery_concurrency: int = 1):
         self.store = store
         self.adapters = dict(adapters)
         self.node_id = node_id
         self.concurrency = concurrency
+        self.recovery_concurrency=max(1,recovery_concurrency)
         self.lease_seconds = lease_seconds
         self.worker_id = worker_id or "job-worker-" + uuid.uuid4().hex
         self.poll_seconds = poll_seconds
@@ -77,25 +78,55 @@ class JobWorker:
 
     async def run(self) -> None:
         tasks: set[asyncio.Task] = set()
-        while not self.stop_event.is_set():
-            completed={task for task in tasks if task.done()}
-            for task in completed:await task
-            tasks-=completed
-            capacity=max(0,self.concurrency-len(tasks));attempts=[]
-            if capacity:
-                await self.run_cleanup_once(limit=capacity)
-                attempts=await self.store.claim_available_jobs(
-                    self.worker_id,self.node_id,self.lease_seconds,limit=capacity,
-                    adapters=set(self.adapters))
-                tasks.update(asyncio.create_task(self._process_isolated(attempt),
-                    name='job-'+attempt.job_id) for attempt in attempts)
-            if not attempts:
-                try:await asyncio.wait_for(self.stop_event.wait(),timeout=0.5)
-                except asyncio.TimeoutError:pass
-        await asyncio.gather(*tasks)
+        recoveries: set[asyncio.Task] = set()
+        cleanup=None
+        failure=None
+        try:
+            while not self.stop_event.is_set():
+                completed={task for task in tasks|recoveries if task.done()}
+                for task in completed:await task
+                tasks-=completed;recoveries-=completed
+                # Cleanup and accepted execution recovery must progress even when
+                # every admission slot is waiting for capacity they can release.
+                if cleanup is None or cleanup.done():
+                    if cleanup:await cleanup
+                    cleanup=asyncio.create_task(self.run_cleanup_once(limit=self.concurrency),
+                        name='job-cleanup')
+                recovery_capacity=max(0,self.recovery_concurrency-len(recoveries))
+                if recovery_capacity:
+                    recovered=await self.store.claim_available_jobs(
+                        self.worker_id,self.node_id,self.lease_seconds,limit=recovery_capacity,
+                        adapters=set(self.adapters),accepted_only=True)
+                    recoveries.update(asyncio.create_task(self._process_isolated(attempt,
+                        continuous=False,recovery_only=True),name='job-recovery-'+attempt.job_id) for attempt in recovered)
+                capacity=max(0,self.concurrency-len(tasks));attempts=[]
+                if capacity:
+                    attempts=await self.store.claim_available_jobs(
+                        self.worker_id,self.node_id,self.lease_seconds,limit=capacity,
+                        adapters=set(self.adapters))
+                    tasks.update(asyncio.create_task(self._process_isolated(attempt),
+                        name='job-'+attempt.job_id) for attempt in attempts)
+                if not attempts:
+                    try:await asyncio.wait_for(self.stop_event.wait(),timeout=0.5)
+                    except asyncio.TimeoutError:pass
+        except BaseException as exc:
+            failure=exc
+        finally:
+            self.stop_event.set()
+            owned=list(tasks|recoveries)+([cleanup] if cleanup else [])
+            joined=asyncio.gather(*owned,return_exceptions=True)
+            while True:
+                try:
+                    results=await asyncio.shield(joined)
+                    break
+                except asyncio.CancelledError as exc:
+                    failure=failure or exc
+            for result in results:
+                if isinstance(result,BaseException):failure=failure or result
+        if failure:raise failure
 
-    async def _process_isolated(self,attempt)->None:
-        try:await self.process(attempt,continuous=True)
+    async def _process_isolated(self,attempt,*,continuous=True,recovery_only=False)->None:
+        try:await self.process(attempt,continuous=continuous,recovery_only=recovery_only)
         except Exception as exc:
             event('job.worker.process_failed',level=40,job_id=attempt.job_id,
                 generation=attempt.generation,exception_type=type(exc).__name__,exc=exc)
@@ -116,7 +147,7 @@ class JobWorker:
                 return
             await self.run_cleanup_once(limit=1)
 
-    async def process(self, attempt, *, continuous: bool = False) -> None:
+    async def process(self, attempt, *, continuous: bool = False, recovery_only: bool = False) -> None:
         lost=asyncio.Event();owner=asyncio.current_task()
         async def heartbeat():
             while True:
@@ -126,7 +157,7 @@ class JobWorker:
                     lost.set();owner.cancel();return
         task=asyncio.create_task(heartbeat(),name="job-heartbeat-"+attempt.job_id)
         try:
-            await self._process_claimed(attempt,continuous=continuous)
+            await self._process_claimed(attempt,continuous=continuous,recovery_only=recovery_only)
         except asyncio.CancelledError:
             if not lost.is_set():raise
             event("job.worker.lease_lost",level=30,job_id=attempt.job_id,
@@ -168,7 +199,8 @@ class JobWorker:
                 terminal_state=JobState.UNKNOWN,retryable=True,retry_class='reconcile_only',
                 side_effect_state='unknown') from exc
 
-    async def _process_claimed(self, attempt, *, continuous: bool = False) -> None:
+    async def _process_claimed(self, attempt, *, continuous: bool = False,
+                               recovery_only: bool = False) -> None:
         job = await self.store.get_job(attempt.job_id)
         request = await self.store.get_job_request(attempt.job_id)
         if not job or not request:
@@ -201,11 +233,15 @@ class JobWorker:
             if participant and participant.state.value == "REQUESTED":
                 await self._pause(adapter, context, external_id, participant.generation)
                 return
-            if participant and participant.state.value == "RESUMED":
+            if (participant and participant.state.value == "RESUMED"
+                    and (not accepted or accepted.accepted_at<=participant.updated_at)):
                 accepted = None
                 external_id = ""
                 context = replace(context, previous_external_execution_id="",
                     previous_acceptance_receipt={})
+            if recovery_only and not external_id:
+                await self.store.release_job_lease(job.id,self.worker_id,attempt.generation)
+                return
             if job.cancel_requested:
                 if not external_id:
                     await self.store.transition_job(job.id, JobState.CANCELLED,

@@ -30,6 +30,140 @@ class FakeAdapter(BaseJobAdapter):
     async def cleanup(self,context,external_execution_id):self.cleanup_calls+=1
 
 
+async def test_full_worker_keeps_cleanup_progressing(tmp_path):
+    import asyncio
+    store,_,job=await setup(tmp_path,request('waiting'))
+    waiting=asyncio.Event();cleaned=asyncio.Event()
+    class Adapter(FakeAdapter):
+        async def submit(self,context):
+            waiting.set()
+            raise PreAcceptFailure('capacity',infrastructure=True,retryable=True,
+                retry_class='capacity_wait',retry_after_seconds=.02)
+        async def cleanup(self,context,external_execution_id):cleaned.set()
+    worker=JobWorker(store,{'fake':Adapter([])},node_id='node',concurrency=1)
+    task=asyncio.create_task(worker.run())
+    try:
+        await asyncio.wait_for(waiting.wait(),2)
+        _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id='b'*32,
+            origin_turn_id='c'*32,idempotency_key='completed-while-busy',jobs=[request('completed')]))
+        attempt=await store.claim_job(jobs[0].id,'old','node',30)
+        await store.record_job_acceptance(jobs[0].id,'old',attempt.generation,
+            external_execution_id='completed-external',receipt={})
+        await store.transition_job(jobs[0].id,JobState.SUCCEEDED,expected_generation=attempt.generation)
+        await asyncio.wait_for(cleaned.wait(),2)
+        assert (await store.get_job(job.id)).generation==1
+    finally:
+        worker.stop_event.set();await asyncio.wait_for(task,3);await store.close()
+
+
+async def test_full_worker_recovers_accepted_execution_without_resubmission(tmp_path):
+    import asyncio
+    store,_,job=await setup(tmp_path,request('waiting'))
+    waiting=asyncio.Event();recovered=asyncio.Event()
+    class Adapter(FakeAdapter):
+        async def submit(self,context):
+            assert context.job.id==job.id
+            waiting.set()
+            raise PreAcceptFailure('capacity',infrastructure=True,retryable=True,
+                retry_class='capacity_wait',retry_after_seconds=.02)
+        async def status(self,context,external_execution_id):
+            assert external_execution_id=='accepted-external'
+            recovered.set();return AdapterStatus(True,JobState.SUCCEEDED,{'ok':True})
+    worker=JobWorker(store,{'fake':Adapter([])},node_id='node',concurrency=1)
+    _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id='b'*32,
+        origin_turn_id='c'*32,idempotency_key='accepted-before-restart',jobs=[request('accepted')]))
+    old=await store.claim_job(jobs[0].id,'old','node',30)
+    await store.record_job_acceptance(jobs[0].id,'old',old.generation,
+        external_execution_id='accepted-external',receipt={})
+    task=asyncio.create_task(worker.run())
+    try:
+        await asyncio.wait_for(waiting.wait(),2)
+        await store.release_job_lease(jobs[0].id,'old',old.generation)
+        await asyncio.wait_for(recovered.wait(),2)
+        assert (await store.get_job(job.id)).generation==1
+    finally:
+        worker.stop_event.set();await asyncio.wait_for(task,3);await store.close()
+
+
+async def test_recovery_after_resume_keeps_newly_accepted_execution(tmp_path):
+    from datetime import timedelta
+    from sandbox_harness.domain import now
+    from sandbox_harness.store import PauseParticipantRow
+    store,_,job=await setup(tmp_path,request('resumed',kind=JobKind.HARNESS))
+    before=now()-timedelta(seconds=1)
+    async with store.connections.begin() as db:
+        db.add(PauseParticipantRow(id=identifier(),owner_id='owner',thread_id=job.thread_id,
+            generation=1,kind='child_harness',participant_id=job.id,state='RESUMED',
+            external_execution_id='old-before-pause',created_at=before,updated_at=before))
+    attempt=await store.claim_job(job.id,'old','node',30)
+    await store.record_job_acceptance(job.id,'old',attempt.generation,
+        external_execution_id='new-after-resume',receipt={})
+    await store.defer_accepted_job(job.id,'old',attempt.generation)
+    adapter=FakeAdapter([],statuses=[AdapterStatus(True,JobState.SUCCEEDED,{'ok':True})])
+    try:
+        worker=JobWorker(store,{'fake':adapter},node_id='node',worker_id='replacement')
+        await worker.run_once()
+        assert (await store.get_job(job.id)).state==JobState.SUCCEEDED
+        assert adapter.submit_calls==0 and adapter.status_calls==1
+    finally:await store.close()
+
+
+@pytest.mark.parametrize('accepted_after_resume',[False,True])
+async def test_recovery_claim_requires_current_acceptance_after_resume(tmp_path,accepted_after_resume):
+    from datetime import timedelta
+    from sandbox_harness.domain import now
+    from sandbox_harness.store import PauseParticipantRow
+    store,_,job=await setup(tmp_path,request('resumed',kind=JobKind.HARNESS))
+    try:
+        attempt=await store.claim_job(job.id,'old','node',30)
+        await store.record_job_acceptance(job.id,'old',attempt.generation,
+            external_execution_id='accepted-external',receipt={})
+        await store.defer_accepted_job(job.id,'old',attempt.generation)
+        timestamp=now()+timedelta(seconds=-1 if accepted_after_resume else 1)
+        async with store.connections.begin() as db:
+            db.add(PauseParticipantRow(id=identifier(),owner_id='owner',thread_id=job.thread_id,
+                generation=1,kind='child_harness',participant_id=job.id,state='RESUMED',
+                external_execution_id='accepted-external',created_at=timestamp,updated_at=timestamp))
+        claims=await store.claim_available_jobs('recovery','node',30,accepted_only=True)
+        assert [c.job_id for c in claims]==([job.id] if accepted_after_resume else [])
+    finally:await store.close()
+
+
+async def test_recovery_lane_never_submits_unaccepted_job(tmp_path):
+    store,_,job=await setup(tmp_path,request('unaccepted'))
+    adapter=FakeAdapter([]);worker=JobWorker(store,{'fake':adapter},node_id='node',worker_id='recovery')
+    try:
+        attempt=await store.claim_job(job.id,'recovery','node',30)
+        await worker.process(attempt,recovery_only=True)
+        assert adapter.submit_calls==0 and await store.latest_job_acceptance(job.id) is None
+    finally:await store.close()
+
+
+async def test_worker_query_failure_waits_for_owned_cleanup(monkeypatch):
+    import asyncio
+    entered=asyncio.Event();release=asyncio.Event()
+    class StoreStub:
+        async def claim_available_jobs(self,*args,**kwargs):raise OSError('database unavailable')
+    worker=JobWorker(StoreStub(),{},node_id='node')
+    async def cleanup(**kwargs):entered.set();await release.wait();return 0
+    monkeypatch.setattr(worker,'run_cleanup_once',cleanup)
+    task=asyncio.create_task(worker.run())
+    try:
+        await asyncio.wait_for(entered.wait(),1)
+        assert not task.done(), 'Worker exited while its cleanup still owned resources'
+        release.set()
+        with pytest.raises(OSError):await task
+    finally:release.set();await asyncio.gather(task,return_exceptions=True)
+
+
+async def test_empty_adapter_registration_cannot_claim_jobs(tmp_path):
+    store,_,job=await setup(tmp_path,request('unregistered'))
+    try:
+        assert await store.claim_available_jobs('empty','node',30,adapters=set())==[]
+        assert (await store.get_job(job.id)).generation==0
+    finally:await store.close()
+
+
 def request(local_id='job',kind=JobKind.PROVIDER,**updates):
     value=dict(local_job_id=local_id,kind=kind,adapter='fake',descriptor_id='fake',
         descriptor_version='1',descriptor_digest='a'*64,idempotency_key=f'{local_id}-request-key',
