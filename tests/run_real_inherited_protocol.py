@@ -159,6 +159,8 @@ async def main():
     parser.add_argument('--job-worker-unit',default=(
         os.environ.get('SANDBOX_HARNESS_JOB_WORKER_UNIT') or
         'sandbox-harness-parallel-job-worker.service'))
+    parser.add_argument('--job-worker-start-command',default=(
+        os.environ.get('SANDBOX_HARNESS_JOB_WORKER_START_COMMAND') or ''))
     parser.add_argument('--api-unit',default=(os.environ.get('SANDBOX_HARNESS_API_UNIT') or
         'sandbox-harness-parallel-api.service'));args=parser.parse_args();value={}
     configured_root=Path(json.loads((ROOT/'tests/real_cases/cases.json').read_text()).get(

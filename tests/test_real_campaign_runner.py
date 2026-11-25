@@ -80,12 +80,13 @@ def test_real_protocol_service_controls_are_deployment_configurable():
     campaign=(ROOT/'tests/run_real_campaign.py').read_text()
     inherited=(ROOT/'tests/run_real_inherited_protocol.py').read_text()
     protocol=(ROOT/'tests/run_real_parallel_protocol.py').read_text()
-    for option in ('--job-worker-unit','--api-unit'):
+    for option in ('--job-worker-unit','--job-worker-start-command','--api-unit'):
         assert option in campaign
         assert option in inherited
         assert option in protocol
     assert "service_unit(args,'job_worker')" in protocol
     assert "service_unit(args,'api')" in protocol
+    assert "service_command(args,'job_worker','start')" in protocol
     assert "'sandbox-harness-parallel-job-worker.service'" not in protocol
     assert "'sandbox-harness-parallel-api.service'" not in protocol
 

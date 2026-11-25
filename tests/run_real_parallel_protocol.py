@@ -11,6 +11,7 @@ import json
 import mimetypes
 import os
 from pathlib import Path,PurePosixPath
+import shlex
 import subprocess
 import tarfile
 import time
@@ -30,6 +31,11 @@ def service_unit(args,role:str)->str:
     configured=(getattr(args,f'{role}_unit','') or
         os.environ.get(f"SANDBOX_HARNESS_{role.upper()}_UNIT",''))
     return configured or f"sandbox-harness-parallel-{role.replace('_','-')}.service"
+
+
+def service_command(args,role:str,action:str)->list[str]:
+    configured=getattr(args,f'{role}_{action}_command','')
+    return shlex.split(configured) if configured else ['systemctl',action,service_unit(args,role)]
 
 
 def validate_skill_product_archive(data:bytes)->dict:
@@ -1259,8 +1265,7 @@ async def case_p21(client,args):
         except httpx.TransportError:pass
         await asyncio.sleep(.1)
     else:raise TimeoutError('api_restart_timeout')
-    await asyncio.to_thread(subprocess.run,['systemctl','start',
-        service_unit(args,'job_worker')],check=True)
+    await asyncio.to_thread(subprocess.run,service_command(args,'job_worker','start'),check=True)
     deadline=time.monotonic()+240
     while time.monotonic()<deadline:
         control=require(await client.get(f"api/threads/{thread['id']}/pause")).json()
@@ -1614,6 +1619,8 @@ async def main():
     parser.add_argument('--timeout',type=float,default=1200)
     parser.add_argument('--intervention-delay',type=float,default=0)
     parser.add_argument('--job-worker-unit',default=os.environ.get('SANDBOX_HARNESS_JOB_WORKER_UNIT',''))
+    parser.add_argument('--job-worker-start-command',default=os.environ.get(
+        'SANDBOX_HARNESS_JOB_WORKER_START_COMMAND',''))
     parser.add_argument('--api-unit',default=os.environ.get('SANDBOX_HARNESS_API_UNIT',''))
     args=parser.parse_args();value={}
     try:
