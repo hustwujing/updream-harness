@@ -17,6 +17,54 @@ async def chunks(*values):
     for value in values:yield value
 
 
+def ebml_header(elements):
+    return b'\x1a\x45\xdf\xa3'+bytes([0x80|len(elements)])+elements
+
+
+@pytest.mark.parametrize('document,mime',[(b'matroska','video/x-matroska'),(b'webm','video/webm')])
+async def test_ebml_video_content_satisfies_its_frozen_output_contract(tmp_path,document,mime):
+    # EBML header fields from an FFmpeg-produced Matroska file (RFC 8794).
+    fields=bytes.fromhex('4286810142f7810142f2810442f38108')
+    fields+=b'\x42\x82'+bytes([0x80|len(document)])+document
+    fields+=bytes.fromhex('4287810442858102')
+    data=ebml_header(fields);path=tmp_path/'no-extension';path.write_bytes(data)
+    assert MimeRegistry.detect(path)==mime
+    assert MimeRegistry.detect(path,mime)==mime
+    with pytest.raises(ValueError,match='Declared MIME'):
+        MimeRegistry.detect(path,'video/mp4')
+    store,gateway,job,attempt=await setup(tmp_path,{
+        'artifact_role':'video','output_disposition':'workspace','min_items':1,'max_items':1,
+        'mime_patterns':[mime]})
+    try:
+        result=await gateway.emit(ArtifactEmission(job.id,attempt.generation,'video','main',0,
+            'result.bin',OutputDisposition.WORKSPACE,mime),chunks(data))
+        assert result.mime==mime
+    finally:await store.close()
+
+
+@pytest.mark.parametrize('data',[
+    b'\x1a\x45\xdf\xa3\xff',
+    b'\x1a\x45\xdf\xa3\xa0\x42\x82\x88matroska',
+    ebml_header(b'\x42\x82\x88matrosk'),
+    ebml_header(b'\x42\x82\x85other'),
+    ebml_header(b'\xec\x8b\x42\x82\x88matroska'),
+    ebml_header(b'\x42\x82\x88matroska\x42\x82\x84webm'),
+])
+def test_ebml_detection_rejects_unknown_truncated_and_embedded_doctypes(tmp_path,data):
+    path=tmp_path/'spoof.mkv';path.write_bytes(data)
+    assert MimeRegistry.detect(path,'video/x-matroska')=='application/octet-stream'
+
+
+@pytest.mark.parametrize('width',[2,8])
+def test_ebml_detection_accepts_multibyte_sizes_and_padded_doctype(tmp_path,width):
+    def size(value):return ((1<<(7*width))|value).to_bytes(width,'big')
+    document=b'matroska\x00\x00'
+    fields=b'\x42\x82'+size(len(document))+document
+    path=tmp_path/'no-extension'
+    path.write_bytes(b'\x1a\x45\xdf\xa3'+size(len(fields))+fields)
+    assert MimeRegistry.detect(path)=='video/x-matroska'
+
+
 @pytest.mark.parametrize('data,mime',[
     (b'8BPS\x00\x01'+b'\x00'*30,'image/vnd.adobe.photoshop'),
     (b'II*\x00'+b'\x00'*32,'image/tiff'),

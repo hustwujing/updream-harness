@@ -114,3 +114,20 @@ objects/arrays first, matching the existing Job CLI boundary; it changes no
 Review authorization, Gateway request or execution policy. Deployed verification
 remains pending. Focused tests passed 57 checks, independent review passed six,
 and the complete Python suite passed 1312 tests with 14 skipped.
+
+### Matroska content detection found by the C29 rerun
+
+The C29 rerun's contract allowed Matroska, MP4 and JSON. Artifact collection
+rejected an allowed Matroska output because `MimeRegistry` lacked EBML detection
+and returned `application/octet-stream`. A locally generated 16×16 FFV1 Matroska
+file passed `ffprobe` while reproducing that incorrect MIME result. Matroska and
+WebM regressions failed before the fix; six malformed/unknown-header controls
+passed. Bounded EBML DocType parsing follows
+[RFC 8794](https://www.rfc-editor.org/rfc/rfc8794.html#section-11.2.6), preserves
+declared/content mismatch rejection, and passed 113 focused checks. Release and
+the fresh C29 real regression remain pending.
+
+The failed C29 continuation was explicitly cancelled after preserving its
+collection errors, preventing redundant test repair. Its partial artifacts do
+not change the failed outcome. R03/R04/R05's earlier Reviewer CLI errors are
+also retained even when those attempts later completed successfully.

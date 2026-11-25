@@ -95,6 +95,15 @@ paths; deletion is a tombstone. Managed project files are materialized into the
 sandbox and excluded from checkpoint archives to avoid duplicate storage.
 Artifact, transcript Item and artifact ProjectFile publication commit in one
 lease-fenced transaction after the immutable object write.
+`ArtifactGateway` detects MIME from content before enforcing the frozen output
+contract. Matroska/WebM detection reads only the bounded EBML header and its
+DocType element (RFC 8794); filenames, declared MIME and text inside an unrelated
+element cannot establish the container type. Truncated, unknown or ambiguous
+headers stay unrecognized, and a declared/content mismatch remains an error.
+Headers beyond the 4096-byte sniff limit remain unknown. The audio/video hint
+follows the existing MP4 declaration policy; media validators separately check
+tracks, decodability and the requested product properties.
+`tests/test_job_artifacts.py` covers detection through contract-bound publication.
 Failed or degraded publication atomically marks every Artifact and visible
 Artifact Item from that Turn partial. The state is monotonic within one Turn;
 a successful retry in a new Turn retains separate historical evidence.

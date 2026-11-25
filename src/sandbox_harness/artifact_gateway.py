@@ -29,6 +29,34 @@ MIME_ALIASES = {
 
 class MimeRegistry:
     @staticmethod
+    def _ebml_document_type(head: bytes) -> bytes | None:
+        """Read a bounded EBML header's DocType, never a match inside payload data."""
+        def vint(offset: int, limit: int, *, identifier: bool = False):
+            if offset>=limit or head[offset]==0:raise ValueError('invalid_ebml_vint')
+            width=9-head[offset].bit_length()
+            if width>(4 if identifier else 8) or offset+width>limit:
+                raise ValueError('truncated_ebml_vint')
+            value=int.from_bytes(head[offset:offset+width],'big')
+            if not identifier:
+                mask=(1<<(7*width))-1;value&=mask
+                if value==mask:raise ValueError('unbounded_ebml_header')
+            return value,offset+width
+        try:
+            size,offset=vint(4,len(head));end=offset+size
+            if end>len(head):return None
+            document=None
+            while offset<end:
+                identity,offset=vint(offset,end,identifier=True)
+                size,offset=vint(offset,end)
+                if offset+size>end:return None
+                if identity==0x4282:
+                    if document is not None:return None
+                    document=head[offset:offset+size].rstrip(b'\x00')
+                offset+=size
+            return document
+        except (ValueError,IndexError):return None
+
+    @staticmethod
     def normalize(value: str) -> str:
         mime = value.split(";", 1)[0].strip().lower()
         return MIME_ALIASES.get(mime, mime or "application/octet-stream")
@@ -51,6 +79,11 @@ class MimeRegistry:
             detected = "audio/mpeg"
         elif len(head) >= 12 and head[4:8] == b"ftyp":
             detected = "audio/mp4" if normalized=="audio/mp4" else "video/mp4"
+        elif head.startswith(b'\x1a\x45\xdf\xa3'):
+            document=cls._ebml_document_type(head)
+            family={b'matroska':'x-matroska',b'webm':'webm'}.get(document)
+            detected=(('audio/' if normalized=='audio/'+family else 'video/')+family
+                if family else 'application/octet-stream')
         elif head.startswith(b"glTF"):detected="model/gltf-binary"
         elif head.startswith(b"Kaydara FBX Binary"):detected="application/vnd.autodesk.fbx"
         elif head.startswith(b"\x1f\x8b"):detected="application/gzip"
