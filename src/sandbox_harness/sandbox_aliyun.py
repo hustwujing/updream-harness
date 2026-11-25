@@ -203,7 +203,11 @@ class AliyunSandboxBackend:
             harness = Harness.CODEX
         state = self._state(getattr(info, "state", "unknown"))
         profile = self._profile(info)
-        return Sandbox(id=str(info.sandbox_id), provider=self.provider, harness=harness,
+        sandbox_id=str(info.sandbox_id)
+        handle=SandboxHandle(provider=self.provider,sandbox_id=sandbox_id,
+            allocation_id=str(metadata.get('sandbox-harness.io/idempotency-key') or sandbox_id),
+            profile_key=profile.compatibility_key,revision=profile.revision)
+        return Sandbox(id=sandbox_id, provider=self.provider, harness=harness,handle=handle,
             profile=profile, metadata=metadata, state=state,
             expires_at=self._aware(getattr(info, "end_at", None)),
             provider_details={"template_id": profile.provider_ref})

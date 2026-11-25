@@ -94,7 +94,10 @@ class OpenSandboxBackend:
         if not isinstance(sandbox_id,str):raise SandboxProviderUnavailable(
             "OpenSandbox response has no sandbox ID",provider=self.provider)
         profile=self._profile(sandbox_id,harness,image,metadata)
-        return Sandbox(id=sandbox_id,provider=self.provider,harness=harness,profile=profile,
+        handle=SandboxHandle(provider=self.provider,sandbox_id=sandbox_id,
+            allocation_id=str(metadata.get('sandbox-harness.io/idempotency-key') or sandbox_id),
+            profile_key=profile.compatibility_key,revision=profile.revision)
+        return Sandbox(id=sandbox_id,provider=self.provider,harness=harness,profile=profile,handle=handle,
             metadata=dict(metadata),state=SandboxState.INVENTORY,
             provider_details={"image":image},image=image)
 
