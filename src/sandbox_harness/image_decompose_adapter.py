@@ -187,12 +187,13 @@ class ImageDecomposeAdapter(BaseJobAdapter):
         contract=context.request.expected_outputs[0];artifacts=[]
         for row in status.result['outputs']:
             path=self._work(context.job.id)/row['path']
-            artifact=await self.artifacts.emit(ArtifactEmission(job_id=context.job.id,
+            artifact=await self.artifacts.emit_matching(ArtifactEmission(job_id=context.job.id,
                 generation=context.generation,artifact_role=contract.artifact_role,
-                item_key=row['sha256'][:16],position=row['position'],filename=path.name,
+                item_key=row['sha256'][:16],position=len(artifacts),filename=path.name,
                 output_disposition=contract.output_disposition,
-                declared_mime=row['mime']),staged_file_chunks(path))
-            artifacts.append(artifact.model_dump(mode='json'))
+                declared_mime=row['mime']),staged_file_chunks(path),
+                mime_patterns=contract.mime_patterns)
+            if artifact is not None:artifacts.append(artifact.model_dump(mode='json'))
         collection=await self.store.finalize_job_artifact_collection(context.job.id,
             context.generation,contract.artifact_role)
         return {'external_id':external_execution_id,'artifacts':artifacts,'collections':[collection]}

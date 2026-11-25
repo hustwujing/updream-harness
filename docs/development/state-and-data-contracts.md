@@ -82,6 +82,13 @@ waiting or failed outcome becomes `CANCELLED` unless cleanup itself failed.
 
 ## Files and objects
 
+Optional multi-format source outputs may use `ArtifactGateway.emit_matching`
+with the frozen collection's MIME patterns. This is content-based selection
+before object persistence; default `emit` remains strict. Selected outputs must
+have dense positions and stable item keys across retries. Store's generation,
+role, disposition, MIME and cardinality checks remain authoritative; selection
+never widens the contract or suppresses declared/content mismatch errors.
+
 Uploads and artifacts are immutable object references verified by SHA-256 and
 byte limits. `project_files` versions logical `assets/...` and `artifacts/...`
 paths; deletion is a tombstone. Managed project files are materialized into the

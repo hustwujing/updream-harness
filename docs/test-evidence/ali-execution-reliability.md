@@ -35,6 +35,11 @@ on mutable provider metadata.
    Skill planning defaults do not introduce another approval for authorized
    work. Missing material facts and required Provider/deployment cards retain
    their existing interaction boundaries.
+6. **Optional output formats:** multi-format adapters can select candidates
+   through `ArtifactGateway.emit_matching` using frozen MIME patterns. Excluded
+   formats create no stored object; selected items retain stable identity and
+   dense positions. Strict emission and Store authorization/cardinality checks
+   remain unchanged. See the [format-selection design](../superpowers/specs/2026-11-25-artifact-format-selection-design.md).
 
 ## Incident audit
 
@@ -58,6 +63,12 @@ on mutable provider metadata.
   blocked Child because the query-review objective supplied no query. The
   fixture now includes PostgreSQL VALUES data, the exact aggregation, explicit
   ordering and a requirement to distinguish static findings from measured plans.
+- **C09:** the first clean full gate on `91189f2` discovered optional PSD/TIFF
+  outputs outside a frozen PNG/ORA/ZIP/JSON collection. The source execution
+  succeeded; repeated collection hit `artifact_mime_not_allowed`. The generic
+  selector preserves the requested formats without widening authorization.
+  That interrupted gate drained to 50 successes, one failure and 118 unstarted
+  cases; it is not final release acceptance.
 
 ## Validation layers
 

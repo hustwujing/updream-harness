@@ -41,6 +41,9 @@ class MimeRegistry:
         if head.startswith(b"\x89PNG\r\n\x1a\n"): detected = "image/png"
         elif head.startswith(b"\xff\xd8\xff"): detected = "image/jpeg"
         elif head.startswith((b"GIF87a", b"GIF89a")): detected = "image/gif"
+        elif head.startswith(b"8BPS"):detected="image/vnd.adobe.photoshop"
+        elif head.startswith((b"II*\x00",b"MM\x00*",b"II+\x00",b"MM\x00+")):
+            detected="image/tiff"
         elif head.startswith(b"%PDF-"): detected = "application/pdf"
         elif head.startswith(b"RIFF") and head[8:12] == b"WEBP": detected = "image/webp"
         elif head.startswith(b"RIFF") and head[8:12] == b"WAVE": detected = "audio/wav"
@@ -55,14 +58,20 @@ class MimeRegistry:
             try:
                 with zipfile.ZipFile(path) as archive:
                     names=set(archive.namelist())
-                safe=all(not PurePosixPath(name).is_absolute() and ".." not in PurePosixPath(name).parts
-                    for name in names)
+                    safe=all(not PurePosixPath(name).is_absolute() and ".." not in PurePosixPath(name).parts
+                        for name in names)
+                    openraster=False
+                    if (safe and {'mimetype','stack.xml'}<=names
+                            and archive.getinfo('mimetype').file_size<=128):
+                        with archive.open('mimetype') as metadata:
+                            openraster=metadata.read(129).strip()==b'image/openraster'
                 model_archive=(normalized=="model/obj+zip" and any(name.lower().endswith(".obj") for name in names)
                     or normalized=="model/gltf+zip" and any(name.lower().endswith((".gltf",".glb")) for name in names)
                     or normalized=="model/vnd.usdz+zip" and any(name.lower().endswith((".usd",".usda",".usdc")) for name in names)
                     or normalized=="model/3mf" and "[Content_Types].xml" in names
                         and any(name.lower().endswith(".model") for name in names))
-                detected = ("application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                detected = ("image/openraster" if openraster else
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                     if "word/document.xml" in names else
                     "application/vnd.openxmlformats-officedocument.presentationml.presentation"
                     if "ppt/presentation.xml" in names else
@@ -133,6 +142,15 @@ class ArtifactGateway:
         self.staging_root.mkdir(parents=True, exist_ok=True)
 
     async def emit(self, value: ArtifactEmission, chunks: AsyncIterable[bytes]):
+        return await self._emit(value,chunks)
+
+    async def emit_matching(self,value:ArtifactEmission,chunks:AsyncIterable[bytes],*,
+                            mime_patterns:tuple[str,...]):
+        """Select optional source formats without widening the frozen output contract."""
+        return await self._emit(value,chunks,mime_patterns=mime_patterns)
+
+    async def _emit(self,value:ArtifactEmission,chunks:AsyncIterable[bytes],*,
+                    mime_patterns:tuple[str,...]|None=None):
         value.validate()
         with NamedTemporaryFile(dir=self.staging_root, prefix=".job-artifact-", delete=False) as stream:
             path = Path(stream.name);digest = hashlib.sha256();size = 0
@@ -150,6 +168,8 @@ class ArtifactGateway:
                 raise
         try:
             mime = MimeRegistry.detect(path, value.declared_mime)
+            if mime_patterns is not None and not MimeRegistry.matches(mime,mime_patterns):
+                return None
             identity = digest.hexdigest()
             object_ref, _ = self.objects.put_file(path, digest=identity, size=size)
             return await self.store.bind_job_artifact(value, sha256=identity, size=size,

@@ -17,6 +17,30 @@ async def chunks(*values):
     for value in values:yield value
 
 
+@pytest.mark.parametrize('data,mime',[
+    (b'8BPS\x00\x01'+b'\x00'*30,'image/vnd.adobe.photoshop'),
+    (b'II*\x00'+b'\x00'*32,'image/tiff'),
+    (b'MM\x00*'+b'\x00'*32,'image/tiff'),
+])
+def test_binary_layer_formats_are_detected_from_content(tmp_path,data,mime):
+    path=tmp_path/'no-extension';path.write_bytes(data)
+    assert MimeRegistry.detect(path)==mime
+
+
+def test_openraster_detection_requires_bounded_metadata_and_safe_paths(tmp_path):
+    for suffix,mimetype,extra,expected in [
+        ('valid',b'image/openraster','layer.png','image/openraster'),
+        ('oversize',b'image/openraster'+b' '*1024,'layer.png','application/zip'),
+        ('unsafe',b'image/openraster','../layer.png','application/zip'),
+    ]:
+        path=tmp_path/(suffix+'.bin')
+        with zipfile.ZipFile(path,'w') as archive:
+            archive.writestr('mimetype',mimetype)
+            archive.writestr('stack.xml','<image><stack/></image>')
+            archive.writestr(extra,b'layer')
+        assert MimeRegistry.detect(path)==expected
+
+
 async def setup(tmp_path,output):
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'artifacts.db'));await store.initialize()
     request=JobRequest(local_job_id='render',kind=JobKind.OPERATION,adapter='render',
@@ -51,6 +75,32 @@ async def test_role_and_disposition_are_distinct_and_collection_publishes_atomic
                 ProjectFileRow.thread_id=='b'*32).order_by(ProjectFileRow.path))).scalars().all()
         assert [value.path for value in files]==[
             'artifacts/jobs/'+job.id+'/image-0.png','artifacts/jobs/'+job.id+'/image-1.png']
+    finally:await store.close()
+
+
+async def test_optional_format_selection_preserves_strict_validation_and_minimum(tmp_path,monkeypatch):
+    output={'artifact_role':'images','output_disposition':'workspace','min_items':1,'max_items':2,
+        'mime_patterns':['image/png']}
+    store,gateway,job,attempt=await setup(tmp_path,output)
+    value=ArtifactEmission(job.id,attempt.generation,'images','source-1',0,'layers.psd',
+        OutputDisposition.WORKSPACE,'application/octet-stream')
+    data=b'8BPS\x00\x01'+b'\x00'*30
+    try:
+        put=gateway.objects.put_file
+        def unexpected_write(*args,**kwargs):raise AssertionError('excluded content was persisted')
+        monkeypatch.setattr(gateway.objects,'put_file',unexpected_write)
+        assert await gateway.emit_matching(value,chunks(data),mime_patterns=('image/png',)) is None
+        with pytest.raises(RuntimeError,match='cardinality'):
+            await store.finalize_job_artifact_collection(job.id,attempt.generation,'images')
+        spoof=ArtifactEmission(job.id,attempt.generation,'images','source-2',0,'spoof.png',
+            OutputDisposition.WORKSPACE,'image/png')
+        with pytest.raises(ValueError,match='Declared MIME'):
+            await gateway.emit_matching(spoof,chunks(data),mime_patterns=('application/pdf',))
+        monkeypatch.setattr(gateway.objects,'put_file',put)
+        with pytest.raises(ValueError,match='artifact_mime_not_allowed'):
+            await gateway.emit(value,chunks(data))
+        with pytest.raises(ValueError,match='artifact_mime_not_allowed'):
+            await gateway.emit_matching(value,chunks(data),mime_patterns=())
     finally:await store.close()
 
 

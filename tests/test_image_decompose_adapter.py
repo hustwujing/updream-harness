@@ -28,7 +28,7 @@ def ora():
     return stream.getvalue()
 
 
-async def setup(tmp_path):
+async def setup(tmp_path,mime_patterns=()):
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'decompose.db'));await store.initialize()
     profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
     thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
@@ -45,7 +45,8 @@ async def setup(tmp_path):
             'quality':'balanced','reconstruction_guard':True},
         input_artifacts=(JobArtifactInput(artifact_id=artifact.id,artifact_role='source'),),
         expected_outputs=(JobExpectedOutput(artifact_role='layer_package',
-            output_disposition=OutputDisposition.DELIVERY,min_items=2,max_items=30),),
+            output_disposition=OutputDisposition.DELIVERY,min_items=2,max_items=30,
+            mime_patterns=mime_patterns),),
         retry_policy={'max_pre_accept_attempts':1},cancellation_policy={'supported':True},
         reconciliation_policy={'supported':True})
     _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id=thread.id,
@@ -90,6 +91,39 @@ async def test_decompose_submit_poll_collect_and_recover(tmp_path):
         assert result['collections'][0]['state']=='published'
     finally:
         await adapter.client.aclose();await store.close()
+
+
+async def test_decompose_collection_selects_frozen_formats_with_dense_retry_identity(tmp_path):
+    payloads={'layer':('layer.png','image/png',png()),
+        'psd':('layers.psd','image/vnd.adobe.photoshop',b'8BPS\x00\x01'+b'\x00'*30),
+        'package':('layers.ora','application/octet-stream',ora()),
+        'tiff':('layers.tiff','image/tiff',b'II*\x00'+b'\x00'*32)}
+    def handler(request):
+        if request.url.path=='/api/jobs/remote-formats':
+            return httpx.Response(200,json={'status':'succeeded','artifacts':[
+                {'id':key,'name':name,'media_type':mime}
+                for key,(name,mime,data) in payloads.items()]})
+        key=request.url.path.rsplit('/',1)[-1]
+        if key in payloads:
+            _,mime,data=payloads[key];return httpx.Response(200,content=data,
+                headers={'content-type':mime})
+        raise AssertionError(request.url.path)
+    store,objects,settings,job,attempt,request=await setup(tmp_path,
+        ('image/png','image/openraster','application/zip'))
+    adapter=ImageDecomposeAdapter(settings,store,objects,transport=httpx.MockTransport(handler))
+    context=JobExecutionContext(job=job,request=request,generation=attempt.generation)
+    try:
+        status=await adapter.status(context,'remote-formats')
+        first=await adapter.collect(context,'remote-formats',status)
+        second=await adapter.collect(context,'remote-formats',status)
+        assert [row['filename'] for row in first['artifacts']]==['layer.png','layers.ora']
+        assert [row['position'] for row in first['artifacts']]==[0,1]
+        identity=('artifact_id','artifact_role','item_key','position','filename','sha256','size','mime','object_ref')
+        assert [{key:row[key] for key in identity} for row in first['artifacts']]==[
+            {key:row[key] for key in identity} for row in second['artifacts']]
+        assert first['collections']==second['collections']
+        assert first['collections'][0]['state']=='published'
+    finally:await adapter.client.aclose();await store.close()
 
 
 def test_decompose_rejects_non_loopback_service(tmp_path):
