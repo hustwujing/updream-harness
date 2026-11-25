@@ -557,6 +557,99 @@ async def test_collection_retry_exhaustion_is_structured_without_resubmission(tm
     finally:await store.close()
 
 
+@pytest.mark.parametrize('data,declared,allowed,item_limit,transfer_limit,total_limit,error_code',[
+    (b'result','text/plain','image/png',1024,1024,2048,'artifact_mime_not_allowed'),
+    (b'%PDF-1.7\nreport','image/png','image/png',1024,1024,2048,'artifact_mime_mismatch'),
+    (b'result','text/plain','text/plain',4,1024,2048,'artifact_item_too_large'),
+    (b'result','text/plain','text/plain',1024,4,2048,'artifact_item_too_large'),
+    (b'result','text/plain','text/plain',1024,1024,4,'artifact_collection_too_large'),
+])
+async def test_deterministic_artifact_rejection_never_retries_collection(
+        tmp_path,data,declared,allowed,item_limit,transfer_limit,total_limit,error_code):
+    from sandbox_harness.artifact_gateway import ArtifactEmission,ArtifactGateway
+    from sandbox_harness.job_contracts import OutputDisposition
+    from sandbox_harness.objects import ObjectStore
+    store,_,job=await setup(tmp_path,request(kind=JobKind.OPERATION,
+        expected_outputs=[{'artifact_role':'files','output_disposition':'delivery',
+            'min_items':1,'max_items':1,'mime_patterns':[allowed],'max_item_bytes':item_limit,
+            'max_total_bytes':total_limit}],
+        retry_policy={'max_pre_accept_attempts':2,'max_collection_attempts':3}))
+    gateway=ArtifactGateway(store,ObjectStore(tmp_path/'objects'),tmp_path/'stage',
+        maximum_bytes=transfer_limit)
+    async def chunks():yield data
+    class Collector(FakeAdapter):
+        collect_calls=0
+        async def collect(self,context,external_id,status):
+            self.collect_calls+=1
+            await gateway.emit(ArtifactEmission(context.job.id,context.generation,'files',
+                'result',0,'result.bin',OutputDisposition.DELIVERY,declared),chunks())
+            return await store.finalize_job_artifact_collection(context.job.id,context.generation,'files')
+    adapter=Collector([AdapterSubmission('external-1',{'accepted':True},completed=True)])
+    worker=JobWorker(store,{'fake':adapter},node_id='node',worker_id='worker')
+    try:
+        await worker.run_once();failed=await store.get_job(job.id)
+        assert failed.state==JobState.FAILED
+        assert failed.result['error_code']==error_code
+        assert failed.result['failed_phase']=='validation'
+        assert failed.result['retryable'] is False and failed.result['retry_class']=='none'
+        assert failed.result['side_effect_state']=='completed'
+        assert await store.current_project_files(job.thread_id,'owner')==[]
+        await worker.run_once()
+        assert adapter.submit_calls==adapter.collect_calls==1
+    finally:await store.close()
+
+
+@pytest.mark.parametrize('file_kind',['text','zip'])
+async def test_mime_io_failure_retries_collection_of_the_same_execution(tmp_path,monkeypatch,file_kind):
+    import io
+    import zipfile
+    from pathlib import Path
+    from sandbox_harness.artifact_gateway import ArtifactEmission,ArtifactGateway
+    from sandbox_harness.job_contracts import OutputDisposition
+    from sandbox_harness.objects import ObjectStore
+    data=b'result';mime='text/plain'
+    if file_kind=='zip':
+        stream=io.BytesIO()
+        with zipfile.ZipFile(stream,'w') as archive:archive.writestr('result.txt',data)
+        data=stream.getvalue();mime='application/zip'
+    store,_,job=await setup(tmp_path,request(kind=JobKind.OPERATION,
+        expected_outputs=[{'artifact_role':'files','output_disposition':'delivery',
+            'min_items':1,'max_items':1,'mime_patterns':[mime]}],
+        retry_policy={'max_pre_accept_attempts':2,'max_collection_attempts':3}))
+    gateway=ArtifactGateway(store,ObjectStore(tmp_path/'objects'),tmp_path/'stage',maximum_bytes=1024)
+    remaining=1
+    original=Path.read_text if file_kind=='text' else zipfile.ZipFile
+    def read_once(path,*args,**kwargs):
+        nonlocal remaining
+        if isinstance(path,Path) and path.parent==gateway.staging_root and remaining:
+            remaining-=1
+            raise OSError('controlled transient read failure')
+        return original(path,*args,**kwargs)
+    if file_kind=='text':monkeypatch.setattr(Path,'read_text',read_once)
+    else:monkeypatch.setattr(zipfile,'ZipFile',read_once)
+    async def chunks():yield data
+    class Collector(FakeAdapter):
+        collect_calls=0
+        async def collect(self,context,external_id,status):
+            self.collect_calls+=1
+            await gateway.emit(ArtifactEmission(context.job.id,context.generation,'files',
+                'result',0,'result.bin',OutputDisposition.DELIVERY,mime),chunks())
+            return {}
+    adapter=Collector([AdapterSubmission('external-1',{'accepted':True},completed=True)],
+        [AdapterStatus(True,JobState.SUCCEEDED)])
+    first=JobWorker(store,{'fake':adapter},node_id='node',worker_id='before-restart')
+    second=JobWorker(store,{'fake':adapter},node_id='node',worker_id='after-restart')
+    try:
+        await first.run_once();waiting=await store.get_job(job.id)
+        assert waiting.state==JobState.WAITING_EXTERNAL
+        assert waiting.result['error_code']=='artifact_collection_failed'
+        await second.run_once()
+        assert (await store.get_job(job.id)).state==JobState.SUCCEEDED
+        assert adapter.submit_calls==1 and adapter.collect_calls==2
+        assert (await store.latest_job_acceptance(job.id)).external_execution_id=='external-1'
+    finally:await store.close()
+
+
 @pytest.mark.parametrize('actual_count',[0,2])
 async def test_frozen_collection_cardinality_failure_never_retries_immutable_result(tmp_path,actual_count):
     from sandbox_harness.artifact_gateway import ArtifactEmission,ArtifactGateway

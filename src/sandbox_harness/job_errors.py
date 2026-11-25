@@ -9,6 +9,13 @@ ERROR_PHASES=frozenset({'input_validation','authorization','capacity','submissio
 SIDE_EFFECT_STATES=frozenset({'none','possible','accepted','completed','unknown'})
 
 
+class ArtifactValidationError(ValueError):
+    """A deterministic content/contract rejection cannot improve on collection retry."""
+    def __init__(self,error_code:str,detail:str=''):
+        self.error_code=error_code
+        super().__init__(detail or error_code)
+
+
 class ArtifactCollectionCardinalityError(RuntimeError):
     """A frozen collection count cannot be repaired by reading the same result."""
     def __init__(self,artifact_role:str,minimum:int,maximum:int,actual:int):
@@ -145,6 +152,17 @@ JOB_ERROR_CONTRACTS={
     'submission_outcome_unknown_after_worker_loss':_contract('Worker 中断后无法确认提交结果',
         '检查原外部执行记录并对账，严禁直接重提。','reconciliation',
         side_effect='unknown'),
+    'artifact_mime_not_allowed':_contract('成果格式不符合已确认的产物契约',
+        '请生成契约允许的格式，或明确修正输出契约后创建替代任务。','validation',
+        side_effect='completed'),
+    'artifact_mime_mismatch':_contract('成果声明的格式与实际内容不一致',
+        '请修正成果内容或格式声明后创建替代任务。','validation',side_effect='completed'),
+    'artifact_item_too_large':_contract('成果文件超过允许的大小',
+        '请减小或拆分成果文件，再创建符合大小限制的替代任务。','validation',
+        side_effect='completed'),
+    'artifact_collection_too_large':_contract('成果集合超过允许的总大小',
+        '请减小成果集合，或明确修正总大小限制后创建替代任务。','validation',
+        side_effect='completed'),
     'artifact_collection_failed':_contract('任务已执行，但成果收集失败',
         '保留原执行句柄和成果位置，从收集阶段恢复，不要重复执行外部任务。','collection',
         retryable=True,retry_class='collect_same_execution',side_effect='completed'),

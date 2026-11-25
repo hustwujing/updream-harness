@@ -131,3 +131,18 @@ The failed C29 continuation was explicitly cancelled after preserving its
 collection errors, preventing redundant test repair. Its partial artifacts do
 not change the failed outcome. R03/R04/R05's earlier Reviewer CLI errors are
 also retained even when those attempts later completed successfully.
+
+### Deterministic artifact rejection and transient I/O
+
+The same C29 investigation showed that a deterministic MIME rejection was
+wrapped as a retryable collection failure. Five Gateway→Store→Worker regressions
+reproduced that behavior for MIME, declared/content mismatch and item/transfer/
+collection size limits. Typed content-validation errors now terminate with their
+specific public code and preserve the original accepted execution boundary.
+
+Independent review caught a transient-I/O edge: MIME probing previously swallowed
+text/ZIP `OSError` as an unknown format. Two additional red regressions reproduced
+the resulting permanent failure. Those I/O errors now propagate to collection
+retry; a replacement Worker collects the same execution with one submission.
+The completed focused suite passed 138 checks and independent review passed 20.
+Broader release checks and deployed regression are pending.

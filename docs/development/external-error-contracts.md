@@ -80,7 +80,7 @@ Nonterminal cleanup keeps the normal reservation hold.
 5. `status()` maps transient query failures to a nonterminal status when the
    Provider can still be queried. A terminal `UNKNOWN` must retain the handle and
    use a reconciliation error code.
-6. `collect()` failures are collection failures. The Durable Worker records
+6. Unexpected transfer/storage faults during `collect()` are collection failures. The Durable Worker records
    `artifact_collection_failed` and preserves the accepted execution boundary.
    If the Descriptor permits collection retry, the Store closes the current
    Attempt as `COLLECTION_RETRY`, releases its lease and creates a later
@@ -104,6 +104,15 @@ Nonterminal cleanup keeps the normal reservation hold.
     Cardinality evidence alone does not prove a non-program cause: the campaign
     continues to require source/output investigation and retains strict failure
     classification.
+12. MIME contract rejection, declared/content mismatch, per-file limits and
+    collection-total limits raise `ArtifactValidationError`. The corresponding
+    `artifact_mime_not_allowed`, `artifact_mime_mismatch`,
+    `artifact_item_too_large` and `artifact_collection_too_large` results use
+    validation phase, completed side effects and no collection retry. Preserve
+    preceding ownership, generation, role and disposition checks. MIME probing
+    must propagate storage `OSError`; only content parsing failures may become
+    an unknown format. Gateway/Store/Worker regressions exercise all four codes
+    and replacement-worker recovery after text/ZIP reads fail once.
 
 ## Readiness And Preflight
 

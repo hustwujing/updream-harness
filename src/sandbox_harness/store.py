@@ -22,7 +22,7 @@ from .catalog import ResolvedProfile
 from .events import RedisEventBus
 from .media_errors import media_error_guidance
 from .media_provider import MediaCancellationRequested
-from .job_errors import ArtifactCollectionCardinalityError,job_error_payload,normalize_job_error
+from .job_errors import ArtifactCollectionCardinalityError,ArtifactValidationError,job_error_payload,normalize_job_error
 from .activity_projection import merge_projection_payload,projection_instruction
 from .job_contracts import (
     JobAttemptReceipt, JobGroupCreate, JobGroupDraftCreate, JobGroupDraftState,
@@ -3467,10 +3467,10 @@ class Store:
                 if value.output_disposition != contract.output_disposition:
                     raise RuntimeError("artifact_disposition_not_granted")
                 if size > contract.max_item_bytes:
-                    raise ValueError("artifact_item_too_large")
+                    raise ArtifactValidationError("artifact_item_too_large")
                 from .artifact_gateway import MimeRegistry
                 if not MimeRegistry.matches(mime, contract.mime_patterns):
-                    raise ValueError("artifact_mime_not_allowed")
+                    raise ArtifactValidationError("artifact_mime_not_allowed")
                 existing = (await db.execute(select(JobArtifactRow).where(
                     JobArtifactRow.job_id == job.id,
                     JobArtifactRow.artifact_role == value.artifact_role,
@@ -3743,7 +3743,7 @@ class Store:
                 if [row.position for row in rows] != list(range(len(rows))):
                     raise RuntimeError("artifact_collection_order_invalid")
                 if sum(row.size for row in rows) > contract.max_total_bytes:
-                    raise ValueError("artifact_collection_too_large")
+                    raise ArtifactValidationError("artifact_collection_too_large")
                 receipts = validation_receipts or []
                 by_validator = {str(item.get("validator")): item for item in receipts}
                 if any(name not in by_validator or by_validator[name].get("status") != "pass"

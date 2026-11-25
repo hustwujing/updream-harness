@@ -12,7 +12,7 @@ from .job_adapters import (
     SubmissionOutcomeUnknown,AllocationRecoveryRequired,
 )
 from .job_contracts import JobKind, JobState, TERMINAL_JOB_STATES
-from .job_errors import ArtifactCollectionCardinalityError,normalize_job_error
+from .job_errors import ArtifactCollectionCardinalityError,ArtifactValidationError,normalize_job_error
 from .observability import event,sanitize
 from .sandbox_contracts import (
     SandboxEndpointUnavailable, SandboxProviderUnavailable, SandboxRateLimited,
@@ -41,6 +41,9 @@ class JobWorker:
     async def _collect_result(self,adapter,context,external_id,status):
         try:result=await adapter.collect(context,external_id,status)
         except ExternalJobFailure:raise
+        except ArtifactValidationError as exc:
+            raise ExternalJobFailure('成果未通过格式或大小校验',
+                error_code=exc.error_code,failed_phase='validation') from exc
         except ArtifactCollectionCardinalityError as exc:
             failure=ExternalJobFailure('成果文件数量不符合已冻结的产物契约',
                 error_code='artifact_collection_cardinality_invalid',failed_phase='validation')

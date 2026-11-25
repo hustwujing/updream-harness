@@ -13,6 +13,7 @@ from typing import AsyncIterable
 from defusedxml import ElementTree
 
 from .job_contracts import OutputDisposition
+from .job_errors import ArtifactValidationError
 
 
 MIME_ALIASES = {
@@ -111,7 +112,7 @@ class MimeRegistry:
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     if "xl/workbook.xml" in names else normalized if safe and model_archive
                     else "application/zip")
-            except (OSError, zipfile.BadZipFile):
+            except zipfile.BadZipFile:
                 detected = "application/octet-stream"
         else:
             try:
@@ -131,11 +132,11 @@ class MimeRegistry:
                         "application/json" if is_json else "image/svg+xml" if root is not None and
                         root.tag in {"svg","{http://www.w3.org/2000/svg}svg"} else "text/plain")
                 else:detected="application/octet-stream"
-            except (OSError, UnicodeDecodeError):
+            except UnicodeDecodeError:
                 detected = "application/octet-stream"
         if normalized not in {"", "application/octet-stream"} and detected != "application/octet-stream":
             if normalized != detected and not (normalized == "text/markdown" and detected == "text/plain"):
-                raise ValueError("Declared MIME does not match content")
+                raise ArtifactValidationError('artifact_mime_mismatch',"Declared MIME does not match content")
             return normalized
         return detected
 
@@ -193,7 +194,7 @@ class ArtifactGateway:
                         raise ValueError("Artifact stream chunks must be bytes")
                     size += len(chunk)
                     if size > self.maximum_bytes:
-                        raise ValueError("Artifact exceeds byte limit")
+                        raise ArtifactValidationError('artifact_item_too_large',"Artifact exceeds byte limit")
                     digest.update(chunk);stream.write(chunk)
                 stream.flush();os.fsync(stream.fileno())
             except BaseException:
