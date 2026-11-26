@@ -110,7 +110,6 @@ async def wait_for_first_artifact(client,thread_id,turn_id,deadline,stable_polls
 
 def classify(final,artifacts,media_jobs=None):
     state=final.get("state","");code=final.get("error_code","") or ""
-    if state=="COMPLETED" and artifacts:return "success",""
     failed_media=next((job for job in (media_jobs or [])
         if job.get("status") in {"failed","unknown","cancelled"}),None)
     if failed_media:
@@ -119,6 +118,7 @@ def classify(final,artifacts,media_jobs=None):
                 "budget_exhausted","content_policy_rejected","no_target_found"}:
             return "non_program_failure",code
         return "program_failure",code or "media_job_failed"
+    if state=="COMPLETED" and artifacts:return "success",""
     if state=="COMPLETED":return "optimizable_prompt","completed_without_artifact"
     if state in {"AWAITING_USER","WAITING_USER"}:
         return "optimizable_prompt",final.get("error_detail") or "unclear_user_intervention"

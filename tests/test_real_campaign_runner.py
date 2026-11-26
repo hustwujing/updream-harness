@@ -375,6 +375,10 @@ def test_media_provider_failure_is_not_prompt_failure():
     assert campaign.classify({"state":"COMPLETED"},[],[{
         "status":"failed","error_code":"artifact_registration_failed"}]) == (
         "program_failure","artifact_registration_failed")
+    classification,reason=campaign.classify({"state":"COMPLETED"},[{"type":"artifact"}],[{
+        "status":"failed","error_code":"provider_endpoint_unavailable"}])
+    assert campaign.combine_job_outcome(classification,reason,None,["min_images"]) == (
+        "non_program_failure","provider_endpoint_unavailable")
 
 
 def test_durable_job_failure_preserves_model_budget_root_cause():
