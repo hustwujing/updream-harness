@@ -33,9 +33,12 @@ from sandbox_harness.services.job_worker.image_decompose_adapter import (ImageDe
 from sandbox_harness.services.media_worker.image_decompose_provider import (ImageDecomposeProvider)
 from sandbox_harness.common.contracts.job_contracts import (JobArtifactInput, JobExpectedOutput, JobGroupCreate, JobRequest)
 from sandbox_harness.common.execution.job_worker import (JobWorker)
+from sandbox_harness.common.jobs.media_authority import MediaAuthorityClient
 from sandbox_harness.services.media_worker.media_worker import (MediaWorker)
 from sandbox_harness.common.storage.objects import (ObjectStore)
-from sandbox_harness.common.db.store import (MediaJobRow, MediaOutboxRow, Store)
+from sandbox_harness.common.db.core import CoreRepository
+from sandbox_harness.common.db.media_repository import MediaRepository
+from sandbox_harness.common.db.models import (MediaJobRow, MediaOutboxRow)
 
 ROOT=Path(__file__).resolve().parents[1]
 CASES=('DM01','DM02','DM03','DM04')
@@ -102,8 +105,8 @@ class AuditedProvider(ImageDecomposeProvider):
 
 
 async def worker_main(fixture):
-    settings=Settings.model_validate(json.loads(fixture.read_text()))
-    store=Store(settings.database_url);await store.initialize()
+    value=json.loads(fixture.read_text());settings=Settings.model_validate(value['settings'])
+    store=MediaRepository(value['media_database_url']);await store.initialize()
     objects=ObjectStore(settings.data_root/'objects')
     provider=AuditedProvider(settings,objects)
     worker=MediaWorker(settings,store,objects,None,external_providers={'image_layered_http':provider})
@@ -157,13 +160,19 @@ class Campaign:
         started=time.monotonic();self.started+=1
         self.running[identity]={'stage':'preparing','expected':True};self.save()
         root=self.root/identity;root.mkdir(parents=True,exist_ok=False)
-        settings=Settings(backend='fake',data_root=root,database_url='sqlite+aiosqlite:///'+str(root/'platform.db'),
+        core_url='sqlite+aiosqlite:///'+str(root/'core.db')
+        media_url='sqlite+aiosqlite:///'+str(root/'media.db')
+        settings=Settings(backend='fake',data_root=root,database_url=core_url,
             media_job_lease_seconds=10,image_decompose_base_url=self.args.service_url)
-        fixture=root/'settings.json';write_json(fixture,settings.model_dump(mode='json',include={
-            'backend','data_root','database_url','media_job_lease_seconds','image_decompose_base_url'}))
+        fixture=root/'settings.json';write_json(fixture,{
+            'settings':settings.model_dump(mode='json',include={
+                'backend','data_root','database_url','media_job_lease_seconds','image_decompose_base_url'}),
+            'media_database_url':media_url})
         flags={'drop_download':identity=='DM01','hold_acceptance':identity=='DM02',
             'drop_create':identity=='DM04'};write_json(root/'faults.json',flags)
-        store=Store(settings.database_url);await store.initialize();objects=ObjectStore(root/'objects')
+        store=CoreRepository(core_url,namespace='image-decompose-real')
+        media_store=MediaRepository(media_url)
+        await store.initialize();await media_store.initialize();objects=ObjectStore(root/'objects')
         child=None;job_task=None;job_worker=None;native_ids=[];cleanup=[]
         async def spawn():
             with (root/'media-worker.log').open('ab') as log:
@@ -196,7 +205,9 @@ class Campaign:
             group,jobs=await store.create_job_group('real-media-test',JobGroupCreate(thread_id=thread.id,
                 origin_turn_id=turn.id,idempotency_key='real-media-group',jobs=(request,)))
             job=jobs[0];self.running[identity].update(job_id=job.id,stage='submitting');self.save()
-            job_worker=JobWorker(store,{'image.decompose':ImageDecomposeAdapter(settings,store,objects)},
+            media_authority=MediaAuthorityClient(store,media_store)
+            job_worker=JobWorker(store,{'image.decompose':ImageDecomposeAdapter(
+                settings,store,objects,media_authority)},
                 node_id='isolated-media-test',lease_seconds=30,poll_seconds=.2)
             job_task=asyncio.create_task(job_worker.run());child=await spawn()
             receipt=await eventually(native_receipt,timeout=90)
@@ -221,7 +232,7 @@ class Campaign:
             async def terminal():
                 value=await store.get_job(job.id)
                 self.running[identity]['job_state']=value.state.value
-                media=await store.get_media_job(media_id,'real-media-test')
+                media=await media_store.get_media_job(media_id,'real-media-test')
                 self.running[identity]['media_phase']=media.phase;self.save()
                 return value if value.state.value in {'SUCCEEDED','FAILED','BLOCKED','UNKNOWN','CANCELLED'} else None
             final=await eventually(terminal,timeout=self.args.timeout)
@@ -231,7 +242,7 @@ class Campaign:
             assert sum(row['event']=='create_requested' for row in trace)==1
             assert sum(row['event']=='native_accepted' for row in trace)==1
             if identity=='DM01':assert sum(row['event']=='artifact_response_dropped' for row in trace)==1
-            async with store.connections() as db:
+            async with media_store.connections() as db:
                 media=await db.get(MediaJobRow,media_id)
                 if identity=='DM02':
                     assert media.generation>recovery['old_generation']
@@ -254,9 +265,9 @@ class Campaign:
                     else:raise AssertionError('unselected format published')
             else:assert artifacts==[]
             if identity=='DM04':
-                await store.request_media_cancel(media_id,'real-media-test')
+                await media_store.request_media_cancel(media_id,'real-media-test')
                 async def still_unknown():
-                    return (await store.get_media_job(media_id,'real-media-test')).status=='unknown'
+                    return (await media_store.get_media_job(media_id,'real-media-test')).status=='unknown'
                 await eventually(still_unknown,timeout=40)
                 assert sum(row['event']=='create_requested' for row in events(root))==1
             outboxes=await store.list_job_outboxes()
@@ -285,7 +296,7 @@ class Campaign:
                     result=await provider.cancel({'provider_job_id':native_id})
                     cleanup.append({'native_id':native_id,'quiescent':result.status=='cancelled'})
                 except Exception as exc:cleanup.append({'native_id':native_id,'exception_type':type(exc).__name__})
-            await store.close()
+            await media_store.close();await store.close()
             if any(not row.get('quiescent') for row in cleanup):
                 self.results[identity]['classification']='program_failure'
                 self.results[identity]['reason']='owned_native_cleanup_unconfirmed'

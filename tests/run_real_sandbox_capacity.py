@@ -42,10 +42,15 @@ from sandbox_harness.common.sandbox.runtime import (RuntimeClient)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCreateRequest, SandboxProfile, SandboxScope, SandboxCapacityUnavailable, SandboxRateLimited)
 from sandbox_harness.common.sandbox.sandbox_factory import (build_sandbox_backend, build_profile_resolver)
 from sandbox_harness.common.scheduling.scheduler import (NodeInventory, ResourceRequest, Scheduler)
-from sandbox_harness.common.db.store import (JobAttemptRow, Store)
+from sandbox_harness.common.db.core import CoreRepository
+from sandbox_harness.common.db.models import JobAttemptRow
 
 ROOT=Path(__file__).resolve().parents[1]
 CASES=('RC01','RC02','RC03','RC04','RC05','RC06','RC07')
+
+
+def core_repository(settings):
+    return CoreRepository(settings.database_url,namespace=settings.namespace)
 
 
 def append_audit(path:Path,value:dict):
@@ -75,7 +80,7 @@ def instrument_creates(backend,settings):
 
 
 async def allocator_main(path):
-    raw,settings,profile=fixture(path);store=Store(settings.database_url)
+    raw,settings,profile=fixture(path);store=core_repository(settings)
     await store.initialize();backend=build_sandbox_backend(settings);instrument_creates(backend,settings)
     service=AllocationService(store,backend,lease_seconds=settings.allocation_lease_seconds)
     try:
@@ -84,7 +89,7 @@ async def allocator_main(path):
 
 
 async def worker_main(path):
-    raw,settings,profile=fixture(path);store=Store(settings.database_url)
+    raw,settings,profile=fixture(path);store=core_repository(settings)
     await store.initialize();backend=build_sandbox_backend(settings)
     audit=settings.data_root/'execution-audit.jsonl'
     record_acceptance=store.record_job_acceptance
@@ -203,7 +208,7 @@ async def run_case(case,raw,path,store,backend,profile):
             return (await db.scalars(select(JobAttemptRow).where(JobAttemptRow.job_id==job_id)
                 .order_by(JobAttemptRow.generation.desc()).limit(1))).first()
     async def node_ready():
-        from sandbox_harness.common.db.store import (NodeRow)
+        from sandbox_harness.common.db.models import NodeRow
         ready=settings.data_root/f"worker-ready-{raw['worker_generation']}.json"
         if not ready.exists() or json.loads(ready.read_text()).get('pid')!=process.pid:return False
         async with store.connections() as db:
@@ -370,7 +375,7 @@ async def run(args):
     raw={**raw,'settings':updated.model_dump(mode='json'),'node_cpu':16}
     path=data_root/'worker-fixture.json';fd=os.open(path,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
     with os.fdopen(fd,'w') as f:json.dump(raw,f)
-    store=Store(updated.database_url);await store.initialize();backend=build_sandbox_backend(updated)
+    store=core_repository(updated);await store.initialize();backend=build_sandbox_backend(updated)
     allocator_log=(data_root/'allocator.log').open('w')
     allocator=subprocess.Popen([sys.executable,str(Path(__file__).resolve()),'--fixture',str(path),'--allocator'],
         cwd=ROOT,env={**os.environ,'TMPDIR':str(data_root/'tmp'),'PYTHONDONTWRITEBYTECODE':'1'},

@@ -33,9 +33,15 @@ from sandbox_harness.common.contracts.job_contracts import (JobState)
 from sandbox_harness.common.storage.objects import (ObjectStore)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxScope)
 from sandbox_harness.common.sandbox.sandbox_factory import (build_sandbox_backend)
-from sandbox_harness.common.db.store import (Store, SandboxAllocationRow, JobRow, ResourceReservationRow, JobCleanupRow)
+from sandbox_harness.common.db.core import CoreRepository
+from sandbox_harness.common.db.models import (SandboxAllocationRow, JobRow,
+                                               ResourceReservationRow, JobCleanupRow)
 
 CASES=('AR02','AR03','AR04','AR01')
+
+
+def core_repository(settings):
+    return CoreRepository(settings.database_url,namespace=settings.namespace)
 
 
 def audit_rows(root):
@@ -44,7 +50,7 @@ def audit_rows(root):
 
 
 async def allocator_main(path):
-    raw,settings,_=fixture(path);store=Store(settings.database_url)
+    raw,settings,_=fixture(path);store=core_repository(settings)
     await store.initialize();backend=build_sandbox_backend(settings)
     create=backend.create;observe=backend.reconcile_create
     audit=settings.data_root/'execution-audit.jsonl'
@@ -92,7 +98,7 @@ async def run_case(case,base,profile,run_root,progress):
     path=data/'fixture.json'
     fd=os.open(path,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
     with os.fdopen(fd,'w') as stream:json.dump(raw,stream)
-    store=Store(settings.database_url);await store.initialize()
+    store=core_repository(settings);await store.initialize()
     backend=build_sandbox_backend(settings);processes=[];logs=[]
     result={'case':case,'passed':False,'status':'running','provider':backend.provider,
         'sandbox_profile':asdict(profile),'artifact_image_digest':raw['image_digest'],
