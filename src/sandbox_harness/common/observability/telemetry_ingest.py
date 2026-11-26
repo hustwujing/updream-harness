@@ -1,4 +1,6 @@
 """Restricted OTLP receiver for authenticated sandbox telemetry, never business state."""
+import math
+import re
 import time
 from datetime import datetime,timezone
 from opentelemetry import trace
@@ -42,6 +44,114 @@ def resource(values):
     return Resource({'service.namespace':'updream-harness','service.name':'runtime',
         'service.instance.id':str(data.get('service.instance.id','unknown'))[:64],
         'service.version':str(data.get('service.version','unknown'))[:64]})
+
+
+RUNTIME_METRICS = {
+    'updream.operation.count': ('sum','{operation}',
+        'Completed application operations',{'operation.name','operation.outcome'}),
+    'updream.operation.duration': ('histogram','ms',
+        'Application operation duration',{'operation.name','operation.outcome'}),
+    'updream.telemetry.condition': ('sum','{event}',
+        'Application telemetry health conditions',{'telemetry.condition'}),
+}
+TELEMETRY_CONDITIONS = {
+    'dropped_records','disk_errors','export_failures','library_warnings',
+    'schema_violations','storage_recoveries',
+}
+
+
+def _metric_attributes(values,expected):
+    if len(values)!=len(expected):raise ValueError('metric_attributes_invalid')
+    result=attributes(values)
+    if set(result) != expected:raise ValueError('metric_attributes_invalid')
+    if 'operation.name' in result and (not isinstance(result['operation.name'],str)
+            or not EVENT.fullmatch(result['operation.name'])):
+        raise ValueError('metric_attributes_invalid')
+    if result.get('operation.outcome') not in {None,'success','failed','cancelled'}:
+        raise ValueError('metric_attributes_invalid')
+    if result.get('telemetry.condition') not in {None,*TELEMETRY_CONDITIONS}:
+        raise ValueError('metric_attributes_invalid')
+
+
+def _metric_exemplars(point):
+    if len(point.exemplars)>4:raise ValueError('metric_exemplar_invalid')
+    for exemplar in point.exemplars:
+        if exemplar.filtered_attributes:raise ValueError('metric_exemplar_invalid')
+        if bool(exemplar.trace_id)!=bool(exemplar.span_id):
+            raise ValueError('metric_exemplar_invalid')
+        if exemplar.trace_id and (len(exemplar.trace_id)!=16 or len(exemplar.span_id)!=8):
+            raise ValueError('metric_exemplar_invalid')
+        kind=exemplar.WhichOneof('value')
+        if kind not in {'as_int','as_double'}:raise ValueError('metric_exemplar_invalid')
+        value=getattr(exemplar,kind)
+        if value<0 or kind=='as_double' and not math.isfinite(value):
+            raise ValueError('metric_exemplar_invalid')
+
+
+def validate_otlp_metrics(data,claims):
+    """Validate the fixed Runtime metric contract before raw OTLP relay."""
+    from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import ExportMetricsServiceRequest
+    if not getattr(claims,'sandbox_id',''):raise ValueError('metric_scope_invalid')
+    payload=ExportMetricsServiceRequest();payload.ParseFromString(data);points=0;metrics=0
+    for group in payload.resource_metrics:
+        if group.schema_url:raise ValueError('metric_resource_invalid')
+        supplied=attributes(group.resource.attributes)
+        allowed_resource={'service.namespace','service.name','service.instance.id','service.version',
+            'deployment.environment.name','telemetry.sdk.language','telemetry.sdk.name',
+            'telemetry.sdk.version'}
+        if len(group.resource.attributes)!=len(supplied) or set(supplied)-allowed_resource:
+            raise ValueError('metric_resource_invalid')
+        if supplied.get('service.namespace') not in {None,'updream-harness'}:
+            raise ValueError('metric_resource_invalid')
+        if supplied.get('service.name') not in {None,'runtime'}:
+            raise ValueError('metric_resource_invalid')
+        if supplied.get('service.instance.id') and (not isinstance(
+                supplied['service.instance.id'],str)
+                or not re.fullmatch(r'[0-9a-f]{32}',supplied['service.instance.id'])):
+            raise ValueError('metric_resource_invalid')
+        if any(not isinstance(value,(str,int,float,bool)) or isinstance(value,str) and len(value)>80
+                for value in supplied.values()):
+            raise ValueError('metric_resource_invalid')
+        resource(group.resource.attributes)
+        for scope in group.scope_metrics:
+            if (scope.schema_url or scope.scope.name!='updream-harness'
+                    or scope.scope.version or scope.scope.attributes):
+                raise ValueError('metric_scope_invalid')
+            for metric in scope.metrics:
+                metrics+=1
+                if metrics>32 or metric.name not in RUNTIME_METRICS:
+                    raise ValueError('metric_name_invalid')
+                expected_kind,expected_unit,expected_description,expected_attributes=RUNTIME_METRICS[metric.name]
+                if (metric.WhichOneof('data')!=expected_kind or metric.unit!=expected_unit
+                        or metric.description!=expected_description or metric.metadata):
+                    raise ValueError('metric_type_invalid')
+                values=getattr(metric,expected_kind).data_points
+                aggregate=getattr(metric,expected_kind)
+                if aggregate.aggregation_temporality not in {1,2}:
+                    raise ValueError('metric_type_invalid')
+                if expected_kind=='sum' and not metric.sum.is_monotonic:
+                    raise ValueError('metric_type_invalid')
+                for point in values:
+                    points+=1
+                    if points>512:raise ValueError('too_many_records')
+                    _metric_attributes(point.attributes,expected_attributes)
+                    _metric_exemplars(point)
+                    if expected_kind=='sum':
+                        kind=point.WhichOneof('value')
+                        if kind not in {'as_int','as_double'}:
+                            raise ValueError('metric_value_invalid')
+                        value=getattr(point,kind)
+                        if value<0 or kind=='as_double' and not math.isfinite(value):
+                            raise ValueError('metric_value_invalid')
+                    elif (point.count<0 or not math.isfinite(point.sum)
+                            or len(point.bucket_counts)!=len(point.explicit_bounds)+1
+                            or len(point.bucket_counts)>64
+                            or sum(point.bucket_counts)!=point.count
+                            or any(not math.isfinite(value) for value in point.explicit_bounds)
+                            or list(point.explicit_bounds)!=sorted(point.explicit_bounds)):
+                        raise ValueError('metric_value_invalid')
+    if not points:raise ValueError('metric_batch_empty')
+    return points
 
 
 def decode_otlp(signal,data,claims):

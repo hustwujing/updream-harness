@@ -389,6 +389,7 @@ class SandboxChildBackend(SandboxAllocationOwner):
                 model=str(context.request.parameters.get('model','')),
                 model_start_timeout_seconds=self.settings.runtime_model_start_timeout_seconds,
                 event_idle_timeout_seconds=self.settings.runtime_event_idle_timeout_seconds,
+                telemetry_metrics_enabled=self.settings.runtime_metrics_enabled,
                 runtime_bundle_digest=self.settings.runtime_bundle_digest,
                 runtime_code_bundle_digest=self.settings.runtime_code_bundle_digest,
                 runtime_profile_id=reservation.runtime_profile_id,

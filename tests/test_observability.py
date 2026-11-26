@@ -71,6 +71,53 @@ def rows(value):
     return [json.loads(line) for path in value.sink.root.glob('*.telemetry.jsonl') for line in path.read_text().splitlines()]
 
 
+def runtime_metrics_request(metric_name='updream.operation.count',attribute_name='operation.name'):
+    payload=ExportMetricsServiceRequest();resource=payload.resource_metrics.add()
+    for key,value in {'service.namespace':'updream-harness','service.name':'runtime',
+        'service.instance.id':'a'*32}.items():
+        attribute=resource.resource.attributes.add();attribute.key=key
+        attribute.value.string_value=value
+    scope=resource.scope_metrics.add();scope.scope.name='updream-harness'
+    metric=scope.metrics.add();metric.name=metric_name
+    if metric_name=='updream.operation.duration':
+        metric.unit='ms';metric.description='Application operation duration'
+        point=metric.histogram.data_points.add();point.count=1;point.sum=12.5
+        point.bucket_counts.extend([0,1]);point.explicit_bounds.append(10)
+        metric.histogram.aggregation_temporality=2
+    else:
+        metric.unit='{event}' if metric_name=='updream.telemetry.condition' else '{operation}'
+        metric.description=('Application telemetry health conditions'
+            if metric_name=='updream.telemetry.condition' else 'Completed application operations')
+        point=metric.sum.data_points.add();point.as_int=1
+        metric.sum.aggregation_temporality=2;metric.sum.is_monotonic=True
+    attribute=point.attributes.add();attribute.key=attribute_name
+    attribute.value.string_value=('success' if attribute_name=='operation.outcome' else
+        'dropped_records' if attribute_name=='telemetry.condition' else 'runtime.execution')
+    if metric_name.startswith('updream.operation.') and attribute_name=='operation.name':
+        outcome=point.attributes.add();outcome.key='operation.outcome';outcome.value.string_value='success'
+    return payload
+
+
+def test_runtime_metrics_ingest_accepts_only_bounded_contract():
+    from sandbox_harness.common.observability.telemetry_ingest import validate_otlp_metrics
+    claims=SimpleNamespace(turn_id='turn',thread_id='thread',sandbox_id='sandbox')
+    assert validate_otlp_metrics(runtime_metrics_request().SerializeToString(),claims)==1
+    assert validate_otlp_metrics(runtime_metrics_request(
+        'updream.operation.duration').SerializeToString(),claims)==1
+    assert validate_otlp_metrics(runtime_metrics_request(
+        'updream.telemetry.condition','telemetry.condition').SerializeToString(),claims)==1
+    with pytest.raises(ValueError,match='metric_name_invalid'):
+        validate_otlp_metrics(runtime_metrics_request('provider.private').SerializeToString(),claims)
+    with pytest.raises(ValueError,match='metric_attributes_invalid'):
+        validate_otlp_metrics(runtime_metrics_request(attribute_name='thread_id').SerializeToString(),claims)
+    exemplar_payload=runtime_metrics_request()
+    point=exemplar_payload.resource_metrics[0].scope_metrics[0].metrics[0].sum.data_points[0]
+    exemplar=point.exemplars.add();attribute=exemplar.filtered_attributes.add()
+    attribute.key='prompt';attribute.value.string_value='must-not-relay'
+    with pytest.raises(ValueError,match='metric_exemplar_invalid'):
+        validate_otlp_metrics(exemplar_payload.SerializeToString(),claims)
+
+
 def test_event_field_contract_rejects_unknown_fields_in_strict_mode():
     with pytest.raises(ValueError,match='unknown_telemetry_fields:private_payload'):
         obs.sanitize({'turn_id':'turn-1','private_payload':'do-not-log'},strict=True)
@@ -507,6 +554,64 @@ async def test_gateway_receiver_requires_scope_and_does_not_consume_model_budget
     assert imported['attributes']['updream.origin']=='sandbox_reported'
 
 
+async def test_gateway_relays_validated_runtime_metrics_with_platform_identity(telemetry,tmp_path,monkeypatch):
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
+    from sandbox_harness.common.security.capability import CapabilityCodec
+    from sandbox_harness.common.configuration.config import Settings
+    from sandbox_harness.common.contracts.domain import Harness
+    class Redis:
+        async def exists(self,key):return 0
+        async def eval(self,script,count,*values):return 1
+        async def ping(self):return True
+        async def aclose(self):pass
+    forwarded=[]
+    async def relay(settings,data):forwarded.append(data);return b''
+    monkeypatch.setattr(gateway.Redis,'from_url',lambda *args,**kwargs:Redis())
+    monkeypatch.setattr(gateway,'forward_sandbox_metrics',relay)
+    settings=Settings(backend='fake',data_root=tmp_path,
+        database_url='sqlite+aiosqlite:///'+str(tmp_path/'metrics.db'),
+        gateway_signing_key='test-key'*8,runtime_metrics_enabled=True)
+    app=gateway.create_gateway(settings)
+    token,_=CapabilityCodec(settings.gateway_signing_key).issue(thread_id='thread',turn_id='turn',
+        sandbox_id='sandbox',harness=Harness.CODEX,model='model',routes=['/v1/telemetry'],
+        ttl_seconds=60,max_requests=1,max_public_requests=1,token_budget=1)
+    await app.state.store.initialize()
+    try:
+        headers={'Authorization':'Bearer '+token,'Content-Type':'application/x-protobuf'}
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app),base_url='http://test') as client:
+            payload=runtime_metrics_request().SerializeToString()
+            response=await client.post('/v1/telemetry/metrics',headers=headers,content=payload)
+            assert response.status_code==200 and forwarded==[payload]
+            invalid=runtime_metrics_request('provider.private').SerializeToString()
+            assert (await client.post('/v1/telemetry/metrics',headers=headers,
+                content=invalid)).status_code==422
+    finally:await app.state.store.close()
+
+
+async def test_sandbox_metrics_forwarder_replaces_sandbox_authorization(tmp_path,monkeypatch):
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
+    from sandbox_harness.common.configuration.config import Settings
+    captured={}
+    class Response:
+        content=b'collector-receipt'
+        def raise_for_status(self):pass
+    class Client:
+        def __init__(self,**kwargs):captured['client']=kwargs
+        async def __aenter__(self):return self
+        async def __aexit__(self,*args):pass
+        async def post(self,url,**kwargs):captured.update(url=url,**kwargs);return Response()
+    monkeypatch.setenv('OTEL_EXPORTER_OTLP_ENDPOINT','http://collector:4318')
+    monkeypatch.setenv('OTEL_EXPORTER_OTLP_HEADERS','Authorization=Bearer%20platform-identity')
+    monkeypatch.setattr(gateway.httpx,'AsyncClient',Client)
+    result=await gateway.forward_sandbox_metrics(Settings(data_root=tmp_path),b'metrics')
+    assert result==b'collector-receipt'
+    assert captured['url']=='http://collector:4318/v1/metrics'
+    headers={key.lower():value for key,value in captured['headers'].items()}
+    assert headers['authorization']=='Bearer platform-identity'
+    assert headers['content-type']=='application/x-protobuf'
+    assert captured['content']==b'metrics' and captured['client']['trust_env'] is False
+
+
 async def test_trace_context_is_durable_and_stale_owner_cannot_replace_it(tmp_path,telemetry):
     from test_support.legacy_store import (Store)
     from test_second_review import seed
@@ -697,13 +802,14 @@ async def test_reused_runtime_configuration_logs_the_new_turn_not_the_previous_o
     monkeypatch.setattr(telemetry,'set_remote',lambda *args,**kwargs:remotes.append((args,kwargs)))
     app=runtime.create_app()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app),base_url='http://runtime') as client:
-        for turn_id in ('a'*32,'b'*32):
+        for index,turn_id in enumerate(('a'*32,'b'*32)):
             response=await client.post('/v1/configure',json={'capability_token':'x'*32,'gateway_url':'http://gateway:28600',
-                'harness':'codex','model':'model','proxy_url':'http://172.31.0.1:28601','thread_id':'c'*32,'turn_id':turn_id,'sandbox_id':'d'*32})
+                'harness':'codex','model':'model','proxy_url':'http://172.31.0.1:28601','thread_id':'c'*32,
+                'turn_id':turn_id,'sandbox_id':'d'*32,'telemetry_metrics_enabled':bool(index)})
             assert response.status_code==200
     logs=[row for row in rows(telemetry) if row['event_name']=='http.request.completed' and row['attributes']['http.route']=='/v1/configure']
     assert [row['attributes']['updream.turn_id'] for row in logs]==['a'*32,'b'*32]
-    assert len(remotes)==2 and all(value[1]=={'metrics':False} for value in remotes)
+    assert [value[1] for value in remotes]==[{'metrics':False},{'metrics':True}]
 
 
 @pytest.mark.parametrize(('code','status','origin'),[

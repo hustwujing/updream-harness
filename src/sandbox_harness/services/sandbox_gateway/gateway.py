@@ -26,7 +26,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from redis.asyncio import Redis
 import uvicorn
 
-from sandbox_harness.common.observability.observability import (configure, RequestLoggingMiddleware, event, enrich, add_link, telemetry, operation, carrier)
+from sandbox_harness.common.observability.observability import (configure, RequestLoggingMiddleware, event, enrich, add_link, telemetry, operation, carrier, export_headers)
 from sandbox_harness.common.observability.http import (observed_async_client)
 from sandbox_harness.common.security.capability import (CapabilityCodec)
 from sandbox_harness.common.security.grants import (GrantAuthority)
@@ -72,6 +72,20 @@ def fallback_rate_count(state: OrderedDict, nonce: str, window: int, capacity: i
     count=(previous[1]+1) if previous and previous[0]==window else 1
     state[nonce]=(window,count)
     return count
+
+
+async def forward_sandbox_metrics(settings: Settings, data: bytes) -> bytes:
+    endpoint=os.getenv('OTEL_EXPORTER_OTLP_METRICS_ENDPOINT','')
+    if not endpoint:
+        base=os.getenv('OTEL_EXPORTER_OTLP_ENDPOINT','').rstrip('/')
+        endpoint=base+'/v1/metrics' if base else ''
+    if not endpoint:raise RuntimeError('sandbox_metrics_export_unconfigured')
+    headers={**export_headers(),'Content-Type':'application/x-protobuf'}
+    async with httpx.AsyncClient(timeout=settings.log_otlp_timeout_seconds,
+            trust_env=False) as client:
+        response=await client.post(endpoint,headers=headers,content=data)
+        response.raise_for_status()
+        return response.content
 
 
 def validation_detail(error: ValidationError) -> dict:
@@ -467,12 +481,25 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             if len(body)>4*1024*1024:raise HTTPException(413,"Telemetry batch too large")
         if request.headers.get("content-encoding") not in (None,"identity"):
             raise HTTPException(415,"Telemetry compression is not supported")
+        if signal=='metrics':
+            if not settings.runtime_metrics_enabled:
+                raise HTTPException(503,'Runtime metrics are disabled')
+            from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import ExportMetricsServiceResponse
+            from sandbox_harness.common.observability.telemetry_ingest import validate_otlp_metrics
+            try:validate_otlp_metrics(bytes(body),claims)
+            except Exception:raise HTTPException(422,"Invalid telemetry batch")
+            try:content=await forward_sandbox_metrics(settings,bytes(body))
+            except Exception as exc:
+                event('telemetry.metrics.relay_failed',level=logging.WARNING,exc=exc)
+                return Response(content=ExportMetricsServiceResponse().SerializeToString(),
+                    status_code=503,media_type='application/x-protobuf')
+            return Response(content=content or ExportMetricsServiceResponse().SerializeToString(),
+                media_type='application/x-protobuf')
         try:rows=decode_otlp(signal,bytes(body),claims)
         except Exception:raise HTTPException(422,"Invalid telemetry batch")
         target=telemetry()
         if target is None:raise HTTPException(503,"Telemetry receiver unavailable")
         rejected=sum(not target.put(kind,row) for kind,row in rows)
-        from fastapi.responses import Response
         if signal=="logs":
             from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import ExportLogsServiceResponse
             result=ExportLogsServiceResponse()

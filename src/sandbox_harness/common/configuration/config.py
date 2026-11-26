@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     gateway_model_idle_timeout_seconds: float = Field(default=300, ge=10, le=1800)
     runtime_model_start_timeout_seconds: float = Field(default=150, ge=10, le=900)
     runtime_event_idle_timeout_seconds: float = Field(default=900, ge=60, le=3600)
+    runtime_metrics_enabled: bool = False
     runtime_stream_reattach_attempts: int = Field(default=8, ge=2, le=12)
     runtime_stream_reattach_max_delay_seconds: float = Field(default=4, ge=0.1, le=10)
     runtime_bundle_dir: Path = Path(".data/runtime-bundles")

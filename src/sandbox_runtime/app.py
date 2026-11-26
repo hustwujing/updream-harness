@@ -125,6 +125,7 @@ class Configure(BaseModel):
     child_mode: bool = False
     delegation_depth: int = Field(default=0, ge=0, le=4)
     background_job_max_seconds: float = Field(default=3600, ge=1, le=86400)
+    telemetry_metrics_enabled: bool = False
 
 
 class PtyCreate(BaseModel):
@@ -1136,7 +1137,8 @@ def create_app() -> FastAPI:
         if telemetry():
             await asyncio.to_thread(telemetry().set_remote,
                 value.gateway_url.rstrip("/")+"/v1/telemetry",
-                {"Authorization":"Bearer "+value.capability_token},metrics=False)
+                {"Authorization":"Bearer "+value.capability_token},
+                metrics=value.telemetry_metrics_enabled)
         token = RUN / "capability-token"
         temporary = RUN / ".capability-token.tmp"
         temporary.write_text(value.capability_token)

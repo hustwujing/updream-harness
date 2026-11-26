@@ -962,6 +962,7 @@ class Broker:
                         runtime_code_bundle_digest=(turn.runtime_code_bundle_digest
                             or self.settings.runtime_code_bundle_digest),
                         runtime_profile_id="primary-full-cpu", skill_ids=primary_skills,
+                        telemetry_metrics_enabled=self.settings.runtime_metrics_enabled,
                         skill_digests={identity:self.catalog.profile_resolver.skills[identity].digest
                             for identity in primary_skills} if self.catalog.profile_resolver else {},
                     )
