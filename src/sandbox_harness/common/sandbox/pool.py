@@ -151,6 +151,38 @@ class SandboxPool:
             retained=self._retained_allocations.pop(key,None)
             if pending is not None or retained is not None:self._release_user_slot()
 
+    async def forget_absent_allocation(self, provider: str, allocation_id: str) -> None:
+        """Evict local ownership only after the durable authority confirms absence.
+
+        Used by lifecycle cleanup after its ABSENT commit. It performs no RPC;
+        repeating it after reply/process loss does not release another slot.
+        """
+        expiries = []
+        async with self._lock:
+            key = (provider, allocation_id)
+            charged = self._pending_allocations.pop(key, None) is not None
+            charged = (self._retained_allocations.pop(key, None) is not None) or charged
+            for thread_id, sandbox in list(self._attached.items()):
+                if (sandbox.handle.provider, sandbox.handle.allocation_id) == key:
+                    self._attached.pop(thread_id)
+                    self._idle_since.pop(thread_id, None)
+                    expiry = self._expiry.pop(thread_id, None)
+                    if expiry:
+                        expiries.append(expiry)
+                    charged = True
+            for retiring_key, (sandbox, user_slot) in list(self._retiring.items()):
+                if (sandbox.handle.provider, sandbox.handle.allocation_id) == key:
+                    self._retiring.pop(retiring_key)
+                    charged = charged or user_slot
+            if charged:
+                self._release_user_slot()
+            self._capacity_changed.set()
+        tasks = [task for task in expiries if task is not asyncio.current_task()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     async def execution_available(self) -> bool:
         async with self._lock:
             values=list(self._attached.values())+[sandbox for rows in self._warm.values()

@@ -14,6 +14,7 @@ class ThreadsTransactions:
             reasoning_level=resolved.reasoning_level, reasoning_effort=resolved.reasoning_effort,
             title=value.title, created_at=timestamp, updated_at=timestamp)
         async with self.connections.begin() as db:
+            await self._admit_new_work(db, owner_id, row.id)
             db.add(row)
         return self.thread_view(row)
 
@@ -252,4 +253,3 @@ class ThreadsTransactions:
         if self.events:
             await self.events.delete(turn_ids)
         return turn_ids
-

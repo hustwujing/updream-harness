@@ -24,7 +24,10 @@ async def test_fresh_domains_contain_only_owned_tables(tmp_path):
             observed.update(owned)
         finally:
             await db.close()
-    assert len(observed) == 56
+    from sandbox_harness.common.db.models import Base
+    from sandbox_harness.common.db.account_models import AccountBase
+    from sandbox_harness.common.db.ownership_models import OwnershipBase
+    assert observed == set(Base.metadata.tables) | set(AccountBase.metadata.tables) | set(OwnershipBase.metadata.tables)
 
 
 async def test_wrong_domain_and_unversioned_database_fail_without_mutation(tmp_path):

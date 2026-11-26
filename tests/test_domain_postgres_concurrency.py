@@ -150,3 +150,47 @@ async def test_registration_uses_four_databases_and_retains_principal_on_restart
     finally:
         await accounts.close()
         await asyncio.gather(*(database.close() for database in domains.values()))
+
+
+async def test_sandbox_cleanup_has_one_claim_and_releases_capacity_after_commit():
+    from sandbox_harness.common.catalog.catalog import HarnessCatalog
+    from sandbox_harness.common.contracts.domain import Harness, ThreadCreate
+    from sandbox_harness.common.contracts.sandbox_contracts import SandboxCreateRequest
+    from sandbox_harness.common.db.core import CoreRepository
+    from sandbox_harness.common.db.lifecycle import LifecycleParticipant, LifecycleProposal
+    from sandbox_harness.common.sandbox.sandbox import FakeSandboxBackend
+    from sandbox_harness.common.sandbox.pool import SandboxPool
+    from sandbox_harness.common.sandbox.ownership_cleanup import OwnershipCleanup
+    identity = uuid4().hex
+    core = CoreRepository(URLS["core"], namespace=identity)
+    remotes = {name: DomainDatabase(name, URLS[name]) for name in ("media", "sites")}
+    backend = FakeSandboxBackend(namespace=identity)
+    pool = SandboxPool(backend, {h: "image" for h in Harness}, {h: 0 for h in Harness}, max_sandboxes=1)
+    try:
+        profile = HarnessCatalog().resolve("codex", "gpt-5.6", "standard")
+        thread = await core.create_thread(ThreadCreate(harness=Harness.CODEX, model=profile.model, title="cleanup"),
+                                          profile, identity)
+        request = SandboxCreateRequest(harness=Harness.CODEX,
+            profile=backend.legacy_profile(Harness.CODEX, "image"), environment={},
+            ttl_seconds=300, allocation_id=identity)
+        key = await core.ownership.begin_create(identity, thread.id, request)
+        sandbox = await backend.create(request)
+        await core.ownership.record_handle(key, sandbox.handle)
+        proposal = LifecycleProposal(identity, identity, thread.id, 0, "delete", "deleted")
+        await core.coordinator.start(proposal, set(remotes))
+        targets = {name: LifecycleParticipant(database).handoff for name, database in remotes.items()}
+        await core.handoff.relay(targets)
+        await core.coordinator.advance(identity)
+        await pool.restore_allocation_capacity(await core.ownership.capacity_obligations())
+        workers = [OwnershipCleanup(core.ownership, backend, pool) for _ in range(8)]
+        results = await asyncio.gather(*(worker.run_once() for worker in workers))
+        assert sum(result["released"] for result in results) == 1
+        assert pool._user_slots._value == 1
+        assert await core.ownership.capacity_obligations() == []
+        await core.handoff.relay(targets)
+        assert (await core.coordinator.advance(identity)).state == "completed"
+        assert await core.get_thread(thread.id, identity) is None
+    finally:
+        await pool.close()
+        await core.close()
+        await asyncio.gather(*(database.close() for database in remotes.values()))

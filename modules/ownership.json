@@ -162,6 +162,14 @@
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/cleanup.py"
     },
+    "src/sandbox_harness/common/db/core.py": {
+      "owner": "common/db",
+      "target": "src/sandbox_harness/common/db/core.py"
+    },
+    "src/sandbox_harness/common/db/core_lifecycle.py": {
+      "owner": "common/db",
+      "target": "src/sandbox_harness/common/db/core_lifecycle.py"
+    },
     "src/sandbox_harness/common/db/domain_database.py": {
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/domain_database.py"
@@ -222,6 +230,10 @@
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/models.py"
     },
+    "src/sandbox_harness/common/db/ownership_models.py": {
+      "owner": "common/db",
+      "target": "src/sandbox_harness/common/db/ownership_models.py"
+    },
     "src/sandbox_harness/common/db/pause.py": {
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/pause.py"
@@ -229,6 +241,10 @@
     "src/sandbox_harness/common/db/sandbox.py": {
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/sandbox.py"
+    },
+    "src/sandbox_harness/common/db/sandbox_ownership.py": {
+      "owner": "common/db",
+      "target": "src/sandbox_harness/common/db/sandbox_ownership.py"
     },
     "src/sandbox_harness/common/db/sites.py": {
       "owner": "common/db",
@@ -334,9 +350,17 @@
       "owner": "common/sandbox",
       "target": "src/sandbox_harness/common/sandbox/allocation_client.py"
     },
+    "src/sandbox_harness/common/sandbox/allocation_identity.py": {
+      "owner": "common/sandbox",
+      "target": "src/sandbox_harness/common/sandbox/allocation_identity.py"
+    },
     "src/sandbox_harness/common/sandbox/job_allocation.py": {
       "owner": "common/sandbox",
       "target": "src/sandbox_harness/common/sandbox/job_allocation.py"
+    },
+    "src/sandbox_harness/common/sandbox/ownership_cleanup.py": {
+      "owner": "common/sandbox",
+      "target": "src/sandbox_harness/common/sandbox/ownership_cleanup.py"
     },
     "src/sandbox_harness/common/sandbox/pool.py": {
       "owner": "common/sandbox",

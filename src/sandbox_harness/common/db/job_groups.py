@@ -15,6 +15,7 @@ class JobGroupsTransactions:
         lock_identity = f"draft-create:{value.thread_id}:{value.idempotency_key}"
         async with self.job_lock(lock_identity):
             async with self.connections.begin() as db:
+                await self._admit_new_work(db, owner_id, value.thread_id)
                 existing = (await db.execute(select(JobGroupDraftRow).where(
                     JobGroupDraftRow.thread_id == value.thread_id,
                     JobGroupDraftRow.idempotency_key == value.idempotency_key,
@@ -268,6 +269,7 @@ class JobGroupsTransactions:
         lock_identity = f"group-create:{value.thread_id}:{value.idempotency_key}"
         async with self.job_lock(lock_identity):
             async with self.connections.begin() as db:
+                await self._admit_new_work(db, owner_id, value.thread_id)
                 group, jobs = await self._create_job_group_locked(db, owner_id, value)
                 return self.job_group_view(group), [self.job_view(job) for job in jobs]
 
@@ -277,6 +279,7 @@ class JobGroupsTransactions:
         expired = False
         async with self.job_lock(f"draft:{draft_id}"):
             async with self.connections.begin() as db:
+                await self._admit_job_draft(db, owner_id, draft_id)
                 draft = (await db.execute(select(JobGroupDraftRow).where(
                     JobGroupDraftRow.id == draft_id,
                     JobGroupDraftRow.owner_id == owner_id,
@@ -464,4 +467,3 @@ class JobGroupsTransactions:
                 JobAttemptRow.accepted_at.is_not(None),
             ).order_by(JobAttemptRow.generation.desc()).limit(1))).scalar_one_or_none()
             return self.job_attempt_view(row) if row else None
-

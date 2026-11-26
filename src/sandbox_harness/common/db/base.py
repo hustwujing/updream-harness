@@ -13,12 +13,21 @@ class BaseConnections:
         self.engine = create_async_engine(database_url)
         self.connections = async_sessionmaker(self.engine, expire_on_commit=False)
         self.events = RedisEventBus(redis_url, redis_prefix) if redis_url else None
+        self._initialize_locks()
+
+    def _initialize_locks(self):
         self.event_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.event_lock_users: dict[str, int] = defaultdict(int)
         self.event_lock_guard = asyncio.Lock()
         self.job_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.job_lock_users: dict[str, int] = defaultdict(int)
         self.job_lock_guard = asyncio.Lock()
+
+    async def _admit_new_work(self, db, owner_id, thread_id):
+        """The old single-database facade has no distributed lifecycle barrier."""
+
+    async def _admit_job_draft(self, db, owner_id, draft_id):
+        """Distributed repositories fence draft confirmation before row locks."""
 
 
     @asynccontextmanager
@@ -64,4 +73,3 @@ class BaseConnections:
         async with self.connections() as db:
             await db.execute(text("SELECT 1"))
         return True
-

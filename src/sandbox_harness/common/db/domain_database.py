@@ -17,6 +17,7 @@ from sqlalchemy.sql.schema import Table
 
 from .models import Base, SCHEMA_INITIALIZATION_LOCK_ID, canonical_digest
 from .account_models import AccountBase
+from .ownership_models import OwnershipBase
 
 
 DOMAIN_TABLES = {
@@ -31,6 +32,7 @@ DOMAIN_TABLES = {
         "sandbox_allocations", "sandbox_audit_events", "sandbox_controls", "sandbox_port_grants",
         "thread_controls", "threads", "turn_inputs", "turn_order", "turn_project_files",
         "turns", "uploads",
+        "sandbox_ownership",
     }),
     "media": frozenset({
         "media_batches", "media_drafts", "media_job_executions", "media_job_outbox",
@@ -174,7 +176,7 @@ class DomainDatabase:
             raise ValueError("database_domain_invalid")
         self.domain, self.url = domain, url
         self.owned_tables = DOMAIN_TABLES[domain] | PROTOCOL_TABLES
-        self.tables = {name: table for metadata in (Base.metadata, AccountBase.metadata)
+        self.tables = {name: table for metadata in (Base.metadata, AccountBase.metadata, OwnershipBase.metadata)
                        for name, table in metadata.tables.items() if name in DOMAIN_TABLES[domain]}
         self.tables.update(ProtocolBase.metadata.tables)
         self.engine = create_async_engine(url)
@@ -217,7 +219,7 @@ class DomainDatabase:
                     raise RuntimeError("database_schema_mismatch")
                 await connection.run_sync(self._check_shape)
                 return
-            for metadata in (Base.metadata, AccountBase.metadata):
+            for metadata in (Base.metadata, AccountBase.metadata, OwnershipBase.metadata):
                 await connection.run_sync(lambda c, metadata=metadata: metadata.create_all(c,
                     tables=[table for name, table in metadata.tables.items() if name in DOMAIN_TABLES[self.domain]]))
             await connection.run_sync(ProtocolBase.metadata.create_all)

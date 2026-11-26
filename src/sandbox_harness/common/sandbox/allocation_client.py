@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .allocation_identity import allocation_key, encode_request, decode_request
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -27,20 +28,10 @@ class AllocationAbsent(RuntimeError):
     """The platform ledger proves no live allocation belongs to this request."""
 
 
-def allocation_key(namespace,provider,allocation_id):
-    return hashlib.sha256(json.dumps([namespace,provider,allocation_id],separators=(',',':')).encode()).hexdigest()
 
 
-def encode_request(request):
-    return json.dumps({'harness':request.harness.value,'profile':asdict(request.profile),
-        'environment':dict(request.environment),'ttl_seconds':request.ttl_seconds,
-        'allocation_id':request.allocation_id},sort_keys=True,separators=(',',':'))
 
 
-def decode_request(encoded):
-    value=json.loads(encoded)
-    return SandboxCreateRequest(harness=Harness(value['harness']),profile=SandboxProfile(**value['profile']),
-        environment=value['environment'],ttl_seconds=value['ttl_seconds'],allocation_id=value['allocation_id'])
 
 
 def snapshot(row):

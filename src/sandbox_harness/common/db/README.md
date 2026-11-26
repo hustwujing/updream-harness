@@ -37,6 +37,20 @@ disabled account retains its claim. Only the registration replay flow may recove
 a session using the original signed proof plus password verification. The API
 middleware has not yet been switched to this repository.
 
+`CoreRepository` initializes only core tables and records Turn completion and its
+media notification atomically. Its lifecycle coordinator preserves core Job,
+budget, artifact and cleanup checks. The new sandbox ownership ledger records a
+create intent before an external call, fences binding by owner/Thread epochs and
+keeps unknown creation capacity owned. A committed lifecycle can defer its local
+effect until cleanup records progress through confirmed absence and capacity
+release. Cleanup uses the backend's required deletion-convergence contract without
+requiring a healthy Runtime, and resumes from the durable phase after process loss.
+
+Pool/Inspector creation/binding/retention hooks, source permit/publication flows
+and application entry points still need integration. The old public Store
+lifecycle methods must be replaced by the coordinator result contract during API
+wiring; these libraries are not a completed application deployment.
+
 These primitives are verified independently on SQLite and disposable PostgreSQL
 databases. The service entry points still use the original Store until their
 business transactions have been converted; these primitives alone are not a

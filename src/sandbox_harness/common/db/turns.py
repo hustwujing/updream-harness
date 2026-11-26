@@ -21,6 +21,7 @@ class TurnsTransactions:
         if network_access not in {"restricted", "public"}:
             raise ValueError("Invalid Turn network access")
         async with self.connections.begin() as db:
+            await self._admit_new_work(db, owner_id, thread_id)
             thread = (await db.execute(update(ThreadRow).where(ThreadRow.id == thread_id,
                 ThreadRow.owner_id == owner_id).values(updated_at=ThreadRow.updated_at)
                 .returning(ThreadRow))).scalar_one_or_none()
@@ -580,6 +581,9 @@ class TurnsTransactions:
                 item.updated_at=now()
             elif item.type == ItemType.APPROVAL.value and item.status == "in_progress":
                 item.status = "failed"; item.updated_at = now()
+        await self._seal_media_batch_on_turn_finish(db, turn_id)
+
+    async def _seal_media_batch_on_turn_finish(self, db, turn_id):
         await db.execute(update(MediaBatchRow).where(MediaBatchRow.turn_id == turn_id,
             MediaBatchRow.status == "open").values(status="sealed", sealed_at=now(), updated_at=now()))
 
@@ -676,4 +680,3 @@ class TurnsTransactions:
             row.checkpoint_ref = checkpoint_ref
             row.native_thread_id = native_thread_id
             row.updated_at = now()
-
