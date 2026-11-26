@@ -388,7 +388,7 @@ class JobWorker:
                         error_detail=type(exc).__name__)
                     event('job.submission.contract_rejected',level=40,job_id=job.id,
                         worker_id=self.worker_id,generation=attempt.generation,
-                        error_code='operation_start_failed',exception_type=type(exc).__name__)
+                        error_code='operation_start_failed')
                     return
                 except Exception as exc:
                     deterministic = bool(request.retry_policy.get("deterministic"))
