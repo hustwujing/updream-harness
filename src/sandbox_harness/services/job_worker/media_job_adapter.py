@@ -13,8 +13,9 @@ from sandbox_harness.common.catalog.provider_preflight import (CAPABILITY_SCOPES
 
 
 class MediaProviderJobAdapter(BaseJobAdapter):
-    def __init__(self,settings,store,objects,catalog):
+    def __init__(self,settings,store,objects,catalog,media=None):
         self.settings=settings;self.store=store;self.objects=objects;self.catalog=catalog
+        self.media=media or store
         self.artifacts=ArtifactGateway(store,objects,settings.data_root/'tmp'/'provider-job-artifacts',
             maximum_bytes=settings.max_artifact_bytes)
         self.preflight=ProviderPreflight(store,objects,catalog)
@@ -28,16 +29,19 @@ class MediaProviderJobAdapter(BaseJobAdapter):
                 error_code='provider_input_invalid',failed_phase=(
                     'authorization' if exc.code=='capability_scope_invalid' else 'input_validation'),
                 retryable=False) from exc
-        owner_id=await self.store.owner_id_for_thread(context.job.thread_id)
-        if not owner_id:raise KeyError('media_provider_thread_not_found')
-        value=MediaDraftCreate(kind=validated.kind,model=validated.model,
-            generation_mode=validated.generation_mode,
-            parameters=validated.parameters,references=[],idempotency_key=request.idempotency_key,
-            turn_id='',output_role='candidate')
-        draft,_=await self.store.create_media_draft(owner_id,context.job.thread_id,value,
-            expires_at=now()+timedelta(seconds=self.settings.media_draft_ttl_seconds),
-            provider_spec=validated.spec,reference_snapshots=validated.references)
-        media_job=await self.store.confirm_media_draft(draft.id,owner_id,provider_spec=validated.spec)
+        if hasattr(self.media,"submit"):
+            media_job=await self.media.submit(context,validated)
+        else:
+            owner_id=await self.store.owner_id_for_thread(context.job.thread_id)
+            if not owner_id:raise KeyError('media_provider_thread_not_found')
+            value=MediaDraftCreate(kind=validated.kind,model=validated.model,
+                generation_mode=validated.generation_mode,
+                parameters=validated.parameters,references=[],idempotency_key=request.idempotency_key,
+                turn_id='',output_role='candidate')
+            draft,_=await self.store.create_media_draft(owner_id,context.job.thread_id,value,
+                expires_at=now()+timedelta(seconds=self.settings.media_draft_ttl_seconds),
+                provider_spec=validated.spec,reference_snapshots=validated.references)
+            media_job=await self.store.confirm_media_draft(draft.id,owner_id,provider_spec=validated.spec)
         return AdapterSubmission(external_execution_id=media_job.id,acceptance_receipt={
             'media_job_id':media_job.id,'provider':media_job.provider,'provider_adapter':media_job.adapter,
             'execution_mode':media_job.execution_mode})
@@ -47,8 +51,7 @@ class MediaProviderJobAdapter(BaseJobAdapter):
 
     async def status(self,context:JobExecutionContext,external_execution_id:str)->AdapterStatus:
         external_execution_id=await self.resolve_execution(context,external_execution_id)
-        owner_id=await self.store.owner_id_for_thread(context.job.thread_id)
-        value=await self.store.get_media_job(external_execution_id,owner_id)
+        value=await self.media.get_media_job(external_execution_id,context.job.owner_id)
         if not value:raise RuntimeError('accepted_media_job_missing')
         if value.status=='succeeded':return AdapterStatus(True,JobState.SUCCEEDED,{
             'media_job_id':value.id,'provider':value.provider,'credits_consumed':value.credits_consumed})
@@ -69,14 +72,18 @@ class MediaProviderJobAdapter(BaseJobAdapter):
         external_execution_id=await self.resolve_execution(context,external_execution_id)
         current=await self.status(context,external_execution_id)
         if current.terminal:return current
-        owner_id=await self.store.owner_id_for_thread(context.job.thread_id)
-        try:value=await self.store.request_media_cancel(external_execution_id,owner_id)
+        try:
+            if hasattr(self.media,"cancel"):
+                await self.media.cancel(context);value=await self.media.get_media_job(
+                    external_execution_id,context.job.owner_id)
+            else:
+                value=await self.media.request_media_cancel(external_execution_id,context.job.owner_id)
         except RuntimeError:return AdapterStatus(False,JobState.CANCELLING,{
             'media_job_id':external_execution_id,'cancel_refused':True})
         return AdapterStatus(False,JobState.CANCELLING,{'media_job_id':value.id})
 
     async def outputs(self,context:JobExecutionContext,external_execution_id:str)->list[dict]:
-        output=await self.store.media_job_output_for_thread(external_execution_id,context.job.thread_id)
+        output=await self.media.media_job_output_for_thread(external_execution_id,context.job.thread_id)
         return [{"role":"primary",**output}] if output else []
 
     async def collect(self,context:JobExecutionContext,external_execution_id:str,

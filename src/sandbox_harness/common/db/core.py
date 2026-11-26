@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 from sqlalchemy import select, update
 from sandbox_harness.common.events.events import RedisEventBus
-from sandbox_harness.common.contracts.domain import TERMINAL, ThreadControlState
+from sandbox_harness.common.contracts.domain import TERMINAL, ThreadControlState, now
 from sandbox_harness.common.contracts.job_contracts import TERMINAL_JOB_STATES
 from .domain_database import DomainDatabase, DomainOutbox, DomainScope
 from .lifecycle import LifecycleCoordinator, LifecycleParticipant
 from .core_lifecycle import CoreThreadLifecycle
 from .sandbox_ownership import SandboxOwnership
-from .ownership_models import SandboxOwnershipRow
+from .ownership_models import RemoteObligationRow, SandboxOwnershipRow
 from .models import (JobGroupDraftRow, JobRow, SandboxControlRow, ThreadControlRow, ThreadRow, TurnRow, canonical_digest)
 from .base import BaseConnections
 from .capabilities import CapabilitiesTransactions
@@ -69,10 +69,13 @@ class CoreRepository(CoreThreadLifecycle, DomainDatabase, BaseConnections, Capab
         scope_id = canonical_digest([thread.owner_id, thread.id])
         scope = await db.get(DomainScope, scope_id)
         owner = await db.get(DomainScope, canonical_digest([thread.owner_id, ""]))
-        await self.handoff.enqueue(db, command_id=identity, target="media", kind="media.turn_finished",
+        generation=scope.generation if scope else 0
+        await self.enqueue_remote(db, command_id=identity, target="media", kind="media.turn.finished",
             aggregate_id=scope_id, owner_id=thread.owner_id, generation=scope.generation if scope else 0,
-            payload={"thread_id": thread.id, "turn_id": turn_id, "origin_finished": True,
-                     "owner_generation": owner.generation if owner else 0})
+            thread_id=thread.id, payload={"owner_id":thread.owner_id,"thread_id": thread.id,
+                "turn_id": turn_id, "origin_finished": True,
+                "owner_generation": owner.generation if owner else 0,
+                "thread_generation":generation})
 
     async def _check_lifecycle(self, db, proposal):
         if proposal.action == "register":
@@ -90,7 +93,11 @@ class CoreRepository(CoreThreadLifecycle, DomainDatabase, BaseConnections, Capab
             creating = await db.scalar(select(SandboxOwnershipRow.id).where(
                 SandboxOwnershipRow.owner_id == proposal.owner_id,
                 SandboxOwnershipRow.state.in_(["CREATING", "ALLOCATED"])).limit(1))
-            return "active_work_prevents_registration" if any((active_turn, active_job, control, pause, creating)) else ""
+            remote = await db.scalar(select(RemoteObligationRow.id).where(
+                RemoteObligationRow.owner_id == proposal.owner_id,
+                RemoteObligationRow.state == "pending").limit(1))
+            return "active_work_prevents_registration" if any(
+                (active_turn, active_job, control, pause, creating, remote)) else ""
         return await self._check_thread_lifecycle(db, proposal)
 
     async def _apply_lifecycle(self, db, proposal):
@@ -109,3 +116,31 @@ class CoreRepository(CoreThreadLifecycle, DomainDatabase, BaseConnections, Capab
             JobGroupDraftRow.id == draft_id, JobGroupDraftRow.owner_id == owner_id))
         if thread_id:
             await self._admit_new_work(db, owner_id, thread_id)
+
+    async def owner_id_for_thread(self, thread_id):
+        async with self.connections() as db:
+            return await db.scalar(select(ThreadRow.owner_id).where(ThreadRow.id == thread_id)) or ""
+
+    async def enqueue_remote(self, db, *, command_id, target, kind, aggregate_id,
+                             owner_id, thread_id, generation, payload):
+        await self.handoff.enqueue(db, command_id=command_id, target=target, kind=kind,
+            aggregate_id=aggregate_id, owner_id=owner_id, generation=generation, payload=payload)
+        row = await db.get(RemoteObligationRow, command_id)
+        if row:
+            if (row.owner_id != owner_id or row.thread_id != thread_id
+                    or row.target != target or row.kind != kind):
+                raise ValueError("remote_obligation_identity_conflict")
+        else:
+            db.add(RemoteObligationRow(id=command_id, owner_id=owner_id, thread_id=thread_id,
+                target=target, kind=kind, state="pending", created_at=now(), updated_at=now()))
+
+    async def relay_remote(self, destinations, limit=100):
+        result = await self.handoff.relay(destinations, limit=limit)
+        async with self.transaction() as db:
+            rows = list((await db.scalars(select(RemoteObligationRow).join(DomainOutbox,
+                DomainOutbox.id == RemoteObligationRow.id).where(
+                    RemoteObligationRow.state == "pending",
+                    DomainOutbox.state == "acknowledged").with_for_update())).all())
+            for row in rows:
+                row.state = "acknowledged"; row.updated_at = now()
+        return result

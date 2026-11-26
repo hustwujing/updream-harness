@@ -56,10 +56,13 @@ def test_job_service_accepts_provider_opaque_refs_and_refuses_incomplete_matrix(
     assert all(row.image_ref.startswith("template-") for row in opaque)
 
 
-async def test_job_service_registers_node_and_stops_without_deleting_shared_state(tmp_path):
+async def test_job_service_registers_node_and_stops_without_deleting_shared_state(tmp_path,monkeypatch):
     payload=json.loads((ROOT/"deploy/profile-catalog.example.json").read_text())
     raw=json.dumps(payload,sort_keys=True,separators=(",",":"));catalog=tmp_path/"profiles.json"
-    catalog.write_text(raw);database="sqlite+aiosqlite:///"+str(tmp_path/"service.db")
+    catalog.write_text(raw);database="sqlite+aiosqlite:///"+str(tmp_path/"core.db")
+    media_database="sqlite+aiosqlite:///"+str(tmp_path/"media.db")
+    monkeypatch.setenv("SANDBOX_HARNESS_CORE_DATABASE_URL",database)
+    monkeypatch.setenv("SANDBOX_HARNESS_MEDIA_DATABASE_URL",media_database)
     settings=Settings(backend="fake",data_root=tmp_path,database_url=database,redis_url="",
         object_backend="local",profile_catalog_path=catalog,
         profile_catalog_digest=hashlib.sha256(raw.encode()).hexdigest(),
@@ -67,14 +70,15 @@ async def test_job_service_registers_node_and_stops_without_deleting_shared_stat
     stop=asyncio.Event();task=asyncio.create_task(serve(settings,stop_event=stop))
     for _ in range(100):
         try:
-            with sqlite3.connect(tmp_path/"service.db") as connection:
+            with sqlite3.connect(tmp_path/"core.db") as connection:
                 row=connection.execute("select id from nodes where id='test-node'").fetchone()
         except sqlite3.OperationalError:row=None
         if row:break
         await asyncio.sleep(.01)
     else:pytest.fail("Job Service did not register its node")
     stop.set();await asyncio.wait_for(task,5)
-    store=Store(database)
+    from sandbox_harness.common.db.core import CoreRepository
+    store=CoreRepository(database,namespace=settings.namespace)
     try:
         await store.initialize()
         async with store.connections() as connection:

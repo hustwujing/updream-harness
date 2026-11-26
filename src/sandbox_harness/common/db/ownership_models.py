@@ -36,3 +36,15 @@ class SandboxOwnershipRow(OwnershipBase):
     capacity_released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class RemoteObligationRow(OwnershipBase):
+    __tablename__ = "remote_obligations"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    target: Mapped[str] = mapped_column(String(32))
+    kind: Mapped[str] = mapped_column(String(80))
+    state: Mapped[str] = mapped_column(String(24), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

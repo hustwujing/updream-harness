@@ -11,6 +11,7 @@ import signal
 import time
 
 from sandbox_harness.common.configuration.config import (Settings, load_settings)
+from sandbox_harness.common.configuration.databases import (DatabaseSettings)
 from sandbox_harness.common.sandbox.allocation_client import (AllocationClient)
 from sandbox_harness.common.contracts.domain import (Harness)
 from sandbox_harness.services.job_worker.harness_job import (HarnessJobAdapter, JobGrantFactory, SandboxChildBackend)
@@ -18,6 +19,7 @@ from sandbox_harness.services.job_worker.image_decompose_adapter import (ImageDe
 from sandbox_harness.common.execution.job_worker import (JobWorker)
 from sandbox_harness.common.catalog.job_catalog import (JobCatalog)
 from sandbox_harness.common.jobs.job_coordinator import (JobCoordinator)
+from sandbox_harness.common.jobs.media_authority import (MediaAuthorityClient)
 from sandbox_harness.common.scheduling.node_agent import (NodeAgent)
 from sandbox_harness.common.catalog.media_catalog import (MediaCatalog)
 from sandbox_harness.services.job_worker.media_job_adapter import (CAPABILITY_SCOPES, MediaProviderJobAdapter)
@@ -31,7 +33,8 @@ from sandbox_harness.common.jobs.review import (ReviewerCoordinator, ReviewSubmi
 from sandbox_harness.common.sandbox.runtime import (RuntimeClient)
 import sandbox_harness.common.sandbox.sandbox_factory as sandbox_factory
 from sandbox_harness.common.scheduling.scheduler import (NodeProfile, Scheduler)
-from sandbox_harness.common.db.store import (Store)
+from sandbox_harness.common.db.core import (CoreRepository)
+from sandbox_harness.common.db.media_repository import (MediaRepository)
 
 
 def resolved_node_profiles(resolver: ProfileResolver, backend=None) -> tuple[NodeProfile, ...]:
@@ -65,7 +68,10 @@ def sandbox_pool(settings: Settings) -> SandboxPool:
 
 
 async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) -> None:
-    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    databases=DatabaseSettings().for_service("job-worker")
+    store=CoreRepository(databases["core"],settings.redis_url,settings.redis_prefix,
+        namespace=settings.namespace)
+    media=MediaRepository(databases["media"])
     pool=sandbox_pool(settings);objects=object_store(settings)
     runtime=RuntimeClient(timeout_seconds=settings.sandbox_timeout_seconds,
         reattach_attempts=settings.runtime_stream_reattach_attempts,
@@ -87,11 +93,12 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
         ark_assets_configured=bool(settings.ark_access_key and settings.ark_secret_key
             and settings.ark_asset_group_id and settings.ark_project_name),
         tripo_configured=bool(settings.tripo_api_key))
-    media_adapter=MediaProviderJobAdapter(settings,store,objects,media_catalog)
+    media_authority=MediaAuthorityClient(store,media)
+    media_adapter=MediaProviderJobAdapter(settings,store,objects,media_catalog,media_authority)
     render_adapter=MediaRenderOperationAdapter(scheduler=scheduler,pool=pool,runtime=runtime,
         store=store,objects=objects,settings=settings,token_factory=JobGrantFactory(settings),
         profile_resolver=resolver,allocation_client=allocation_client)
-    decompose_adapter=ImageDecomposeAdapter(settings,store,objects)
+    decompose_adapter=ImageDecomposeAdapter(settings,store,objects,media_authority)
     catalog_raw=settings.job_catalog_path.read_text()
     job_catalog=JobCatalog.from_json(catalog_raw,expected_digest=(settings.job_catalog_digest
         or hashlib.sha256(catalog_raw.encode()).hexdigest()))
@@ -129,7 +136,7 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
         heartbeat_seconds=settings.job_node_heartbeat_seconds,
         cached_bundle_digests=tuple(value for value in (settings.runtime_bundle_digest,
             settings.runtime_code_bundle_digest) if value))
-    await store.initialize()
+    await store.initialize();await media.initialize()
     validate=getattr(pool.backend,"validate_active_providers",None)
     if validate:validate(await store.active_sandbox_providers())
     await pool.restore_allocation_capacity(await store.job_sandbox_capacity())
@@ -161,6 +168,7 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
         preserved={pool.sandbox_key(value) for value in child_backend.sessions.values()}
         await pool.close(preserve_sandbox_keys=preserved)
         await pool.backend.aclose()
+        await media.close()
         await store.close()
 
 

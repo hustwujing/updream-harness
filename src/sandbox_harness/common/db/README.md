@@ -64,6 +64,23 @@ the explicit sites connection and has no core database credential. API-side site
 admission and preparation still require durable core-to-sites commands before
 this repository is used by the full application.
 
+`MediaRepository` gives MediaWorker only the media authority. Core issues a
+generation-fenced source permit in the same transaction as its remote obligation;
+media consumes the permit before Provider submission. Cancellation locks permit
+before media Job, and terminal outputs plus publication outbox commit locally.
+Real PostgreSQL tests cover duplicate dispatch, one Worker claim and concurrent
+permit consumption/cancellation. JobWorker now connects separately to core and
+media through `MediaAuthorityClient`; AllocationWorker and ControlledWorker use
+only core, while SiteWorker uses only sites.
+
+Turn media/site preparation and media promotion use `CrossDomainCommands`.
+Every source transaction records an explicit remote obligation, so lifecycle
+operations reject pending delivery. Target effects and receipts are idempotent;
+media promotion commits Core ProjectFiles before acknowledging their identities
+back to media. `GatewayRepositories` exposes only the sandbox-gateway method
+allowlist, but the gateway entry point still awaits configuration/test migration
+before it replaces the transitional Store.
+
 These primitives are verified independently on SQLite and disposable PostgreSQL
 databases. The service entry points still use the original Store until their
 business transactions have been converted; these primitives alone are not a

@@ -3,6 +3,8 @@ from sqlalchemy import delete, or_, select, update
 from sandbox_harness.common.contracts.domain import TERMINAL, now
 from sandbox_harness.common.contracts.job_contracts import JobState, JobGroupState, TERMINAL_JOB_STATES
 from .models import (ArtifactRow, AuthorizationSnapshotRow, BudgetAccountRow, BudgetLedgerRow, BudgetReservationRow, EventRow, InteractionRow, ItemRow, JobActivityRow, JobArtifactRow, JobAttemptRow, JobCleanupRow, JobDisplayActivityRow, JobGroupDraftRow, JobGroupRow, JobLeaseRow, JobOutboxRow, JobRow, PauseParticipantRow, ProjectFileRow, ResourceReservationRow, ReviewGateRow, SandboxAllocationRow, SandboxAuditRow, SandboxControlRow, SandboxPortGrantRow, ThreadControlRow, ThreadRow, TurnInputRow, TurnOrderRow, TurnProjectFileRow, TurnRow)
+from .domain_database import DomainOutbox
+from .ownership_models import RemoteObligationRow
 
 
 class CoreThreadLifecycle:
@@ -39,6 +41,11 @@ class CoreThreadLifecycle:
             return "thread_not_found"
         if proposal.action == "unarchive":
             return ""
+        if await db.scalar(select(RemoteObligationRow.id).where(
+                RemoteObligationRow.owner_id == proposal.owner_id,
+                RemoteObligationRow.thread_id == proposal.thread_id,
+                RemoteObligationRow.state == "pending").limit(1)):
+            return "remote_obligations_pending"
         if await db.get(SandboxControlRow, thread.id):
             return "sandbox_takeover_active"
         if await db.scalar(select(TurnRow.id).where(TurnRow.thread_id == thread.id,
@@ -110,6 +117,11 @@ class CoreThreadLifecycle:
             ThreadControlRow.thread_id == thread_id))
         await db.execute(delete(ProjectFileRow).where(ProjectFileRow.thread_id == thread_id))
         await db.execute(delete(ItemRow).where(ItemRow.thread_id == thread_id))
+        remote_ids = select(RemoteObligationRow.id).where(
+            RemoteObligationRow.thread_id == thread_id)
+        await db.execute(delete(DomainOutbox).where(DomainOutbox.id.in_(remote_ids)))
+        await db.execute(delete(RemoteObligationRow).where(
+            RemoteObligationRow.thread_id == thread_id))
         if turn_ids:
             await db.execute(delete(TurnOrderRow).where(TurnOrderRow.turn_id.in_(turn_ids)))
             await db.execute(delete(TurnProjectFileRow).where(TurnProjectFileRow.turn_id.in_(turn_ids)))

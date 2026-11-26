@@ -31,14 +31,13 @@ from sandbox_harness.services.media_worker.minimax_voice import (MiniMaxVoiceClo
 from sandbox_harness.common.observability.observability import (event)
 from sandbox_harness.common.storage.objects import (ObjectStore, S3ObjectStore)
 from sandbox_harness.common.security.network import (normalize_host, public_address)
-from sandbox_harness.common.db.store import (Store)
 from sandbox_harness.common.process.identity import (_process_start)
 
 
 class MediaWorker:
     """Durable media executor for the real, probed Provider protocols."""
 
-    def __init__(self, settings, store: Store, objects: ObjectStore | S3ObjectStore, catalog: MediaCatalog,
+    def __init__(self, settings, store, objects: ObjectStore | S3ObjectStore, catalog: MediaCatalog,
                  *, external_providers=None):
         self.settings = settings
         self.store = store

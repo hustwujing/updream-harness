@@ -170,6 +170,10 @@
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/core_lifecycle.py"
     },
+    "src/sandbox_harness/common/db/cross_domain.py": {
+      "owner": "common/db",
+      "target": "src/sandbox_harness/common/db/cross_domain.py"
+    },
     "src/sandbox_harness/common/db/domain_database.py": {
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/domain_database.py"
@@ -181,6 +185,10 @@
     "src/sandbox_harness/common/db/files.py": {
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/files.py"
+    },
+    "src/sandbox_harness/common/db/gateway_repositories.py": {
+      "owner": "common/db",
+      "target": "src/sandbox_harness/common/db/gateway_repositories.py"
     },
     "src/sandbox_harness/common/db/handoff.py": {
       "owner": "common/db",
@@ -222,9 +230,17 @@
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/media_jobs.py"
     },
+    "src/sandbox_harness/common/db/media_models.py": {
+      "owner": "common/db",
+      "target": "src/sandbox_harness/common/db/media_models.py"
+    },
     "src/sandbox_harness/common/db/media_references.py": {
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/media_references.py"
+    },
+    "src/sandbox_harness/common/db/media_repository.py": {
+      "owner": "common/db",
+      "target": "src/sandbox_harness/common/db/media_repository.py"
     },
     "src/sandbox_harness/common/db/models.py": {
       "owner": "common/db",
@@ -305,6 +321,10 @@
     "src/sandbox_harness/common/jobs/job_coordinator.py": {
       "owner": "common/jobs",
       "target": "src/sandbox_harness/common/jobs/job_coordinator.py"
+    },
+    "src/sandbox_harness/common/jobs/media_authority.py": {
+      "owner": "common/jobs",
+      "target": "src/sandbox_harness/common/jobs/media_authority.py"
     },
     "src/sandbox_harness/common/jobs/review.py": {
       "owner": "common/jobs",

@@ -18,6 +18,7 @@ from sqlalchemy.sql.schema import Table
 from .models import Base, SCHEMA_INITIALIZATION_LOCK_ID, canonical_digest
 from .account_models import AccountBase
 from .ownership_models import OwnershipBase
+from .media_models import MediaAuthorityBase
 
 
 DOMAIN_TABLES = {
@@ -33,11 +34,13 @@ DOMAIN_TABLES = {
         "thread_controls", "threads", "turn_inputs", "turn_order", "turn_project_files",
         "turns", "uploads",
         "sandbox_ownership",
+        "remote_obligations",
     }),
     "media": frozenset({
         "media_batches", "media_drafts", "media_job_executions", "media_job_outbox",
         "media_job_outputs", "media_jobs", "media_reference_assets", "media_reference_uploads",
         "media_voice_clones",
+        "media_source_permits",
     }),
     "sites": frozenset({
         "site_projects", "site_drafts", "site_draft_files", "site_deploy_jobs",
@@ -176,7 +179,8 @@ class DomainDatabase:
             raise ValueError("database_domain_invalid")
         self.domain, self.url = domain, url
         self.owned_tables = DOMAIN_TABLES[domain] | PROTOCOL_TABLES
-        self.tables = {name: table for metadata in (Base.metadata, AccountBase.metadata, OwnershipBase.metadata)
+        self.tables = {name: table for metadata in (Base.metadata, AccountBase.metadata,
+                       OwnershipBase.metadata, MediaAuthorityBase.metadata)
                        for name, table in metadata.tables.items() if name in DOMAIN_TABLES[domain]}
         self.tables.update(ProtocolBase.metadata.tables)
         self.engine = create_async_engine(url)
@@ -219,7 +223,8 @@ class DomainDatabase:
                     raise RuntimeError("database_schema_mismatch")
                 await connection.run_sync(self._check_shape)
                 return
-            for metadata in (Base.metadata, AccountBase.metadata, OwnershipBase.metadata):
+            for metadata in (Base.metadata, AccountBase.metadata, OwnershipBase.metadata,
+                             MediaAuthorityBase.metadata):
                 await connection.run_sync(lambda c, metadata=metadata: metadata.create_all(c,
                     tables=[table for name, table in metadata.tables.items() if name in DOMAIN_TABLES[self.domain]]))
             await connection.run_sync(ProtocolBase.metadata.create_all)
@@ -238,3 +243,8 @@ class DomainDatabase:
 
     async def close(self):
         await self.engine.dispose()
+
+    async def healthcheck(self):
+        async with self.connections() as session:
+            await session.execute(select(1))
+        return True

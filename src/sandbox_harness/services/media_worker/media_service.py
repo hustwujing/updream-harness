@@ -4,17 +4,19 @@ import asyncio
 import signal
 
 from sandbox_harness.common.configuration.config import (load_settings, validate_service_settings)
+from sandbox_harness.common.configuration.databases import (DatabaseSettings)
 from sandbox_harness.common.catalog.media_catalog import (MediaCatalog)
 from sandbox_harness.services.media_worker.media_worker import (MediaWorker)
 from sandbox_harness.common.storage.objects import (object_store)
 from sandbox_harness.common.observability.observability import (configure, event)
-from sandbox_harness.common.db.store import (Store)
+from sandbox_harness.common.db.media_repository import (MediaRepository)
 
 
 async def serve() -> None:
     settings = load_settings()
     validate_service_settings(settings)
-    store = Store(settings.database_url, settings.redis_url, settings.redis_prefix)
+    database_url = DatabaseSettings().for_service("media-worker")["media"]
+    store = MediaRepository(database_url)
     worker = MediaWorker(settings, store, object_store(settings), MediaCatalog(settings.media_catalog_json,
         ark_assets_configured=bool(settings.ark_access_key and settings.ark_secret_key
             and settings.ark_asset_group_id and settings.ark_project_name),

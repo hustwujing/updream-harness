@@ -194,3 +194,32 @@ async def test_sandbox_cleanup_has_one_claim_and_releases_capacity_after_commit(
         await pool.close()
         await core.close()
         await asyncio.gather(*(database.close() for database in remotes.values()))
+
+
+async def test_media_permit_dispatch_and_worker_claim_have_one_winner():
+    from sandbox_harness.common.db.media_repository import MediaRepository
+    identity = uuid4().hex
+    payload = {"dispatch_id":identity,"media_job_id":identity[:32],"source_job_id":uuid4().hex,
+        "source_generation":2,"request_digest":"a"*64,"owner_id":"owner","thread_id":uuid4().hex,
+        "kind":"image","model":"image/model","provider":"provider","adapter":"image_api",
+        "execution_mode":"async","cancellation_mode":"supported","parameters":{},"references":[],
+        "output_contracts":[{"role":"primary","mime_patterns":["image/*"],"max_item_bytes":1024}]}
+    repositories = [MediaRepository(URLS["media"]) for _ in range(8)]
+    try:
+        views = await asyncio.gather(*(repository.accept_source_job(payload) for repository in repositories))
+        assert {view.id for view in views} == {payload["media_job_id"]}
+        claims = await asyncio.gather(*(repository.claim_media_jobs("worker-" + str(index))
+                                      for index, repository in enumerate(repositories)))
+        claimed = [row for rows in claims for row in rows]
+        assert len(claimed) == 1
+        row = claimed[0]
+        owner = next("worker-" + str(index) for index, rows in enumerate(claims) if rows)
+        repository = repositories[int(owner.removeprefix("worker-"))]
+        begin, cancel = await asyncio.gather(
+            repository.media_cancel_requested(row["id"], owner, row["generation"], begin_submission=True),
+            repositories[-1].cancel_source_job(identity, payload["source_job_id"], 2),
+        )
+        assert begin in {True, False}
+        assert await repository.media_cancel_requested(row["id"], owner, row["generation"])
+    finally:
+        await asyncio.gather(*(repository.close() for repository in repositories))

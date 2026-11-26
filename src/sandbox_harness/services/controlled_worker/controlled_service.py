@@ -8,13 +8,14 @@ import time
 import threading
 
 from sandbox_harness.common.configuration.config import (Settings, load_settings)
+from sandbox_harness.common.configuration.databases import (DatabaseSettings)
 from sandbox_harness.services.controlled_worker.controlled_media_adapter import (ControlledMediaOperationAdapter)
 from sandbox_harness.common.execution.job_worker import (JobWorker)
 from sandbox_harness.common.scheduling.node_agent import (NodeAgent, discover_gpus)
 from sandbox_harness.common.storage.objects import (object_store)
 from sandbox_harness.common.observability.observability import (configure, event)
 from sandbox_harness.common.scheduling.scheduler import (NodeProfile, Scheduler)
-from sandbox_harness.common.db.store import (Store)
+from sandbox_harness.common.db.core import (CoreRepository)
 from sandbox_harness.services.controlled_worker.controlled_media_runner import (probe_controlled_gpu)
 
 
@@ -71,7 +72,10 @@ def validate_runtime(settings:Settings)->Path:
 
 async def serve(settings:Settings,*,stop_event:asyncio.Event|None=None)->None:
     if os.geteuid()!=0:raise RuntimeError('controlled_worker_requires_root')
-    runtime=validate_runtime(settings);store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    runtime=validate_runtime(settings)
+    database_url=DatabaseSettings().for_service("controlled-worker")["core"]
+    store=CoreRepository(database_url,settings.redis_url,settings.redis_prefix,
+        namespace=settings.namespace)
     objects=object_store(settings);scheduler=Scheduler(store)
     gpu_provider=ControlledGPUProvider(runtime,settings.data_root)
     adapter=ControlledMediaOperationAdapter(scheduler=scheduler,store=store,objects=objects,

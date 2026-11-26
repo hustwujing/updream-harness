@@ -9,13 +9,15 @@ import signal
 
 from sandbox_harness.services.allocation_worker.allocation_dispatch import (AllocationService)
 from sandbox_harness.common.configuration.config import (Settings, load_settings)
+from sandbox_harness.common.configuration.databases import (DatabaseSettings)
 from sandbox_harness.common.observability.observability import (configure)
 from sandbox_harness.common.sandbox.sandbox_factory import (build_sandbox_backend)
-from sandbox_harness.common.db.store import (Store)
+from sandbox_harness.common.db.core import (CoreRepository)
 
 
 async def serve(settings):
-    store=Store(settings.database_url);await store.initialize()
+    database_url=DatabaseSettings().for_service("allocation-worker")["core"]
+    store=CoreRepository(database_url,namespace=settings.namespace);await store.initialize()
     backend=build_sandbox_backend(settings)
     service=AllocationService(store,backend,lease_seconds=settings.allocation_lease_seconds)
     stop=asyncio.Event();loop=asyncio.get_running_loop()

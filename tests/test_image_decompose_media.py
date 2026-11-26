@@ -320,7 +320,7 @@ async def test_definitive_rejection_retries_without_adopting_other_task(tmp_path
     finally:await store.close()
 
 
-async def test_legacy_import_requires_recorded_exact_handle(tmp_path):
+async def test_legacy_native_handle_is_rejected_even_when_recorded(tmp_path):
     settings,store,objects,context=await setup(tmp_path)
     adapter=ImageDecomposeAdapter(settings,store,objects)
     try:
@@ -328,11 +328,8 @@ async def test_legacy_import_requires_recorded_exact_handle(tmp_path):
             await adapter.status(context,'unrelated-native-job')
         await store.record_job_acceptance(context.job.id,'worker',context.generation,
             external_execution_id='legacy-job',receipt={'external_id':'legacy-job'})
-        await adapter.status(context,'legacy-job')
-        job=(await store.claim_media_jobs('replacement'))[0]
-        assert job['provider_job_id']=='legacy-job' and job['phase']=='provider_polling'
-        with pytest.raises(RuntimeError,match='media_provider_identity_conflict'):
-            await adapter.status(context,'unrelated-native-job')
+        with pytest.raises(RuntimeError,match='unrecorded_media_execution_identity'):
+            await adapter.status(context,'legacy-job')
     finally:await store.close()
 
 
@@ -362,47 +359,6 @@ async def test_media_link_schema_upgrade_preserves_old_rows_and_is_idempotent(tm
         assert (await store.get_media_job(old.id,'owner')).id==old.id
         value=await ImageDecomposeAdapter(settings,store,objects).submit(context)
         assert value.external_execution_id!=old.id
-    finally:await store.close()
-
-
-@pytest.mark.parametrize('already_finalized',[False,True])
-async def test_legacy_partial_collection_keeps_original_artifact_identity(tmp_path,already_finalized):
-    import hashlib
-    from sandbox_harness.common.artifacts.artifact_gateway import (ArtifactEmission)
-    from sandbox_harness.services.media_worker.image_decompose_provider import (ImageDecomposeProvider)
-    from sandbox_harness.services.media_worker.media_worker import (MediaWorker)
-    settings,store,objects,context=await setup(tmp_path)
-    adapter=ImageDecomposeAdapter(settings,store,objects)
-    blue=png();stream=io.BytesIO();Image.new('RGB',(32,32),'red').save(stream,format='PNG')
-    payloads={'a':blue,'b':stream.getvalue()};previous=[];calls=[]
-    def handler(request):
-        calls.append(request.method);assert request.method=='GET'
-        if '/artifacts/' in request.url.path:return httpx.Response(200,content=payloads[request.url.path[-1]])
-        return httpx.Response(200,json={'status':'succeeded','artifacts':[
-            {'id':key,'name':key+'.png','media_type':'image/png'} for key in payloads]})
-    try:
-        await store.record_job_acceptance(context.job.id,'worker',context.generation,
-            external_execution_id='legacy-job',receipt={'external_id':'legacy-job'})
-        for position,(key,data) in enumerate(payloads.items()):
-            if position and not already_finalized:break
-            async def chunks():yield data
-            value=await adapter.artifacts.emit(ArtifactEmission(job_id=context.job.id,
-                generation=context.generation,artifact_role='layer_package',
-                item_key=hashlib.sha256(data).hexdigest()[:16],position=position,
-                filename=key+'.png',output_disposition=context.request.expected_outputs[0].output_disposition,
-                declared_mime='image/png'),chunks())
-            previous.append(value.artifact_id)
-        if already_finalized:
-            await store.finalize_job_artifact_collection(context.job.id,context.generation,'layer_package')
-        await adapter.status(context,'legacy-job')
-        provider=ImageDecomposeProvider(settings,objects,transport=httpx.MockTransport(handler))
-        worker=MediaWorker(settings,store,objects,None,external_providers={'image_layered_http':provider})
-        await worker.process((await store.claim_media_jobs(worker.owner))[0])
-        status=await adapter.status(context,'legacy-job')
-        result=await adapter.collect(context,'legacy-job',status)
-        assert [row['artifact_id'] for row in result['artifacts']][:len(previous)]==previous
-        assert len(await store.list_job_artifacts(context.job.id))==2
-        assert calls==['GET','GET','GET']
     finally:await store.close()
 
 

@@ -36,10 +36,13 @@ async def test_core_turn_terminalization_persists_media_notification_atomically(
 
 async def test_core_registration_refuses_active_turn_and_fences_new_admission(tmp_path):
     from sandbox_harness.common.db.core import CoreRepository
+    from sandbox_harness.common.db.domain_database import DomainDatabase
+    from sandbox_harness.common.db.handoff import DomainHandoff
     from sandbox_harness.common.db.lifecycle import LifecycleProposal
     core = CoreRepository("sqlite+aiosqlite:///" + str(tmp_path / "core.db"), namespace="ownership-test")
+    media = DomainDatabase("media", "sqlite+aiosqlite:///" + str(tmp_path / "media.db"))
     try:
-        await core.initialize()
+        await core.initialize(); await media.initialize()
         profile, thread = await create_thread(core)
         turn, _, _ = await core.create_turn(thread.id, TurnCreate(message="task", idempotency_key="core-turn"),
                                            profile, "owner")
@@ -47,6 +50,8 @@ async def test_core_registration_refuses_active_turn_and_fences_new_admission(tm
                                                {"accounts", "media", "sites"})
         assert result.state == "refused" and result.error_code == "active_work_prevents_registration"
         await core.set_turn_state(turn.id, TurnState.COMPLETED)
+        async def terminal(session,envelope):return {"status":"empty"}
+        await core.relay_remote({"media":DomainHandoff(media,{"media.turn.finished":terminal})})
         result = await core.coordinator.start(LifecycleProposal("idle", "owner", "", 0, "register", "open"),
                                                {"accounts", "media", "sites"})
         assert result.state == "pending"
@@ -55,7 +60,7 @@ async def test_core_registration_refuses_active_turn_and_fences_new_admission(tm
         with pytest.raises(RuntimeError, match="lifecycle_admission_blocked"):
             await create_thread(core)
     finally:
-        await core.close()
+        await core.close(); await media.close()
 
 
 async def test_empty_thread_archive_unarchive_and_delete_preserve_domain_fences(tmp_path):
@@ -113,3 +118,33 @@ async def test_core_terminal_state_rolls_back_when_notification_cannot_commit(tm
             assert list((await session.scalars(select(DomainOutbox))).all()) == []
     finally:
         await core.close()
+
+
+async def test_pending_remote_obligation_blocks_lifecycle_until_receipt(tmp_path):
+    from sandbox_harness.common.db.domain_database import DomainDatabase
+    from sandbox_harness.common.db.handoff import DomainHandoff
+    from sandbox_harness.common.db.lifecycle import LifecycleProposal
+    from sandbox_harness.common.db.core import CoreRepository
+    core = CoreRepository("sqlite+aiosqlite:///" + str(tmp_path / "core.db"), namespace="ownership-test")
+    media = DomainDatabase("media", "sqlite+aiosqlite:///" + str(tmp_path / "media.db"))
+
+    async def receive(session, envelope):
+        return {"accepted":True}
+
+    target = DomainHandoff(media, {"test.remote":receive})
+    try:
+        await core.initialize(); await media.initialize()
+        _, thread = await create_thread(core)
+        async with core.transaction() as session:
+            await core.enqueue_remote(session, command_id="remote-command", target="media",
+                kind="test.remote", aggregate_id=thread.id, owner_id="owner", thread_id=thread.id,
+                generation=0, payload={"thread_id":thread.id})
+        refused = await core.coordinator.start(LifecycleProposal(
+            "archive-blocked", "owner", thread.id, 0, "archive", "archived"), {"media"})
+        assert refused.state == "refused" and refused.error_code == "remote_obligations_pending"
+        await core.relay_remote({"media":target})
+        pending = await core.coordinator.start(LifecycleProposal(
+            "archive-ready", "owner", thread.id, 0, "archive", "archived"), {"media"})
+        assert pending.state == "pending"
+    finally:
+        await core.close(); await media.close()
