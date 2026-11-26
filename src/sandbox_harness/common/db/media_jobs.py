@@ -523,7 +523,7 @@ class MediaJobsTransactions:
             if isinstance(credits,(int,float)) and not isinstance(credits,bool) and credits>=0:
                 records.append(("provider-credits:"+job.id,"provider_credits",
                     round(float(credits)*1_000_000),"microcredit"))
-            for key,kind,amount,unit in records:
+            for key,kind,amount,unit in records if hasattr(self,"handoff") else ():
                 payload={"idempotency_key":key,"owner_id":job.owner_id,
                     "thread_id":job.thread_id,"turn_id":job.turn_id or "","job_id":job.id,
                     "kind":kind,"amount":amount,"unit":unit,"source":job.provider}
