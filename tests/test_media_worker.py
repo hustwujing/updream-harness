@@ -238,6 +238,22 @@ async def test_image_provider_failure_preserves_safe_http_and_business_code(monk
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(('requested','provider_size'),(
+    ('2560x1920','2K'),('3072x2048','3K'),('4096x4096','4K'),('3K','3K')))
+async def test_seedream_direct_model_uses_supported_size_tiers(monkeypatch,requested,provider_size):
+    value=worker();client=Client([Response({'data':[{'url':'https://result.test/image.png'}]})])
+    async def client_factory():return client
+    monkeypatch.setattr(value,'_client',client_factory)
+    monkeypatch.delenv('SANDBOX_HARNESS_ARK_IMAGE_MODEL_SEEDREAM_5_0',raising=False)
+    result=await value._ark_image({'id':'job','generation':1,'model':'seedream-5.0',
+        'parameters':{'prompt':'test','size':requested}})
+    payload=client.posts[0][1]['json']
+    assert result.status=='success'
+    assert payload['model']=='doubao-seedream-5-0-pro-260628'
+    assert payload['size']==provider_size
+
+
+@pytest.mark.asyncio
 async def test_image_rate_limit_is_deferred_with_stable_error(monkeypatch):
     value=worker();client=Client([Response({"error":{"code":"RateLimitExceeded"}},429)])
     async def client_factory():return client

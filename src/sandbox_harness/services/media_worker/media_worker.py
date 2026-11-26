@@ -400,14 +400,24 @@ class MediaWorker:
             return f"{direction}延长视频1。" + prompt
         return prompt
 
+    @staticmethod
+    def _seedream_size(value: str) -> str:
+        if value in {"2K", "3K", "4K"}:
+            return value
+        match=re.fullmatch(r"(\d+)x(\d+)",value)
+        if not match:
+            return value
+        longest=max(int(match.group(1)),int(match.group(2)))
+        return "2K" if longest<=2560 else "3K" if longest<=3584 else "4K"
+
     async def _ark_image(self, job: dict[str, Any]) -> ProviderResult:
         base = self.settings.upstream_image.rstrip("/")
         key = os.environ.get("SANDBOX_HARNESS_UPSTREAM_IMAGE_KEY", "")
         p = job["parameters"]
         model = {"seedream-5.0": os.environ.get("SANDBOX_HARNESS_ARK_IMAGE_MODEL_SEEDREAM_5_0",
-            "doubao-seedream-5-0-260128")}.get(job["model"], job["model"])
+            "doubao-seedream-5-0-pro-260628")}.get(job["model"], job["model"])
         payload = {"model": model, "prompt": p.get("prompt", ""), "response_format": "url",
-                   "size": p.get("size", "2048x2048"), "watermark": False}
+                   "size": self._seedream_size(p.get("size", "2048x2048")), "watermark": False}
         references = self._ordered_references(job)
         if references:
             urls = [await self._reference_url(item) for item in references]
