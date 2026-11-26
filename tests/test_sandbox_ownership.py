@@ -269,6 +269,113 @@ async def test_pool_persists_create_handle_and_binding_before_return(tmp_path):
         await core.close()
 
 
+async def test_pool_persists_retained_deadline_and_rebind_cancels_expiry(tmp_path):
+    from sandbox_harness.common.db.models import utc_datetime
+    from sandbox_harness.common.sandbox.pool import SandboxPool
+    core, ledger, backend, thread, _ = await setup_owned(tmp_path)
+    pool = SandboxPool(backend, {h: "image" for h in Harness}, {h: 0 for h in Harness},
+                       max_sandboxes=1, ownership=ledger)
+    try:
+        sandbox = await pool.acquire(thread_id=thread.id, turn_id="first", harness=Harness.CODEX,
+            environment={}, ownership_owner_id="owner")
+        identity = ledger.identity(sandbox.handle.provider, sandbox.handle.allocation_id)
+        before = now()
+        await pool.release(sandbox, keep_attached=True, keepalive_seconds=60)
+        retained = await ledger.get(identity)
+        assert retained["state"] == "RETAINED"
+        assert utc_datetime(retained["retained_until"]) >= before + timedelta(seconds=59)
+        assert thread.id not in pool._expiry
+
+        reused = await pool.acquire(thread_id=thread.id, turn_id="second", harness=Harness.CODEX,
+            environment={}, ownership_owner_id="owner")
+        assert reused is sandbox
+        rebound = await ledger.get(identity)
+        assert rebound["state"] == "LIVE" and rebound["retained_until"] is None
+        await pool.release(reused, keep_attached=False)
+    finally:
+        await pool.close()
+        await core.close()
+
+
+@pytest.mark.parametrize("failure_boundary", ["none", "capacity_release"])
+async def test_replacement_worker_reaps_expired_retained_sandbox(
+        tmp_path, monkeypatch, failure_boundary):
+    from sandbox_harness.common.db.ownership_models import SandboxOwnershipRow
+    from sandbox_harness.common.sandbox.ownership_cleanup import OwnershipCleanup
+    from sandbox_harness.common.sandbox.pool import SandboxPool
+    core, ledger, backend, thread, _ = await setup_owned(tmp_path)
+    old = SandboxPool(backend, {h: "image" for h in Harness}, {h: 0 for h in Harness},
+                      max_sandboxes=1, ownership=ledger)
+    replacement = None
+    try:
+        sandbox = await old.acquire(thread_id=thread.id, turn_id="first", harness=Harness.CODEX,
+            environment={}, ownership_owner_id="owner")
+        identity = ledger.identity(sandbox.handle.provider, sandbox.handle.allocation_id)
+        await old.release(sandbox, keep_attached=True, keepalive_seconds=60)
+        await old.close(preserve_sandbox_keys={old.sandbox_key(sandbox)})
+        async with core.transaction() as session:
+            await session.execute(update(SandboxOwnershipRow).where(SandboxOwnershipRow.id == identity)
+                .values(retained_until=now() - timedelta(seconds=1)))
+
+        replacement = SandboxPool(backend, {h: "image" for h in Harness}, {h: 0 for h in Harness},
+                                  max_sandboxes=1, ownership=ledger)
+        await replacement.restore_allocation_capacity(await ledger.capacity_obligations())
+        cleanup = OwnershipCleanup(ledger, backend, replacement)
+        if failure_boundary == "capacity_release":
+            original = replacement.forget_absent_allocation
+
+            async def fail_once(*args):
+                monkeypatch.setattr(replacement, "forget_absent_allocation", original)
+                raise ConnectionError("injected")
+
+            monkeypatch.setattr(replacement, "forget_absent_allocation", fail_once)
+            assert await cleanup.run_retained_once() == {"released": 0, "pending": 1}
+            assert sandbox.id not in backend.items
+            assert (await ledger.get(identity))["state"] == "ABSENT"
+            async with core.transaction() as session:
+                await session.execute(update(SandboxOwnershipRow).where(SandboxOwnershipRow.id == identity)
+                    .values(next_attempt_at=None, claim_expires_at=now() - timedelta(seconds=1)))
+
+        assert await cleanup.run_retained_once() == {"released": 1, "pending": 0}
+        assert sandbox.id not in backend.items
+        assert (await ledger.get(identity))["state"] == "RELEASED"
+        assert await ledger.capacity_obligations() == []
+        assert replacement._user_slots._value == 1
+    finally:
+        if not old._closed:
+            await old.close(preserve_sandbox_keys={old.sandbox_key(sandbox)} if 'sandbox' in locals() else set())
+        if replacement:
+            await replacement.close()
+        await core.close()
+
+
+async def test_expired_retention_claim_fences_same_thread_rebind(tmp_path):
+    from sandbox_harness.common.db.ownership_models import SandboxOwnershipRow
+    from sandbox_harness.common.sandbox.pool import SandboxPool
+    core, ledger, backend, thread, _ = await setup_owned(tmp_path)
+    pool = SandboxPool(backend, {h: "image" for h in Harness}, {h: 0 for h in Harness},
+                       max_sandboxes=1, ownership=ledger)
+    try:
+        sandbox = await pool.acquire(thread_id=thread.id, turn_id="first", harness=Harness.CODEX,
+            environment={}, ownership_owner_id="owner")
+        identity = ledger.identity(sandbox.handle.provider, sandbox.handle.allocation_id)
+        await pool.release(sandbox, keep_attached=True, keepalive_seconds=60)
+        async with core.transaction() as session:
+            await session.execute(update(SandboxOwnershipRow).where(SandboxOwnershipRow.id == identity)
+                .values(retained_until=now() - timedelta(seconds=1)))
+        claim = (await ledger.claim_retained_cleanup("cleaner"))[0]
+        with pytest.raises(RuntimeError, match="sandbox_retained_cleanup_claimed"):
+            await pool.acquire(thread_id=thread.id, turn_id="second", harness=Harness.CODEX,
+                environment={}, ownership_owner_id="owner")
+        await backend.delete(sandbox)
+        await ledger.confirm_absent(identity, "cleaner", claim["claim_generation"])
+        await pool.forget_absent_allocation(sandbox.handle.provider, sandbox.handle.allocation_id)
+        await ledger.confirm_capacity_released(identity, "cleaner", claim["claim_generation"])
+    finally:
+        await pool.close(preserve_sandbox_keys={pool.sandbox_key(sandbox)} if 'sandbox' in locals() else set())
+        await core.close()
+
+
 async def test_pool_warm_adoption_becomes_owned_before_thread_binding(tmp_path):
     from sandbox_harness.common.sandbox.pool import SandboxPool
     core, ledger, backend, thread, _ = await setup_owned(tmp_path)

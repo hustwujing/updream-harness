@@ -225,6 +225,45 @@ async def test_sandbox_cleanup_has_one_claim_and_releases_capacity_after_commit(
         await asyncio.gather(*(database.close() for database in remotes.values()))
 
 
+async def test_expired_retained_sandbox_has_one_cleanup_claim():
+    from sandbox_harness.common.catalog.catalog import HarnessCatalog
+    from sandbox_harness.common.contracts.domain import Harness, ThreadCreate
+    from sandbox_harness.common.contracts.sandbox_contracts import SandboxCreateRequest
+    from sandbox_harness.common.db.core import CoreRepository
+    from sandbox_harness.common.sandbox.sandbox import FakeSandboxBackend
+    identity = uuid4().hex
+    repositories = [CoreRepository(URLS["core"], namespace=identity) for _ in range(8)]
+    backend = FakeSandboxBackend(namespace=identity)
+    try:
+        await repositories[0].initialize()
+        profile = HarnessCatalog().resolve("codex", "gpt-5.6", "standard")
+        thread = await repositories[0].create_thread(
+            ThreadCreate(harness=Harness.CODEX, model=profile.model, title="retained"), profile, identity)
+        request = SandboxCreateRequest(harness=Harness.CODEX,
+            profile=backend.legacy_profile(Harness.CODEX, "image"), environment={},
+            ttl_seconds=300, allocation_id=identity)
+        key = await repositories[0].ownership.begin_create(identity, thread.id, request)
+        sandbox = await backend.create(request)
+        await repositories[0].ownership.record_handle(key, sandbox.handle)
+        await repositories[0].ownership.bind(
+            key, identity, thread.id, owner_generation=0, thread_generation=0)
+        await repositories[0].ownership.mark_retained(sandbox.handle, 0)
+
+        claims = await asyncio.gather(*(repository.ownership.claim_retained_cleanup(
+            "cleaner-" + str(index)) for index, repository in enumerate(repositories)))
+        claimed = [row for rows in claims for row in rows]
+        assert len(claimed) == 1
+        claim = claimed[0]
+        await backend.delete(sandbox)
+        winner = next(repository for repository, rows in zip(repositories, claims) if rows)
+        owner = claim["claim_owner"]
+        await winner.ownership.confirm_absent(key, owner, claim["claim_generation"])
+        await winner.ownership.confirm_capacity_released(key, owner, claim["claim_generation"])
+        assert await winner.ownership.capacity_obligations() == []
+    finally:
+        await asyncio.gather(*(repository.close() for repository in repositories))
+
+
 async def test_media_permit_dispatch_and_worker_claim_have_one_winner():
     from sandbox_harness.common.db.media_repository import MediaRepository
     identity = uuid4().hex

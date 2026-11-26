@@ -34,7 +34,7 @@ class SandboxOwnership:
             return None
         result = {name: getattr(row, name) for name in ("id", "namespace", "provider", "allocation_id",
             "owner_id", "thread_id", "profile_key", "state", "operation_id", "claim_owner", "claim_generation",
-            "claim_expires_at", "error_code", "request_json")}
+            "claim_expires_at", "retained_until", "error_code", "request_json")}
         result["handle"] = json.loads(row.handle_json) if row.handle_json else None
         return result
 
@@ -160,9 +160,34 @@ class SandboxOwnership:
             if (row.owner_generation != version.owner_generation
                     or row.thread_generation != version.thread_generation):
                 raise RuntimeError("sandbox_ownership_generation_stale")
+            if (row.claim_owner and row.claim_expires_at is not None
+                    and utc_datetime(row.claim_expires_at) > now()):
+                raise RuntimeError("sandbox_retained_cleanup_claimed")
             row.state = "LIVE"
+            row.retained_until = None
+            row.next_attempt_at = None
+            row.claim_owner, row.claim_expires_at = "", None
             row.updated_at = now()
             return SandboxHandle.from_mapping(json.loads(row.handle_json))
+
+    async def mark_retained(self, handle: SandboxHandle, keepalive_seconds: int):
+        if not 0 <= keepalive_seconds <= 86400:
+            raise ValueError("sandbox_retention_invalid")
+        identity = self.identity(handle.provider, handle.allocation_id)
+        async with self.core.transaction() as db:
+            row = await db.get(SandboxOwnershipRow, identity, with_for_update=True)
+            if (row is None or row.namespace != self.namespace
+                    or row.handle_json != canonical_json(handle.to_mapping())):
+                raise ValueError("sandbox_ownership_handle_conflict")
+            if row.state not in {"LIVE", "RETAINED"}:
+                raise RuntimeError("sandbox_retention_state_conflict")
+            timestamp = now()
+            row.state = "RETAINED"
+            row.retained_until = timestamp + timedelta(seconds=keepalive_seconds)
+            row.next_attempt_at = None
+            row.error_code = ""
+            row.updated_at = timestamp
+            return row.retained_until
 
     async def mark_delete_pending(self, handle: SandboxHandle):
         identity = self.identity(handle.provider, handle.allocation_id)
@@ -172,8 +197,12 @@ class SandboxOwnership:
                 return False
             if row.handle_json != canonical_json(handle.to_mapping()):
                 raise ValueError("sandbox_ownership_handle_conflict")
+            if (row.claim_owner and row.claim_expires_at is not None
+                    and utc_datetime(row.claim_expires_at) > now()):
+                raise RuntimeError("sandbox_retained_cleanup_claimed")
             if row.state != "RELEASED":
                 row.state = "DELETE_PENDING"
+                row.retained_until = None
                 row.updated_at = now()
             return True
 
@@ -191,6 +220,7 @@ class SandboxOwnership:
                 row.absent_confirmed_at = row.absent_confirmed_at or timestamp
                 row.capacity_released_at = timestamp
                 row.claim_owner, row.claim_expires_at = "", None
+                row.retained_until, row.next_attempt_at = None, None
                 row.updated_at = timestamp
                 await self.core._record_usage_locked(db,idempotency_key="sandbox:"+row.id,
                     owner_id=row.owner_id,thread_id=row.thread_id,turn_id="",job_id="",
@@ -260,6 +290,33 @@ class SandboxOwnership:
                 row.updated_at = now()
             return [self._view(row) for row in rows]
 
+    async def claim_retained_cleanup(self, owner, *, limit=16, lease_seconds=30):
+        if not owner or not 1 <= limit <= 100 or not 1 <= lease_seconds <= 300:
+            raise ValueError("sandbox_cleanup_claim_invalid")
+        timestamp = now()
+        async with self.core.transaction() as db:
+            rows = (await db.scalars(select(SandboxOwnershipRow).where(
+                SandboxOwnershipRow.namespace == self.namespace,
+                or_(
+                    (SandboxOwnershipRow.state == "RETAINED")
+                    & SandboxOwnershipRow.retained_until.is_not(None)
+                    & (SandboxOwnershipRow.retained_until <= timestamp),
+                    (SandboxOwnershipRow.state == "ABSENT")
+                    & (SandboxOwnershipRow.operation_id == "")
+                    & SandboxOwnershipRow.capacity_released_at.is_(None),
+                ),
+                or_(SandboxOwnershipRow.claim_expires_at.is_(None),
+                    SandboxOwnershipRow.claim_expires_at <= timestamp),
+                or_(SandboxOwnershipRow.next_attempt_at.is_(None),
+                    SandboxOwnershipRow.next_attempt_at <= timestamp))
+                .order_by(SandboxOwnershipRow.created_at).limit(limit).with_for_update(
+                    of=SandboxOwnershipRow, skip_locked=True))).all()
+            for row in rows:
+                row.claim_owner, row.claim_generation = owner, row.claim_generation + 1
+                row.claim_expires_at = timestamp + timedelta(seconds=lease_seconds)
+                row.updated_at = timestamp
+            return [self._view(row) for row in rows]
+
     async def _claimed(self, db, identity, owner, generation):
         row = await db.get(SandboxOwnershipRow, identity, with_for_update=True)
         if (row is None or row.namespace != self.namespace or row.claim_owner != owner
@@ -273,9 +330,10 @@ class SandboxOwnership:
             row = await self._claimed(db, identity, owner, generation)
             if not row.handle_json:
                 raise RuntimeError("sandbox_absence_not_proven")
-            if row.state not in {"DELETE_PENDING", "ABSENT"}:
+            if row.state not in {"DELETE_PENDING", "RETAINED", "ABSENT"}:
                 raise RuntimeError("sandbox_cleanup_state_conflict")
             row.state, row.absent_confirmed_at, row.updated_at = "ABSENT", row.absent_confirmed_at or now(), now()
+            row.retained_until = None
 
     async def confirm_capacity_released(self, identity, owner, generation):
         async with self.core.transaction() as db:
@@ -285,6 +343,7 @@ class SandboxOwnership:
             timestamp=now()
             row.state, row.capacity_released_at, row.updated_at = "RELEASED", timestamp, timestamp
             row.claim_owner, row.claim_expires_at = "", None
+            row.retained_until, row.next_attempt_at = None, None
             await self.core._record_usage_locked(db,idempotency_key="sandbox:"+row.id,
                 owner_id=row.owner_id,thread_id=row.thread_id,turn_id="",job_id="",
                 kind="sandbox_seconds",amount=max(0,int((timestamp-

@@ -83,3 +83,9 @@ class OwnershipCleanup:
                                                 lease_seconds=self.lease_seconds)
         results = await asyncio.gather(*(self._one(claim) for claim in claims))
         return {"released": sum(results), "pending": len(results) - sum(results)}
+
+    async def run_retained_once(self):
+        claims = await self.ledger.claim_retained_cleanup(self.owner, limit=self.concurrency,
+                                                         lease_seconds=self.lease_seconds)
+        results = await asyncio.gather(*(self._one(claim) for claim in claims))
+        return {"released": sum(results), "pending": len(results) - sum(results)}

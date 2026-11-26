@@ -96,6 +96,7 @@ class PlatformWorker:
                 await self.store.relay_pending()
                 await self.store.advance_lifecycle_operations()
                 await cleanup.run_once()
+                await cleanup.run_retained_once()
                 delay=self.settings.supervisor_retry_initial_seconds
             except asyncio.CancelledError:raise
             except Exception as exc:

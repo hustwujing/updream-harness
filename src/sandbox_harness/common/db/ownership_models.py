@@ -29,6 +29,7 @@ class SandboxOwnershipRow(OwnershipBase):
     claim_owner: Mapped[str] = mapped_column(String(64), default="")
     claim_generation: Mapped[int] = mapped_column(Integer, default=0)
     claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retained_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_code: Mapped[str] = mapped_column(String(80), default="")
     attempts: Mapped[int] = mapped_column(Integer, default=0)

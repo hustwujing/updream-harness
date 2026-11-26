@@ -646,14 +646,17 @@ class SandboxPool:
                 if self._attached.get(sandbox.thread_id) is not sandbox:
                     return
                 if keep_attached:
+                    if self.ownership:
+                        await self.ownership.mark_retained(sandbox.handle, keepalive_seconds)
                     self._attached[sandbox.thread_id] = sandbox
                     previous = self._expiry.pop(sandbox.thread_id, None)
                     if previous:
                         previous.cancel()
-                    self._expiry[sandbox.thread_id] = asyncio.create_task(
-                        self._expire(sandbox.thread_id, sandbox, keepalive_seconds),
-                        name="sandbox-expire-" + sandbox.thread_id,
-                    )
+                    if not self.ownership:
+                        self._expiry[sandbox.thread_id] = asyncio.create_task(
+                            self._expire(sandbox.thread_id, sandbox, keepalive_seconds),
+                            name="sandbox-expire-" + sandbox.thread_id,
+                        )
                     self._idle_since[sandbox.thread_id] = time.monotonic()
                     self._capacity_changed.set()
                     return
