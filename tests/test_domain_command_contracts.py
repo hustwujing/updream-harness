@@ -54,6 +54,31 @@ def test_command_payload_and_receipt_are_exact_typed_contracts():
         validate_command_result("lifecycle.prepare", {"prepared": "yes", "error_code": ""})
 
 
+def test_media_source_authorize_accepts_provider_without_generation_mode():
+    from sandbox_harness.common.contracts.domain_commands import validate_command_payload
+
+    contract = validate_command_payload("media.source.authorize", "core", "media", {
+        "dispatch_id": "d" * 64,
+        "media_job_id": "m" * 32,
+        "source_job_id": "j" * 32,
+        "source_generation": 1,
+        "request_digest": "a" * 64,
+        "owner_id": "owner",
+        "thread_id": "t" * 32,
+        "kind": "image",
+        "model": "qwen-image-layered",
+        "generation_mode": "",
+        "provider": "local-qwen-layered",
+        "adapter": "image_layered_http",
+        "execution_mode": "async",
+        "cancellation_mode": "supported",
+        "parameters": {},
+        "references": [],
+        "output_contracts": [{"role": "layer_package"}],
+    })
+    assert contract.kind == "media.source.authorize"
+
+
 async def test_invalid_command_fails_before_outbox_insert(tmp_path):
     from sandbox_harness.common.db.handoff import DomainHandoff
 

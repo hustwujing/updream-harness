@@ -234,6 +234,21 @@ async def test_pre_accept_failure_preserves_stable_domain_error_code(tmp_path):
     finally:await store.close()
 
 
+async def test_domain_payload_rejection_before_outbox_is_not_unknown_submission(tmp_path):
+    from sandbox_harness.common.contracts.domain_commands import DomainCommandPayloadError
+    store,_,job=await setup(tmp_path,request(kind=JobKind.OPERATION))
+    adapter=FakeAdapter([DomainCommandPayloadError("domain_command_payload_invalid")])
+    worker=JobWorker(store,{'fake':adapter},node_id='node',concurrency=1,worker_id='worker')
+    try:
+        assert await worker.run_once()==1
+        failed=await store.get_job(job.id)
+        assert failed.state==JobState.FAILED
+        assert failed.result['error_code']=='operation_start_failed'
+        assert failed.result['side_effect_state']=='none'
+        assert await store.latest_job_acceptance(job.id) is None
+    finally:await store.close()
+
+
 async def test_semantic_no_target_failure_never_retries_frozen_selector(tmp_path):
     store,_,job=await setup(tmp_path,request(kind=JobKind.OPERATION,
         retry_policy={'max_pre_accept_attempts':5,'deterministic':True}))

@@ -8,6 +8,7 @@ from datetime import datetime,timezone
 
 import httpx
 
+from sandbox_harness.common.contracts.domain_commands import DomainCommandValidationError
 from sandbox_harness.common.execution.job_adapters import (AdapterStatus, ExternalJobFailure, JobAdapter, JobExecutionContext, PreAcceptCancelled, PreAcceptFailure, SubmissionOutcomeUnknown, AllocationRecoveryRequired)
 from sandbox_harness.common.contracts.job_contracts import (JobKind, JobState, TERMINAL_JOB_STATES)
 from sandbox_harness.common.contracts.job_errors import (ArtifactCollectionCardinalityError, ArtifactValidationError, normalize_job_error)
@@ -381,6 +382,14 @@ class JobWorker:
                     return
                 except JobDeadlineExceeded:
                     raise
+                except DomainCommandValidationError as exc:
+                    await self.store.finish_pre_accept_attempt(job.id,self.worker_id,
+                        attempt.generation,retry=False,error_code="operation_start_failed",
+                        error_detail=type(exc).__name__)
+                    event('job.submission.contract_rejected',level=40,job_id=job.id,
+                        worker_id=self.worker_id,generation=attempt.generation,
+                        error_code='operation_start_failed',exception_type=type(exc).__name__)
+                    return
                 except Exception as exc:
                     deterministic = bool(request.retry_policy.get("deterministic"))
                     if request.kind == JobKind.OPERATION and deterministic:

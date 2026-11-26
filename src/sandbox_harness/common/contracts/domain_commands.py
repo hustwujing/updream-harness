@@ -13,6 +13,14 @@ class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
 
+class DomainCommandValidationError(ValueError):
+    """A deterministic command-contract rejection before handler effects."""
+
+
+class DomainCommandPayloadError(DomainCommandValidationError):
+    pass
+
+
 class LifecycleCommand(_StrictModel):
     operation_id: str = Field(pattern=r"^[A-Za-z0-9_.:-]{1,64}$")
     owner_id: str = Field(pattern=r"^[A-Za-z0-9_.:-]{1,64}$")
@@ -75,7 +83,7 @@ class MediaSourceAuthorize(_StrictModel):
     thread_id: str = Field(min_length=1, max_length=32)
     kind: Literal["image", "video", "audio", "model3d"]
     model: str = Field(min_length=1, max_length=160)
-    generation_mode: str = Field(min_length=1, max_length=80)
+    generation_mode: str = Field(max_length=80)
     provider: str = Field(min_length=1, max_length=80)
     adapter: str = Field(min_length=1, max_length=80)
     execution_mode: Literal["sync", "async"]
@@ -114,7 +122,7 @@ class MediaTurnDraft(MediaTurnScope):
     draft_id: str = Field(min_length=1, max_length=32)
     kind: Literal["image", "video", "audio", "model3d"]
     model: str = Field(min_length=1, max_length=160)
-    generation_mode: str = Field(min_length=1, max_length=80)
+    generation_mode: str = Field(max_length=80)
     parameters: dict[str, Any]
     references: list[dict[str, Any]] = Field(max_length=15)
     idempotency_key: str = Field(min_length=8, max_length=160)
@@ -227,11 +235,11 @@ class DomainCommandContract:
 
     def validate_payload(self, source: str, target: str, payload: dict) -> None:
         if source != self.source or target not in self.targets:
-            raise ValueError("domain_command_route_invalid")
+            raise DomainCommandValidationError("domain_command_route_invalid")
         try:
             self.payload_model.model_validate(payload)
         except (ValidationError, TypeError, ValueError) as exc:
-            raise ValueError("domain_command_payload_invalid") from exc
+            raise DomainCommandPayloadError("domain_command_payload_invalid") from exc
 
     def validate_result(self, result: dict) -> None:
         try:
@@ -267,7 +275,7 @@ def validate_command_payload(kind: str, source: str, target: str, payload: dict,
                              *, contracts=None) -> DomainCommandContract:
     contract = (contracts or DOMAIN_COMMAND_CONTRACTS).get(kind)
     if contract is None:
-        raise ValueError("handoff_kind_unsupported")
+        raise DomainCommandValidationError("handoff_kind_unsupported")
     contract.validate_payload(source, target, payload)
     return contract
 
