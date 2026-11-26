@@ -309,6 +309,15 @@ def test_ali_image_decompose_service_is_materialized_under_data2():
     assert "unexpected_project_root" in source
 
 
+def test_image_inference_launch_requires_selected_external_release():
+    runner=(ROOT/"deploy/ali/run-service.sh").read_text()
+    start=(ROOT/"deploy/ali/start.sh").read_text()
+    assert '.data/release-tools/image_inference_release.py' in runner
+    assert 'image_inference_release.py" resolve' in runner
+    assert 'command=("$image_python" -m uvicorn' in runner
+    assert "image_inference_release" in start
+
+
 def test_ali_service_runner_uses_only_ali_environment_and_logs():
     source=(ROOT/"deploy/ali/run-service.sh").read_text()
     assert ".data/config/platform.env" in source

@@ -65,11 +65,16 @@ case "$component" in
     command=("$release_python" -m sandbox_harness.services.sandbox_gateway.gateway)
     ;;
   image-inference)
-    service_root="$root/.data/services/image-layered"
+    mapfile -t image_release < <(/data/wujing03/miniforge3/bin/python \
+      "$root/.data/release-tools/image_inference_release.py" resolve --data-root "$root/.data")
+    [[ ${#image_release[@]} -eq 3 && -x "${image_release[0]}" && -d "${image_release[1]}" ]] || {
+      echo "invalid selected image-inference release" >&2; exit 1; }
+    image_python=${image_release[0]};service_root=${image_release[1]}
+    export SANDBOX_HARNESS_RELEASE=${image_release[2]}
     [[ -f "$service_root/service/app.py" ]] || { echo "image decompose service is not materialized" >&2; exit 1; }
     "$root/.venv/bin/python" "$root/deploy/ali/isolate-image-service.py"
     export PYTHONPATH="$service_root:${PYTHONPATH:-}"
-    command=(/data/wujing03/miniforge3/envs/media-foundation/bin/python -m uvicorn
+    command=("$image_python" -m uvicorn
       service.app:app --host 127.0.0.1 --port 8912 --no-access-log)
     ;;
   job-worker) command=("$release_python" -m sandbox_harness.services.job_worker.job_service) ;;

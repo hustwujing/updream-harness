@@ -13,7 +13,7 @@ set +a
 
 release_tools="$root/.data/release-tools"
 install -d -o root -g root -m 0755 "$release_tools"
-for tool in service_release build_module module_manifest module_boundaries; do
+for tool in service_release image_inference_release build_module module_manifest module_boundaries; do
   install -o root -g root -m 0444 "$root/tools/$tool.py" "$release_tools/$tool.py"
 done
 
