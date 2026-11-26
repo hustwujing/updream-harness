@@ -100,6 +100,15 @@ def test_continuation_protocols_wait_for_state_instead_of_fixed_sleep():
     assert "await wait_jobs(client,committed['jobs'],1200);await asyncio.sleep(3)" not in source
 
 
+def test_provider_coverage_reads_media_identity_from_media_database():
+    source=(ROOT/'tests/run_real_parallel_protocol.py').read_text()
+    block=source[source.index('async def verify_provider_coverage'):
+        source.index('async def wait_provider_coverage')]
+    assert 'media_store=media_repository(settings)' in block
+    assert 'await media_store.get_media_job(external_id,owner)' in block
+    assert 'await store.get_media_job' not in block
+
+
 def test_primary_decision_protocol_stops_after_terminal_model_failure():
     source=(ROOT/'tests/run_real_parallel_protocol.py').read_text()
     block=source[source.index('async def case_p23'):source.index('async def case_p24')]

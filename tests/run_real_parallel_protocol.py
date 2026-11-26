@@ -22,6 +22,7 @@ from dotenv import dotenv_values
 
 from sandbox_harness.common.configuration.databases import DatabaseSettings
 from sandbox_harness.common.db.core import CoreRepository
+from sandbox_harness.common.db.media_repository import MediaRepository
 
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -34,6 +35,11 @@ def core_repository(settings):
     database=DatabaseSettings().for_service("api")["core"]
     return CoreRepository(database,settings.redis_url,settings.redis_prefix,
                           namespace=settings.namespace)
+
+
+def media_repository(settings):
+    database=DatabaseSettings().for_service("media-worker")["media"]
+    return MediaRepository(database)
 
 
 def service_unit(args,role:str)->str:
@@ -388,7 +394,7 @@ async def verify_provider_coverage(thread_id:str,jobs:list[dict],expected:dict[s
     settings=load_platform_settings()
     from sqlalchemy import select
     from test_support.legacy_store import (JobAttemptRow, Store)
-    store=core_repository(settings)
+    store=core_repository(settings);media_store=media_repository(settings)
     evidence={}
     try:
         owner=(await store.get_thread(thread_id)).owner_id
@@ -406,7 +412,7 @@ async def verify_provider_coverage(thread_id:str,jobs:list[dict],expected:dict[s
             external_ids={row.external_execution_id for row in attempts if row.external_execution_id}
             if len(external_ids)!=1:
                 raise AssertionError('provider external identity count:'+job['local_job_id'])
-            external_id=next(iter(external_ids));media=await store.get_media_job(external_id,owner)
+            external_id=next(iter(external_ids));media=await media_store.get_media_job(external_id,owner)
             if not media:raise AssertionError('provider MediaJob missing:'+job['local_job_id'])
             actual=(media.adapter,media.model,media.generation_mode)
             wanted=(spec['adapter'],spec['model'],spec['mode'])
@@ -421,7 +427,8 @@ async def verify_provider_coverage(thread_id:str,jobs:list[dict],expected:dict[s
                 'capability':request.descriptor_id,'adapter':media.adapter,'model':media.model,
                 'mode':media.generation_mode,'artifact_ids':[row.artifact_id for row in artifacts]}
         return {'classification':'success','evidence':evidence}
-    finally:await store.close()
+    finally:
+        await store.close();await media_store.close()
 
 
 async def wait_provider_coverage(client,jobs,timeout):
