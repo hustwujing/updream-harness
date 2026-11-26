@@ -13,7 +13,7 @@ from sqlalchemy import select, or_, func
 from sandbox_harness.common.contracts.domain import (Harness, now)
 from sandbox_harness.common.execution.job_adapters import (PreAcceptCancelled, AllocationRecoveryRequired)
 from sandbox_harness.common.contracts.job_contracts import (JobState, TERMINAL_JOB_STATES)
-from sandbox_harness.common.observability.observability import (event)
+from sandbox_harness.common.observability.observability import (business_metric, event)
 from sandbox_harness.common.contracts.sandbox_contracts import (Sandbox, SandboxCreateRequest, SandboxHandle, SandboxProfile, SandboxScope, SandboxCapacityUnavailable, SandboxRateLimited, SandboxAuthenticationFailed, SandboxProfileUnavailable, SandboxCreateOutcomeUnknown, SandboxProviderError)
 from sandbox_harness.common.db.models import (JobRow, JobLeaseRow, JobAttemptRow, JobCleanupRow,
                                               SandboxAllocationRow, utc_datetime)
@@ -66,6 +66,7 @@ class AllocationService:
                     row.claim_expires_at=now()+timedelta(seconds=self.lease_seconds)
         task=asyncio.create_task(heartbeat())
         started=asyncio.get_running_loop().time()
+        metric_outcome='unknown'
         event('sandbox.allocation.create.started',allocation_id=identity,job_id=value['job_id'],
             generation=value['job_generation'],provider=self.backend.provider,state_before='PENDING',
             state_after='SENDING')
@@ -76,18 +77,21 @@ class AllocationService:
                     or sandbox.compatibility_key!=request.profile.compatibility_key):
                 raise RuntimeError('sandbox_allocation_identity_mismatch')
             await self._finish(identity,'READY',handle=sandbox.handle)
+            metric_outcome='success'
             event('sandbox.allocation.create.completed',allocation_id=identity,
                 job_id=value['job_id'],generation=value['job_generation'],provider=self.backend.provider,
                 sandbox_id=sandbox.id,state_after='READY',outcome='success',
                 duration_ms=round((asyncio.get_running_loop().time()-started)*1000,3))
         except tuple(REJECTIONS.values()) as exc:
             await self._finish(identity,'REJECTED',error_code=exc.code)
+            metric_outcome='rejected'
             event('sandbox.allocation.create.rejected',level=30,allocation_id=identity,
                 job_id=value['job_id'],generation=value['job_generation'],provider=self.backend.provider,
                 state_after='REJECTED',outcome='rejected',error_code=exc.code,exc=exc,
                 duration_ms=round((asyncio.get_running_loop().time()-started)*1000,3))
         except asyncio.CancelledError:
             await asyncio.shield(self._finish(identity,'UNKNOWN'))
+            metric_outcome='cancelled'
             event('sandbox.allocation.create.unknown',level=30,allocation_id=identity,
                 job_id=value['job_id'],generation=value['job_generation'],provider=self.backend.provider,
                 state_after='UNKNOWN',outcome='cancelled');raise
@@ -98,6 +102,9 @@ class AllocationService:
                 state_after='UNKNOWN',outcome='unknown',exc=exc,
                 duration_ms=round((asyncio.get_running_loop().time()-started)*1000,3))
         finally:
+            business_metric('updream.sandbox.create.duration',
+                (asyncio.get_running_loop().time()-started)*1000,
+                provider=self.backend.provider,outcome=metric_outcome)
             task.cancel();await asyncio.gather(task,return_exceptions=True)
 
     async def _expire_creates(self):
@@ -166,6 +173,7 @@ class AllocationService:
 
     async def _reconcile(self,value):
         request=decode_request(value['request_json']);handle=None;error_code='allocation_not_visible'
+        started=asyncio.get_running_loop().time()
         event('sandbox.allocation.reconcile.started',allocation_id=value['id'],job_id=value['job_id'],
             generation=value['job_generation'],provider=self.backend.provider,
             retry_count=value['reconcile_attempts'],state_before='UNKNOWN')
@@ -194,6 +202,9 @@ class AllocationService:
             generation=value['job_generation'],provider=self.backend.provider,
             retry_count=value['reconcile_attempts'],state_after='READY' if handle else 'UNKNOWN',
             outcome='success' if handle else 'deferred',error_code='' if handle else error_code)
+        business_metric('updream.sandbox.reconciliation.duration',
+            (asyncio.get_running_loop().time()-started)*1000,provider=self.backend.provider,
+            outcome='success' if handle else 'deferred')
 
     async def reconcile_once(self,limit=8):
         await self._expire_creates()

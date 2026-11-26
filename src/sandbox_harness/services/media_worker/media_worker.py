@@ -28,7 +28,7 @@ from sandbox_harness.services.media_worker.image_decompose_provider import (Imag
 from sandbox_harness.services.media_worker.media_errors import (classify_provider_error)
 from sandbox_harness.services.media_worker.media_reference_publisher import (MediaReferencePreparationError, MediaReferencePublisher)
 from sandbox_harness.services.media_worker.minimax_voice import (MiniMaxVoiceCloneError, MiniMaxVoiceClonePending, MiniMaxVoiceClones)
-from sandbox_harness.common.observability.observability import (event)
+from sandbox_harness.common.observability.observability import (business_metric, event)
 from sandbox_harness.common.observability.http import (observed_async_client)
 from sandbox_harness.common.storage.objects import (ObjectStore, S3ObjectStore)
 from sandbox_harness.common.security.network import (normalize_host, public_address)
@@ -153,7 +153,7 @@ class MediaWorker:
             task.cancel();await asyncio.gather(task,return_exceptions=True)
 
     async def _process_claimed(self, job: dict[str, Any]) -> None:
-        stage = "claimed"
+        stage = "claimed";provider_started=None;provider_metric_outcome=""
         try:
             if job.get("source_job_id") and await self.store.media_cancel_requested(
                     job["id"],self.owner,job["generation"]):
@@ -175,8 +175,11 @@ class MediaWorker:
                 phase="provider_polling" if job.get("provider_job_id") else (
                     "preparing_voice_clone" if job.get("references") and job.get("adapter") == "minimax_t2a"
                     else "preparing_references" if job.get("references") else "requesting"))
+            provider_started=time.monotonic()
             result=(ProviderResult(**job["provider_result"]) if job.get("provider_result")
                 else await self._execute(job))
+            provider_phase="poll" if job.get("provider_job_id") else "submit"
+            provider_metric_outcome=result.status
             if job.get("source_job_id") and await self.store.media_cancel_requested(
                     job["id"],self.owner,job["generation"]):
                 provider=self.external_providers.get(job["adapter"])
@@ -319,6 +322,15 @@ class MediaWorker:
                     error_code="worker_error", error_detail=f"{stage}:{type(exc).__name__}")
                 event("media.job.unknown", level=40, job_id=job["id"], provider=job["provider"], model=job["model"],
                     failure_stage=stage, exc=exc)
+        finally:
+            if provider_started is not None:
+                provider_phase="poll" if job.get("provider_job_id") else "submit"
+                outcome=provider_metric_outcome or "failed"
+                business_metric('updream.provider.operation.count',1,provider=job["provider"],
+                    phase=provider_phase,outcome=outcome)
+                business_metric('updream.provider.operation.duration',
+                    (time.monotonic()-provider_started)*1000,provider=job["provider"],
+                    phase=provider_phase,outcome=outcome)
 
     async def _cancel_external(self,job:dict)->None:
         provider=self.external_providers.get(job["adapter"])

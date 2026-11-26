@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sandbox_harness.common.observability.observability import (observed, event, enrich, carrier, add_link, telemetry, failure_origin)
+from sandbox_harness.common.observability.observability import (observed, event, enrich, carrier, add_link, business_metric, telemetry, failure_origin)
 from sandbox_harness.common.observability.http import (observed_async_client)
 
 import asyncio
@@ -949,6 +949,9 @@ class Broker:
                         if recovered_result is None:
                             raise RuntimeError("Runtime recovery stream ended without a result")
                 else:
+                    if turn.state==TurnState.QUEUED:
+                        business_metric('updream.turn.queue.duration',
+                            max(0,(now()-turn.created_at).total_seconds()*1000),outcome='started')
                     await self._state(turn.id, TurnState.RESTORING)
                     sandbox = await self.pool.acquire(
                         thread_id=thread.id,

@@ -51,6 +51,23 @@ BUSINESS = BUSINESS_FIELDS
 STANDARD = STANDARD_FIELDS
 EVENT = re.compile(r'^[a-z][a-z0-9_.-]{0,119}$')
 
+BUSINESS_METRICS={
+    'updream.turn.queue.duration':('histogram','ms',('outcome',)),
+    'updream.turn.first_output.duration':('histogram','ms',('harness',)),
+    'updream.sandbox.create.duration':('histogram','ms',('provider','outcome')),
+    'updream.sandbox.capacity_wait.duration':('histogram','ms',('provider','outcome')),
+    'updream.sandbox.reconciliation.duration':('histogram','ms',('provider','outcome')),
+    'updream.job.stage.duration':('histogram','ms',('stage','outcome','kind')),
+    'updream.job.stage.count':('counter','{transition}',('stage','outcome','kind')),
+    'updream.outbox.lag':('histogram','ms',('target','state')),
+    'updream.outbox.backlog':('histogram','{message}',('target','state')),
+    'updream.outbox.delivery.count':('counter','{delivery}',('target','outcome')),
+    'updream.provider.operation.duration':('histogram','ms',('provider','phase','outcome')),
+    'updream.provider.operation.count':('counter','{operation}',('provider','phase','outcome')),
+    'updream.artifact.delivery.duration':('histogram','ms',('phase','outcome')),
+    'updream.artifact.delivery.count':('counter','{artifact}',('phase','outcome')),
+}
+
 DESCRIPTIONS = {
     'turn.accepted':'Turn accepted; duplicate submissions reuse the existing Turn',
     'turn.lease.claimed':'Broker acquired the fenced processing lease',
@@ -401,6 +418,11 @@ class Telemetry:
             unit='ms',description='Application operation duration')
         self.telemetry_conditions=meter.create_counter('updream.telemetry.condition',
             unit='{event}',description='Application telemetry health conditions')
+        self.business_metrics={name:(meter.create_counter(name,unit=unit,
+            description='Bounded application business transitions') if kind=='counter'
+            else meter.create_histogram(name,unit=unit,
+                description='Bounded application business duration or snapshot'))
+            for name,(kind,unit,_) in BUSINESS_METRICS.items()}
     def increment(self,key,count=1):
         with self.guard:self.stats[key]=self.stats.get(key,0)+count
         try:self.telemetry_conditions.add(count,{'telemetry.condition':key})
@@ -412,6 +434,22 @@ class Telemetry:
             self.operation_count.add(1,attributes)
             self.operation_duration.record(max(0,float(duration_ms)),attributes)
         except Exception:pass
+    def record_business_metric(self,name,value,attributes):
+        spec=BUSINESS_METRICS.get(name)
+        if spec is None:raise ValueError('business_metric_name_invalid')
+        if (not isinstance(attributes,dict)
+                or tuple(sorted(attributes))!=tuple(sorted(spec[2]))
+                or any(not isinstance(item,str)
+                    or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,64}',item)
+                    for item in attributes.values())):
+            raise ValueError('business_metric_attributes_invalid')
+        if isinstance(value,bool) or not isinstance(value,(int,float)) or value<0:
+            raise ValueError('business_metric_value_invalid')
+        instrument=self.business_metrics[name]
+        try:
+            if spec[0]=='counter':instrument.add(int(value),attributes)
+            else:instrument.record(float(value),attributes)
+        except Exception:self.increment('export_failures')
     def put(self,kind,value):
         if self.stopping:self.increment('dropped_records');return False
         try:self.queue.put_nowait((kind,value));return True
@@ -620,6 +658,8 @@ def configure(service,root,settings=None):
     return _TELEMETRY
 
 def telemetry():return _TELEMETRY
+def business_metric(name,value,**attributes):
+    if _TELEMETRY is not None:_TELEMETRY.record_business_metric(name,value,attributes)
 def diagnostics():
     return _DIAGNOSTICS if _DIAGNOSTICS is not None and _DIAGNOSTICS.mode!='off' else None
 

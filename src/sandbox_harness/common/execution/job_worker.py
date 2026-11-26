@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from dataclasses import replace
 from datetime import datetime,timezone
@@ -10,7 +11,7 @@ import httpx
 from sandbox_harness.common.execution.job_adapters import (AdapterStatus, ExternalJobFailure, JobAdapter, JobExecutionContext, PreAcceptCancelled, PreAcceptFailure, SubmissionOutcomeUnknown, AllocationRecoveryRequired)
 from sandbox_harness.common.contracts.job_contracts import (JobKind, JobState, TERMINAL_JOB_STATES)
 from sandbox_harness.common.contracts.job_errors import (ArtifactCollectionCardinalityError, ArtifactValidationError, normalize_job_error)
-from sandbox_harness.common.observability.observability import (event, sanitize)
+from sandbox_harness.common.observability.observability import (business_metric, event, sanitize)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxEndpointUnavailable, SandboxProviderUnavailable, SandboxRateLimited)
 
 
@@ -325,8 +326,12 @@ class JobWorker:
                                     state_after='infrastructure_wait',error_code=exc.error_code,
                                     retry_seconds=exc.retry_after_seconds or 0)
                                 if exc.retry_after_seconds:
+                                    wait_started=time.monotonic()
                                     await self._before_deadline(
                                         asyncio.sleep(exc.retry_after_seconds),deadline)
+                                    business_metric('updream.sandbox.capacity_wait.duration',
+                                        (time.monotonic()-wait_started)*1000,
+                                        provider=job.adapter[:64],outcome='resumed')
                                 if not self.stop_event.is_set():
                                     await self.store.mark_job_submission_started(
                                         job.id,self.worker_id,attempt.generation)

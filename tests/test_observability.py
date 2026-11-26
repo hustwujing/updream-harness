@@ -445,6 +445,33 @@ def test_metrics_record_bounded_operation_and_health_dimensions(tmp_path,monkeyp
         value.close()
 
 
+def test_business_metrics_use_fixed_low_cardinality_contract(tmp_path):
+    reader=InMemoryMetricReader();value=obs.Telemetry(
+        'business-metrics-test',tmp_path,metric_readers=(reader,))
+    try:
+        value.record_business_metric('updream.turn.queue.duration',125,
+            {'outcome':'started'})
+        value.record_business_metric('updream.job.stage.count',1,
+            {'stage':'submission','outcome':'success','kind':'provider'})
+        value.record_business_metric('updream.outbox.backlog',3,
+            {'target':'media','state':'waiting_dependency'})
+        metrics={metric.name:metric for resource in reader.get_metrics_data().resource_metrics
+            for scope in resource.scope_metrics for metric in scope.metrics}
+        assert {'updream.turn.queue.duration','updream.job.stage.count',
+            'updream.outbox.backlog'}<=set(metrics)
+        queue=metrics['updream.turn.queue.duration'].data.data_points[0]
+        assert queue.sum==125 and dict(queue.attributes)=={'outcome':'started'}
+        count=metrics['updream.job.stage.count'].data.data_points[0]
+        assert count.value==1 and dict(count.attributes)=={
+            'stage':'submission','outcome':'success','kind':'provider'}
+        with pytest.raises(ValueError,match='business_metric_attributes_invalid'):
+            value.record_business_metric('updream.turn.queue.duration',1,
+                {'turn_id':'high-cardinality'})
+        with pytest.raises(ValueError,match='business_metric_name_invalid'):
+            value.record_business_metric('updream.private.metric',1,{})
+    finally:value.close()
+
+
 def test_retention_is_bounded_and_does_not_remove_other_files(tmp_path):
     sink=obs.JsonSink(tmp_path,'test','one',max_bytes=2048,days=7,segment_bytes=512)
     other=tmp_path/'user.txt';other.write_text('keep')

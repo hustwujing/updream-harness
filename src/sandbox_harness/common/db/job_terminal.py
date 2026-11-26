@@ -7,8 +7,8 @@ from sqlalchemy import (and_, or_, delete, select, update)
 from sqlalchemy.ext.asyncio import (AsyncSession)
 from sandbox_harness.common.contracts.domain import (ItemType, ThreadControlState, TurnState, TERMINAL, identifier, now)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupState, JobOutboxView, JobState, JobView, TERMINAL_JOB_STATES, OutputDisposition)
-from sandbox_harness.common.observability.observability import canonical_traceparent
-from .models import (BudgetAccountRow, BudgetLedgerRow, BudgetReservationRow, ItemRow, JobArtifactRow, JobAttemptRow, JobCleanupRow, JobGroupRow, JobLeaseRow, JobOutboxRow, JobRow, ResourceReservationRow, ThreadControlRow, ThreadRow, TurnRow, canonical_json)
+from sandbox_harness.common.observability.observability import business_metric, canonical_traceparent
+from .models import (BudgetAccountRow, BudgetLedgerRow, BudgetReservationRow, ItemRow, JobArtifactRow, JobAttemptRow, JobCleanupRow, JobGroupRow, JobLeaseRow, JobOutboxRow, JobRow, ResourceReservationRow, ThreadControlRow, ThreadRow, TurnRow, canonical_json, utc_datetime)
 
 
 class JobTerminalTransactions:
@@ -59,7 +59,7 @@ class JobTerminalTransactions:
             raise KeyError("job_not_found")
         encoded = canonical_json(result or {})
         digest = hashlib.sha256(encoded.encode()).hexdigest()
-        view=None
+        view=None;transition_metric=None;published_artifacts=0
         async with self.job_lock(f"group:{group_id}"):
             async with self.connections.begin() as db:
                 group = await db.get(JobGroupRow, group_id, with_for_update=True)
@@ -79,6 +79,7 @@ class JobTerminalTransactions:
                             await self._release_group_budgets_locked(db,group_id)
                     else:raise RuntimeError("job_already_terminal")
                 else:
+                    transition_metric=(job.kind,max(0,(now()-utc_datetime(job.updated_at)).total_seconds()*1000))
                     job.state = state.value
                     job.result_json = encoded
                     job.result_digest = digest
@@ -203,6 +204,7 @@ class JobTerminalTransactions:
                                     'local_job_id':artifact_job.local_job_id}),
                                 created_at=timestamp,updated_at=timestamp))
                             visible_ids.add(artifact_row.artifact_id)
+                            published_artifacts+=1
                         all_cancelled = all(member.state == JobState.CANCELLED.value for member in jobs)
                         thread=await db.get(ThreadRow,group.thread_id,with_for_update=True)
                         outbox = (await db.execute(select(JobOutboxRow).where(
@@ -219,6 +221,15 @@ class JobTerminalTransactions:
                             ))
                     await db.flush()
                     view=self.job_view(job)
+        if transition_metric:
+            kind,duration=transition_metric;stage=state.value.lower()
+            business_metric('updream.job.stage.count',1,stage=stage,
+                outcome=stage,kind=kind)
+            business_metric('updream.job.stage.duration',duration,stage=stage,
+                outcome=stage,kind=kind)
+        if published_artifacts:
+            business_metric('updream.artifact.delivery.count',published_artifacts,
+                phase='final_delivery',outcome='success')
         return view
 
 

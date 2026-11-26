@@ -22,7 +22,7 @@ from sandbox_harness.common.contracts.domain_commands import (
 )
 from sandbox_harness.common.contracts.domain import now
 from sandbox_harness.common.observability.observability import (
-    add_link, canonical_traceparent, carrier, event, operation,
+    add_link, business_metric, canonical_traceparent, carrier, event, operation,
 )
 from .domain_database import DOMAIN_TABLES, DomainDatabase, DomainInbox, DomainOutbox, DomainStream
 from .models import canonical_digest, canonical_json, utc_datetime
@@ -262,12 +262,24 @@ class DomainHandoff:
                 or_(DomainOutbox.next_attempt_at.is_(None), DomainOutbox.next_attempt_at <= now()))
                 .order_by(DomainOutbox.created_at, DomainOutbox.stream_id, DomainOutbox.sequence)
                 .limit(limit))).all())
+            snapshots=(await session.execute(select(DomainOutbox.target,DomainOutbox.state,
+                func.count(),func.min(DomainOutbox.created_at)).where(
+                    DomainOutbox.state!="acknowledged").group_by(
+                        DomainOutbox.target,DomainOutbox.state))).all()
+        timestamp=now()
+        for target,state,count,oldest in snapshots:
+            business_metric('updream.outbox.backlog',count,target=target,state=state)
+            if oldest:
+                lag=max(0,(timestamp-utc_datetime(oldest)).total_seconds()*1000)
+                business_metric('updream.outbox.lag',lag,target=target,state=state)
         delivered = 0
         failures = []
         for row in rows:
             try:
                 receipt = await destinations[row.target].receive(Envelope(**json.loads(row.envelope_json)))
                 await self.acknowledge(row.id, receipt)
+                business_metric('updream.outbox.delivery.count',1,
+                    target=row.target,outcome='acknowledged')
                 delivered += 1
             except Exception as exc:
                 # Store only a stable classification. Source persistence failure
@@ -277,5 +289,7 @@ class DomainHandoff:
                 event("domain.handoff.delivery_failed", level=40 if terminal else 30,
                     peer_service=row.target, error_code=code, retry_count=attempt,
                     state="failed" if terminal else "waiting_dependency")
+                business_metric('updream.outbox.delivery.count',1,
+                    target=row.target,outcome=code)
                 failures.append(RelayFailure(row.stream_id, row.target, code, terminal))
         return RelayResult(delivered, tuple(failures))
