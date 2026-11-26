@@ -124,6 +124,14 @@ def error_reference(origin: str, identity: str, code: str) -> str:
     return hashlib.sha256((origin + "\0" + identity + "\0" + code).encode()).hexdigest()[:32]
 
 
+def public_exception_code(exc: BaseException, fallback: str) -> str:
+    """Expose only an intentional stable code, never arbitrary exception text."""
+    if not _SAFE_CODE.fullmatch(fallback):
+        raise ValueError("public_error_fallback_invalid")
+    value = str(exc)
+    return value if _SAFE_CODE.fullmatch(value) else fallback
+
+
 def public_failure(code: str, detail: str) -> tuple[str, str]:
     text = detail.lower()
     if code == 'infrastructure_capacity_wait':

@@ -37,7 +37,7 @@ from sandbox_harness.services.api.execution_graph import (ExecutionGraphProjecto
 from sandbox_harness.common.catalog.execution_readiness import (ExecutionReadiness)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobView)
 from sandbox_harness.common.contracts.public_errors import public_job_result
-from sandbox_harness.common.contracts.errors import error_reference
+from sandbox_harness.common.contracts.errors import error_reference, public_exception_code
 from sandbox_harness.common.configuration.config import (Settings, load_settings, validate_service_settings)
 from sandbox_harness.common.configuration.databases import (DatabaseSettings)
 from sandbox_harness.common.observability.observability import (
@@ -631,9 +631,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             return await job_coordinator.prepare_group(request.state.owner_id, value)
         except (KeyError, ValueError) as exc:
-            raise HTTPException(422, str(exc)) from exc
+            raise HTTPException(422, public_exception_code(exc,"request_invalid")) from exc
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc)) from exc
+            raise HTTPException(409, public_exception_code(exc,"request_conflict")) from exc
 
     @app.get("/api/job-group-drafts/{draft_id}")
     async def get_job_group_draft(draft_id: str, request: Request):
@@ -659,11 +659,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             return await job_coordinator.edit_group(draft_id, request.state.owner_id, value)
         except KeyError as exc:
-            raise HTTPException(404, str(exc)) from exc
+            raise HTTPException(404, public_exception_code(exc,"resource_not_found")) from exc
         except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
+            raise HTTPException(422, public_exception_code(exc,"request_invalid")) from exc
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc)) from exc
+            raise HTTPException(409, public_exception_code(exc,"request_conflict")) from exc
 
     @app.post("/api/job-group-drafts/{draft_id}/confirm")
     async def confirm_job_group_draft(draft_id: str, request: Request):
@@ -671,18 +671,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return public_job_response(await job_coordinator.confirm_group(
                 draft_id, request.state.owner_id))
         except KeyError as exc:
-            raise HTTPException(404, str(exc)) from exc
+            raise HTTPException(404, public_exception_code(exc,"resource_not_found")) from exc
         except (ValueError, RuntimeError) as exc:
-            raise HTTPException(409, str(exc)) from exc
+            raise HTTPException(409, public_exception_code(exc,"request_conflict")) from exc
 
     @app.post("/api/job-group-drafts/{draft_id}/reject")
     async def reject_job_group_draft(draft_id: str, request: Request):
         try:
             return await job_coordinator.reject_group(draft_id, request.state.owner_id)
         except KeyError as exc:
-            raise HTTPException(404, str(exc)) from exc
+            raise HTTPException(404, public_exception_code(exc,"resource_not_found")) from exc
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc)) from exc
+            raise HTTPException(409, public_exception_code(exc,"request_conflict")) from exc
 
     @app.get("/api/job-groups/{group_id}")
     async def get_job_group(group_id: str, request: Request):
@@ -698,7 +698,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return {"jobs":[public_job_view(value) for value in
                 await job_coordinator.cancel_group(group_id, request.state.owner_id)]}
         except KeyError as exc:
-            raise HTTPException(404, str(exc)) from exc
+            raise HTTPException(404, public_exception_code(exc,"resource_not_found")) from exc
 
     @app.get("/api/jobs/{job_id}")
     async def get_job(job_id: str, request: Request):
@@ -713,7 +713,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             return public_job_view(await job_coordinator.cancel_job(job_id, request.state.owner_id))
         except KeyError as exc:
-            raise HTTPException(404, str(exc)) from exc
+            raise HTTPException(404, public_exception_code(exc,"resource_not_found")) from exc
 
     @app.post("/api/threads/{thread_id}/media/reference-uploads")
     async def create_media_reference_upload(thread_id: str, value: MediaReferenceUploadCreate,
@@ -727,7 +727,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 object_key=prepared["object_key"], public_url=prepared["public_url"],
                 expires_at=now() + timedelta(minutes=15))
         except (ValueError, RuntimeError) as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         return {**upload.model_dump(mode="json"), "upload": {"method": "PUT",
             "url": prepared["put_url"], "headers": prepared["headers"]}}
 
@@ -765,7 +765,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return await store.finish_media_reference_upload(upload.id, request.state.owner_id,
                 project_file.id)
         except ValueError as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         except ClientError as exc:
             status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
             raise HTTPException(409 if status == 404 else 502,
@@ -784,7 +784,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(422, "Media model is not enabled")
         except ValueError as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         try:
             result, _ = await store.create_media_draft(request.state.owner_id, thread_id, value,
                 expires_at=now() + timedelta(seconds=settings.media_draft_ttl_seconds), provider_spec=spec,
@@ -793,7 +793,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Media Turn not found")
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.get("/api/media/drafts/{draft_id}")
     async def get_media_draft(draft_id: str, request: Request):
@@ -821,13 +821,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             media_catalog.validate_parameters(current.kind, model, parameters,
                 generation_mode=generation_mode, references=references)
         except (KeyError, ValueError) as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         try:
             return await store.update_media_draft(draft_id, request.state.owner_id,
                 model=value.model, generation_mode=value.generation_mode, parameters=value.parameters,
                 reference_snapshots=references if value.references is not None else None)
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.post("/api/media/drafts/{draft_id}/confirm")
     async def confirm_media_draft(draft_id: str, request: Request):
@@ -840,9 +840,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 generation_mode=current.generation_mode, references=snapshot["references"])
             return await store.confirm_media_draft(draft_id, request.state.owner_id, provider_spec=spec)
         except (KeyError, ValueError) as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.post("/api/turns/{turn_id}/media/drafts/confirm")
     async def confirm_media_batch(turn_id:str,request:Request):
@@ -860,15 +860,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return await store.confirm_media_batch(turn_id,request.state.owner_id,
                 provider_specs=specs)
         except (KeyError,ValueError) as exc:
-            raise HTTPException(422,str(exc))
+            raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         except RuntimeError as exc:
-            raise HTTPException(409,str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.post("/api/turns/{turn_id}/media/drafts/cancel")
     async def cancel_media_batch(turn_id:str,request:Request):
         try:return await store.cancel_media_batch(turn_id,request.state.owner_id)
         except KeyError:raise HTTPException(404,"Media batch not found")
-        except RuntimeError as exc:raise HTTPException(409,str(exc))
+        except RuntimeError as exc:raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.post("/api/media/drafts/{draft_id}/cancel")
     async def cancel_media_draft(draft_id: str, request: Request):
@@ -877,7 +877,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Media draft not found")
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.get("/api/media/jobs/{job_id}")
     async def get_media_job(job_id: str, request: Request):
@@ -899,8 +899,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "Media job not found")
         except RuntimeError as exc:
             if str(exc) == "media_cancel_not_supported":
-                raise HTTPException(409, str(exc))
-            raise HTTPException(409, str(exc))
+                raise HTTPException(409, public_exception_code(exc,"request_conflict"))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.post("/api/media/jobs/{job_id}/refresh")
     async def refresh_media_job(job_id: str, request: Request):
@@ -925,7 +925,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Site draft not found")
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.post("/api/sites/drafts/{draft_id}/cancel")
     async def cancel_site_draft(draft_id: str, request: Request):
@@ -934,7 +934,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Site draft not found")
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     async def site_draft_preview_response(draft_id: str, path: str, request: Request):
         try:
@@ -986,7 +986,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Site deployment job not found")
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.get("/api/threads/{thread_id}/sites")
     async def list_site_projects(thread_id: str, request: Request):
@@ -1092,9 +1092,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if account is None:
                     raise RuntimeError("registration_result_invalid")
         except ValueError as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
         response = JSONResponse({"authenticated": True, "user": account.model_dump(mode="json")})
         response.delete_cookie(COOKIE, path=cookie_path(request))
         response.set_cookie(AUTH_COOKIE, token, httponly=True, samesite="lax", secure=secure_cookie(request),
@@ -1125,9 +1125,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not await account_auth.verify_account(account,value.current_password):
             raise HTTPException(401,"invalid_credentials")
         try:username = normalize_username(value.username)
-        except ValueError as exc:raise HTTPException(422,str(exc))
+        except ValueError as exc:raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         try:updated = await store.update_username(account.id,username)
-        except RuntimeError as exc:raise HTTPException(409,str(exc))
+        except RuntimeError as exc:raise HTTPException(409, public_exception_code(exc,"request_conflict"))
         return {"authenticated":True,"user":updated.model_dump(mode="json")}
 
     @app.post("/api/auth/change-password")
@@ -1137,7 +1137,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not await account_auth.verify_account(account,value.current_password):
             raise HTTPException(401,"invalid_credentials")
         try:password_hash = await account_auth.hash_password(value.new_password)
-        except ValueError as exc:raise HTTPException(422,str(exc))
+        except ValueError as exc:raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         await store.update_password(account.id,password_hash,keep_token_hash=request.state.auth_token_hash)
         return {"changed":True}
 
@@ -1155,9 +1155,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             updated = await store.update_account(account.id, username=username, password_hash=password_hash,
                 keep_token_hash=request.state.auth_token_hash)
         except ValueError as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
         return {"authenticated": True, "user": updated.model_dump(mode="json")}
 
     @app.get("/api/auth/avatar")
@@ -1178,7 +1178,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if request.state.ingress == "frpc": raise HTTPException(403, "account_action_not_available")
         data = await limited_body(request, MAX_AVATAR_BYTES)
         try: mime = avatar_mime(data)
-        except ValueError as exc: raise HTTPException(422, str(exc))
+        except ValueError as exc: raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         object_ref, _ = await asyncio.to_thread(objects.put, data)
         updated = await store.set_user_avatar(account.id, object_ref, mime)
         return {"authenticated": True, "user": updated.model_dump(mode="json")}
@@ -1196,7 +1196,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             resolved = catalog.resolve(value.harness, value.model, value.reasoning_level)
         except ValueError as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         return await store.create_thread(value, resolved, request.state.owner_id)
 
     @app.get("/api/threads")
@@ -1229,7 +1229,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Thread not found")
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.post("/api/threads/{thread_id}/unarchive")
     async def unarchive_thread(thread_id: str, request: Request):
@@ -1242,7 +1242,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Thread not found")
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.delete("/api/threads/{thread_id}")
     async def delete_thread(thread_id: str, request: Request):
@@ -1251,7 +1251,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Thread not found")
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
         if result.state == "pending":
             return JSONResponse({"operation_id":result.operation_id,"state":"pending"},
                 status_code=202)
@@ -1280,9 +1280,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Thread not found")
         except ValueError as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.get("/api/threads/{thread_id}/turns")
     async def list_turns(thread_id: str, request: Request):
@@ -1340,7 +1340,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             path = managed_project_path(path, upload=True)
         except ValueError as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         data = await limited_body(request, settings.max_attachment_bytes)
         object_ref, digest = await asyncio.to_thread(objects.put, data)
         value, _ = await store.register_project_file(thread_id, path=path, source_type="upload",
@@ -1354,7 +1354,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             path = managed_project_path(path)
         except ValueError as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         return await store.project_file_history(thread_id, path, request.state.owner_id)
 
     @app.get("/api/threads/{thread_id}/interactions")
@@ -1370,9 +1370,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Interaction not found")
         except ValueError as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.get("/api/turns/{turn_id}")
     async def get_turn(turn_id: str, request: Request):
@@ -1396,7 +1396,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Turn not found")
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
         return {"accepted": True}
 
     @app.get("/api/threads/{thread_id}/pause")
@@ -1416,7 +1416,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Thread not found")
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
         participants = await store.list_pause_participants(thread_id, control.generation)
         return {**control.model_dump(mode="json"),
             "participants": [value.model_dump(mode="json") for value in participants]}
@@ -1428,7 +1428,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Thread not found")
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.post("/api/threads/{thread_id}/stop-all")
     async def stop_all_thread_work(thread_id: str, request: Request):
@@ -1473,7 +1473,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     raise HTTPException(409, "input_delivery_failed") from exc
             return await store.get_turn_input(result.id)
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.get("/api/turns/{turn_id}/inputs")
     async def list_turn_inputs(turn_id: str, request: Request):
@@ -1495,7 +1495,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Turn or background job not found")
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.get("/api/turns/{turn_id}/events")
     async def events(turn_id: str, request: Request, after: int = 0):
@@ -1535,9 +1535,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Sandbox or Thread not found")
         except ValueError as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
             raise HTTPException(404 if status == 404 else 502, "Sandbox runtime is unavailable")
@@ -1989,7 +1989,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             path = managed_project_path(value.path)
         except ValueError as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         if path.split("/", 1)[0] != current.path.split("/", 1)[0]:
             raise HTTPException(422, "Project file category cannot change during rename")
         try:
@@ -1997,7 +1997,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Project file not found")
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.post("/api/project-files/{file_id}/restore")
     async def restore_project_file(file_id: str, request: Request):
@@ -2045,7 +2045,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Project file not found")
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     web_root = resource_path("web")
     static = web_root / "dist" if (web_root / "dist" / "index.html").is_file() else web_root

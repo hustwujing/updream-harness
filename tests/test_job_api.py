@@ -92,7 +92,7 @@ def test_job_group_api_rejects_inline_operation_and_origin_turn_mismatch(tmp_pat
         assert mismatch.status_code==404
         rejected=client.post('/api/job-group-drafts',json={'thread_id':first['id'],
             'origin_turn_id':turn['id'],'idempotency_key':'inline-group','jobs':[inline]})
-        assert rejected.status_code==422 and 'inline Operation' in rejected.json()['detail']
+        assert rejected.status_code==422 and rejected.json()['detail']=='request_invalid'
 
 
 def test_sandbox_job_cli_validates_complete_group_before_gateway_call(tmp_path,monkeypatch,capsys):

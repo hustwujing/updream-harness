@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sandbox_harness.common.configuration.resources import resource_path
+from sandbox_harness.common.contracts.errors import public_exception_code
 
 import asyncio
 import base64
@@ -516,7 +517,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         try:
             claims = codec.verify(token_from(request), route=route)
         except ValueError as exc:
-            raise HTTPException(401, str(exc))
+            raise HTTPException(401, public_exception_code(exc,"invalid_capability"))
         if not hasattr(request.state, "log_context"):
             request.state.log_context = {}
         request.state.log_context.update({"turn_id": claims.turn_id, "thread_id": claims.thread_id,
@@ -598,7 +599,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
                     parameter_digest=parameter_digest,
                 )
             except (ValueError, TypeError, json.JSONDecodeError) as exc:
-                raise HTTPException(403, str(exc)) from exc
+                raise HTTPException(403, public_exception_code(exc,"capability_scope_invalid")) from exc
         return claims
 
     @app.get("/v1/media/jobs/{job_id}")
@@ -624,11 +625,11 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         try:
             return await artifact_gateway.emit(value, request.stream())
         except KeyError as exc:
-            raise HTTPException(404, str(exc)) from exc
+            raise HTTPException(404, public_exception_code(exc,"resource_not_found")) from exc
         except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
+            raise HTTPException(422, public_exception_code(exc,"request_invalid")) from exc
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc)) from exc
+            raise HTTPException(409, public_exception_code(exc,"request_conflict")) from exc
 
     @app.get("/v1/job-artifacts/{artifact_id}/content")
     async def runtime_fetch_job_artifact(artifact_id:str,request:Request):
@@ -654,18 +655,19 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     async def runtime_prepare_job_group(value: JobGroupCreate, request: Request):
         claims = await authorize_runtime_request(request, "/v1/job-group-drafts")
         try:value=JobCoordinator.scope_child_group(value,claims)
-        except ValueError as exc:raise HTTPException(403,str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(403,public_exception_code(exc,"capability_scope_invalid")) from exc
         if value.thread_id != claims.thread_id or value.origin_turn_id != claims.turn_id:
             raise HTTPException(403, "JobGroup identity is outside Turn capability")
         try:
             owner_id = await activity_store.owner_id_for_thread(claims.thread_id)
             return await job_coordinator.prepare_group(owner_id, value)
         except KeyError as exc:
-            raise HTTPException(404, str(exc)) from exc
+            raise HTTPException(404, public_exception_code(exc,"resource_not_found")) from exc
         except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
+            raise HTTPException(422, public_exception_code(exc,"request_invalid")) from exc
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc)) from exc
+            raise HTTPException(409, public_exception_code(exc,"request_conflict")) from exc
 
     @app.get("/v1/execution/catalog")
     async def runtime_execution_catalog(request:Request):
@@ -714,9 +716,9 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         owner_id=await activity_store.owner_id_for_thread(claims.thread_id)
         if not owner_id:raise HTTPException(404,"Thread not found")
         try:return await reviewer.prepare_submission(owner_id,claims.thread_id,claims.turn_id,value)
-        except KeyError as exc:raise HTTPException(404,str(exc)) from exc
-        except ValueError as exc:raise HTTPException(422,str(exc)) from exc
-        except RuntimeError as exc:raise HTTPException(409,str(exc)) from exc
+        except KeyError as exc:raise HTTPException(404,public_exception_code(exc,"resource_not_found")) from exc
+        except ValueError as exc:raise HTTPException(422,public_exception_code(exc,"request_invalid")) from exc
+        except RuntimeError as exc:raise HTTPException(409,public_exception_code(exc,"request_conflict")) from exc
 
     async def runtime_draft_owner(draft_id: str, claims):
         value = await activity_store.get_job_group_draft(draft_id)
@@ -737,9 +739,9 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         try:
             return await job_coordinator.edit_group(draft_id, owner_id, value)
         except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
+            raise HTTPException(422, public_exception_code(exc,"request_invalid")) from exc
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc)) from exc
+            raise HTTPException(409, public_exception_code(exc,"request_conflict")) from exc
 
     @app.get("/v1/job-groups/{group_id}")
     async def runtime_get_job_group(group_id: str, request: Request):
@@ -803,7 +805,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             media_catalog.validate_parameters(value.kind, value.model, value.parameters,
                 generation_mode=value.generation_mode, references=references)
         except ValueError as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         try:
             draft, _ = await activity_store.create_media_draft(owner_id, claims.thread_id, value,
                 expires_at=now() + timedelta(seconds=settings.media_draft_ttl_seconds), provider_spec=spec,
@@ -811,7 +813,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Media Turn not found")
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
         return {**draft.model_dump(mode="json"), "requires_confirmation": True}
 
     @app.post("/v1/media/batch/commit")
@@ -825,7 +827,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Media Turn not found")
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.post("/v1/media/jobs/{job_id}/cancel")
     async def runtime_cancel_media_job(job_id: str, request: Request):
@@ -835,7 +837,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "Media job not found")
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.get("/v1/media/jobs/{job_id}/content")
     async def runtime_media_job_content(job_id: str, request: Request):
@@ -863,11 +865,11 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             return await activity_store.promote_media_job_for_thread(job_id, claims.thread_id,
                 str(raw.get("output_role") or ""))
         except ValueError as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         except KeyError:
             raise HTTPException(404, "Media Job not found")
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
 
     @app.post("/v1/sites/drafts")
     async def runtime_create_site_draft(request: Request, name: str, slug: str,
@@ -878,7 +880,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         try:
             slug = normalize_site_slug(slug)
         except ValueError as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         declared=request.headers.get("content-length")
         if declared:
             try:declared_size=int(declared)
@@ -919,11 +921,11 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
                 expires_at=now() + timedelta(seconds=settings.site_draft_ttl_seconds),
                 public_base_path=settings.site_public_base_path, files=staged)
         except ValueError as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, public_exception_code(exc,"request_invalid"))
         except KeyError:
             raise HTTPException(404, "Site Turn not found")
         except RuntimeError as exc:
-            raise HTTPException(409, str(exc))
+            raise HTTPException(409, public_exception_code(exc,"request_conflict"))
         finally:
             if package:package.remove()
             if archive_path:archive_path.unlink(missing_ok=True)

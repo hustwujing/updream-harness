@@ -3,6 +3,7 @@ from sandbox_harness.common.contracts.public_errors import (
     public_turn_failure,
 )
 from sandbox_harness.common.contracts.domain import MediaJobView, SiteDeployJobView, TurnView
+from sandbox_harness.common.contracts.errors import public_exception_code
 from sandbox_harness.common.contracts.job_contracts import JobView
 from sandbox_harness.services.api.app import public_job_view
 
@@ -77,3 +78,12 @@ def test_public_job_api_projection_removes_internal_result_detail():
     assert "error_detail" not in payload["result"]
     assert "exception_type" not in payload["result"]
     assert len(payload["result"]["troubleshooting_id"])==32
+
+
+def test_public_exception_code_only_preserves_stable_business_codes():
+    assert public_exception_code(ValueError("turn_terminal"),"request_invalid")=="turn_terminal"
+    assert public_exception_code(
+        RuntimeError("ReadError https://private.invalid credential=secret"),
+        "request_conflict",
+    )=="request_conflict"
+    assert public_exception_code(KeyError("thread_not_found"),"resource_not_found")=="resource_not_found"

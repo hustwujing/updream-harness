@@ -245,7 +245,7 @@ async def test_gateway_continuously_validates_job_grant_headers_and_parameters(t
         'query_string':b'','headers':bad_headers},receive)
     with pytest.raises(HTTPException) as error:
         await endpoint('job-1',bad)
-    assert error.value.status_code==403 and 'grant scope' in error.value.detail
+    assert error.value.status_code==403 and error.value.detail=='capability_scope_invalid'
 
 
 async def test_job_execution_catalog_is_filtered_to_the_signed_grant(tmp_path,monkeypatch):

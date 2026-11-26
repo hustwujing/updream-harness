@@ -214,7 +214,7 @@ def test_media_reference_api_freezes_owned_project_file_snapshot(tmp_path):
             "references":[{"project_file_id":project["id"],"role":"first_frame","usage":"composition"}],
             "idempotency_key":"reference-api-draft","output_role":"workspace"}
         forbidden=client.post(f"/api/threads/{second['id']}/media/drafts",json=payload)
-        assert forbidden.status_code==422 and "registered ProjectFile" in forbidden.json()["detail"]
+        assert forbidden.status_code==422 and forbidden.json()["detail"]=="request_invalid"
         draft=client.post(f"/api/threads/{first['id']}/media/drafts",json=payload)
         assert draft.status_code==200
         value=draft.json();assert value["generation_mode"]=="first_frame"
@@ -287,7 +287,7 @@ def test_media_reference_upload_rejects_boss_metadata_mismatch(tmp_path, monkeyp
         ticket=client.post(f"/api/threads/{thread['id']}/media/reference-uploads",json={
             "name":"reference.png","kind":"image","mime":"image/png","size":100,"sha256":"1"*64}).json()
         response=client.post(f"/api/media/reference-uploads/{ticket['id']}/complete")
-        assert response.status_code==422 and "metadata does not match" in response.json()["detail"]
+        assert response.status_code==422 and response.json()["detail"]=="request_invalid"
 
 
 
