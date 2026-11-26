@@ -109,6 +109,17 @@ def test_provider_coverage_reads_media_identity_from_media_database():
     assert 'await store.get_media_job' not in block
 
 
+def test_semantic_provider_contract_allows_model_packages_only_for_3d():
+    protocol=load_runner().parallel
+    model=protocol.semantic_provider_job('model','model3d.generate',kind='model3d',
+        model='v3.1',mode='text_to_model',parameters={'prompt':'shape'})
+    image=protocol.semantic_provider_job('image','image.generate',kind='image',
+        model='seedream-5.0',mode='text_to_image',parameters={'prompt':'shape'})
+    assert model['expected_outputs'][0]['min_items']==1
+    assert model['expected_outputs'][0]['max_items']==20
+    assert image['expected_outputs'][0]['max_items']==1
+
+
 def test_primary_decision_protocol_stops_after_terminal_model_failure():
     source=(ROOT/'tests/run_real_parallel_protocol.py').read_text()
     block=source[source.index('async def case_p23'):source.index('async def case_p24')]

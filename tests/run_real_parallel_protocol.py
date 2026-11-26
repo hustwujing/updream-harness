@@ -156,7 +156,8 @@ def semantic_provider_job(local_id:str,capability:str,*,kind:str,model:str,mode:
         'input_artifacts':[{'artifact_id':row['artifact_id'],'artifact_role':'reference'}
             for row in references],
         'expected_outputs':[{'artifact_role':PROVIDER_OUTPUT_ROLES[capability],
-            'output_disposition':'workspace','min_items':1,'max_items':1}]}
+            'output_disposition':'workspace','min_items':1,
+            'max_items':20 if kind=='model3d' else 1}]}
 
 
 def harness_job(index:int,args,*,objective:str='Return a concise factual analysis.',
