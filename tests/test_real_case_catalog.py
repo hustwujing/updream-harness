@@ -66,3 +66,4 @@ def test_artifact_staging_recovery_is_a_serial_supplemental_real_gate():
     assert "settings.data_root/'tmp'/'child-job-artifacts'" in source
     assert "settings.data_root/'tmp'/'controlled-job-artifacts'" in source
     assert "row.outcome=='COLLECTION_RETRY'" in source
+    assert "staging recovery did not produce one terminal continuation" in source

@@ -1531,6 +1531,9 @@ async def case_as01(client,args):
         settings.data_root/'tmp'/'controlled-job-artifacts']
     for path in staging:shutil.rmtree(path,ignore_errors=True)
     result=await case_p24(client,args)
+    _,continuations=await wait_continuations(client,result['thread_id'],maximum=1)
+    if len(continuations)!=1:
+        raise AssertionError('staging recovery did not produce one terminal continuation')
     if not all(path.is_dir() for path in staging):
         raise AssertionError('artifact staging directories were not recreated')
     from sqlalchemy import select
@@ -1551,7 +1554,8 @@ async def case_as01(client,args):
                 raise AssertionError('external execution identity changed:'+identity)
     finally:await store.close()
     return {**result,'staging_fault_injected':True,'staging_recreated':True,
-        'collection_retry_count':0,'duplicate_external_execution':False}
+        'collection_retry_count':0,'duplicate_external_execution':False,
+        'continuation_id':continuations[0]['id']}
 
 
 async def case_p26(client,args):
