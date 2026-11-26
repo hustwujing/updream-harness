@@ -6,7 +6,7 @@ import json
 import uuid
 
 from sandbox_harness.common.contracts.domain import (TurnCreate)
-from sandbox_harness.common.observability.observability import (event)
+from sandbox_harness.common.observability.observability import (add_link, event, operation)
 
 
 class ContinuationDispatcher:
@@ -51,13 +51,16 @@ class ContinuationDispatcher:
             parent_job_id=await self.store.child_parent_for_group(item['group_id'])
             (nested if parent_job_id else primary).append((item,parent_job_id))
         for item,parent_job_id in nested:
-            await self.store.ready_child_continuation(parent_job_id,item['group_id'],
-                item['outbox_id'],{'group_id':item['group_id'],
-                    'result_digest':item['result_digest'],'results':item['results']})
-            await self.store.finish_job_outbox_batch([item['outbox_id']],self.owner,
-                continuation_turn_id=parent_job_id,delivered=True)
-            event('job.child_continuation.ready',thread_id=item['thread_id'],
-                job_id=parent_job_id,group_id=item['group_id'])
+            with operation('job.child_continuation.dispatch',new_trace=True,
+                    thread_id=item['thread_id'],job_id=parent_job_id,group_id=item['group_id']):
+                add_link(item.get('traceparent',''))
+                await self.store.ready_child_continuation(parent_job_id,item['group_id'],
+                    item['outbox_id'],{'group_id':item['group_id'],
+                        'result_digest':item['result_digest'],'results':item['results']})
+                await self.store.finish_job_outbox_batch([item['outbox_id']],self.owner,
+                    continuation_turn_id=parent_job_id,delivered=True)
+                event('job.child_continuation.ready',thread_id=item['thread_id'],
+                    job_id=parent_job_id,group_id=item['group_id'])
         batch=[item for item,_ in primary]
         if not batch:return len(nested)
         outbox_ids = sorted(item["outbox_id"] for item in batch)
@@ -80,27 +83,31 @@ class ContinuationDispatcher:
             "intended final file into `/workspace/outputs`; do not rerun a successful Job only "
             "to change publication disposition. "
             + json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
-        try:
-            group = await self.store.get_job_group(batch[0]["group_id"])
-            origin = await self.store.get_turn(group.origin_turn_id) if group else None
-            turn = await self.broker.submit(thread_id, TurnCreate(
-                message=message, idempotency_key="job-continuation-" + digest,
-                delivery_mode="queue"), network_access=(origin.network_access if origin else "restricted"),
-                internal=True)
-            if self.after_submit:
-                await self.after_submit(turn, batch)
-            await self.store.finish_job_outbox_batch(outbox_ids, self.owner,
-                continuation_turn_id=turn.id, delivered=True)
-            event("job.continuation.created", thread_id=thread_id, turn_id=turn.id,
-                group_count=len(batch), job_count=sum(len(item["results"]) for item in batch))
-            return len(batch)+len(nested)
-        except Exception as exc:
-            permanent=isinstance(exc,RuntimeError) and str(exc) in {
-                "thread_archived","active_jobs_prevent_archival"}
-            await self.store.finish_job_outbox_batch(outbox_ids, self.owner,
-                continuation_turn_id="", delivered=False, error=type(exc).__name__,
-                permanent=permanent)
-            raise
+        with operation('job.continuation.dispatch',new_trace=True,thread_id=thread_id,
+                group_count=len(batch),job_count=sum(len(item['results']) for item in batch)):
+            for traceparent in dict.fromkeys(item.get('traceparent','') for item in batch):
+                add_link(traceparent)
+            try:
+                group = await self.store.get_job_group(batch[0]["group_id"])
+                origin = await self.store.get_turn(group.origin_turn_id) if group else None
+                turn = await self.broker.submit(thread_id, TurnCreate(
+                    message=message, idempotency_key="job-continuation-" + digest,
+                    delivery_mode="queue"), network_access=(origin.network_access if origin else "restricted"),
+                    internal=True)
+                if self.after_submit:
+                    await self.after_submit(turn, batch)
+                await self.store.finish_job_outbox_batch(outbox_ids, self.owner,
+                    continuation_turn_id=turn.id, delivered=True)
+                event("job.continuation.created", thread_id=thread_id, turn_id=turn.id,
+                    group_count=len(batch), job_count=sum(len(item["results"]) for item in batch))
+                return len(batch)+len(nested)
+            except Exception as exc:
+                permanent=isinstance(exc,RuntimeError) and str(exc) in {
+                    "thread_archived","active_jobs_prevent_archival"}
+                await self.store.finish_job_outbox_batch(outbox_ids, self.owner,
+                    continuation_turn_id="", delivered=False, error=type(exc).__name__,
+                    permanent=permanent)
+                raise
 
     async def run(self) -> None:
         while not self.stop_event.is_set():

@@ -1,3 +1,6 @@
+import json
+import logging
+
 import pytest
 
 from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
@@ -5,6 +8,7 @@ from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, Turn
 from sandbox_harness.services.api.job_continuation import (ContinuationDispatcher)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobKind, JobRequest, JobState)
 from test_support.legacy_store import (Store)
+import sandbox_harness.common.observability.observability as obs
 
 
 class StoreBroker:
@@ -17,17 +21,23 @@ class StoreBroker:
         return turn
 
 
-async def setup(tmp_path,*,active_origin=False):
+async def setup(tmp_path,*,active_origin=False,traceparent=""):
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'continuation.db'));await store.initialize()
     profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
     thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model='gpt-5.6',
         reasoning_level='standard',title='Continuation'),profile,'owner')
     origin,_,_=await store.create_turn(thread.id,TurnCreate(message='start',
-        idempotency_key='origin-turn-key'),profile,'owner')
+        idempotency_key='origin-turn-key'),profile,'owner',traceparent=traceparent)
     if not active_origin:
         await store.set_turn_state(origin.id,TurnState.COMPLETED)
         assert await store.claim_next_turn(thread.id,origin.id) is None
     return store,profile,thread,origin
+
+
+def telemetry_rows(value):
+    assert value.flush(5)
+    return [json.loads(line) for path in value.sink.root.glob("*.telemetry.jsonl")
+        for line in path.read_text().splitlines()]
 
 
 async def terminal_group(store,thread,origin,suffix,state=JobState.SUCCEEDED,suppress=False,jobs=1):
@@ -64,6 +74,34 @@ async def test_user_turn_queued_before_completion_precedes_factual_continuation(
         await store.set_turn_state(user.id,TurnState.COMPLETED)
         assert (await store.claim_next_turn(thread.id,user.id)).id==continuation.id
     finally:await store.close()
+
+
+async def test_continuation_dispatch_links_durable_origin_trace(tmp_path,monkeypatch):
+    telemetry=obs.Telemetry("continuation-test",tmp_path/"logs")
+    monkeypatch.setattr(obs,"_PROVIDER",telemetry.provider)
+    monkeypatch.setattr(obs,"_TELEMETRY",telemetry)
+    root=logging.getLogger();old_level=root.level;root.setLevel(logging.INFO);root.addHandler(telemetry.handler)
+    store=None
+    try:
+        with obs.operation("test.origin.submit",new_trace=True):
+            expected=obs.carrier()["traceparent"]
+            store,_,thread,origin=await setup(tmp_path,traceparent=expected)
+        group,_=await terminal_group(store,thread,origin,"linked")
+        claimed=await store.claim_job_outbox_batch("inspect")
+        assert claimed[0]["traceparent"]==expected
+        await store.finish_job_outbox_batch([claimed[0]["outbox_id"]],"inspect",
+            continuation_turn_id="",delivered=False)
+
+        assert await ContinuationDispatcher(store,StoreBroker(store)).run_once()==1
+        span=next(row for row in telemetry_rows(telemetry)
+            if row["signal"]=="span" and row["event_name"]=="job.continuation.dispatch")
+        assert span["trace_id"]!=expected.split("-")[1]
+        assert span["links"]==[{
+            "trace_id":expected.split("-")[1],"span_id":expected.split("-")[2]}]
+        assert (await store.get_job_outbox(group.id)).state=="delivered"
+    finally:
+        root.removeHandler(telemetry.handler);root.setLevel(old_level);telemetry.close()
+        if store is not None:await store.close()
 
 
 async def test_continuation_snapshots_inputs_only_after_origin_settles(tmp_path):

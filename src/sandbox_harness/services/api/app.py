@@ -38,7 +38,9 @@ from sandbox_harness.common.catalog.execution_readiness import (ExecutionReadine
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate)
 from sandbox_harness.common.configuration.config import (Settings, load_settings, validate_service_settings)
 from sandbox_harness.common.configuration.databases import (DatabaseSettings)
-from sandbox_harness.common.observability.observability import (RequestLoggingMiddleware, telemetry, event)
+from sandbox_harness.common.observability.observability import (
+    RequestLoggingMiddleware, add_link, canonical_traceparent, event, operation, telemetry,
+)
 from sandbox_harness.common.observability.http import (observed_async_client)
 from sandbox_harness.common.contracts.domain import (Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, RegisterRequest, UpdateAccountRequest, MediaDraftCreate, MediaDraftUpdate, MediaReferenceUploadCreate, ProjectFileRename, SandboxReleaseRequest, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, TERMINAL, valid_attachment_name, now)
 from sandbox_harness.services.api.document_preview import (is_presentation, presentation_pdf)
@@ -354,9 +356,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 message = ("[media_group_completed] Continue the original user task. Use only results with status=succeeded and a non-empty path or inspect_command; never invent a path for a failed result. Verify input files exist before composition. Media results: "
                     + json.dumps(results, ensure_ascii=False, sort_keys=True))
             origin = await store.get_turn(turn_id)
-            await broker.submit(batch["thread_id"], TurnCreate(message=message,
-                idempotency_key=f"media-continuation-{turn_id}", delivery_mode="queue"),
-                network_access=origin.network_access if origin else "restricted", internal=True)
+            with operation("media.continuation.dispatch",new_trace=True,
+                    thread_id=batch["thread_id"],turn_id=turn_id):
+                if origin:
+                    add_link(canonical_traceparent(origin.last_traceparent)
+                        or canonical_traceparent(origin.submit_traceparent))
+                await broker.submit(batch["thread_id"], TurnCreate(message=message,
+                    idempotency_key=f"media-continuation-{turn_id}", delivery_mode="queue"),
+                    network_access=origin.network_access if origin else "restricted", internal=True)
         async def dispatch_media_outbox():
             initial_delay=settings.supervisor_retry_initial_seconds
             delay = initial_delay

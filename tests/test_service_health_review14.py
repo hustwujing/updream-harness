@@ -1,6 +1,9 @@
 import asyncio
 from collections import OrderedDict
+import json
+import logging
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -9,6 +12,7 @@ import sandbox_harness.services.sandbox_gateway.gateway as gateway_module
 from sandbox_harness.services.api.app import (create_app, web_distribution_digest)
 from sandbox_harness.common.configuration.config import (Settings)
 from sandbox_harness.services.api.sandbox_inspector import (SandboxInspector)
+import sandbox_harness.common.observability.observability as obs
 
 
 def settings(tmp_path,name="health"):
@@ -53,6 +57,45 @@ def test_media_outbox_claim_failure_recovers_without_task_restart(tmp_path):
         assert response.status_code==200 and calls>=4
         assert response.json()["media_outbox"]["failures"]==3
         assert response.json()["supervisors"]["media_outbox"] is True
+
+
+def test_media_continuation_dispatch_links_durable_origin_trace(tmp_path,monkeypatch):
+    telemetry=obs.Telemetry("media-continuation-test",tmp_path/"logs")
+    monkeypatch.setattr(obs,"_PROVIDER",telemetry.provider)
+    monkeypatch.setattr(obs,"_TELEMETRY",telemetry)
+    root=logging.getLogger();old_level=root.level;root.setLevel(logging.INFO);root.addHandler(telemetry.handler)
+    with obs.operation("test.media.origin",new_trace=True):
+        expected=obs.carrier()["traceparent"]
+    app=create_app(settings(tmp_path,"media-linked"));store=app.state.store
+    claimed=False;done=threading.Event()
+    async def claim(*args,**kwargs):
+        nonlocal claimed
+        if claimed:return []
+        claimed=True
+        return [{"turn_id":"a"*32,"thread_id":"b"*32,"owner_id":"owner"}]
+    async def group(*args,**kwargs):
+        return True,[{"status":"failed","output_role":"candidate","job_id":"c"*32,
+            "draft_id":"d"*32,"kind":"image","model":"test","project_path":"",
+            "error_code":"provider_failed"}]
+    async def origin(*args,**kwargs):
+        return SimpleNamespace(network_access="restricted",last_traceparent=expected,
+            submit_traceparent="")
+    async def submit(*args,**kwargs):return SimpleNamespace(id="e"*32)
+    async def finish(*args,**kwargs):done.set()
+    store.claim_media_batches=claim;store.media_continuation_group=group
+    store.get_turn=origin;store.finish_media_batch=finish;app.state.broker.submit=submit
+    try:
+        with TestClient(app):assert done.wait(3)
+        assert telemetry.flush(5)
+        rows=[json.loads(line) for path in telemetry.sink.root.glob("*.telemetry.jsonl")
+            for line in path.read_text().splitlines()]
+        span=next(row for row in rows
+            if row["signal"]=="span" and row["event_name"]=="media.continuation.dispatch")
+        assert span["trace_id"]!=expected.split("-")[1]
+        assert span["links"]==[{
+            "trace_id":expected.split("-")[1],"span_id":expected.split("-")[2]}]
+    finally:
+        root.removeHandler(telemetry.handler);root.setLevel(old_level);telemetry.close()
 
 
 async def test_sandbox_expiry_scan_failure_recovers_and_releases():

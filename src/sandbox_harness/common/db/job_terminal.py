@@ -7,6 +7,7 @@ from sqlalchemy import (and_, or_, delete, select, update)
 from sqlalchemy.ext.asyncio import (AsyncSession)
 from sandbox_harness.common.contracts.domain import (ItemType, ThreadControlState, TurnState, TERMINAL, identifier, now)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupState, JobOutboxView, JobState, JobView, TERMINAL_JOB_STATES, OutputDisposition)
+from sandbox_harness.common.observability.observability import canonical_traceparent
 from .models import (BudgetAccountRow, BudgetLedgerRow, BudgetReservationRow, ItemRow, JobArtifactRow, JobAttemptRow, JobCleanupRow, JobGroupRow, JobLeaseRow, JobOutboxRow, JobRow, ResourceReservationRow, ThreadControlRow, ThreadRow, TurnRow, canonical_json)
 
 
@@ -239,7 +240,8 @@ class JobTerminalTransactions:
                                      max_groups: int = 32, max_jobs: int = 100,
                                      max_bytes: int = 1024 * 1024) -> list[dict]:
         async with self.connections.begin() as db:
-            candidates = list((await db.execute(select(JobOutboxRow)
+            candidates = list((await db.execute(select(JobOutboxRow,
+                TurnRow.last_traceparent,TurnRow.submit_traceparent)
                 .join(ThreadRow,ThreadRow.id==JobOutboxRow.thread_id)
                 .join(JobGroupRow,JobGroupRow.id==JobOutboxRow.group_id)
                 .join(TurnRow,TurnRow.id==JobGroupRow.origin_turn_id)
@@ -252,16 +254,16 @@ class JobTerminalTransactions:
                 or_(JobOutboxRow.state == "ready", and_(
                     JobOutboxRow.state == "claimed", JobOutboxRow.claim_expires_at < now())),
             ).order_by(JobOutboxRow.created_at, JobOutboxRow.id).limit(max_groups * 4)
-                .with_for_update(skip_locked=True,of=JobOutboxRow))).scalars().all())
+                .with_for_update(skip_locked=True,of=JobOutboxRow))).all())
             if not candidates:
                 return []
-            thread_id = candidates[0].thread_id
+            thread_id = candidates[0][0].thread_id
             selected = []
             total_jobs = total_bytes = 0
-            frozen_digest = candidates[0].claim_batch_digest
-            source = ([row for row in candidates if row.claim_batch_digest == frozen_digest]
+            frozen_digest = candidates[0][0].claim_batch_digest
+            source = ([value for value in candidates if value[0].claim_batch_digest == frozen_digest]
                 if frozen_digest else candidates)
-            for row in source:
+            for row,last_traceparent,submit_traceparent in source:
                 if row.thread_id != thread_id:
                     continue
                 result = json.loads(row.result_json)
@@ -274,18 +276,20 @@ class JobTerminalTransactions:
                     row.state = "suppressed"
                     row.updated_at = now()
                     continue
-                selected.append((row, result))
+                selected.append((row,result,canonical_traceparent(last_traceparent)
+                    or canonical_traceparent(submit_traceparent)))
                 total_jobs += len(result); total_bytes += encoded_bytes
             batch_digest = (frozen_digest or hashlib.sha256("\n".join(sorted(
-                row.id for row, _ in selected)).encode()).hexdigest())
+                row.id for row,_,_ in selected)).encode()).hexdigest())
             expires_at = now() + timedelta(seconds=lease_seconds)
-            for row, _ in selected:
+            for row,_,_ in selected:
                 row.state = "claimed"; row.claim_owner = owner
                 row.claim_batch_digest = batch_digest
                 row.claim_expires_at = expires_at; row.updated_at = now()
             return [{"outbox_id": row.id, "group_id": row.group_id,
                 "thread_id": row.thread_id, "result_digest": row.result_digest,
-                "batch_digest": batch_digest, "results": result} for row, result in selected]
+                "batch_digest": batch_digest, "results": result,
+                "traceparent":traceparent} for row,result,traceparent in selected]
 
 
     async def finish_job_outbox_batch(self, outbox_ids: list[str], owner: str, *,
@@ -381,4 +385,3 @@ class JobTerminalTransactions:
                 group.state = JobGroupState.CONTINUED.value
                 group.continued_at = timestamp; group.updated_at = timestamp
             return len(rows)
-
