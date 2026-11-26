@@ -67,7 +67,7 @@ async def test_gateway_streams_job_artifact_under_exact_output_grant(tmp_path,mo
             assert path.read_bytes()==b'%PDF-1.7\nstreamed'
             return 'sha256:'+digest,digest
     monkeypatch.setattr(gateway.Redis,'from_url',lambda *args,**kwargs:Redis())
-    monkeypatch.setattr(gateway,'Store',Store)
+    monkeypatch.setattr(gateway,'gateway_repositories',Store)
     monkeypatch.setattr(gateway,'object_store',lambda settings:Objects())
     settings=Settings(backend='fake',database_url='sqlite+aiosqlite:///'+str(tmp_path/'gateway.db'),
         redis_url='redis://127.0.0.1:6379/15',data_root=tmp_path)

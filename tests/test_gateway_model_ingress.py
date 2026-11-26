@@ -28,7 +28,7 @@ def ingress(tmp_path,monkeypatch):
             state.reservations.append(args)
         async def finalize_model_tokens(self,*args):return {'charged':1}
     monkeypatch.setattr(gateway.Redis,'from_url',lambda *args,**kwargs:object())
-    monkeypatch.setattr(gateway,'Store',lambda *args,**kwargs:SecurityStore())
+    monkeypatch.setattr(gateway,'gateway_repositories',lambda *args,**kwargs:SecurityStore())
     class Activity:
         def __init__(self,*args):
             self.request_id='request-'+str(len(state.activities));self.probe=OutputProbe()

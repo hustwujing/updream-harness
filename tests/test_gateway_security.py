@@ -102,7 +102,7 @@ async def test_native_auxiliary_model_routes_preserve_payload_and_budget_semanti
             self.finalized.append((request_id,usage));return {"charged":usage or 100_000}
     store=SecurityStore();requests=[];activities=[]
     monkeypatch.setattr(gateway.Redis,"from_url",lambda *args,**kwargs:Redis())
-    monkeypatch.setattr(gateway,"Store",lambda *args,**kwargs:store)
+    monkeypatch.setattr(gateway,"gateway_repositories",lambda *args,**kwargs:store)
     class Activity:
         def __init__(self,*args):
             self.request_id="request-"+str(len(activities));self.probe=OutputProbe();self.finished=False
@@ -168,7 +168,7 @@ async def test_local_budget_rejection_terminalizes_model_activity_before_upstrea
             raise ValueError('model_token_budget_exhausted')
     store=SecurityStore();activities=[]
     monkeypatch.setattr(gateway.Redis,'from_url',lambda *args,**kwargs:Redis())
-    monkeypatch.setattr(gateway,'Store',lambda *args,**kwargs:store)
+    monkeypatch.setattr(gateway,'gateway_repositories',lambda *args,**kwargs:store)
     class Activity:
         def __init__(self,*args):
             self.request_id='local-budget';self.started=False;self.finished=[];activities.append(self)
@@ -252,7 +252,7 @@ async def test_gateway_revocation_survives_redis_reset(tmp_path,monkeypatch):
         async def set(self,key,value,**kwargs):self.values[key]=value
     redis=Redis()
     monkeypatch.setattr(gateway.Redis,"from_url",lambda *args,**kwargs:redis)
-    monkeypatch.setattr(gateway,"Store",lambda *args,**kwargs:store)
+    monkeypatch.setattr(gateway,"gateway_repositories",lambda *args,**kwargs:store)
     app=gateway.create_gateway(settings)
     token,value=CapabilityCodec(settings.gateway_signing_key).issue(thread_id="thread",turn_id="turn",
         sandbox_id="sandbox",harness=Harness.CODEX,model="gpt-5.6",
@@ -283,7 +283,7 @@ async def test_gateway_fails_closed_when_capability_authority_is_unavailable(tmp
         def __init__(self,*args,**kwargs):pass
         async def authorize_capability(self,*args,**kwargs):raise RuntimeError("database unavailable")
     monkeypatch.setattr(gateway.Redis,"from_url",lambda *args,**kwargs:Redis())
-    monkeypatch.setattr(gateway,"Store",BrokenStore)
+    monkeypatch.setattr(gateway,"gateway_repositories",BrokenStore)
     settings=Settings(backend="fake",data_root=tmp_path,
         database_url="sqlite+aiosqlite:///"+str(tmp_path/"authority-down.db"))
     app=gateway.create_gateway(settings)
@@ -394,7 +394,7 @@ async def test_excessive_native_model_request_never_reaches_upstream(
             return {"request_count":1,"public_request_count":0,"token_remaining":1}
         async def persist_runtime_event(self,*args,**kwargs):return None
     monkeypatch.setattr(gateway.Redis,"from_url",lambda *args,**kwargs:Redis())
-    monkeypatch.setattr(gateway,"Store",SecurityStore)
+    monkeypatch.setattr(gateway,"gateway_repositories",SecurityStore)
     calls=[]
     async def forwarded(*args,**kwargs):calls.append(True)
     monkeypatch.setattr(gateway,"send_with_start_timeout",forwarded)
@@ -434,7 +434,7 @@ async def model_gateway_fixture(tmp_path,monkeypatch,stream,content_type):
             self.finalized.append((request_id,usage));return {"charged":usage or 100}
     store=SecurityStore()
     monkeypatch.setattr(gateway.Redis,"from_url",lambda *args,**kwargs:Redis())
-    monkeypatch.setattr(gateway,"Store",lambda *args,**kwargs:store)
+    monkeypatch.setattr(gateway,"gateway_repositories",lambda *args,**kwargs:store)
     class Activity:
         def __init__(self,*args):self.request_id="idle-request";self.probe=OutputProbe();self.finished=False
         async def start(self):pass

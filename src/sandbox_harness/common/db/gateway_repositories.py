@@ -6,7 +6,13 @@ CORE_METHODS = frozenset({
     "authorize_capability", "revoke_capability", "reserve_model_tokens", "finalize_model_tokens",
     "get_artifact", "get_reviewed_job_artifact_for_thread", "get_job", "get_job_cleanup",
     "get_job_group", "get_job_group_draft", "list_jobs_for_group", "owner_id_for_thread",
-    "turn_input_artifacts",
+    "turn_input_artifacts", "resolve_project_file_reference", "bind_job_artifact",
+    "confirm_job_group_draft", "create_job_group", "create_job_group_draft",
+    "get_job_authorization_context", "get_job_group_draft_request", "get_turn_for_owner",
+    "reject_job_group_draft", "request_job_cancel", "request_job_group_cancel",
+    "update_job_group_draft", "validate_job_input_artifacts",
+    "persist_runtime_event", "update_model_activity",
+    "resolve_review_candidates",
 })
 MEDIA_METHODS = frozenset({
     "get_media_job_for_thread", "media_job_output_for_thread", "request_media_cancel_for_thread",

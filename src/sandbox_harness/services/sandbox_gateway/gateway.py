@@ -40,6 +40,7 @@ from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.catalog.execution_readiness import (ExecutionReadiness)
 from sandbox_harness.common.jobs.review import (ReviewSubmission, ReviewerCoordinator)
 from sandbox_harness.common.configuration.config import (Settings, load_settings, validate_service_settings)
+from sandbox_harness.common.configuration.databases import (DatabaseSettings)
 from sandbox_harness.common.contracts.domain import (Harness, MediaDraftCreate, now)
 from sandbox_harness.common.models.model_routes import (ModelRoutes)
 from sandbox_harness.common.models.model_activity import (ModelActivity)
@@ -48,7 +49,10 @@ from sandbox_harness.common.catalog.media_references import (resolve_media_refer
 from sandbox_harness.common.catalog.provider_preflight import (ProviderPreflight)
 from sandbox_harness.common.storage.objects import (object_store)
 from sandbox_harness.common.sites.site_bundle import (MAX_SITE_ARCHIVE_BYTES, normalize_site_slug, stage_site_archive)
-from sandbox_harness.common.db.store import (Store)
+from sandbox_harness.common.db.core import (CoreRepository)
+from sandbox_harness.common.db.gateway_repositories import (GatewayRepositories)
+from sandbox_harness.common.db.media_repository import (MediaRepository)
+from sandbox_harness.common.db.site_repository import (SiteRepository)
 from sandbox_harness.services.sandbox_gateway.public_proxy import (DestinationPolicy, start_proxy)
 
 
@@ -275,6 +279,20 @@ async def bytes_with_idle_timeout(response, timeout_seconds: float):
             raise ModelUpstreamIdleTimeout("model_upstream_idle_timeout") from exc
 
 
+def gateway_repositories(settings):
+    try:
+        databases=DatabaseSettings().for_service("sandbox-gateway")
+    except ValueError:
+        if settings.backend!="fake":raise
+        databases={"core":settings.database_url,
+            "media":"sqlite+aiosqlite:///"+str(settings.data_root/"gateway-media.db"),
+            "sites":"sqlite+aiosqlite:///"+str(settings.data_root/"gateway-sites.db")}
+    return GatewayRepositories(
+        CoreRepository(databases["core"],settings.redis_url,settings.redis_prefix,
+            namespace=settings.namespace),
+        MediaRepository(databases["media"]),SiteRepository(databases["sites"]))
+
+
 def create_gateway(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     validate_service_settings(settings)
@@ -289,7 +307,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
     clients: dict[str, httpx.AsyncClient] = {}
     telemetry_fallback: OrderedDict[str, tuple[int,int]] = OrderedDict()
     model_routes = ModelRoutes(settings)
-    activity_store = Store(settings.database_url, settings.redis_url, settings.redis_prefix)
+    activity_store = gateway_repositories(settings)
     job_catalog_raw = settings.job_catalog_path.read_text()
     job_catalog = JobCatalog.from_json(job_catalog_raw,
         expected_digest=(settings.job_catalog_digest or hashlib.sha256(job_catalog_raw.encode()).hexdigest()))

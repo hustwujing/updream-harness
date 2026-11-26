@@ -105,7 +105,7 @@ async def test_gateway_media_status_is_capability_and_thread_scoped(tmp_path, mo
         async def get_media_job_for_thread(self, job_id, thread_id):
             calls.append((job_id, thread_id)); return {"id": job_id, "status": "running"}
     monkeypatch.setattr(gateway.Redis, "from_url", lambda *args, **kwargs: Redis())
-    monkeypatch.setattr(gateway, "Store", Store)
+    monkeypatch.setattr(gateway, "gateway_repositories", Store)
     settings = Settings(backend="fake", database_url="sqlite+aiosqlite:///" + str(tmp_path / "gateway.db"))
     app = gateway.create_gateway(settings)
     token, _ = CapabilityCodec(settings.gateway_signing_key).issue(thread_id="thread-1", turn_id="turn-1",
@@ -146,7 +146,7 @@ async def test_gateway_job_artifact_fetch_is_turn_scoped_and_redacted(tmp_path,m
             assert object_ref=='sha256:private-object' and maximum==len(payload)
             yield payload[:5];yield payload[5:]
     monkeypatch.setattr(gateway.Redis,'from_url',lambda *args,**kwargs:Redis())
-    monkeypatch.setattr(gateway,'Store',Store)
+    monkeypatch.setattr(gateway,'gateway_repositories',Store)
     monkeypatch.setattr(gateway,'object_store',lambda settings:Objects())
     settings=Settings(backend='fake',database_url='sqlite+aiosqlite:///'+str(tmp_path/'fetch.db'))
     app=gateway.create_gateway(settings);codec=CapabilityCodec(settings.gateway_signing_key)
@@ -212,7 +212,7 @@ async def test_gateway_continuously_validates_job_grant_headers_and_parameters(t
         async def get_media_job_for_thread(self,job_id,thread_id):
             return {"id":job_id,"thread_id":thread_id,"status":"running"}
     monkeypatch.setattr(gateway.Redis,'from_url',lambda *args,**kwargs:Redis())
-    monkeypatch.setattr(gateway,'Store',Store)
+    monkeypatch.setattr(gateway,'gateway_repositories',Store)
     settings=Settings(backend='fake',database_url='sqlite+aiosqlite:///'+str(tmp_path/'job-grant.db'))
     app=gateway.create_gateway(settings)
     parameter_digest=hashlib.sha256(json.dumps({'query':[],'body':None},sort_keys=True,
@@ -275,7 +275,7 @@ async def test_job_execution_catalog_is_filtered_to_the_signed_grant(tmp_path,mo
         'child_execution_profiles':[{'id':'child-general'}]}
     async def snapshot(self):return {}
     monkeypatch.setattr(gateway.Redis,'from_url',lambda *args,**kwargs:Redis())
-    monkeypatch.setattr(gateway,'Store',Store)
+    monkeypatch.setattr(gateway,'gateway_repositories',Store)
     monkeypatch.setattr(gateway.HarnessCatalog,'public_execution_metadata',
         lambda self,availability=None:metadata)
     monkeypatch.setattr(gateway.ExecutionReadiness,'snapshot',snapshot)
@@ -343,7 +343,7 @@ async def test_inline_artifact_inspect_is_fenced_by_job_operation_and_artifact_g
             return (SimpleNamespace(id=identity,path='inputs/poster.png',sha256='1'*64,
                 size=123,mime='image/png') if identity==artifact_id else None)
     monkeypatch.setattr(gateway.Redis,'from_url',lambda *args,**kwargs:Redis())
-    monkeypatch.setattr(gateway,'Store',Store)
+    monkeypatch.setattr(gateway,'gateway_repositories',Store)
     settings=Settings(backend='fake',database_url='sqlite+aiosqlite:///'+str(tmp_path/'inspect.db'))
     app=gateway.create_gateway(settings);codec=CapabilityCodec(settings.gateway_signing_key)
     token,_=codec.issue(thread_id='a'*32,turn_id='b'*32,sandbox_id='sandbox-1',
@@ -402,7 +402,7 @@ async def test_gateway_site_prepare_is_capability_scoped_and_turn_bound(tmp_path
             assert path.stat().st_size == size
             return "sha256:" + digest, digest
     monkeypatch.setattr(gateway.Redis, "from_url", lambda *args, **kwargs: Redis())
-    monkeypatch.setattr(gateway, "Store", Store)
+    monkeypatch.setattr(gateway, "gateway_repositories", Store)
     monkeypatch.setattr(gateway, "object_store", lambda settings: Objects())
     settings = Settings(backend="fake", database_url="sqlite+aiosqlite:///" + str(tmp_path / "gateway.db"))
     app = gateway.create_gateway(settings)
@@ -465,7 +465,7 @@ async def test_gateway_media_prepare_creates_turn_bound_draft(tmp_path, monkeypa
             calls.append(("commit", owner_id, thread_id, turn_id))
             return {"turn_id": turn_id, "status": "sealed", "draft_count": 1}
     monkeypatch.setattr(gateway.Redis, "from_url", lambda *args, **kwargs: Redis())
-    monkeypatch.setattr(gateway, "Store", Store)
+    monkeypatch.setattr(gateway, "gateway_repositories", Store)
     settings = Settings(backend="fake", database_url="sqlite+aiosqlite:///" + str(tmp_path / "gateway.db"))
     app = gateway.create_gateway(settings)
     turn_id = "a" * 32
@@ -521,7 +521,7 @@ async def test_gateway_media_candidate_content_and_promotion_are_thread_scoped(t
             assert reference == "sha256:" + "1" * 64 and maximum > 9
             return b"candidate"
     monkeypatch.setattr(gateway.Redis, "from_url", lambda *args, **kwargs: Redis())
-    monkeypatch.setattr(gateway, "Store", Store)
+    monkeypatch.setattr(gateway, "gateway_repositories", Store)
     monkeypatch.setattr(gateway, "object_store", lambda settings: Objects())
     settings = Settings(backend="fake", database_url="sqlite+aiosqlite:///" + str(tmp_path / "gateway-output.db"))
     app = gateway.create_gateway(settings)
@@ -556,7 +556,7 @@ async def test_terminal_model_step_is_saved_before_last_frame_is_forwarded(tmp_p
         async def eval(self,*args):return 1
         async def exists(self,*args):return 0
     monkeypatch.setattr(gateway.Redis,'from_url',lambda *a,**k:Redis())
-    monkeypatch.setattr(gateway,'Store',lambda *a,**k:CapabilityStoreStub())
+    monkeypatch.setattr(gateway,'gateway_repositories',lambda *a,**k:CapabilityStoreStub())
     observations=[]
     class Activity:
         def __init__(self,*args):self.probe=OutputProbe();self.finished=False;self.request_id='model-request';observations.append(self)
