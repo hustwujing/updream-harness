@@ -177,7 +177,9 @@ class MediaWorker:
                 else await self._execute(job))
             if job.get("source_job_id") and await self.store.media_cancel_requested(
                     job["id"],self.owner,job["generation"]):
-                if result.status in {"success","failed","cancelled"}:
+                provider=self.external_providers.get(job["adapter"])
+                if (result.status in {"success","failed","cancelled"}
+                        and (not provider or not result.provider_job_id)):
                     await self.store.update_media_job(job["id"],self.owner,job["generation"],
                         status="cancelled",phase="terminal",
                         provider_job_id=result.provider_job_id)
