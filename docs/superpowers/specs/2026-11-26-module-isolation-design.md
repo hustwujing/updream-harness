@@ -1,7 +1,8 @@
 # Service modules and common libraries
 
-Status: proposed design, awaiting user approval. No product source, database or
-running deployment changes are part of this design commit.
+Status: approved for implementation by the user after the completeness inventory
+("列完之后就动手吧"). Subsequent user steering requires a fresh complete real-case
+gate after implementation. Earlier design commits changed documentation only.
 
 This revision incorporates the user's explicit `sandbox-gateway` naming and
 full deployment-location isolation requirements. The independent builder check
@@ -24,7 +25,7 @@ job outcomes and provider-neutral recovery behavior.
 The user explicitly selected the name `sandbox-gateway` and required code that
 runs inside sandboxes or other execution environments to be independently owned
 and released. The remaining implementation choices below are the author's
-recommendations, not an assertion that the whole design is already approved.
+recommendations now covered by the user's instruction to proceed.
 The existing native implementation workflow is suitable; focused independent reviews follow transaction and deployment stages.
 
 ## Approaches
@@ -110,23 +111,23 @@ src/
   controlled_runtime/       # fixed programs launched inside bwrap, no host service imports
 modules/                     # explicit build/release manifests, grouped by location
   host/
-    api/module.toml
-    sandbox-gateway/module.toml
-    job-worker/module.toml
-    allocation-worker/module.toml
-    media-worker/module.toml
-    controlled-worker/module.toml
-    site-worker/module.toml
+    api/module.json
+    sandbox-gateway/module.json
+    job-worker/module.json
+    allocation-worker/module.json
+    media-worker/module.json
+    controlled-worker/module.json
+    site-worker/module.json
   sandbox/
-    runtime/module.toml
-    bootstrap/module.toml
-    content/module.toml
-    images/module.toml
+    runtime/module.json
+    bootstrap/module.json
+    content/module.json
+    images/module.json
   execution/
-    controlled-runtime/module.toml
-    image-inference/module.toml
+    controlled-runtime/module.json
+    image-inference/module.json
   browser/
-    web-ui/module.toml
+    web-ui/module.json
 web/                        # frontend built only for API release
 runtime/                    # signed bundles, profiles, Skills and image inputs
 ```
@@ -140,7 +141,7 @@ package roots; a new package-root allowlist or image rebuild is unnecessary for
 source moves alone. Actual dependency or Bootstrap changes still require image
 rebuild and image gates under existing rules.
 
-Each `module.toml` defines identity, execution location, artifact type, applicable
+Each `module.json` defines identity, execution location, artifact type, applicable
 console/module entry, allowed source files, common dependencies, third-party dependencies, non-secret required config names,
 packaged data, runtime assets, native OS/permission requirements, external build
 inputs, compatible consumers and verification commands.
@@ -309,7 +310,7 @@ product-module count remains 14 and the host application-service count remains 8
 
 The user-selected module/service name is `sandbox-gateway`. Its Python package
 is `sandbox_harness.services.sandbox_gateway` (Python identifier uses underscore),
-its manifest is `modules/host/sandbox-gateway/module.toml`, and its canonical
+its manifest is `modules/host/sandbox-gateway/module.json`, and its canonical
 entry point is `sandbox-harness-parallel-sandbox-gateway`. It runs on the host;
 "sandbox" describes the clients and controlled access boundary.
 
@@ -522,7 +523,10 @@ implementation run focused tests per move, full Python/build checks at release,
 then affected real cases based on code and packaging reachability. Common contract
 or Runtime moves have a broad blast radius: explicitly reassess all 169 product
 cases and RC7/AR4/DM4, rather than labeling them unaffected because behavior was
-intended to remain the same. Existing unaffected receipts retain their revisions.
+intended to remain the same. Existing unaffected receipts retain their revisions as history. The subsequent
+explicit user requirement is stronger for final acceptance: run all 169 product
+plus RC7/AR4/DM4 real cases anew on the final implementation release; historical
+successes do not satisfy this fresh gate.
 
 Required release proofs include: isolated service imports; ABI/schema identity;
 old/new mixed-version service operation; allocation recovery and capacity;
