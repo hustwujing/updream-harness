@@ -152,6 +152,14 @@ def test_settings_centralize_operational_log_configuration(tmp_path):
     assert diagnostic.max_bytes==5678 and diagnostic.ttl_seconds==6*3600
 
 
+def test_runtime_code_digest_is_the_service_release_when_host_release_is_absent(monkeypatch):
+    monkeypatch.delenv('SANDBOX_HARNESS_RELEASE',raising=False)
+    monkeypatch.setenv('SANDBOX_RUNTIME_CODE_DIGEST','a'*64)
+    assert obs.configured_release()=='a'*64
+    monkeypatch.setenv('SANDBOX_HARNESS_RELEASE','host-release')
+    assert obs.configured_release()=='host-release'
+
+
 def test_diagnostic_capture_is_disabled_by_default_and_payload_requires_debug(tmp_path):
     disabled=DiagnosticCapture(tmp_path/'disabled','api','instance',mode='off')
     assert disabled.record_http(direction='ingress',method='POST',url='https://example.test/private?token=x',

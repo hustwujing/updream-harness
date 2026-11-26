@@ -463,6 +463,10 @@ def export_headers():
     from opentelemetry.util.re import parse_env_headers
     return parse_env_headers(os.getenv("OTEL_EXPORTER_OTLP_HEADERS",""),liberal=True)
 
+def configured_release():
+    return (os.getenv('SANDBOX_HARNESS_RELEASE') or
+        os.getenv('SANDBOX_RUNTIME_CODE_DIGEST') or 'unknown')
+
 def telemetry_configuration(service,root,settings=None):
     data_root=Path(getattr(settings,'data_root',Path(root).parent))
     configured_dir=getattr(settings,'log_dir',os.getenv('SANDBOX_HARNESS_LOG_DIR',''))
@@ -488,7 +492,7 @@ def telemetry_configuration(service,root,settings=None):
 def configure(service,root,settings=None):
     global _PROVIDER,_TELEMETRY,_DIAGNOSTICS,_SCHEMA_STRICT
     if _TELEMETRY:return _TELEMETRY
-    release=os.getenv('SANDBOX_HARNESS_RELEASE','unknown')
+    release=configured_release()
     if release=='unknown':
         import subprocess
         try:release=subprocess.check_output(['git','rev-parse','--short=12','HEAD'],stderr=subprocess.DEVNULL,timeout=2,text=True).strip()
