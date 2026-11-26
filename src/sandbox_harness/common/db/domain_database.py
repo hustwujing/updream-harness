@@ -30,6 +30,7 @@ DOMAIN_TABLES = {
         "job_cleanups", "job_display_activities", "job_group_drafts", "job_groups",
         "job_leases", "job_outbox", "jobs", "model_token_reservations", "nodes",
         "pause_participants", "project_files", "resource_reservations", "review_gates",
+        "platform_leaders",
         "sandbox_allocations", "sandbox_audit_events", "sandbox_controls", "sandbox_port_grants",
         "thread_controls", "threads", "turn_inputs", "turn_order", "turn_project_files",
         "turns", "uploads",

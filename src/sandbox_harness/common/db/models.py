@@ -732,6 +732,15 @@ class JobLeaseRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class PlatformLeaderRow(Base):
+    __tablename__ = "platform_leaders"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner: Mapped[str] = mapped_column(String(160), default="", server_default="")
+    generation: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class SandboxAllocationRow(Base):
     __tablename__ = 'sandbox_allocations'
     id: Mapped[str] = mapped_column(String(64),primary_key=True)

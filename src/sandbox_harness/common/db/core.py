@@ -31,9 +31,10 @@ from .sandbox import SandboxTransactions
 from .turns import TurnsTransactions
 from .files import FilesTransactions
 from .interactions import InteractionsTransactions
+from .leaders import PlatformLeaderTransactions
 
 
-class CoreRepository(CoreThreadLifecycle, DomainDatabase, BaseConnections, CapabilitiesTransactions, ViewsTransactions, PauseTransactions, BudgetsTransactions, JobActivityTransactions, JobGroupsTransactions, JobAttemptsTransactions, AllocationsTransactions, CleanupTransactions, JobTerminalTransactions, JobArtifactsTransactions, EventsTransactions, ThreadsTransactions, SandboxTransactions, TurnsTransactions, FilesTransactions, InteractionsTransactions):
+class CoreRepository(CoreThreadLifecycle, DomainDatabase, BaseConnections, CapabilitiesTransactions, ViewsTransactions, PauseTransactions, BudgetsTransactions, JobActivityTransactions, JobGroupsTransactions, JobAttemptsTransactions, AllocationsTransactions, CleanupTransactions, JobTerminalTransactions, JobArtifactsTransactions, EventsTransactions, ThreadsTransactions, SandboxTransactions, TurnsTransactions, FilesTransactions, InteractionsTransactions, PlatformLeaderTransactions):
     def __init__(self, database_url: str, redis_url: str = "", redis_prefix: str = "sandbox-harness:", *,
                  namespace: str, handoff_max_attempts: int = 8,
                  handoff_max_age_seconds: int = 900):
