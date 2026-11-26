@@ -14,10 +14,11 @@ class CrossDomainCommands:
     async def _turn_scope(self, db, owner_id, thread_id, turn_id):
         version = await self.core.lifecycle.admit(db, owner_id, thread_id)
         thread = await db.get(ThreadRow, thread_id, with_for_update=True)
-        turn = await db.get(TurnRow, turn_id, with_for_update=True)
         if not thread or thread.owner_id != owner_id: raise KeyError("thread_not_found")
-        if not turn or turn.thread_id != thread_id: raise KeyError("turn_not_found")
-        if turn.state in {state.value for state in TERMINAL}: raise RuntimeError("turn_terminal")
+        if turn_id:
+            turn = await db.get(TurnRow, turn_id, with_for_update=True)
+            if not turn or turn.thread_id != thread_id: raise KeyError("turn_not_found")
+            if turn.state in {state.value for state in TERMINAL}: raise RuntimeError("turn_terminal")
         return version
 
     async def create_media_draft(self, owner_id, thread_id, value, *, expires_at,

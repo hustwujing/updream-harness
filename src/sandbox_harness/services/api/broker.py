@@ -25,7 +25,6 @@ from sandbox_harness.common.sandbox.runtime import (RuntimeClient, RuntimeStream
 from sandbox_harness.common.sandbox.sandbox import (SandboxNotFound)
 from sandbox_harness.common.sandbox.sandbox_factory import (SandboxProfileResolver)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxHandle)
-from sandbox_harness.common.db.store import (Store)
 from sandbox_harness.common.sites.site_bundle import (build_site_archive_from_paths, normalize_site_slug)
 
 
@@ -60,7 +59,7 @@ class CheckpointRestoreError(RuntimeError):
 
 
 class Broker:
-    def __init__(self, settings: Settings, store: Store, objects: ObjectStore, pool: SandboxPool, runtime: RuntimeClient, catalog: HarnessCatalog):
+    def __init__(self, settings: Settings, store, objects: ObjectStore, pool: SandboxPool, runtime: RuntimeClient, catalog: HarnessCatalog):
         self.settings = settings
         self.store = store
         self.objects = objects
@@ -507,21 +506,24 @@ class Broker:
             turns = await self.store.list_turns(thread_id, owner_id)
             if any(turn.id in self.tasks or turn.id in self.active_sandboxes for turn in turns):
                 raise RuntimeError("active_thread_cannot_be_deleted")
-            await self.pool.discard_thread(thread_id)
-            await self.store.delete_thread(thread_id, owner_id)
+            result = await self.store.begin_thread_lifecycle(thread_id, owner_id, "delete")
+            if result.state == "refused":
+                raise RuntimeError(result.error_code)
+            return result
 
     async def set_thread_archived(self, thread_id: str, owner_id: str, *, archived: bool):
         async with self.thread_lock(thread_id):
+            if not await self.store.get_thread(thread_id, owner_id):
+                raise KeyError("thread_not_found")
             if archived and await self.store.get_sandbox_control(thread_id, owner_id):
                 raise RuntimeError("sandbox_takeover_active")
-            thread = await self.store.set_thread_archived(thread_id, owner_id, archived=archived)
-            if archived:
-                try:
-                    await self.pool.discard_thread(thread_id)
-                except Exception:
-                    await self.store.set_thread_archived(thread_id, owner_id, archived=False)
-                    raise
-            return thread
+            result = await self.store.begin_thread_lifecycle(
+                thread_id, owner_id, "archive" if archived else "unarchive")
+            if result.state == "refused":
+                raise RuntimeError(result.error_code)
+            if result.state == "pending":
+                return result
+            return await self.store.get_thread(thread_id, owner_id)
 
     @observed("turn.cancel")
     async def cancel(self, turn_id: str) -> None:

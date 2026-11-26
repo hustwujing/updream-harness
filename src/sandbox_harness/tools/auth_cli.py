@@ -10,7 +10,8 @@ from dotenv import dotenv_values
 
 from sandbox_harness.common.security.auth import (AccountAuth, normalize_username)
 from sandbox_harness.common.configuration.config import (load_settings)
-from sandbox_harness.common.db.store import (Store)
+from sandbox_harness.common.configuration.databases import (DatabaseSettings)
+from sandbox_harness.common.db.accounts import (AccountsRepository)
 
 
 def password_value(path: str) -> str:
@@ -29,7 +30,9 @@ async def run(args) -> None:
     if env_file.is_file():
         for key,value in dotenv_values(env_file).items():
             if value is not None:os.environ[key]=value
-    settings = load_settings();store = Store(settings.database_url);await store.initialize()
+    settings = load_settings()
+    database = DatabaseSettings().for_service("account-admin")["accounts"]
+    store = AccountsRepository(database);await store.initialize()
     auth = AccountAuth(store, settings.auth_session_ttl_seconds)
     try:
         if args.action == "list":

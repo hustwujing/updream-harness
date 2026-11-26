@@ -37,6 +37,7 @@ from sandbox_harness.services.api.execution_graph import (ExecutionGraphProjecto
 from sandbox_harness.common.catalog.execution_readiness import (ExecutionReadiness)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate)
 from sandbox_harness.common.configuration.config import (Settings, load_settings, validate_service_settings)
+from sandbox_harness.common.configuration.databases import (DatabaseSettings)
 from sandbox_harness.common.observability.observability import (RequestLoggingMiddleware, telemetry, event)
 from sandbox_harness.common.contracts.domain import (Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, RegisterRequest, UpdateAccountRequest, MediaDraftCreate, MediaDraftUpdate, MediaReferenceUploadCreate, ProjectFileRename, SandboxReleaseRequest, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, TERMINAL, valid_attachment_name, now)
 from sandbox_harness.services.api.document_preview import (is_presentation, presentation_pdf)
@@ -46,12 +47,17 @@ from sandbox_harness.common.catalog.media_references import (inspect_reference, 
 from sandbox_harness.common.catalog.provider_preflight import (ProviderPreflight)
 from sandbox_harness.common.storage.objects import (object_store)
 from sandbox_harness.common.sandbox.pool import (SandboxPool)
+from sandbox_harness.common.sandbox.ownership_cleanup import (OwnershipCleanup)
 from sandbox_harness.common.sandbox.runtime import (RuntimeClient)
 import sandbox_harness.common.sandbox.sandbox_factory as sandbox_factory
 from sandbox_harness.services.api.sandbox_inspector import (SandboxInspector, websocket_endpoint_headers)
 from sandbox_harness.common.sites.site_bundle import (safe_site_path)
 from sandbox_harness.services.api.sessions import (COOKIE, Sessions)
-from sandbox_harness.common.db.store import (Store)
+from sandbox_harness.common.db.accounts import (AccountsRepository)
+from sandbox_harness.common.db.api_repositories import (ApiRepositories)
+from sandbox_harness.common.db.core import (CoreRepository)
+from sandbox_harness.common.db.media_repository import (MediaRepository)
+from sandbox_harness.common.db.site_repository import (SiteRepository)
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +167,21 @@ def managed_project_path(value: str, *, upload: bool = False) -> str:
 
 
 def components(settings: Settings):
-    store = Store(settings.database_url, settings.redis_url, settings.redis_prefix)
+    try:
+        databases = DatabaseSettings().for_service("api")
+    except ValueError:
+        if settings.backend != "fake":
+            raise
+        databases = {
+            "accounts": "sqlite+aiosqlite:///" + str(settings.data_root / "api-accounts.db"),
+            "core": settings.database_url,
+            "media": "sqlite+aiosqlite:///" + str(settings.data_root / "api-media.db"),
+            "sites": "sqlite+aiosqlite:///" + str(settings.data_root / "api-sites.db"),
+        }
+    core = CoreRepository(databases["core"], settings.redis_url, settings.redis_prefix,
+        namespace=settings.namespace)
+    store = ApiRepositories(AccountsRepository(databases["accounts"]), core,
+        MediaRepository(databases["media"]), SiteRepository(databases["sites"]))
     objects = object_store(settings)
     backend=sandbox_factory.build_sandbox_registry(settings)
     releases=sandbox_factory.primary_provider_releases(settings,backend.provider)
@@ -175,7 +195,8 @@ def components(settings: Settings):
     if sum(targets.values()) >= settings.max_sandboxes:
         raise ValueError("max_sandboxes must exceed the total warm pool target")
     pool=SandboxPool(backend,images,targets,max_sandboxes=settings.max_sandboxes,
-        profile_resolver=profile_resolver,ttl_seconds=settings.sandbox_timeout_seconds)
+        profile_resolver=profile_resolver,ttl_seconds=settings.sandbox_timeout_seconds,
+        ownership=core.ownership)
     runtime = RuntimeClient(timeout_seconds=settings.sandbox_timeout_seconds,
         reattach_attempts=settings.runtime_stream_reattach_attempts,
         reattach_max_delay_seconds=settings.runtime_stream_reattach_max_delay_seconds,
@@ -264,8 +285,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await store.initialize()
+        await pool.restore_allocation_capacity(await store.core.ownership.capacity_obligations())
         await broker.start()
         await inspector.start()
+        protocol_stop = asyncio.Event()
+        ownership_cleanup = OwnershipCleanup(store.core.ownership, pool.backend, pool)
+
+        async def drive_domain_protocols():
+            delay = settings.supervisor_retry_initial_seconds
+            while not protocol_stop.is_set():
+                try:
+                    await store.relay_pending()
+                    await store.advance_lifecycle_operations()
+                    await ownership_cleanup.run_once()
+                    app.state.domain_protocol_status = "running"
+                    app.state.domain_protocol_last_error = ""
+                    delay = settings.supervisor_retry_initial_seconds
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    app.state.domain_protocol_status = "degraded"
+                    app.state.domain_protocol_last_error = type(exc).__name__
+                    event("domain.protocol.failed", level=40, exception_type=type(exc).__name__)
+                    delay = min(delay * 2, settings.supervisor_retry_max_seconds)
+                try:
+                    await asyncio.wait_for(protocol_stop.wait(), timeout=max(.1, delay))
+                except asyncio.TimeoutError:
+                    pass
+
+        app.state.domain_protocol_status = "running"
+        app.state.domain_protocol_last_error = ""
+        protocol_task = asyncio.create_task(drive_domain_protocols(), name="domain-protocols")
         continuation_task = asyncio.create_task(continuation_dispatcher.run(),
             name="job-continuation-dispatcher")
         media_outbox_stop = asyncio.Event()
@@ -400,7 +450,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.required_tasks={"job_continuation":continuation_task,
             "media_outbox":media_outbox_task,"sandbox_expiry":inspector.cleanup_task,
             "turn_recovery":broker.recovery_task,"orphan_reaper":broker.reaper_task,
-            "job_group_draft_expiry":draft_expiry_task}
+            "job_group_draft_expiry":draft_expiry_task,"domain_protocols":protocol_task}
         if pool_task:app.state.required_tasks["warm_pool_supervisor"]=pool_task
         yield
         if catalog_task:
@@ -411,6 +461,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             pool_task.cancel()
             with suppress(asyncio.CancelledError):
                 await pool_task
+        protocol_stop.set()
+        await protocol_task
         media_outbox_stop.set()
         await media_outbox_task
         draft_expiry_stop.set();await draft_expiry_task
@@ -456,12 +508,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             owner_id, token, new_session = "", "", False
         elif account:owner_id, token, new_session = account.owner_id, "", False
         elif ingress == "frpc":owner_id, token, new_session = "", "", False
-        else:owner_id, token, new_session = sessions.resolve(request.cookies.get(COOKIE))
+        else:
+            owner_id, token, new_session = sessions.resolve(request.cookies.get(COOKIE))
+            if not await store.accounts.guest_owner_available(owner_id):
+                new_session = False
+                request.state.guest_principal_claimed = True
         request.state.ingress = ingress
         request.state.account = account
         request.state.auth_token_hash = auth_token_hash
         request.state.owner_id = owner_id
         public_auth = request.url.path in {"/api/health", "/api/session", "/api/auth/login", "/api/auth/register"}
+        if (getattr(request.state, "guest_principal_claimed", False)
+                and request.url.path.startswith("/api/") and not public_auth
+                and not request.url.path.startswith("/api/auth/registrations/")):
+            return JSONResponse({"detail":"anonymous_principal_claimed"}, status_code=401,
+                headers={"Cache-Control":"no-store"})
         if ingress == "frpc" and not account and request.url.path.startswith("/api/") and not public_auth:
             return JSONResponse({"detail":"authentication_required"},status_code=401,
                 headers={"Cache-Control":"no-store"})
@@ -951,26 +1012,63 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             username = normalize_username(value.username)
             password_hash = await account_auth.hash_password(value.password)
-            token, digest, expires_at = account_auth.new_session()
-            account = await store.register_user(username, password_hash, request.state.owner_id,
-                session_token_hash=digest, session_expires_at=expires_at)
+            operation_id = hashlib.sha256(("registration\0" + request.state.owner_id
+                + "\0" + username).encode()).hexdigest()
+            try:
+                existing = await store.accounts.registration_result(
+                    operation_id, request.state.owner_id)
+            except KeyError:
+                existing = None
+            if existing:
+                if existing["state"] == "pending":
+                    await store.drive_lifecycle(operation_id)
+                    existing = await store.accounts.registration_result(
+                        operation_id, request.state.owner_id)
+                if existing["state"] == "refused":
+                    raise RuntimeError(existing["error_code"])
+                if existing["state"] == "pending":
+                    return JSONResponse({"operation_id":operation_id,"state":"pending"},
+                        status_code=202)
+                replay = await store.accounts.registration_replay_user(
+                    request.state.owner_id, username)
+                account = await account_auth.authenticate(value.username, value.password)
+                if not replay or not account or account.id != replay.id:
+                    raise RuntimeError("registration_identity_conflict")
+                token, _ = await account_auth.create_session(account.id)
+            else:
+                token, digest, expires_at = account_auth.new_session()
+                result = await store.begin_registration(operation_id, request.state.owner_id,
+                    username, password_hash, session_token_hash=digest,
+                    session_expires_at=expires_at)
+                if result["state"] == "refused":
+                    raise RuntimeError(result["error_code"])
+                if result["state"] == "pending":
+                    response = JSONResponse({"operation_id":operation_id,"state":"pending"},
+                        status_code=202)
+                    response.set_cookie(AUTH_COOKIE, token, httponly=True, samesite="lax",
+                        secure=secure_cookie(request), max_age=settings.auth_session_ttl_seconds,
+                        path=cookie_path(request))
+                    return response
+                account = await store.accounts.get_user(result["user_id"])
+                if account is None:
+                    raise RuntimeError("registration_result_invalid")
         except ValueError as exc:
             raise HTTPException(422, str(exc))
         except RuntimeError as exc:
-            if str(exc) != "username_taken":
-                raise HTTPException(409, str(exc))
-            replay = await store.registration_replay_user(request.state.owner_id, username)
-            if not replay:
-                raise HTTPException(409, "username_taken")
-            account = await account_auth.authenticate(value.username, value.password)
-            if not account or account.id != replay.id:
-                raise HTTPException(409, "username_taken")
-            token, _ = await account_auth.create_session(account.id)
+            raise HTTPException(409, str(exc))
         response = JSONResponse({"authenticated": True, "user": account.model_dump(mode="json")})
         response.delete_cookie(COOKIE, path=cookie_path(request))
         response.set_cookie(AUTH_COOKIE, token, httponly=True, samesite="lax", secure=secure_cookie(request),
             max_age=settings.auth_session_ttl_seconds, path=cookie_path(request))
         return response
+
+    @app.get("/api/auth/registrations/{operation_id}")
+    async def registration_status(operation_id: str, request: Request):
+        try:
+            await store.drive_lifecycle(operation_id)
+            return await store.accounts.registration_result(operation_id, request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404, "registration_not_found")
 
     @app.post("/api/auth/logout")
     async def logout(request: Request):
@@ -1084,7 +1182,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/threads/{thread_id}/archive")
     async def archive_thread(thread_id: str, request: Request):
         try:
-            return await broker.set_thread_archived(thread_id, request.state.owner_id, archived=True)
+            result = await broker.set_thread_archived(thread_id, request.state.owner_id, archived=True)
+            if getattr(result, "state", "") == "pending":
+                return JSONResponse({"operation_id":result.operation_id,"state":"pending"},
+                    status_code=202)
+            return result
         except KeyError:
             raise HTTPException(404, "Thread not found")
         except RuntimeError as exc:
@@ -1093,19 +1195,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/threads/{thread_id}/unarchive")
     async def unarchive_thread(thread_id: str, request: Request):
         try:
-            return await broker.set_thread_archived(thread_id, request.state.owner_id, archived=False)
-        except KeyError:
-            raise HTTPException(404, "Thread not found")
-
-    @app.delete("/api/threads/{thread_id}", status_code=204)
-    async def delete_thread(thread_id: str, request: Request):
-        try:
-            await broker.delete_thread(thread_id, request.state.owner_id)
+            result = await broker.set_thread_archived(thread_id, request.state.owner_id, archived=False)
+            if getattr(result, "state", "") == "pending":
+                return JSONResponse({"operation_id":result.operation_id,"state":"pending"},
+                    status_code=202)
+            return result
         except KeyError:
             raise HTTPException(404, "Thread not found")
         except RuntimeError as exc:
             raise HTTPException(409, str(exc))
+
+    @app.delete("/api/threads/{thread_id}")
+    async def delete_thread(thread_id: str, request: Request):
+        try:
+            result = await broker.delete_thread(thread_id, request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404, "Thread not found")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+        if result.state == "pending":
+            return JSONResponse({"operation_id":result.operation_id,"state":"pending"},
+                status_code=202)
         return Response(status_code=204)
+
+    @app.get("/api/lifecycle/{operation_id}")
+    async def lifecycle_status(operation_id: str, request: Request):
+        try:
+            result = await store.lifecycle_status(operation_id, request.state.owner_id)
+        except KeyError:
+            raise HTTPException(404, "lifecycle_operation_not_found")
+        return {"operation_id":result.operation_id,"state":result.state,
+                "error_code":result.error_code}
 
     @app.post("/api/threads/{thread_id}/turns")
     async def create_turn(thread_id: str, value: TurnCreate, request: Request):

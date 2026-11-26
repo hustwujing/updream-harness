@@ -16,6 +16,7 @@ from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, Turn
 from sandbox_harness.common.storage.objects import (ObjectStore)
 from sandbox_harness.common.sites.site_bundle import (build_site_archive, build_site_archive_from_files, validate_site_archive)
 from sandbox_harness.services.site_worker.site_worker import (SiteWorker)
+from sandbox_harness.common.db.site_repository import (SiteRepository)
 from sandbox_harness.common.db.store import (Store)
 from sandbox_harness.services.api.sessions import (COOKIE, Sessions)
 
@@ -137,26 +138,44 @@ def test_public_site_serves_isolated_html_ranges_and_stops_after_unpublish(tmp_p
         redis_url="", backend="fake", object_backend="local", model_catalog_discovery=False,
         session_signing_key="site-public-session-secret")
 
-    async def prepare():
-        store, objects, _, thread, turn, draft, _ = await context(tmp_path, owner=owner)
-        html=b"<!doctype html><h1>Artifact site</h1><script src='app.js'></script>"
-        script=b"document.body.dataset.ready='yes'"
-        html_ref,html_digest=objects.put(html);script_ref,script_digest=objects.put(script)
-        html_artifact=await store.add_artifact(turn.id,path="artifact-site/index.html",
-            sha256=html_digest,size=len(html),mime="text/html",object_ref=html_ref)
-        await store.add_artifact(turn.id,path="artifact-site/app.js",sha256=script_digest,
-            size=len(script),mime="text/javascript",object_ref=script_ref)
-        worker = SiteWorker(SimpleNamespace(site_worker_concurrency=1), store, objects)
-        await store.confirm_site_draft(draft.id, owner)
-        claimed = await store.claim_site_jobs(worker.owner, 1); await worker.process(claimed[0])
-        project = (await store.list_site_projects(thread.id, owner))[0]
-        published = await store.public_site_file(project.slug, "index.html")
-        await store.close()
-        return project, owner, draft.id, html_artifact.id, published["object_ref"]
-
-    project, owner, draft_id, artifact_id, published_ref = asyncio.run(prepare())
-    with TestClient(create_app(settings)) as client:
+    app = create_app(settings)
+    with TestClient(app) as client:
         client.cookies.set(COOKIE, token)
+        async def prepare():
+            store, objects = app.state.store, app.state.objects
+            profile = HarnessCatalog().resolve("codex", "gpt-5.6", "standard")
+            thread = await store.create_thread(ThreadCreate(harness=Harness.CODEX,
+                model=profile.model, reasoning_level="standard", title="site"), profile, owner)
+            turn, _, _ = await store.create_turn(thread.id,
+                TurnCreate(message="build", idempotency_key="site-public-turn"), profile, owner)
+            archive, files = site(tmp_path / "source-public", "Hello")
+            reference, digest = objects.put(archive)
+            staged=[]
+            for value in files:
+                object_ref,_=objects.put(value.data)
+                staged.append({"path":value.path,"sha256":value.sha256,"size":value.size,
+                    "mime":value.mime,"object_ref":object_ref})
+            draft,_=await store.create_site_draft(owner,thread.id,turn.id,name="Hello",
+                slug="interactive-demo",idempotency_key="site-draft-public",
+                archive_object_ref=reference,bundle_sha256=digest,archive_size=len(archive),
+                file_count=len(files),total_size=sum(value.size for value in files),
+                expires_at=now()+timedelta(hours=1),public_base_path="/sandbox-harness/sites",
+                files=staged)
+            html=b"<!doctype html><h1>Artifact site</h1><script src='app.js'></script>"
+            script=b"document.body.dataset.ready='yes'"
+            html_ref,html_digest=objects.put(html);script_ref,script_digest=objects.put(script)
+            html_artifact=await store.add_artifact(turn.id,path="artifact-site/index.html",
+                sha256=html_digest,size=len(html),mime="text/html",object_ref=html_ref)
+            await store.add_artifact(turn.id,path="artifact-site/app.js",sha256=script_digest,
+                size=len(script),mime="text/javascript",object_ref=script_ref)
+            worker = SiteWorker(SimpleNamespace(site_worker_concurrency=1), store.sites, objects)
+            await store.confirm_site_draft(draft.id, owner)
+            claimed = await store.sites.claim_site_jobs(worker.owner, 1)
+            await worker.process(claimed[0])
+            project = (await store.list_site_projects(thread.id, owner))[0]
+            published = await store.public_site_file(project.slug, "index.html")
+            return project, draft.id, html_artifact.id, published["object_ref"]
+        project, draft_id, artifact_id, published_ref = client.portal.call(prepare)
         preview = client.get(f"/api/sites/drafts/{draft_id}/preview/")
         assert preview.status_code == 200 and b"Hello" in preview.content
         assert "sandbox allow-scripts" in preview.headers["content-security-policy"]
@@ -185,8 +204,8 @@ def test_public_site_serves_isolated_html_ranges_and_stops_after_unpublish(tmp_p
         assert unavailable.json()["detail"]=="Published site file is temporarily unavailable"
 
     async def stop():
-        store = Store(settings.database_url); await store.initialize()
-        await store.unpublish_site(project.id, owner); await store.close()
+        store = SiteRepository("sqlite+aiosqlite:///" + str(tmp_path / "api-sites.db"))
+        await store.initialize(); await store.unpublish_site(project.id, owner); await store.close()
     asyncio.run(stop())
     with TestClient(create_app(settings)) as client:
         assert client.get(f"/sites/{project.slug}/").status_code == 404

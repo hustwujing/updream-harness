@@ -2,19 +2,44 @@
 from datetime import datetime
 import hashlib
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from sandbox_harness.common.contracts.domain import identifier, now
 from .domain_database import DomainDatabase
-from .handoff import DomainHandoff
-from .models import (SiteDraftFileRow, SiteDraftRow, SiteProjectRow, canonical_digest)
+from .lifecycle import LifecycleParticipant
+from .models import (SiteDeployJobRow, SiteDraftFileRow, SiteDraftRow, SiteFileRow,
+                     SiteProjectRow, SiteVersionRow, canonical_digest)
 from .sites import SitesTransactions
 
 
 class SiteRepository(DomainDatabase, SitesTransactions):
     def __init__(self, database_url: str):
         super().__init__("sites", database_url)
-        self.handoff = DomainHandoff(self, {"site.turn.draft":self._receive_turn_draft})
+        self.lifecycle = LifecycleParticipant(self, self._check_lifecycle, self._apply_lifecycle)
+        self.handoff = self.lifecycle.handoff
+        self.handoff.handlers["site.turn.draft"] = self._receive_turn_draft
+
+    async def _check_lifecycle(self, db, proposal):
+        query = select(SiteDeployJobRow.id).where(
+            SiteDeployJobRow.owner_id == proposal.owner_id,
+            SiteDeployJobRow.status.in_(["created", "running", "retry_wait"]))
+        if proposal.thread_id:
+            query = query.where(SiteDeployJobRow.thread_id == proposal.thread_id)
+        return "active_site_jobs_prevent_lifecycle" if await db.scalar(query.limit(1)) else ""
+
+    async def _apply_lifecycle(self, db, proposal):
+        if proposal.action != "delete":
+            return
+        projects = select(SiteProjectRow.id).where(SiteProjectRow.thread_id == proposal.thread_id)
+        drafts = select(SiteDraftRow.id).where(SiteDraftRow.thread_id == proposal.thread_id)
+        versions = select(SiteVersionRow.id).where(SiteVersionRow.project_id.in_(projects))
+        await db.execute(delete(SiteFileRow).where(SiteFileRow.version_id.in_(versions)))
+        await db.execute(delete(SiteVersionRow).where(SiteVersionRow.id.in_(versions)))
+        await db.execute(delete(SiteDeployJobRow).where(
+            SiteDeployJobRow.thread_id == proposal.thread_id))
+        await db.execute(delete(SiteDraftFileRow).where(SiteDraftFileRow.draft_id.in_(drafts)))
+        await db.execute(delete(SiteDraftRow).where(SiteDraftRow.id.in_(drafts)))
+        await db.execute(delete(SiteProjectRow).where(SiteProjectRow.id.in_(projects)))
 
     async def _receive_turn_draft(self, db, envelope):
         value = envelope.payload

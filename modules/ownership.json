@@ -170,6 +170,10 @@
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/core_lifecycle.py"
     },
+    "src/sandbox_harness/common/db/api_repositories.py": {
+      "owner": "common/db",
+      "target": "src/sandbox_harness/common/db/api_repositories.py"
+    },
     "src/sandbox_harness/common/db/cross_domain.py": {
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/cross_domain.py"

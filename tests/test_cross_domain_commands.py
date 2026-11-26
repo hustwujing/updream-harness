@@ -80,3 +80,42 @@ async def test_media_promotion_commits_core_file_then_acknowledges_media(tmp_pat
         assert refreshed.output_role=="delivery" and refreshed.outputs[0].project_file_id
     finally:
         for repository in (core,media,sites):await repository.close()
+
+
+async def test_thread_delete_commits_across_core_media_and_sites(tmp_path):
+    from sandbox_harness.common.db.lifecycle import LifecycleProposal
+    core,media,sites,commands,thread,turn=await setup(tmp_path)
+    value=MediaDraftCreate(kind="image",model="image/model",generation_mode="text_to_image",
+        parameters={"prompt":"opaque"},references=[],idempotency_key="delete-media-draft",
+        turn_id=turn.id,output_role="candidate")
+    spec=type("Spec",(),{"provider":"provider","adapter":"image_api",
+                         "execution":"async","cancellation":"supported"})()
+    try:
+        draft,_=await commands.create_media_draft("owner",thread.id,value,
+            expires_at=now()+timedelta(hours=1),provider_spec=spec)
+        await media.cancel_media_draft(draft.id,"owner")
+        site_values={"name":"Delete","slug":"delete","idempotency_key":"delete-site-draft",
+            "archive_object_ref":"sha256:"+"a"*64,"bundle_sha256":"a"*64,"archive_size":20,
+            "file_count":1,"total_size":12,"expires_at":now()+timedelta(hours=1),
+            "public_base_path":"/sites","files":[{"path":"index.html","sha256":"b"*64,
+                "size":12,"mime":"text/html","object_ref":"sha256:"+"b"*64}]}
+        site_draft,_=await commands.create_site_draft("owner",thread.id,turn.id,**site_values)
+        await sites.cancel_site_draft(site_draft.id,"owner")
+        await core.set_turn_state(turn.id,TurnState.COMPLETED)
+        await commands.relay_pending()
+        claimed=await media.claim_media_batches("continuation")
+        assert claimed and claimed[0]["turn_id"]==turn.id
+        await media.finish_media_batch(turn.id,"continuation",delivered=True)
+        version=await core.lifecycle_version("owner",thread.id)
+        proposal=LifecycleProposal("delete-cross-domains","owner",thread.id,
+            version.thread_generation,"delete","deleted",version.owner_generation)
+        result=await core.coordinator.start(proposal,{"media","sites"})
+        for _ in range(3):
+            await core.handoff.relay({"media":media.handoff,"sites":sites.handoff})
+            result=await core.coordinator.advance(proposal.operation_id)
+        assert result.state=="completed"
+        assert await core.get_thread(thread.id,"owner") is None
+        assert await media.get_media_draft(draft.id,"owner") is None
+        assert await sites.get_site_draft(site_draft.id,"owner") is None
+    finally:
+        for repository in (core,media,sites):await repository.close()

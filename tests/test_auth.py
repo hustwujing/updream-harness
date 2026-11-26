@@ -128,7 +128,9 @@ async def test_registration_session_insert_failure_rolls_back_account_and_owner_
 def test_frpc_requires_account_while_direct_ingress_remains_anonymous(tmp_path):
     database='sqlite+aiosqlite:///'+str(tmp_path/'auth-api.db')
     async def seed():
-        store=Store(database);await store.initialize()
+        from sandbox_harness.common.db.accounts import AccountsRepository
+        store=AccountsRepository('sqlite+aiosqlite:///'+str(tmp_path/'api-accounts.db'))
+        await store.initialize()
         try:await store.create_user('frpc.user',PasswordHasher(time_cost=3,memory_cost=65536,parallelism=2).hash('initial account password'))
         finally:await store.close()
     asyncio.run(seed())

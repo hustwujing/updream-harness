@@ -15,7 +15,8 @@ from sandbox_harness.common.execution.job_adapters import (PreAcceptCancelled, A
 from sandbox_harness.common.contracts.job_contracts import (JobState, TERMINAL_JOB_STATES)
 from sandbox_harness.common.observability.observability import (event)
 from sandbox_harness.common.contracts.sandbox_contracts import (Sandbox, SandboxCreateRequest, SandboxHandle, SandboxProfile, SandboxScope, SandboxCapacityUnavailable, SandboxRateLimited, SandboxAuthenticationFailed, SandboxProfileUnavailable, SandboxCreateOutcomeUnknown, SandboxProviderError)
-from sandbox_harness.common.db.store import (JobRow, JobLeaseRow, JobAttemptRow, JobCleanupRow, SandboxAllocationRow, utc_datetime)
+from sandbox_harness.common.db.models import (JobRow, JobLeaseRow, JobAttemptRow, JobCleanupRow,
+                                              SandboxAllocationRow, utc_datetime)
 
 
 from sandbox_harness.common.sandbox.allocation_client import (AllocationAbsent, AllocationClient, allocation_key, encode_request, decode_request, snapshot, REJECTIONS, ABSENT_STATES)

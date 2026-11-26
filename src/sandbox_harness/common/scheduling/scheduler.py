@@ -10,7 +10,8 @@ from sqlalchemy import select,exists
 
 from sandbox_harness.common.contracts.domain import (identifier, now)
 from sandbox_harness.common.contracts.job_contracts import (TERMINAL_JOB_STATES)
-from sandbox_harness.common.db.store import (JobRow, JobAttemptRow, JobCleanupRow, NodeRow, ResourceReservationRow, utc_datetime)
+from sandbox_harness.common.db.models import (JobRow, JobAttemptRow, JobCleanupRow, NodeRow,
+                                              ResourceReservationRow, utc_datetime)
 
 
 class GPUInventory(BaseModel):

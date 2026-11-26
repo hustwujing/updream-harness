@@ -9,7 +9,10 @@ from sqlalchemy import case,func,or_,select
 
 from sandbox_harness.common.contracts.domain import (TERMINAL, TurnState)
 from sandbox_harness.common.contracts.job_errors import (JOB_ERROR_CONTRACTS)
-from sandbox_harness.common.db.store import (InteractionRow, JobDisplayActivityRow, JobArtifactRow, JobAttemptRow, JobGroupDraftRow, ItemRow, JobGroupRow, JobOutboxRow, JobRow, MediaBatchRow, MediaDraftRow, MediaJobRow, ResourceReservationRow, ReviewGateRow, ThreadRow, TurnOrderRow, TurnRow, utc_datetime)
+from sandbox_harness.common.db.models import (InteractionRow, JobDisplayActivityRow, JobArtifactRow,
+    JobAttemptRow, JobGroupDraftRow, ItemRow, JobGroupRow, JobOutboxRow, JobRow, MediaBatchRow,
+    MediaDraftRow, MediaJobRow, ResourceReservationRow, ReviewGateRow, ThreadRow, TurnOrderRow,
+    TurnRow, utc_datetime)
 
 
 RUNNING_JOB_STATES={'CREATED','QUEUED','RUNNING','WAITING_EXTERNAL','CANCELLING','PAUSING'}
@@ -108,7 +111,7 @@ class ExecutionGraphProjector:
     def __init__(self,store):self.store=store
 
     async def waits(self,thread_id:str,owner_id:str)->list[dict]:
-        async with self.store.connections() as db:
+        async with self.store.core.connections() as db:
             exists=(await db.execute(select(ThreadRow.id).where(ThreadRow.id==thread_id,
                 ThreadRow.owner_id==owner_id))).scalar_one_or_none()
             if not exists:raise KeyError('thread_not_found')
@@ -127,7 +130,7 @@ class ExecutionGraphProjector:
 
     async def snapshot(self,thread_id:str,owner_id:str,*,cursor:str='',include_history:bool=False,
                        history_before:str='')->dict:
-        async with self.store.connections() as db:
+        async with self.store.core.connections() as db:
             exists=(await db.execute(select(ThreadRow.id).where(ThreadRow.id==thread_id,
                 ThreadRow.owner_id==owner_id))).scalar_one_or_none()
             projection_job_ids=set((await db.execute(select(JobRow.id).where(
@@ -135,7 +138,7 @@ class ExecutionGraphProjector:
                 MAX_JOBS))).scalars().all()) if exists else set()
         if not exists:raise KeyError('thread_not_found')
         await self.store.ensure_job_display_activities(projection_job_ids)
-        async with self.store.connections() as db:
+        async with self.store.core.connections() as db:
             thread=(await db.execute(select(ThreadRow).where(ThreadRow.id==thread_id,
                 ThreadRow.owner_id==owner_id))).scalar_one_or_none()
             if not thread:raise KeyError('thread_not_found')
@@ -189,12 +192,7 @@ class ExecutionGraphProjector:
                 if group.draft_id and group.draft_id in draft_by_id:
                     drafts.append(draft_by_id[group.draft_id])
             drafts=list({row.id:row for row in drafts}.values())
-            media_batches=list(reversed(list((await db.execute(select(MediaBatchRow).where(
-                MediaBatchRow.thread_id==thread_id,or_(MediaBatchRow.turn_id.in_(turn_ids|media_origin_ids or {''}),
-                    MediaBatchRow.status.in_(['open','sealed','delivering','blocked'])))
-                .order_by(MediaBatchRow.created_at.desc()).limit(MAX_MEDIA_BATCHES))).scalars().all())))
-            ancestor_turn_ids=({row.origin_turn_id for row in groups+drafts}
-                |{row.turn_id for row in media_batches})-turn_ids
+            ancestor_turn_ids={row.origin_turn_id for row in groups+drafts}-turn_ids
             if ancestor_turn_ids:
                 ancestors=list((await db.execute(select(TurnRow).where(
                     TurnRow.id.in_(ancestor_turn_ids)))).scalars().all())
@@ -213,15 +211,6 @@ class ExecutionGraphProjector:
                 ItemRow.turn_id.in_(turn_ids or {''}),ItemRow.type=='plan',
                 ItemRow.payload_json.like('%"model_request_id"%')).order_by(
                 ItemRow.created_at.desc()).limit(MAX_MODEL_USAGE_ROWS+1))).scalars().all())
-            batch_turn_ids={row.turn_id for row in media_batches}
-            media_drafts=list(reversed(list((await db.execute(select(MediaDraftRow).where(
-                MediaDraftRow.thread_id==thread_id,or_(MediaDraftRow.turn_id.in_(batch_turn_ids or {''}),
-                    MediaDraftRow.status=='awaiting_confirmation')).order_by(MediaDraftRow.created_at.desc())
-                .limit(MAX_MEDIA_DRAFTS))).scalars().all())))
-            media_draft_ids={row.id for row in media_drafts}
-            media_jobs=list(reversed(list((await db.execute(select(MediaJobRow).where(
-                MediaJobRow.thread_id==thread_id,MediaJobRow.draft_id.in_(media_draft_ids or {''}))
-                .order_by(MediaJobRow.created_at.desc()).limit(MAX_MEDIA_JOBS))).scalars().all())))
             interactions=list((await db.execute(select(InteractionRow).where(
                 InteractionRow.thread_id==thread_id,or_(
                     InteractionRow.turn_id.in_(turn_ids or {''}),
@@ -246,6 +235,30 @@ class ExecutionGraphProjector:
                 JobArtifactRow.job_id.in_(job_ids or {''})).group_by(JobArtifactRow.job_id))).all())
             gates=list((await db.execute(select(ReviewGateRow).where(
                 ReviewGateRow.reviewer_job_id.in_(job_ids or {''})))).scalars().all())
+        async with self.store.media.connections() as db:
+            media_batches=list(reversed(list((await db.execute(select(MediaBatchRow).where(
+                MediaBatchRow.thread_id==thread_id,or_(
+                    MediaBatchRow.turn_id.in_(turn_ids|media_origin_ids or {''}),
+                    MediaBatchRow.status.in_(['open','sealed','delivering','blocked'])))
+                .order_by(MediaBatchRow.created_at.desc()).limit(MAX_MEDIA_BATCHES))).scalars().all())))
+            batch_turn_ids={row.turn_id for row in media_batches}
+            media_drafts=list(reversed(list((await db.execute(select(MediaDraftRow).where(
+                MediaDraftRow.thread_id==thread_id,or_(
+                    MediaDraftRow.turn_id.in_(batch_turn_ids or {''}),
+                    MediaDraftRow.status=='awaiting_confirmation')).order_by(
+                        MediaDraftRow.created_at.desc()).limit(MAX_MEDIA_DRAFTS))).scalars().all())))
+            media_draft_ids={row.id for row in media_drafts}
+            media_jobs=list(reversed(list((await db.execute(select(MediaJobRow).where(
+                MediaJobRow.thread_id==thread_id,
+                MediaJobRow.draft_id.in_(media_draft_ids or {''})).order_by(
+                    MediaJobRow.created_at.desc()).limit(MAX_MEDIA_JOBS))).scalars().all())))
+        media_ancestor_ids={row.turn_id for row in media_batches if row.turn_id}-turn_ids
+        if media_ancestor_ids:
+            async with self.store.core.connections() as db:
+                ancestors=list((await db.scalars(select(TurnRow).where(
+                    TurnRow.id.in_(media_ancestor_ids)))).all())
+            turns=sorted({row.id:row for row in turns+ancestors}.values(),key=lambda row:row.created_at)
+            turn_ids={row.id for row in turns}
         reservation_by_job={row.job_id:row for row in reservations}
         usage_truncated=len(model_usage_rows)>MAX_MODEL_USAGE_ROWS
         model_usage=aggregate_model_usage(model_usage_rows[:MAX_MODEL_USAGE_ROWS])

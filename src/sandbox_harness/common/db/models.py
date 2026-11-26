@@ -345,6 +345,7 @@ class MediaBatchRow(Base):
     thread_id: Mapped[str] = mapped_column(String(32), index=True)
     owner_id: Mapped[str] = mapped_column(String(64), index=True)
     status: Mapped[str] = mapped_column(String(20), index=True, default="open", server_default="open")
+    origin_finished: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     lease_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -994,4 +995,3 @@ OWNER_MIGRATION_ROWS = (
 
 
 OWNER_MIGRATION_TABLES = frozenset(row.__tablename__ for row in OWNER_MIGRATION_ROWS)
-

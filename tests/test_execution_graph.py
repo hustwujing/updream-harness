@@ -5,12 +5,28 @@ from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.contracts.domain import (EventKind, Harness, ItemType, ThreadCreate, TurnCreate, TurnState, now)
 from sandbox_harness.services.api.execution_graph import (ExecutionGraphProjector)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobGroupDraftCreate, JobKind, JobRequest, JobState)
-from sandbox_harness.common.db.store import (JobActivityRow, JobArtifactRow, JobOutboxRow, JobRow, MediaBatchRow, MediaDraftRow, MediaJobRow, ReviewGateRow, Store, TurnRow)
+from sandbox_harness.common.db.accounts import AccountsRepository
+from sandbox_harness.common.db.api_repositories import ApiRepositories
+from sandbox_harness.common.db.core import CoreRepository
+from sandbox_harness.common.db.media_repository import MediaRepository
+from sandbox_harness.common.db.site_repository import SiteRepository
+from sandbox_harness.common.db.models import (JobActivityRow, JobArtifactRow, JobOutboxRow,
+    JobRow, MediaBatchRow, MediaDraftRow, MediaJobRow, ReviewGateRow, TurnRow)
 from sqlalchemy import select,update
 
 
+async def graph_store(tmp_path, name):
+    store=ApiRepositories(
+        AccountsRepository("sqlite+aiosqlite:///"+str(tmp_path/(name+"-accounts.db"))),
+        CoreRepository("sqlite+aiosqlite:///"+str(tmp_path/(name+"-core.db")),namespace="graph-test"),
+        MediaRepository("sqlite+aiosqlite:///"+str(tmp_path/(name+"-media.db"))),
+        SiteRepository("sqlite+aiosqlite:///"+str(tmp_path/(name+"-sites.db"))))
+    await store.initialize()
+    return store
+
+
 async def test_execution_graph_contains_only_factual_boundaries_and_truthful_locations(tmp_path):
-    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'graph.db'));await store.initialize()
+    store=await graph_store(tmp_path,'graph')
     try:
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
         thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model='gpt-5.6',
@@ -82,7 +98,7 @@ async def test_execution_graph_contains_only_factual_boundaries_and_truthful_loc
 
 
 async def test_execution_graph_default_window_and_historical_expansion(tmp_path):
-    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'history.db'));await store.initialize()
+    store=await graph_store(tmp_path,'history')
     try:
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
         thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model='gpt-5.6',
@@ -100,7 +116,7 @@ async def test_execution_graph_default_window_and_historical_expansion(tmp_path)
 
 
 async def test_execution_graph_connects_job_group_to_internal_continuation_and_sanitizes_errors(tmp_path):
-    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'continuation-graph.db'));await store.initialize()
+    store=await graph_store(tmp_path,'continuation-graph')
     try:
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
         thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
@@ -123,7 +139,7 @@ async def test_execution_graph_connects_job_group_to_internal_continuation_and_s
         await store.set_turn_state(origin.id,TurnState.COMPLETED)
         continuation,_,_=await store.create_turn(thread.id,TurnCreate(message='continue',
             idempotency_key='job-continuation'),profile,'owner')
-        async with store.connections.begin() as db:
+        async with store.core.connections.begin() as db:
             await db.execute(update(TurnRow).where(TurnRow.id==continuation.id).values(internal=True))
             existing=(await db.execute(select(JobOutboxRow).where(
                 JobOutboxRow.group_id==group.id))).scalar_one()
@@ -143,7 +159,7 @@ async def test_execution_graph_connects_job_group_to_internal_continuation_and_s
 
 
 async def test_execution_graph_projects_exact_child_wait_progress_and_join_barrier(tmp_path):
-    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'wait-progress.db'));await store.initialize()
+    store=await graph_store(tmp_path,'wait-progress')
     try:
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
         thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
@@ -185,7 +201,7 @@ async def test_execution_graph_projects_exact_child_wait_progress_and_join_barri
 
 
 async def test_execution_graph_wait_barrier_does_not_spin_for_fully_paused_group(tmp_path):
-    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'paused-wait.db'));await store.initialize()
+    store=await graph_store(tmp_path,'paused-wait')
     try:
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
         thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
@@ -197,7 +213,7 @@ async def test_execution_graph_wait_barrier_does_not_spin_for_fully_paused_group
             idempotency_key=f'paused-wait-child-{index}') for index in range(2)]
         group,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id=thread.id,
             origin_turn_id=turn.id,idempotency_key='paused-wait-group',jobs=requests))
-        async with store.connections.begin() as db:
+        async with store.core.connections.begin() as db:
             await db.execute(update(JobRow).where(JobRow.group_id==group.id).values(state='PAUSED'))
         barrier=(await ExecutionGraphProjector(store).waits(thread.id,'owner'))[0]
         assert barrier['state']=='PAUSED' and barrier['title']=='子任务已暂停 · 0/2'
@@ -206,7 +222,7 @@ async def test_execution_graph_wait_barrier_does_not_spin_for_fully_paused_group
 
 
 async def test_execution_graph_projects_media_jobs_and_connects_media_continuation(tmp_path):
-    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'media-graph.db'));await store.initialize()
+    store=await graph_store(tmp_path,'media-graph')
     try:
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
         thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
@@ -217,8 +233,9 @@ async def test_execution_graph_projects_media_jobs_and_connects_media_continuati
         continuation,_,_=await store.create_turn(thread.id,TurnCreate(message='media results',
             idempotency_key='media-continuation-'+origin.id),profile,'owner')
         timestamp=now();draft_id='1'*32;job_id='2'*32
-        async with store.connections.begin() as db:
+        async with store.core.connections.begin() as db:
             await db.execute(update(TurnRow).where(TurnRow.id==continuation.id).values(internal=True))
+        async with store.media.connections.begin() as db:
             db.add(MediaBatchRow(turn_id=origin.id,thread_id=thread.id,owner_id='owner',status='continued',
                 created_at=timestamp,sealed_at=timestamp,continued_at=timestamp,updated_at=timestamp))
             db.add(MediaDraftRow(id=draft_id,owner_id='owner',thread_id=thread.id,turn_id=origin.id,
@@ -241,7 +258,7 @@ async def test_execution_graph_projects_media_jobs_and_connects_media_continuati
 
 
 async def test_primary_retry_count_excludes_first_claim_and_counts_takeover(tmp_path):
-    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'retry-graph.db'));await store.initialize()
+    store=await graph_store(tmp_path,'retry-graph')
     try:
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
         thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
@@ -254,7 +271,7 @@ async def test_primary_retry_count_excludes_first_claim_and_counts_takeover(tmp_
         assert node(await ExecutionGraphProjector(store).snapshot(thread.id,'owner'))['retries']==0
         await store.claim_turn(turn.id,'worker-a',1)
         assert node(await ExecutionGraphProjector(store).snapshot(thread.id,'owner'))['retries']==0
-        async with store.connections.begin() as db:
+        async with store.core.connections.begin() as db:
             await db.execute(update(TurnRow).where(TurnRow.id==turn.id).values(
                 lease_expires_at=now()-timedelta(seconds=1)))
         await store.claim_turn(turn.id,'worker-b',1)
@@ -263,7 +280,7 @@ async def test_primary_retry_count_excludes_first_claim_and_counts_takeover(tmp_
 
 
 async def test_expired_draft_projects_terminal_warning_and_is_idempotent(tmp_path):
-    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'expired-graph.db'));await store.initialize()
+    store=await graph_store(tmp_path,'expired-graph')
     try:
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
         thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
@@ -287,7 +304,7 @@ async def test_expired_draft_projects_terminal_warning_and_is_idempotent(tmp_pat
 
 
 async def test_collapsed_graph_keeps_active_group_ancestor_closure_and_gate(tmp_path,monkeypatch):
-    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'closure-graph.db'));await store.initialize()
+    store=await graph_store(tmp_path,'closure-graph')
     try:
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
         thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
@@ -306,7 +323,7 @@ async def test_collapsed_graph_keeps_active_group_ancestor_closure_and_gate(tmp_
             resource_requirements={'harness':'codex','image_digest':'c'*64})
         group,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id=thread.id,
                 origin_turn_id=turns[0].id,idempotency_key='closure-group',jobs=[source,reviewer]))
-        async with store.connections.begin() as db:
+        async with store.core.connections.begin() as db:
             db.add(ReviewGateRow(reviewer_job_id=jobs[1].id,source_job_id=jobs[0].id,
                 source_generation=0,artifact_role='report',artifact_ids_json='[]',
                 artifact_digests_json='[]',required=False,state='optional_warning',
@@ -327,7 +344,7 @@ async def test_collapsed_graph_keeps_active_group_ancestor_closure_and_gate(tmp_
 
 
 async def test_graph_uses_aggregate_counts_and_bounded_artifact_summaries(tmp_path):
-    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'bounded-graph.db'));await store.initialize()
+    store=await graph_store(tmp_path,'bounded-graph')
     try:
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
         thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
@@ -340,7 +357,7 @@ async def test_graph_uses_aggregate_counts_and_bounded_artifact_summaries(tmp_pa
         _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id=thread.id,
             origin_turn_id=turn.id,idempotency_key='bounded-group',jobs=[request]))
         timestamp=now()
-        async with store.connections.begin() as db:
+        async with store.core.connections.begin() as db:
             db.add_all([JobActivityRow(id=f'{index:032x}',job_id=jobs[0].id,sequence=index+1,
                 kind='tool_started',status='in_progress',summary='tool',
                 payload_json=json.dumps({'name':'tool','tool_use_id':f'tool-{index}'}),
@@ -365,7 +382,7 @@ async def test_graph_uses_aggregate_counts_and_bounded_artifact_summaries(tmp_pa
 
 
 async def test_history_before_pages_are_stable_and_nonoverlapping(tmp_path):
-    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'paged-history.db'));await store.initialize()
+    store=await graph_store(tmp_path,'paged-history')
     try:
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
         thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,

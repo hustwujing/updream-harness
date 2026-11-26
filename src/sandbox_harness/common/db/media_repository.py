@@ -6,25 +6,28 @@ import re
 from datetime import datetime, timedelta
 from pathlib import PurePosixPath
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 
 from sandbox_harness.common.contracts.domain import identifier, now
 from sandbox_harness.common.contracts.media_provider import MediaCancellationRequested
 from .domain_database import DomainDatabase
-from .handoff import DomainHandoff
+from .lifecycle import LifecycleParticipant
 from .media_drafts import MediaDraftsTransactions
 from .media_jobs import MediaJobsTransactions
 from .media_models import MediaSourcePermitRow
 from .media_references import MediaReferencesTransactions
 from .models import (MediaBatchRow, MediaDraftRow, MediaExecutionRow, MediaJobOutputRow,
-                     MediaJobRow, MediaOutboxRow, canonical_digest, canonical_json, utc_datetime)
+                     MediaJobRow, MediaOutboxRow, MediaReferenceUploadRow, canonical_digest,
+                     canonical_json, utc_datetime)
 
 
 class MediaRepository(DomainDatabase, MediaReferencesTransactions,
                       MediaDraftsTransactions, MediaJobsTransactions):
     def __init__(self, database_url: str):
         super().__init__("media", database_url)
-        self.handoff = DomainHandoff(self, {
+        self.lifecycle = LifecycleParticipant(self, self._check_lifecycle, self._apply_lifecycle)
+        self.handoff = self.lifecycle.handoff
+        self.handoff.handlers.update({
             "media.source.authorize": self._receive_source_job,
             "media.source.cancel": self._receive_source_cancel,
             "media.turn.draft": self._receive_turn_draft,
@@ -32,6 +35,44 @@ class MediaRepository(DomainDatabase, MediaReferencesTransactions,
             "media.turn.finished": self._receive_turn_finished,
             "media.promotion.ack": self._receive_promotion_ack,
         })
+
+    async def _check_lifecycle(self, db, proposal):
+        job_query = select(MediaJobRow.id).where(
+            MediaJobRow.owner_id == proposal.owner_id,
+            MediaJobRow.status.not_in(["succeeded", "failed", "cancelled", "unknown"]))
+        upload_query = select(MediaReferenceUploadRow.id).where(
+            MediaReferenceUploadRow.owner_id == proposal.owner_id,
+            MediaReferenceUploadRow.status == "pending",
+            MediaReferenceUploadRow.expires_at > now())
+        batch_query = select(MediaBatchRow.turn_id).where(
+            MediaBatchRow.owner_id == proposal.owner_id,
+            MediaBatchRow.status.in_(["open", "sealed", "delivering"]))
+        if proposal.thread_id:
+            job_query = job_query.where(MediaJobRow.thread_id == proposal.thread_id)
+            upload_query = upload_query.where(MediaReferenceUploadRow.thread_id == proposal.thread_id)
+            batch_query = batch_query.where(MediaBatchRow.thread_id == proposal.thread_id)
+        if await db.scalar(job_query.limit(1)):
+            return "active_media_jobs_prevent_lifecycle"
+        if await db.scalar(upload_query.limit(1)):
+            return "pending_media_uploads_prevent_lifecycle"
+        if await db.scalar(batch_query.limit(1)):
+            return "pending_media_batches_prevent_lifecycle"
+        return ""
+
+    async def _apply_lifecycle(self, db, proposal):
+        if proposal.action != "delete":
+            return
+        jobs = select(MediaJobRow.id).where(MediaJobRow.thread_id == proposal.thread_id)
+        drafts = select(MediaDraftRow.id).where(MediaDraftRow.thread_id == proposal.thread_id)
+        await db.execute(delete(MediaJobOutputRow).where(MediaJobOutputRow.job_id.in_(jobs)))
+        await db.execute(delete(MediaExecutionRow).where(MediaExecutionRow.job_id.in_(jobs)))
+        await db.execute(delete(MediaOutboxRow).where(MediaOutboxRow.job_id.in_(jobs)))
+        await db.execute(delete(MediaSourcePermitRow).where(MediaSourcePermitRow.media_job_id.in_(jobs)))
+        await db.execute(delete(MediaJobRow).where(MediaJobRow.thread_id == proposal.thread_id))
+        await db.execute(delete(MediaDraftRow).where(MediaDraftRow.id.in_(drafts)))
+        await db.execute(delete(MediaBatchRow).where(MediaBatchRow.thread_id == proposal.thread_id))
+        await db.execute(delete(MediaReferenceUploadRow).where(
+            MediaReferenceUploadRow.thread_id == proposal.thread_id))
 
     async def _local_media_view(self, db, row):
         if not row:return None
@@ -57,6 +98,35 @@ class MediaRepository(DomainDatabase, MediaReferencesTransactions,
                 MediaJobRow.thread_id==thread_id,MediaJobRow.owner_id==owner_id)
                 .order_by(MediaJobRow.created_at.desc()))).all())
             return [await self._local_media_view(db,row) for row in rows]
+
+    async def create_media_reference_upload(self, owner_id, thread_id, value, *, object_key,
+                                            public_url, expires_at):
+        timestamp = now()
+        async with self.transaction() as db:
+            row = MediaReferenceUploadRow(id=identifier(), owner_id=owner_id, thread_id=thread_id,
+                name=value.name, kind=value.kind, mime=value.mime, size=value.size,
+                sha256=value.sha256, object_key=object_key, public_url=public_url,
+                status="pending", expires_at=expires_at, created_at=timestamp, updated_at=timestamp)
+            db.add(row)
+        return self._media_reference_upload_view(row)
+
+    async def finish_media_reference_upload(self, upload_id, owner_id, project_file_id):
+        async with self.transaction() as db:
+            row = await db.scalar(select(MediaReferenceUploadRow).where(
+                MediaReferenceUploadRow.id == upload_id,
+                MediaReferenceUploadRow.owner_id == owner_id).with_for_update())
+            if not row:
+                raise KeyError("media_reference_upload_not_found")
+            if row.status == "completed":
+                if row.project_file_id != project_file_id:
+                    raise RuntimeError("media_reference_upload_identity_conflict")
+                return self._media_reference_upload_view(row)
+            if row.status != "pending" or utc_datetime(row.expires_at) <= now():
+                raise RuntimeError("media_reference_upload_expired")
+            row.status = "completed"
+            row.project_file_id = project_file_id
+            row.updated_at = now()
+        return self._media_reference_upload_view(row)
 
     async def _dispatch_lock(self, db, identity: str):
         if db.bind.dialect.name == "postgresql":
@@ -215,8 +285,11 @@ class MediaRepository(DomainDatabase, MediaReferencesTransactions,
         if envelope.source != "core" or envelope.owner_id != value.get("owner_id"):
             raise ValueError("media_turn_envelope_invalid")
         batch = await db.get(MediaBatchRow, value["turn_id"], with_for_update=True)
-        if batch and batch.status == "open":
-            batch.status = "sealed"; batch.sealed_at = now(); batch.updated_at = now()
+        if batch:
+            batch.origin_finished = True
+            if batch.status == "open":
+                batch.status = "sealed"; batch.sealed_at = now()
+            batch.updated_at = now()
         return {"turn_id":value["turn_id"],"status":batch.status if batch else "empty"}
 
     async def media_batch_status(self, turn_id, owner_id):
@@ -227,6 +300,66 @@ class MediaRepository(DomainDatabase, MediaReferencesTransactions,
             count = await db.scalar(select(func.count()).select_from(MediaDraftRow).where(
                 MediaDraftRow.turn_id == turn_id))
             return {"turn_id":turn_id,"status":batch.status,"draft_count":count}
+
+    async def media_continuation_group(self, turn_id):
+        terminal = {"succeeded", "failed", "cancelled", "unknown"}
+        async with self.connections() as db:
+            batch = await db.get(MediaBatchRow, turn_id)
+            drafts = list((await db.scalars(select(MediaDraftRow).where(
+                MediaDraftRow.turn_id == turn_id).order_by(
+                    MediaDraftRow.created_at, MediaDraftRow.id))).all())
+            rows = list((await db.scalars(select(MediaJobRow).where(
+                MediaJobRow.turn_id == turn_id).order_by(
+                    MediaJobRow.created_at, MediaJobRow.id))).all())
+            output_rows = list((await db.scalars(select(MediaJobOutputRow).where(
+                MediaJobOutputRow.job_id.in_([row.id for row in rows] or [""]),
+                MediaJobOutputRow.role == "primary"))).all())
+        jobs = {row.draft_id: row for row in rows}
+        outputs = {row.job_id: row for row in output_rows}
+        states = [("expired" if draft.status == "awaiting_confirmation"
+            and utc_datetime(draft.expires_at) <= now() else draft.status) for draft in drafts]
+        complete = all(state in {"cancelled", "expired"} or state == "confirmed"
+            and draft.id in jobs and jobs[draft.id].status in terminal
+            for draft, state in zip(drafts, states))
+        ready = bool(batch and batch.origin_finished and batch.status in {"sealed", "delivering"}
+                     and drafts and complete)
+        group = []
+        for draft, draft_state in zip(drafts, states):
+            row = jobs.get(draft.id)
+            output = outputs.get(row.id) if row else None
+            group.append({
+                "id": row.id if row else draft.id, "job_id": row.id if row else "",
+                "draft_id": draft.id, "thread_id": draft.thread_id, "turn_id": draft.turn_id,
+                "kind": draft.kind, "model": draft.model,
+                "status": row.status if row else draft_state,
+                "output_object_ref": row.output_object_ref if row else "",
+                "output_mime": row.output_mime if row else "",
+                "output_size": row.output_size if row else 0,
+                "error_code": row.error_code if row else "",
+                "error_detail": row.error_detail if row else "",
+                "error_guidance": "", "output_role": draft.output_role,
+                "project_path": self._media_project_path(row.id, row.output_mime)
+                    if row and output and output.project_file_id
+                    and row.output_role in {"workspace", "delivery"} else "",
+            })
+        return ready, group
+
+    async def claim_media_batches(self, owner, limit=20):
+        async with self.transaction() as db:
+            rows = list((await db.scalars(select(MediaBatchRow).where(
+                MediaBatchRow.origin_finished.is_(True),
+                MediaBatchRow.status.in_(["sealed", "delivering"]),
+                or_(MediaBatchRow.lease_expires_at.is_(None),
+                    MediaBatchRow.lease_expires_at < now())).order_by(
+                        MediaBatchRow.created_at).limit(limit).with_for_update())).all())
+            result = []
+            for row in rows:
+                row.status = "delivering"; row.lease_owner = owner
+                row.lease_expires_at = now() + timedelta(seconds=60)
+                row.attempt_count += 1; row.updated_at = now()
+                result.append({"turn_id":row.turn_id,"thread_id":row.thread_id,
+                               "owner_id":row.owner_id})
+            return result
 
     async def promotion_manifest(self, job_id, thread_id):
         async with self.connections() as db:

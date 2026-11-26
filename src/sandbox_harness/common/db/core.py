@@ -1,16 +1,18 @@
 """Core execution authority with a single independently owned database."""
 from __future__ import annotations
 import json
+from pathlib import PurePosixPath
 from sqlalchemy import select, update
 from sandbox_harness.common.events.events import RedisEventBus
 from sandbox_harness.common.contracts.domain import TERMINAL, ThreadControlState, now
 from sandbox_harness.common.contracts.job_contracts import TERMINAL_JOB_STATES
-from .domain_database import DomainDatabase, DomainOutbox, DomainScope
-from .lifecycle import LifecycleCoordinator, LifecycleParticipant
+from .domain_database import DomainDatabase, DomainLifecycle, DomainOutbox, DomainScope
+from .lifecycle import LifecycleCoordinator, LifecycleParticipant, ScopeVersion
 from .core_lifecycle import CoreThreadLifecycle
 from .sandbox_ownership import SandboxOwnership
 from .ownership_models import RemoteObligationRow, SandboxOwnershipRow
-from .models import (JobGroupDraftRow, JobRow, SandboxControlRow, ThreadControlRow, ThreadRow, TurnRow, canonical_digest)
+from .models import (ArtifactRow, JobGroupDraftRow, JobRow, SandboxControlRow,
+                     ThreadControlRow, ThreadRow, TurnRow, canonical_digest)
 from .base import BaseConnections
 from .capabilities import CapabilitiesTransactions
 from .views import ViewsTransactions
@@ -121,6 +123,33 @@ class CoreRepository(CoreThreadLifecycle, DomainDatabase, BaseConnections, Capab
         async with self.connections() as db:
             return await db.scalar(select(ThreadRow.owner_id).where(ThreadRow.id == thread_id)) or ""
 
+    async def artifact_site_file(self, artifact_id, path, owner_id):
+        async with self.connections() as db:
+            root = await db.scalar(select(ArtifactRow).join(TurnRow,
+                TurnRow.id == ArtifactRow.turn_id).join(ThreadRow,
+                ThreadRow.id == TurnRow.thread_id).where(
+                    ArtifactRow.id == artifact_id, ThreadRow.owner_id == owner_id))
+            if not root or PurePosixPath(root.path).name.lower() != "index.html":
+                return None
+            prefix = PurePosixPath(root.path).parent
+            target = (prefix / path).as_posix() if prefix.as_posix() != "." else path
+            row = await db.scalar(select(ArtifactRow).where(
+                ArtifactRow.turn_id == root.turn_id, ArtifactRow.path == target))
+        return ({"object_ref":row.object_ref,"size":row.size,"sha256":row.sha256,
+                 "mime":row.mime} if row else None)
+
+    async def lifecycle_version(self, owner_id, thread_id):
+        async with self.transaction() as db:
+            owner = await self.lifecycle._scope(db, owner_id, "")
+            scope = await self.lifecycle._scope(db, owner_id, thread_id) if thread_id else owner
+            if owner.frozen_by or scope.frozen_by or scope.state == "deleted":
+                raise RuntimeError("lifecycle_admission_blocked")
+            if thread_id:
+                thread = await db.get(ThreadRow, thread_id)
+                if thread is None or thread.owner_id != owner_id:
+                    raise KeyError("thread_not_found")
+            return ScopeVersion(owner.generation, scope.generation)
+
     async def enqueue_remote(self, db, *, command_id, target, kind, aggregate_id,
                              owner_id, thread_id, generation, payload):
         await self.handoff.enqueue(db, command_id=command_id, target=target, kind=kind,
@@ -144,3 +173,9 @@ class CoreRepository(CoreThreadLifecycle, DomainDatabase, BaseConnections, Capab
             for row in rows:
                 row.state = "acknowledged"; row.updated_at = now()
         return result
+
+    async def pending_lifecycle_operations(self, limit=100):
+        async with self.connections() as db:
+            return list((await db.scalars(select(DomainLifecycle.id).where(
+                DomainLifecycle.phase.not_in(["completed", "refused"])).order_by(
+                    DomainLifecycle.id).limit(limit))).all())

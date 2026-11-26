@@ -16,7 +16,8 @@ from sandbox_harness.common.execution.job_adapters import (PreAcceptCancelled, A
 from sandbox_harness.common.contracts.job_contracts import (JobState, TERMINAL_JOB_STATES)
 from sandbox_harness.common.observability.observability import (event)
 from sandbox_harness.common.contracts.sandbox_contracts import (Sandbox, SandboxCreateRequest, SandboxHandle, SandboxProfile, SandboxScope, SandboxCapacityUnavailable, SandboxRateLimited, SandboxAuthenticationFailed, SandboxProfileUnavailable, SandboxCreateOutcomeUnknown, SandboxProviderError)
-from sandbox_harness.common.db.store import (JobRow, JobLeaseRow, JobAttemptRow, JobCleanupRow, SandboxAllocationRow, utc_datetime)
+from sandbox_harness.common.db.models import (JobRow, JobLeaseRow, JobAttemptRow, JobCleanupRow,
+                                              SandboxAllocationRow, utc_datetime)
 
 
 REJECTIONS={kind.code:kind for kind in (SandboxCapacityUnavailable,SandboxRateLimited,
@@ -177,5 +178,4 @@ class AllocationClient:
             if row.state!='READY' or json.loads(row.handle_json)!=receipt.get('sandbox_handle'):
                 raise RuntimeError('sandbox_allocation_handle_conflict')
             row.state='RELEASED';row.updated_at=now()
-
 
