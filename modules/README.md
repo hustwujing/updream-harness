@@ -20,8 +20,12 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/pytest tests/test_module_manifests.py
 Service artifacts, dependency environments, generated manifests and logs belong
 under `.data`. No credentials are stored in these manifests.
 
-All Python services share the common OpenTelemetry event contract and HTTP trace
-propagation closure. Operational JSONL is payload-free. Explicit DEBUG payload
+All Python services share the common OpenTelemetry log, trace and bounded metric
+contract plus HTTP and durable Outbox trace propagation. Kubernetes services
+emit structured JSON stdout and use a platform-injected OTLP endpoint; the
+company platform owns collection and storage. Optional local operational JSONL
+uses the same field allowlist; its only process-text field is the configured,
+credential-redacted Harness stderr tail. Explicit DEBUG payload
 capture uses the separate bounded diagnostic directory described in
 [`docs/observability.md`](../docs/observability.md); module implementations must
 use the shared wrappers instead of private log formats.

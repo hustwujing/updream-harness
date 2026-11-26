@@ -13,11 +13,21 @@ redacted request and response details for a short, bounded period.
 
 ## Two telemetry planes
 
-The operational plane emits OpenTelemetry logs and spans. It contains event
+The operational plane emits OpenTelemetry logs, spans and bounded metrics. It contains event
 names, resource identity, trace context, business identifiers, state
 transitions, outcomes, error classes, durations, byte counts and content
-digests. It never contains prompts, generated content, commands, file contents,
-credentials, arbitrary headers, query strings or raw exception messages.
+digests. Except for the explicitly configured Harness stderr tail described
+below, it never contains prompts, generated content, commands, file contents,
+credentials, arbitrary headers, query strings or arbitrary exception messages.
+
+Harness stdout is a business protocol and is never copied wholesale into
+operational logs. Runtime drains stderr on a separate pipe to prevent process
+blocking and emits one `runtime.harness.stderr` record when stderr is non-empty.
+`SANDBOX_HARNESS_RUNTIME_STDERR_LOG_MAX_BYTES` controls the retained tail:
+zero omits text, positive values retain that many bytes, and negative values
+select the hard maximum of 1 MiB. The same credential redactor applies before
+JSONL/stdout/OTLP export. Users receive stable error codes and a troubleshooting
+identity, not `stderr_tail`.
 
 The diagnostic plane is disabled by default and writes only beneath the
 configured data root. `SANDBOX_HARNESS_DIAGNOSTIC_CAPTURE` accepts `off`,
@@ -60,11 +70,24 @@ trace. The primary query key is `trace_id`; `thread_id`, `turn_id`, `job_id`,
 
 ## Storage and export
 
-Each process writes a bounded local JSONL spool through the existing async
-queue. Host services may export logs and traces over OTLP/HTTP to an
-OpenTelemetry Collector. The Collector owns vendor-specific routing, retry and
-central retention. A Collector outage must not block product work; local queue
-depth, dropped records, disk errors and export failures remain observable.
+Each process uses a bounded in-memory queue. Local development may enable the
+bounded JSONL sink. Kubernetes deployments enable structured JSON stdout for
+the SRE-managed company log agent and export application logs, traces and bounded metrics over
+OTLP/HTTP when the platform injects an endpoint. Collection, disk buffering,
+vendor routing, retry, storage and display belong to the company platform; this
+repository does not deploy a Collector or application-owned disk queue. An
+export outage must not block product work; queue depth, dropped records, disk
+errors and export failures remain observable.
+
+External Sandbox Runtime remains outside the SRE-managed Kubernetes log agent. It uses
+the current Turn's short-lived capability to send logs, traces and optionally
+bounded application metrics through the scope-checked Sandbox Gateway and keeps
+a bounded diagnostic ring for cleanup fallback. Gateway validates the fixed
+metric contract and relays protobuf with SRE credentials; Sandbox credentials
+never reach the company Collector. Cross-DB Domain
+Envelopes bind canonical `traceparent` to their digest, while Job and Media
+continuations recover the authoritative origin Turn context and start a new
+Trace with Span Links after restart or delayed delivery.
 
 The operational log level, directory, filename template, queue capacity,
 segment size, aggregate size and retention days are configurable. Diagnostic
