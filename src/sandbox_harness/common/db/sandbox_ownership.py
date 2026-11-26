@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from sandbox_harness.common.contracts.domain import now
 from sandbox_harness.common.contracts.sandbox_contracts import SandboxHandle
@@ -56,7 +56,26 @@ class SandboxOwnership:
                 raise ValueError("sandbox_ownership_identity_conflict")
             return self._view(row)
 
-    async def begin_create(self, owner_id, thread_id, request):
+    async def resume_thread(self, owner_id, thread_id, profile_key):
+        """Resolve the one durable allocation retained for a Thread after process loss."""
+        async with self.core.connections() as db:
+            rows = (await db.scalars(select(SandboxOwnershipRow).where(
+                SandboxOwnershipRow.namespace == self.namespace,
+                SandboxOwnershipRow.owner_id == owner_id,
+                SandboxOwnershipRow.thread_id == thread_id,
+                SandboxOwnershipRow.state.in_(["CREATING", "ALLOCATED", "LIVE", "RETAINED"])))).all()
+            if len(rows) > 1:
+                raise RuntimeError("sandbox_thread_ownership_conflict")
+            if not rows:
+                return None
+            row=rows[0]
+            if row.profile_key != profile_key:
+                raise RuntimeError("sandbox_thread_profile_conflict")
+            return self._view(row)
+
+    async def begin_create(self, owner_id, thread_id, request, *, capacity_limit: int = 0):
+        if capacity_limit < 0:
+            raise ValueError("sandbox_ownership_capacity_invalid")
         identity = self.identity(request.profile.provider, request.allocation_id)
         encoded = encode_request(request)
         digest = canonical_digest(json.loads(encoded))
@@ -77,6 +96,15 @@ class SandboxOwnership:
                     row.updated_at = now()
                     return identity
                 raise RuntimeError("sandbox_creation_requires_reconciliation")
+            if capacity_limit:
+                await self.core.handoff._identity_lock(
+                    db, "sandbox-ownership-capacity", self.namespace)
+                occupied = await db.scalar(select(func.count()).select_from(
+                    SandboxOwnershipRow).where(
+                        SandboxOwnershipRow.namespace == self.namespace,
+                        SandboxOwnershipRow.state != "RELEASED"))
+                if occupied >= capacity_limit:
+                    raise RuntimeError("sandbox_ownership_capacity_wait")
             version = await self.core.lifecycle.admit(db, owner_id, thread_id)
             thread = await db.scalar(select(ThreadRow).where(ThreadRow.id == thread_id,
                 ThreadRow.owner_id == owner_id).with_for_update())

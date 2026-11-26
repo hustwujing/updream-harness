@@ -264,6 +264,37 @@ async def test_expired_retained_sandbox_has_one_cleanup_claim():
         await asyncio.gather(*(repository.close() for repository in repositories))
 
 
+async def test_thread_sandbox_capacity_has_one_cross_process_winner():
+    from sandbox_harness.common.catalog.catalog import HarnessCatalog
+    from sandbox_harness.common.contracts.domain import Harness, ThreadCreate
+    from sandbox_harness.common.contracts.sandbox_contracts import SandboxCreateRequest
+    from sandbox_harness.common.db.core import CoreRepository
+    from sandbox_harness.common.sandbox.sandbox import FakeSandboxBackend
+    identity=uuid4().hex
+    repositories=[CoreRepository(URLS["core"],namespace=identity) for _ in range(2)]
+    backend=FakeSandboxBackend(namespace=identity)
+    try:
+        await repositories[0].initialize()
+        profile=HarnessCatalog().resolve("codex","gpt-5.6","standard")
+        threads=[await repositories[0].create_thread(ThreadCreate(
+            harness=Harness.CODEX,model=profile.model,title="capacity"),profile,identity)
+            for _ in range(2)]
+        requests=[SandboxCreateRequest(harness=Harness.CODEX,
+            profile=backend.legacy_profile(Harness.CODEX,"image"),environment={},
+            ttl_seconds=300,allocation_id="allocation-"+str(index)) for index in range(2)]
+        results=await asyncio.gather(*(repository.ownership.begin_create(
+            identity,thread.id,request,capacity_limit=1)
+            for repository,thread,request in zip(repositories,threads,requests)),
+            return_exceptions=True)
+        assert sum(isinstance(value,str) for value in results)==1
+        rejected=[value for value in results if isinstance(value,RuntimeError)]
+        assert len(rejected)==1 and str(rejected[0])=="sandbox_ownership_capacity_wait"
+        obligations=await repositories[0].ownership.capacity_obligations()
+        assert len(obligations)==1
+    finally:
+        await asyncio.gather(*(repository.close() for repository in repositories))
+
+
 async def test_media_permit_dispatch_and_worker_claim_have_one_winner():
     from sandbox_harness.common.db.media_repository import MediaRepository
     identity = uuid4().hex

@@ -472,3 +472,55 @@ async def test_replacement_pool_reconciles_lost_create_reply_without_resubmit(tm
         if replacement:
             await replacement.close()
         await core.close()
+
+
+async def test_database_capacity_release_wakes_another_process_pool(tmp_path):
+    import asyncio
+    from sandbox_harness.common.catalog.catalog import HarnessCatalog
+    from sandbox_harness.common.contracts.domain import ThreadCreate
+    from sandbox_harness.common.sandbox.pool import SandboxPool
+    core, ledger, backend, first_thread, _ = await setup_owned(tmp_path)
+    profile=HarnessCatalog().resolve("codex","gpt-5.6","standard")
+    second_thread=await core.create_thread(ThreadCreate(
+        harness=Harness.CODEX,model=profile.model,title="second"),profile,"owner")
+    first=SandboxPool(backend,{h:"image" for h in Harness},{h:0 for h in Harness},
+        max_sandboxes=1,ownership=ledger)
+    second=SandboxPool(backend,{h:"image" for h in Harness},{h:0 for h in Harness},
+        max_sandboxes=1,ownership=ledger)
+    try:
+        occupied=await first.acquire(thread_id=first_thread.id,turn_id="first",harness=Harness.CODEX,
+            environment={},ownership_owner_id="owner")
+        waiting=asyncio.create_task(second.acquire(thread_id=second_thread.id,turn_id="second",
+            harness=Harness.CODEX,environment={},ownership_owner_id="owner"))
+        await asyncio.sleep(.1)
+        assert not waiting.done(),"a second process exceeded database-authoritative capacity"
+        await first.release(occupied,keep_attached=False)
+        admitted=await asyncio.wait_for(waiting,3)
+        assert admitted.thread_id==second_thread.id
+        assert len(await ledger.capacity_obligations())==1
+        await second.release(admitted,keep_attached=False)
+    finally:
+        await first.close();await second.close();await core.close()
+
+
+async def test_replacement_pool_resumes_owned_sandbox_without_local_capacity_snapshot(tmp_path):
+    from sandbox_harness.common.sandbox.pool import SandboxPool
+    core,ledger,backend,thread,_=await setup_owned(tmp_path)
+    first=SandboxPool(backend,{h:"image" for h in Harness},{h:0 for h in Harness},
+        max_sandboxes=1,ownership=ledger)
+    replacement=None
+    try:
+        sandbox=await first.acquire(thread_id=thread.id,turn_id="first",harness=Harness.CODEX,
+            environment={},ownership_owner_id="owner")
+        await first.release(sandbox,keep_attached=True,keepalive_seconds=60)
+        await first.close(preserve_sandbox_keys={first.sandbox_key(sandbox)})
+        replacement=SandboxPool(backend,{h:"image" for h in Harness},{h:0 for h in Harness},
+            max_sandboxes=1,ownership=ledger)
+        resumed=await replacement.acquire(thread_id=thread.id,turn_id="second",harness=Harness.CODEX,
+            environment={},ownership_owner_id="owner")
+        assert resumed.handle.allocation_id==sandbox.handle.allocation_id
+        await replacement.release(resumed,keep_attached=False)
+    finally:
+        if not first._closed:await first.close()
+        if replacement:await replacement.close()
+        await core.close()

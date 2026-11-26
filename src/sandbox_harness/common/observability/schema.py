@@ -7,7 +7,7 @@ from typing import Mapping
 
 
 BUSINESS_FIELDS = frozenset({
-    "address_family", "allocation_id", "ark", "artifact_id", "attempt", "broker_id",
+    "address_family", "allocation_id", "ark", "artifact_id", "attempt", "broker_id", "capacity_limit",
     "bundle_version", "bytes", "cache_read_input_tokens", "cache_write_input_tokens",
     "cancelled", "capture_mode", "capture_session", "checkpointed", "count",
     "discovered_count", "disk_errors", "dropped_count", "duration_ms", "elapsed_seconds",

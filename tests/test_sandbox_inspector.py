@@ -227,7 +227,8 @@ async def test_inspector_restore_records_durable_sandbox_ownership(tmp_path):
         sandbox=await inspector.restore(thread.id,owner)
         identity=store.ownership.identity(sandbox.handle.provider,sandbox.handle.allocation_id)
         record=await store.ownership.get(identity)
-        assert record["state"]=="LIVE" and record["thread_id"]==thread.id
+        assert record["state"]=="RETAINED" and record["retained_until"] is not None
+        assert record["thread_id"]==thread.id
         await pool.release(sandbox,keep_attached=False)
         assert (await store.ownership.get(identity))["state"]=="RELEASED"
     finally:
