@@ -1134,7 +1134,9 @@ def create_app() -> FastAPI:
             request.state.log_context.clear();request.state.log_context.update(app.state.log_context)
         enrich(**app.state.log_context)
         if telemetry():
-            await asyncio.to_thread(telemetry().set_remote,value.gateway_url.rstrip("/")+"/v1/telemetry",{"Authorization":"Bearer "+value.capability_token})
+            await asyncio.to_thread(telemetry().set_remote,
+                value.gateway_url.rstrip("/")+"/v1/telemetry",
+                {"Authorization":"Bearer "+value.capability_token},metrics=False)
         token = RUN / "capability-token"
         temporary = RUN / ".capability-token.tmp"
         temporary.write_text(value.capability_token)

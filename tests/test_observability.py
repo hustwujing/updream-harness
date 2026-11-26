@@ -693,7 +693,8 @@ async def test_reused_runtime_configuration_logs_the_new_turn_not_the_previous_o
     import sandbox_runtime.app as runtime
     monkeypatch.setattr(runtime,'WORKSPACE',tmp_path/'workspace');monkeypatch.setattr(runtime,'RUN',tmp_path/'run')
     monkeypatch.setattr(runtime,'OUTPUTS',tmp_path/'workspace/outputs')
-    monkeypatch.setattr(telemetry,'set_remote',lambda *args:None)
+    remotes=[]
+    monkeypatch.setattr(telemetry,'set_remote',lambda *args,**kwargs:remotes.append((args,kwargs)))
     app=runtime.create_app()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app),base_url='http://runtime') as client:
         for turn_id in ('a'*32,'b'*32):
@@ -702,6 +703,7 @@ async def test_reused_runtime_configuration_logs_the_new_turn_not_the_previous_o
             assert response.status_code==200
     logs=[row for row in rows(telemetry) if row['event_name']=='http.request.completed' and row['attributes']['http.route']=='/v1/configure']
     assert [row['attributes']['updream.turn_id'] for row in logs]==['a'*32,'b'*32]
+    assert len(remotes)==2 and all(value[1]=={'metrics':False} for value in remotes)
 
 
 @pytest.mark.parametrize(('code','status','origin'),[

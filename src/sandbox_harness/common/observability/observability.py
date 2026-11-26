@@ -418,7 +418,7 @@ class Telemetry:
         except queue.Full:self.increment('dropped_records');return False
     def status(self):
         with self.guard:return {**self.stats,'service':self.service,'instance_id':self.instance,'version':self.resource.attributes['service.version'],'queue_depth':self.queue.qsize(),'queue_capacity':self.queue.maxsize,'writer_alive':self.worker.is_alive()}
-    def set_remote(self,endpoint,headers=None):
+    def set_remote(self,endpoint,headers=None,*,metrics=True):
         from opentelemetry.exporter.otlp.proto.http import Compression
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
@@ -438,7 +438,7 @@ class Telemetry:
             self.meter_provider.shutdown()
             self.metric_exporter=None
             readers=()
-            if endpoint:
+            if endpoint and metrics:
                 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
                 delegate=OTLPMetricExporter(endpoint=endpoint.rstrip('/')+'/metrics',headers=headers or {},
                     timeout=self.otlp_timeout_seconds,session=session(),compression=Compression.NoCompression)
