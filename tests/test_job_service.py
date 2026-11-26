@@ -8,16 +8,16 @@ import sqlite3
 import pytest
 from sqlalchemy import select
 
-from sandbox_harness.config import Settings
-from sandbox_harness.job_service import resolved_node_profiles,serve
-from sandbox_harness.store import NodeRow,Store
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.services.job_worker.job_service import (resolved_node_profiles, serve)
+from sandbox_harness.common.db.store import (NodeRow, Store)
 
 
 ROOT=Path(__file__).resolve().parents[1]
 
 
 def test_job_service_entrypoint_configures_dedicated_telemetry():
-    source=(ROOT/"src/sandbox_harness/job_service.py").read_text()
+    source=(ROOT/"src/sandbox_harness/services/job_worker/job_service.py").read_text()
     assert 'configure("job-worker",settings.data_root/"logs")' in source
 
 

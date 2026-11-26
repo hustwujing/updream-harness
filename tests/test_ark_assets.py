@@ -4,7 +4,7 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 
-from sandbox_harness.ark_assets import ArkAssetError, ArkAssets
+from sandbox_harness.services.media_worker.ark_assets import (ArkAssetError, ArkAssets)
 
 
 def settings(**values):

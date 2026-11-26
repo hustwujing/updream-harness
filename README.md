@@ -284,7 +284,7 @@ Configure an isolated local environment and the `.data` cache/temp exports in
 uv sync --extra test --extra runtime-media
 .venv/bin/pytest
 npm --prefix web run build
-.venv/bin/uvicorn sandbox_harness.app:create_app --factory --reload --port 22766
+.venv/bin/uvicorn sandbox_harness.services.api.app:create_app --factory --reload --port 22766
 ```
 
 Set `SANDBOX_HARNESS_BACKEND=fake` only for local UI development and tests.

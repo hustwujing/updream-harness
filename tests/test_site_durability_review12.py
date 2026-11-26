@@ -10,13 +10,13 @@ import tracemalloc
 import pytest
 from sqlalchemy import update
 
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import Harness,ThreadCreate,now
-from sandbox_harness.objects import ObjectStore
-from sandbox_harness.site_bundle import build_site_archive_from_files,stage_site_archive
-from sandbox_harness.site_worker import SiteWorker
-from sandbox_harness.store import SiteDeployJobRow,Store
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, now)
+from sandbox_harness.common.storage.objects import (ObjectStore)
+from sandbox_harness.common.sites.site_bundle import (build_site_archive_from_files, stage_site_archive)
+from sandbox_harness.services.site_worker.site_worker import (SiteWorker)
+from sandbox_harness.common.db.store import (SiteDeployJobRow, Store)
 
 
 async def prepared(tmp_path,name="site",*,max_attempts=4):

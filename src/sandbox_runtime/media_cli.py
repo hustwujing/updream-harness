@@ -8,8 +8,8 @@ import uuid
 import httpx
 from pydantic import ValidationError
 
-from sandbox_harness.domain import MediaDraftCreate
-from sandbox_harness.media_catalog import MediaCatalog
+from sandbox_harness.common.contracts.domain import (MediaDraftCreate)
+from sandbox_harness.common.catalog.media_catalog import (MediaCatalog)
 from .state import capability_token_file
 
 

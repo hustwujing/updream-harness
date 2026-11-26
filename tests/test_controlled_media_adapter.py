@@ -6,16 +6,15 @@ from types import SimpleNamespace
 from PIL import Image
 import pytest
 
-from sandbox_harness.controlled_media_adapter import ControlledMediaOperationAdapter
-from sandbox_harness.controlled_media_runner import ControlledOperationError
-from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.job_adapters import AdapterStatus,JobExecutionContext,PreAcceptFailure
-from sandbox_harness.job_contracts import (JobArtifactInput,JobExpectedOutput,JobGroupCreate,JobKind,
-    JobRequest,JobState,OutputDisposition)
-from sandbox_harness.objects import ObjectStore
-from sandbox_harness.scheduler import GPUInventory,NodeInventory,NodeProfile,Scheduler
-from sandbox_harness.store import Store
+from sandbox_harness.services.controlled_worker.controlled_media_adapter import (ControlledMediaOperationAdapter)
+from sandbox_harness.services.controlled_worker.controlled_media_runner import (ControlledOperationError)
+from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate)
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.execution.job_adapters import (AdapterStatus, JobExecutionContext, PreAcceptFailure)
+from sandbox_harness.common.contracts.job_contracts import (JobArtifactInput, JobExpectedOutput, JobGroupCreate, JobKind, JobRequest, JobState, OutputDisposition)
+from sandbox_harness.common.storage.objects import (ObjectStore)
+from sandbox_harness.common.scheduling.scheduler import (GPUInventory, NodeInventory, NodeProfile, Scheduler)
+from sandbox_harness.common.db.store import (Store)
 
 
 def png(mode='RGB',color='blue'):

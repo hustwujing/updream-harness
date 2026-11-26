@@ -5,7 +5,7 @@
 This guide applies to Composer attachments, Artifact and ProjectFile cards,
 inline previews and document conversion. The source entries are
 `web/src/main.jsx`, `web/src/DocumentPreview.jsx`,
-`src/sandbox_harness/app.py` and `src/sandbox_harness/document_preview.py`.
+`src/sandbox_harness/services/api/app.py` and `src/sandbox_harness/services/api/document_preview.py`.
 
 ## Contracts
 

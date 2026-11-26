@@ -5,8 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from sandbox_harness.job_contracts import (JobArtifactInput,JobGroupCreate,JobKind,JobRequest,JobState,
-    REVIEWER_HARNESS_DESCRIPTOR)
+from sandbox_harness.common.contracts.job_contracts import (JobArtifactInput, JobGroupCreate, JobKind, JobRequest, JobState, REVIEWER_HARNESS_DESCRIPTOR)
 
 
 class ReviewTrigger(StrEnum):

@@ -4,8 +4,8 @@
   "kind": "controlled",
   "location": "controlled",
   "sources": [
-    "src/sandbox_harness/sam3_job.py",
-    "src/sandbox_harness/transcribe_job.py",
+    "src/controlled_runtime/sam3_job.py",
+    "src/controlled_runtime/transcribe_job.py",
     "scripts/build_controlled_runtime_manifest.py"
   ],
   "source_roots": [],

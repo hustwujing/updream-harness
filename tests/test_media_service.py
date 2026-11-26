@@ -6,10 +6,10 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from sandbox_harness.app import create_app
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import Harness,MediaDraftCreate,ThreadCreate,TurnCreate,now
+from sandbox_harness.services.api.app import (create_app)
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Harness, MediaDraftCreate, ThreadCreate, TurnCreate, now)
 from sandbox_runtime import media_cli
 
 
@@ -53,8 +53,8 @@ def test_media_batch_confirm_api_creates_all_jobs_once(tmp_path):
 
 
 def test_media_worker_is_a_separate_service():
-    app = (ROOT / "src/sandbox_harness/app.py").read_text()
-    worker = (ROOT / "src/sandbox_harness/media_worker.py").read_text()
+    app = (ROOT / "src/sandbox_harness/services/api/app.py").read_text()
+    worker = (ROOT / "src/sandbox_harness/services/media_worker/media_worker.py").read_text()
     unit = (ROOT / "deploy/systemd/sandbox-harness-parallel-media-worker.service").read_text()
     project = (ROOT / "pyproject.toml").read_text()
     base = (ROOT / "runtime/base.Dockerfile").read_text()
@@ -62,7 +62,7 @@ def test_media_worker_is_a_separate_service():
     assert "MediaWorker(" not in app
     assert "continuation_callback" not in worker
     assert "ExecStart=/data2/wujing03/sandbox-harness-platform-parallel/.venv/bin/sandbox-harness-parallel-media-worker" in unit
-    assert 'sandbox-harness-media-worker = "sandbox_harness.media_service:run"' in project
+    assert 'sandbox-harness-media-worker = "sandbox_harness.services.media_worker.media_service:run"' in project
     assert "sandbox-harness-parallel-media-worker.service" in install
     for command in ("sandbox-harness-api", "sandbox-harness-gateway", "sandbox-harness-media-worker",
                     "sandbox-harness-site-worker"):
@@ -243,7 +243,7 @@ def test_media_reference_presigned_upload_and_completion_are_owner_scoped(tmp_pa
         def promote_media_upload(self, key, digest): return "sha256:"+digest
         def put(self,data): return "sha256:"+"0"*64,"0"*64
         def get(self,*args,**kwargs): return content
-    objects=Objects();monkeypatch.setattr("sandbox_harness.app.object_store",lambda settings:objects)
+    objects=Objects();monkeypatch.setattr("sandbox_harness.services.api.app.object_store",lambda settings:objects)
     settings=Settings(data_root=tmp_path,database_url="sqlite+aiosqlite:///"+str(tmp_path/"upload.db"),
         redis_url="",backend="fake",object_backend="local",model_catalog_discovery=False,
         session_signing_key="media-upload-session-secret")
@@ -276,7 +276,7 @@ def test_media_reference_upload_rejects_boss_metadata_mismatch(tmp_path, monkeyp
             return {"size":99,"mime":"image/png","metadata":{"sha256":"1"*64,"size":"100","kind":"image"}}
         def put(self,data): return "sha256:"+"0"*64,"0"*64
         def get(self,*args,**kwargs): return b""
-    monkeypatch.setattr("sandbox_harness.app.object_store",lambda settings:Objects())
+    monkeypatch.setattr("sandbox_harness.services.api.app.object_store",lambda settings:Objects())
     settings=Settings(data_root=tmp_path,database_url="sqlite+aiosqlite:///"+str(tmp_path/"mismatch.db"),
         redis_url="",backend="fake",object_backend="local",model_catalog_discovery=False,
         session_signing_key="media-mismatch-session-secret")

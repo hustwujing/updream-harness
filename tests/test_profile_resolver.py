@@ -4,14 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from sandbox_harness.profiles import (
-    ChildExecutionProfile,
-    ProviderRelease,
-    ProfileRequirements,
-    ProfileResolver,
-    RuntimeDependencyProfile,
-    SkillDescriptor,
-)
+from sandbox_harness.common.catalog.profiles import (ChildExecutionProfile, ProviderRelease, ProfileRequirements, ProfileResolver, RuntimeDependencyProfile, SkillDescriptor)
 
 
 ROOT = Path(__file__).resolve().parents[1]

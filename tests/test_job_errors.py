@@ -1,5 +1,5 @@
-from sandbox_harness.job_errors import JOB_ERROR_CONTRACTS,job_error_payload
-from sandbox_harness.media_errors import MEDIA_ERROR_GUIDANCE
+from sandbox_harness.common.contracts.job_errors import (JOB_ERROR_CONTRACTS, job_error_payload)
+from sandbox_harness.services.media_worker.media_errors import (MEDIA_ERROR_GUIDANCE)
 
 
 def test_all_provider_errors_and_core_executor_errors_have_public_contracts():

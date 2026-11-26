@@ -3,10 +3,10 @@ import pytest
 from dataclasses import replace
 
 from test_harness_job import setup
-from sandbox_harness.domain import Harness
-from sandbox_harness.job_adapters import AdapterStatus,JobExecutionContext
-from sandbox_harness.sandbox import FakeSandboxBackend
-from sandbox_harness.sandbox_contracts import SandboxCreateRequest,SandboxRateLimited
+from sandbox_harness.common.contracts.domain import (Harness)
+from sandbox_harness.common.execution.job_adapters import (AdapterStatus, JobExecutionContext)
+from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
+from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCreateRequest, SandboxRateLimited)
 
 
 async def fixture(tmp_path):
@@ -22,7 +22,7 @@ async def fixture(tmp_path):
 
 
 async def test_waiter_loss_does_not_cancel_provider_create_or_duplicate_on_recovery(tmp_path):
-    from sandbox_harness.allocation_dispatch import AllocationClient,AllocationService
+    from sandbox_harness.services.allocation_worker.allocation_dispatch import (AllocationClient, AllocationService)
     class Provider(FakeSandboxBackend):
         entered=asyncio.Event();finish=asyncio.Event();calls=0
         async def create(self,request):
@@ -54,7 +54,7 @@ async def test_waiter_loss_does_not_cancel_provider_create_or_duplicate_on_recov
 
 
 async def test_stale_waiter_cannot_enqueue_after_replacement(tmp_path):
-    from sandbox_harness.allocation_dispatch import AllocationClient,AllocationService
+    from sandbox_harness.services.allocation_worker.allocation_dispatch import (AllocationClient, AllocationService)
     store,context,request=await fixture(tmp_path);backend=FakeSandboxBackend()
     client=AllocationClient(store,backend,poll_seconds=.01)
     try:
@@ -68,7 +68,7 @@ async def test_stale_waiter_cannot_enqueue_after_replacement(tmp_path):
 
 
 async def test_definitive_capacity_rejection_is_durable_and_retryable(tmp_path):
-    from sandbox_harness.allocation_dispatch import AllocationClient,AllocationService
+    from sandbox_harness.services.allocation_worker.allocation_dispatch import (AllocationClient, AllocationService)
     class Provider(FakeSandboxBackend):
         calls=0
         async def create(self,request):
@@ -93,9 +93,9 @@ async def test_definitive_capacity_rejection_is_durable_and_retryable(tmp_path):
 
 
 async def test_allocator_loss_keeps_unknown_and_never_reissues_create(tmp_path):
-    from sandbox_harness.allocation_dispatch import AllocationClient,AllocationService
-    from sandbox_harness.store import SandboxAllocationRow
-    from sandbox_harness.domain import now
+    from sandbox_harness.services.allocation_worker.allocation_dispatch import (AllocationClient, AllocationService)
+    from sandbox_harness.common.db.store import (SandboxAllocationRow)
+    from sandbox_harness.common.contracts.domain import (now)
     from datetime import timedelta
     class Provider(FakeSandboxBackend):
         calls=0
@@ -124,15 +124,15 @@ async def test_allocator_loss_keeps_unknown_and_never_reissues_create(tmp_path):
 @pytest.mark.parametrize('reject',[False,True])
 async def test_late_response_cleans_cancelled_waiter_and_original_reservation(tmp_path,user_cancel,reject):
     from types import SimpleNamespace
-    from sandbox_harness.allocation_dispatch import AllocationClient,AllocationService
-    from sandbox_harness.config import Settings
-    from sandbox_harness.media_render_adapter import MediaRenderOperationAdapter
-    from sandbox_harness.objects import ObjectStore
-    from sandbox_harness.pool import SandboxPool
-    from sandbox_harness.scheduler import Scheduler
-    from sandbox_harness.job_adapters import SubmissionInterrupted
-    from sandbox_harness.job_contracts import JobState
-    from sandbox_harness.job_worker import JobWorker
+    from sandbox_harness.services.allocation_worker.allocation_dispatch import (AllocationClient, AllocationService)
+    from sandbox_harness.common.configuration.config import (Settings)
+    from sandbox_harness.services.job_worker.media_render_adapter import (MediaRenderOperationAdapter)
+    from sandbox_harness.common.storage.objects import (ObjectStore)
+    from sandbox_harness.common.sandbox.pool import (SandboxPool)
+    from sandbox_harness.common.scheduling.scheduler import (Scheduler)
+    from sandbox_harness.common.execution.job_adapters import (SubmissionInterrupted)
+    from sandbox_harness.common.contracts.job_contracts import (JobState)
+    from sandbox_harness.common.execution.job_worker import (JobWorker)
     class Provider(FakeSandboxBackend):
         entered=asyncio.Event();finish=asyncio.Event();calls=0
         async def create(self,request):
@@ -149,7 +149,7 @@ async def test_late_response_cleans_cancelled_waiter_and_original_reservation(tm
     request=replace(request,allocation_id=context.job.id+'-g'+str(context.generation))
     worker=JobWorker(store,{'child-harness':adapter},node_id='node',worker_id='job-worker')
     if user_cancel:
-        from sandbox_harness.store import JobAttemptRow
+        from sandbox_harness.common.db.store import (JobAttemptRow)
         from sqlalchemy import select
         async with store.connections() as db:
             attempt=(await db.scalars(select(JobAttemptRow).where(JobAttemptRow.job_id==context.job.id))).one()
@@ -187,8 +187,8 @@ async def test_late_response_cleans_cancelled_waiter_and_original_reservation(tm
 
 @pytest.mark.parametrize('boundary',['poll','ready_lookup'])
 async def test_observation_failure_after_enqueue_preserves_allocation_ownership(tmp_path,boundary):
-    from sandbox_harness.allocation_dispatch import AllocationClient,AllocationService
-    from sandbox_harness.sandbox_contracts import SandboxCreateOutcomeUnknown,SandboxProviderUnavailable
+    from sandbox_harness.services.allocation_worker.allocation_dispatch import (AllocationClient, AllocationService)
+    from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCreateOutcomeUnknown, SandboxProviderUnavailable)
     store,context,request=await fixture(tmp_path);backend=FakeSandboxBackend()
     client=AllocationClient(store,backend,poll_seconds=.01)
     try:
@@ -215,14 +215,14 @@ async def test_observation_failure_after_enqueue_preserves_allocation_ownership(
 @pytest.mark.parametrize('delete_failures',[0,2])
 async def test_child_receipt_keeps_dispatch_identity_through_cleanup_and_new_attempt(tmp_path,response_lost,delete_failures):
     from types import SimpleNamespace
-    from sandbox_harness.allocation_dispatch import AllocationClient,AllocationService
-    from sandbox_harness.config import Settings
-    from sandbox_harness.harness_job import HarnessJobAdapter,SandboxChildBackend
-    from sandbox_harness.job_adapters import SubmissionOutcomeUnknown
-    from sandbox_harness.objects import ObjectStore
-    from sandbox_harness.pool import SandboxPool
-    from sandbox_harness.scheduler import Scheduler
-    from sandbox_harness.sandbox_contracts import SandboxProviderUnavailable
+    from sandbox_harness.services.allocation_worker.allocation_dispatch import (AllocationClient, AllocationService)
+    from sandbox_harness.common.configuration.config import (Settings)
+    from sandbox_harness.services.job_worker.harness_job import (HarnessJobAdapter, SandboxChildBackend)
+    from sandbox_harness.common.execution.job_adapters import (SubmissionOutcomeUnknown)
+    from sandbox_harness.common.storage.objects import (ObjectStore)
+    from sandbox_harness.common.sandbox.pool import (SandboxPool)
+    from sandbox_harness.common.scheduling.scheduler import (Scheduler)
+    from sandbox_harness.common.contracts.sandbox_contracts import (SandboxProviderUnavailable)
     class Provider(FakeSandboxBackend):
         deletes=0
         async def delete(self,sandbox):
@@ -285,8 +285,8 @@ async def test_child_receipt_keeps_dispatch_identity_through_cleanup_and_new_att
 
 
 async def test_retiring_old_generation_does_not_release_new_pending_allocation():
-    from sandbox_harness.pool import SandboxPool
-    from sandbox_harness.sandbox_contracts import SandboxProviderUnavailable
+    from sandbox_harness.common.sandbox.pool import (SandboxPool)
+    from sandbox_harness.common.contracts.sandbox_contracts import (SandboxProviderUnavailable)
     class Provider(FakeSandboxBackend):
         creates=0;deletes=0;entered=asyncio.Event();finish=asyncio.Event()
         async def create(self,request):
@@ -318,7 +318,7 @@ async def test_retiring_old_generation_does_not_release_new_pending_allocation()
 
 
 async def test_explicit_replacement_allocation_never_reuses_previous_attachment():
-    from sandbox_harness.pool import SandboxPool
+    from sandbox_harness.common.sandbox.pool import (SandboxPool)
     provider=FakeSandboxBackend();pool=SandboxPool(provider,{Harness.CODEX:'image'},
         {Harness.CODEX:0},max_sandboxes=1)
     try:

@@ -110,7 +110,7 @@ def main():
     args=parser.parse_args()
     root=Path(__file__).resolve().parents[1]
     code_root=(args.code_root or root).resolve()
-    if not (code_root/'src/sandbox_harness/main.py').is_file():raise ValueError('Invalid code root')
+    if not (code_root/'src/sandbox_harness/services/api/main.py').is_file():raise ValueError('Invalid code root')
     ensure_release_clean(code_root)
     revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=code_root,text=True).strip()
     if not re.fullmatch('[0-9a-f]{40}',revision):raise ValueError('Invalid Git revision')

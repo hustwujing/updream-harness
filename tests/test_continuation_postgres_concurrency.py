@@ -3,11 +3,11 @@ import os
 
 import pytest
 
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate,TurnState,identifier
-from sandbox_harness.job_continuation import ContinuationDispatcher
-from sandbox_harness.job_contracts import JobGroupCreate,JobKind,JobRequest,JobState
-from sandbox_harness.store import Store
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate, TurnState, identifier)
+from sandbox_harness.services.api.job_continuation import (ContinuationDispatcher)
+from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobKind, JobRequest, JobState)
+from sandbox_harness.common.db.store import (Store)
 from test_job_continuation import StoreBroker
 
 

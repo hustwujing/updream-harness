@@ -1,5 +1,5 @@
-from sandbox_harness.job_contracts import JobGroupCreate,JobKind,JobRequest
-from sandbox_harness.store import Store
+from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobKind, JobRequest)
+from sandbox_harness.common.db.store import (Store)
 
 
 async def setup(tmp_path):

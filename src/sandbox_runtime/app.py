@@ -30,7 +30,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from sandbox_harness.observability import RequestLoggingMiddleware, observed, event, enrich, telemetry, ToolObservations
+from sandbox_harness.common.observability.observability import (RequestLoggingMiddleware, observed, event, enrich, telemetry, ToolObservations)
 
 from .adapters import (command,control_interaction_response,control_user_message,normalize,
     normalize_error_code,streaming_user_message)

@@ -1,17 +1,16 @@
-from sandbox_harness.catalog import HarnessCatalog
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from datetime import timedelta
 
-from sandbox_harness.domain import Attachment, EventKind, Harness, ItemType, RuntimeEvent, ThreadCreate, TurnCreate, TurnInputCreate, TurnState, now
-from sandbox_harness.artifact_gateway import ArtifactEmission
-from sandbox_harness.job_contracts import (JobExpectedOutput,JobGroupCreate,JobKind,JobRequest,
-    JobState,OutputDisposition)
-from sandbox_harness.store import MediaJobRow, Store, ThreadRow, TurnRow, valid_project_file_path
+from sandbox_harness.common.contracts.domain import (Attachment, EventKind, Harness, ItemType, RuntimeEvent, ThreadCreate, TurnCreate, TurnInputCreate, TurnState, now)
+from sandbox_harness.common.artifacts.artifact_gateway import (ArtifactEmission)
+from sandbox_harness.common.contracts.job_contracts import (JobExpectedOutput, JobGroupCreate, JobKind, JobRequest, JobState, OutputDisposition)
+from sandbox_harness.common.db.store import (MediaJobRow, Store, ThreadRow, TurnRow, valid_project_file_path)
 import pytest
 
 
 async def test_prepared_input_artifacts_survive_replay_and_aliases_follow_input_sequence(tmp_path):
     from sqlalchemy import select,update
-    from sandbox_harness.store import ArtifactRow
+    from sandbox_harness.common.db.store import (ArtifactRow)
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'input-bindings.db'));await store.initialize()
     try:
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard');owner='owner'
@@ -698,7 +697,7 @@ async def test_interaction_response_claim_expires_and_preserves_idempotency(tmp_
             await store.claim_interaction_response(interaction.id, owner,
                 "response-claim-key", response, claim_owner="broker-two", lease_seconds=30)
         async with store.connections.begin() as db:
-            from sandbox_harness.store import InteractionRow
+            from sandbox_harness.common.db.store import (InteractionRow)
             row = await db.get(InteractionRow, interaction.id, with_for_update=True)
             row.response_expires_at = now() - timedelta(seconds=1)
         reclaimed, accepted = await store.claim_interaction_response(interaction.id, owner,
@@ -775,7 +774,7 @@ async def test_concurrent_thread_items_receive_unique_contiguous_sequences(tmp_p
 
 async def test_legacy_unsafe_attachment_name_remains_readable_but_cannot_be_submitted(tmp_path):
     import json
-    from sandbox_harness.domain import identifier, now
+    from sandbox_harness.common.contracts.domain import (identifier, now)
     store = Store("sqlite+aiosqlite:///" + str(tmp_path / "legacy-attachment.db")); await store.initialize()
     try:
         thread_id, turn_id, timestamp = identifier(), identifier(), now()

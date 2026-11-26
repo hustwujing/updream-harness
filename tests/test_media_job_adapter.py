@@ -3,16 +3,15 @@ from types import SimpleNamespace
 
 from PIL import Image
 
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate
-from sandbox_harness.job_adapters import JobExecutionContext,PreAcceptFailure
-from sandbox_harness.job_contracts import (JobArtifactInput,JobExpectedOutput,JobGroupCreate,JobKind,JobRequest,
-    JobState,OutputDisposition)
-from sandbox_harness.media_job_adapter import MediaProviderJobAdapter
-from sandbox_harness.objects import ObjectStore
-from sandbox_harness.provider_preflight import ProviderPreflight,ProviderPreflightError
-from sandbox_harness.store import Store
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate)
+from sandbox_harness.common.execution.job_adapters import (JobExecutionContext, PreAcceptFailure)
+from sandbox_harness.common.contracts.job_contracts import (JobArtifactInput, JobExpectedOutput, JobGroupCreate, JobKind, JobRequest, JobState, OutputDisposition)
+from sandbox_harness.services.job_worker.media_job_adapter import (MediaProviderJobAdapter)
+from sandbox_harness.common.storage.objects import (ObjectStore)
+from sandbox_harness.common.catalog.provider_preflight import (ProviderPreflight, ProviderPreflightError)
+from sandbox_harness.common.db.store import (Store)
 
 
 class Catalog:

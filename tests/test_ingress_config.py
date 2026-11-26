@@ -23,7 +23,7 @@ def test_frpc_ingress_is_private_login_only_and_has_no_registration_route_overri
     assert "proxy_pass http://127.0.0.1:24766/;" in source
     assert "proxy_buffering off" in source and "Upgrade $http_upgrade" in source
     assert "location / {" in source and "return 404" in source
-    app=(ROOT/"src/sandbox_harness/app.py").read_text()
+    app=(ROOT/"src/sandbox_harness/services/api/app.py").read_text()
     assert 'request.state.ingress == "frpc"' in app
     assert 'registration_not_available' in app
 

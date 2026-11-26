@@ -3,13 +3,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate,identifier,now
-from sandbox_harness.job_catalog import JobCatalog, JobCatalogPayload
-from sandbox_harness.job_contracts import (JobExpectedOutput,JobGroupCreate,JobKind,JobRequest,
-    JobState,OutputDisposition)
-from sandbox_harness.job_coordinator import JobCoordinator, JobGroupDraftUpdate
-from sandbox_harness.store import Store
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate, identifier, now)
+from sandbox_harness.common.catalog.job_catalog import (JobCatalog, JobCatalogPayload)
+from sandbox_harness.common.contracts.job_contracts import (JobExpectedOutput, JobGroupCreate, JobKind, JobRequest, JobState, OutputDisposition)
+from sandbox_harness.common.jobs.job_coordinator import (JobCoordinator, JobGroupDraftUpdate)
+from sandbox_harness.common.db.store import (Store)
 
 
 ROOT=__import__('pathlib').Path(__file__).resolve().parents[1]
@@ -342,7 +341,7 @@ async def test_reject_expire_and_cancel_scopes_are_truthful(tmp_path):
 async def test_harness_infrastructure_fields_are_resolved_by_host_not_manager(tmp_path):
     import hashlib,json
     from pathlib import Path
-    from sandbox_harness.profiles import ProfileResolver
+    from sandbox_harness.common.catalog.profiles import (ProfileResolver)
     root=Path(__file__).resolve().parents[1]
     raw=(root/'deploy/profile-catalog.example.json').read_text()
     resolver=ProfileResolver.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest(),
@@ -376,7 +375,7 @@ async def test_harness_infrastructure_fields_are_resolved_by_host_not_manager(tm
 async def test_harness_skill_metadata_freezes_required_capability_and_network(tmp_path):
     import hashlib,json
     from pathlib import Path
-    from sandbox_harness.profiles import ProfileResolver
+    from sandbox_harness.common.catalog.profiles import (ProfileResolver)
     root=Path(__file__).resolve().parents[1]
     raw=(root/'deploy/profile-catalog.example.json').read_text()
     resolver=ProfileResolver.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest(),
@@ -401,7 +400,7 @@ async def test_harness_skill_metadata_freezes_required_capability_and_network(tm
 async def test_harness_missing_adapter_resolves_to_registered_child_adapter(tmp_path):
     import hashlib,json
     from pathlib import Path
-    from sandbox_harness.profiles import ProfileResolver
+    from sandbox_harness.common.catalog.profiles import (ProfileResolver)
     root=Path(__file__).resolve().parents[1]
     raw=(root/'deploy/profile-catalog.example.json').read_text()
     resolver=ProfileResolver.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest(),
@@ -425,7 +424,7 @@ async def test_harness_missing_adapter_resolves_to_registered_child_adapter(tmp_
 async def test_harness_descriptor_identity_is_frozen(tmp_path):
     import hashlib,json
     from pathlib import Path
-    from sandbox_harness.profiles import ProfileResolver
+    from sandbox_harness.common.catalog.profiles import (ProfileResolver)
     root=Path(__file__).resolve().parents[1]
     raw=(root/'deploy/profile-catalog.example.json').read_text()
     resolver=ProfileResolver.from_json(raw,expected_digest=hashlib.sha256(raw.encode()).hexdigest(),

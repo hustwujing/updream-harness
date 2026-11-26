@@ -7,18 +7,9 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from sandbox_harness.domain import Harness
-from sandbox_harness.sandbox_aliyun import AliyunSandboxBackend,_E2BClient
-from sandbox_harness.sandbox_contracts import (
-    SandboxCreateOutcomeUnknown,
-    SandboxCreateRequest,
-    SandboxEndpointUnavailable,
-    SandboxNotFound,
-    SandboxProfile,
-    SandboxProfileUnavailable,
-    SandboxProviderUnavailable,
-    SandboxScope,
-)
+from sandbox_harness.common.contracts.domain import (Harness)
+from sandbox_harness.common.sandbox.sandbox_aliyun import (AliyunSandboxBackend, _E2BClient)
+from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCreateOutcomeUnknown, SandboxCreateRequest, SandboxEndpointUnavailable, SandboxNotFound, SandboxProfile, SandboxProfileUnavailable, SandboxProviderUnavailable, SandboxScope)
 
 
 def creation() -> SandboxCreateRequest:
@@ -276,7 +267,7 @@ async def test_aliyun_unknown_create_without_inventory_match_is_explicit():
 async def test_aliyun_delete_does_not_trust_transient_inventory_absence(monkeypatch):
     client=FakeAliyunClient();value=backend(client,httpx.MockTransport(health_transport))
     async def no_sleep(_):return None
-    monkeypatch.setattr("sandbox_harness.sandbox_aliyun.asyncio.sleep",no_sleep)
+    monkeypatch.setattr("sandbox_harness.common.sandbox.sandbox_aliyun.asyncio.sleep",no_sleep)
     try:
         sandbox=await value.create(creation())
         client.hide_inventory=True

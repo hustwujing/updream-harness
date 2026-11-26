@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from sandbox_harness.minimax_voice import MiniMaxVoiceClones
+from sandbox_harness.services.media_worker.minimax_voice import (MiniMaxVoiceClones)
 
 
 class Response:

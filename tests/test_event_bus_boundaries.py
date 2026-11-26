@@ -1,7 +1,7 @@
 import asyncio
 import time
-import sandbox_harness.events as events
-from sandbox_harness.domain import Event,EventKind
+import sandbox_harness.common.events.events as events
+from sandbox_harness.common.contracts.domain import (Event, EventKind)
 
 
 async def test_redis_connected_but_silent_has_bounded_database_fallback(monkeypatch):

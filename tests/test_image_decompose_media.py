@@ -5,14 +5,14 @@ import httpx
 import pytest
 from PIL import Image
 
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate
-from sandbox_harness.image_decompose_adapter import ImageDecomposeAdapter
-from sandbox_harness.job_adapters import JobExecutionContext
-from sandbox_harness.job_contracts import JobArtifactInput,JobExpectedOutput,JobGroupCreate,JobRequest
-from sandbox_harness.objects import ObjectStore
-from sandbox_harness.store import Store
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate)
+from sandbox_harness.services.job_worker.image_decompose_adapter import (ImageDecomposeAdapter)
+from sandbox_harness.common.execution.job_adapters import (JobExecutionContext)
+from sandbox_harness.common.contracts.job_contracts import (JobArtifactInput, JobExpectedOutput, JobGroupCreate, JobRequest)
+from sandbox_harness.common.storage.objects import (ObjectStore)
+from sandbox_harness.common.db.store import (Store)
 
 
 def png():
@@ -72,8 +72,8 @@ async def test_decompose_submission_queues_media_job_without_provider_http(tmp_p
 
 
 async def test_media_worker_owns_decompose_execution_and_multiple_outputs(tmp_path,monkeypatch):
-    from sandbox_harness.media_worker import MediaWorker
-    from sandbox_harness.job_contracts import JobState
+    from sandbox_harness.services.media_worker.media_worker import (MediaWorker)
+    from sandbox_harness.common.contracts.job_contracts import (JobState)
     settings,store,objects,context=await setup(tmp_path)
     calls=[];client_type=httpx.AsyncClient
     cookie=settings.data_root/'image-decompose'/'cookie.txt'
@@ -115,8 +115,8 @@ async def test_media_worker_owns_decompose_execution_and_multiple_outputs(tmp_pa
 
 
 async def queued_worker(tmp_path,handler,mime_patterns=(),*,max_item_bytes=128*1024**2):
-    from sandbox_harness.image_decompose_provider import ImageDecomposeProvider
-    from sandbox_harness.media_worker import MediaWorker
+    from sandbox_harness.services.media_worker.image_decompose_provider import (ImageDecomposeProvider)
+    from sandbox_harness.services.media_worker.media_worker import (MediaWorker)
     settings,store,objects,context=await setup(tmp_path,mime_patterns,max_item_bytes=max_item_bytes)
     cookie=settings.data_root/'image-decompose'/'cookie.txt'
     cookie.parent.mkdir(parents=True,exist_ok=True);cookie.write_text('session=test')
@@ -155,7 +155,7 @@ async def test_lost_create_response_never_adopts_or_resubmits(tmp_path):
 
 
 async def test_replacement_media_worker_polls_exact_accepted_handle(tmp_path):
-    from sandbox_harness.media_worker import MediaWorker
+    from sandbox_harness.services.media_worker.media_worker import (MediaWorker)
     calls=[];interrupted=True
     def handler(request):
         nonlocal interrupted
@@ -339,7 +339,7 @@ async def test_legacy_import_requires_recorded_exact_handle(tmp_path):
 @pytest.mark.parametrize('url',['http://10.0.0.8:8912','https://127.0.0.1:8912',
     'http://user:password@127.0.0.1:8912','http://127.0.0.1:8912/path'])
 def test_transport_rejects_non_loopback_or_credentialled_configuration(tmp_path,url):
-    from sandbox_harness.image_decompose_provider import ImageDecomposeProvider
+    from sandbox_harness.services.media_worker.image_decompose_provider import (ImageDecomposeProvider)
     settings=Settings(backend='fake',data_root=tmp_path,image_decompose_base_url=url)
     with pytest.raises(ValueError,match='loopback'):ImageDecomposeProvider(settings,None)
 
@@ -347,8 +347,8 @@ def test_transport_rejects_non_loopback_or_credentialled_configuration(tmp_path,
 async def test_media_link_schema_upgrade_preserves_old_rows_and_is_idempotent(tmp_path):
     from datetime import timedelta
     from sqlalchemy import text
-    from sandbox_harness.domain import MediaDraftCreate,now
-    from sandbox_harness.image_decompose_adapter import DECOMPOSE_SPEC
+    from sandbox_harness.common.contracts.domain import (MediaDraftCreate, now)
+    from sandbox_harness.services.job_worker.image_decompose_adapter import (DECOMPOSE_SPEC)
     settings,store,objects,context=await setup(tmp_path)
     try:
         draft,_=await store.create_media_draft('owner',context.job.thread_id,MediaDraftCreate(
@@ -368,9 +368,9 @@ async def test_media_link_schema_upgrade_preserves_old_rows_and_is_idempotent(tm
 @pytest.mark.parametrize('already_finalized',[False,True])
 async def test_legacy_partial_collection_keeps_original_artifact_identity(tmp_path,already_finalized):
     import hashlib
-    from sandbox_harness.artifact_gateway import ArtifactEmission
-    from sandbox_harness.image_decompose_provider import ImageDecomposeProvider
-    from sandbox_harness.media_worker import MediaWorker
+    from sandbox_harness.common.artifacts.artifact_gateway import (ArtifactEmission)
+    from sandbox_harness.services.media_worker.image_decompose_provider import (ImageDecomposeProvider)
+    from sandbox_harness.services.media_worker.media_worker import (MediaWorker)
     settings,store,objects,context=await setup(tmp_path)
     adapter=ImageDecomposeAdapter(settings,store,objects)
     blue=png();stream=io.BytesIO();Image.new('RGB',(32,32),'red').save(stream,format='PNG')

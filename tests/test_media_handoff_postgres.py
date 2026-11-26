@@ -5,8 +5,8 @@ import os
 import pytest
 from sqlalchemy import func,select
 
-from sandbox_harness.image_decompose_adapter import ImageDecomposeAdapter
-from sandbox_harness.store import MediaJobRow,Store
+from sandbox_harness.services.job_worker.image_decompose_adapter import (ImageDecomposeAdapter)
+from sandbox_harness.common.db.store import (MediaJobRow, Store)
 from test_image_decompose_media import setup
 
 pytestmark=pytest.mark.skipif(not os.environ.get('PARALLEL_TEST_POSTGRES_URL'),
@@ -16,8 +16,8 @@ pytestmark=pytest.mark.skipif(not os.environ.get('PARALLEL_TEST_POSTGRES_URL'),
 async def test_postgres_upgrade_keeps_existing_media_rows(tmp_path):
     from datetime import timedelta
     from sqlalchemy import text
-    from sandbox_harness.domain import MediaDraftCreate,now
-    from sandbox_harness.image_decompose_adapter import DECOMPOSE_SPEC
+    from sandbox_harness.common.contracts.domain import (MediaDraftCreate, now)
+    from sandbox_harness.services.job_worker.image_decompose_adapter import (DECOMPOSE_SPEC)
     settings,store,objects,context=await setup(tmp_path,
         database_url=os.environ['PARALLEL_TEST_POSTGRES_URL'])
     try:
@@ -51,7 +51,7 @@ async def test_concurrent_media_handoff_across_store_instances(tmp_path):
 
 
 async def test_source_cancellation_and_media_handoff_serialize(tmp_path):
-    from sandbox_harness.job_adapters import PreAcceptCancelled
+    from sandbox_harness.common.execution.job_adapters import (PreAcceptCancelled)
     settings,store,objects,context=await setup(tmp_path,
         database_url=os.environ['PARALLEL_TEST_POSTGRES_URL'])
     other=Store(settings.database_url)

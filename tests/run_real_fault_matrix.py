@@ -2,8 +2,8 @@ from __future__ import annotations
 import asyncio,json,subprocess,time,uuid
 from pathlib import Path
 import httpx
-from sandbox_harness.config import load_settings
-from sandbox_harness.sandbox import OpenSandboxBackend
+from sandbox_harness.common.configuration.config import (load_settings)
+from sandbox_harness.common.sandbox.sandbox import (OpenSandboxBackend)
 
 TERMINAL={"COMPLETED","FAILED","CANCELLED","WAITING_USER"}
 

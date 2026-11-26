@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from sandbox_harness.domain import Harness
-from sandbox_harness.grants import GrantAuthority, JobGrantRequest, TurnGrantRequest
+from sandbox_harness.common.contracts.domain import (Harness)
+from sandbox_harness.common.security.grants import (GrantAuthority, JobGrantRequest, TurnGrantRequest)
 
 
 def authority() -> GrantAuthority:
@@ -33,7 +33,8 @@ def lifetime_job_request(ttl):
 
 def test_child_grant_uses_one_clock_sample_for_check_and_signed_expiry(monkeypatch):
     from types import SimpleNamespace
-    from sandbox_harness import grants,capability
+    import sandbox_harness.common.security.grants as grants
+    import sandbox_harness.common.security.capability as capability
     ticks=iter([1000,1030,1031]);clock=SimpleNamespace(time=lambda:next(ticks))
     monkeypatch.setattr(grants,'time',clock);monkeypatch.setattr(capability,'time',clock)
     issuer=authority();_,parent=issuer.issue_turn(turn_request())
@@ -43,7 +44,8 @@ def test_child_grant_uses_one_clock_sample_for_check_and_signed_expiry(monkeypat
 
 def test_explicit_child_ttl_cannot_exceed_remaining_parent_lifetime(monkeypatch):
     from types import SimpleNamespace
-    from sandbox_harness import grants,capability
+    import sandbox_harness.common.security.grants as grants
+    import sandbox_harness.common.security.capability as capability
     clock=SimpleNamespace(time=lambda:1000)
     monkeypatch.setattr(grants,'time',clock);monkeypatch.setattr(capability,'time',clock)
     issuer=authority();_,parent=issuer.issue_turn(turn_request())
@@ -55,7 +57,8 @@ def test_explicit_child_ttl_cannot_exceed_remaining_parent_lifetime(monkeypatch)
 @pytest.mark.parametrize('elapsed',[59,60,61])
 def test_inherited_child_lifetime_stops_at_parent_expiry(monkeypatch,elapsed):
     from types import SimpleNamespace
-    from sandbox_harness import grants,capability
+    import sandbox_harness.common.security.grants as grants
+    import sandbox_harness.common.security.capability as capability
     clock=SimpleNamespace(time=lambda:1000)
     monkeypatch.setattr(grants,'time',clock);monkeypatch.setattr(capability,'time',clock)
     issuer=authority();_,parent=issuer.issue_turn(turn_request());clock.time=lambda:1000+elapsed

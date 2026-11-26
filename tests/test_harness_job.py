@@ -3,21 +3,19 @@ import httpx
 import asyncio
 from types import SimpleNamespace
 
-from sandbox_harness.harness_job import HarnessJobAdapter,JobGrantFactory,SandboxChildBackend
-from sandbox_harness.job_adapters import (AdapterStatus,JobExecutionContext,PreAcceptFailure,
-    SubmissionOutcomeUnknown,SubmissionInterrupted)
-from sandbox_harness.job_contracts import (JobGroupCreate,JobExpectedOutput,JobKind,JobRequest,
-    JobState,OutputDisposition)
-from sandbox_harness.job_worker import JobWorker
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate
-from sandbox_harness.objects import ObjectStore
-from sandbox_harness.sandbox import Sandbox,SandboxCapacityUnavailable,SandboxNotFound
-from sandbox_harness.sandbox_contracts import SandboxRuntimeRoute
-from sandbox_harness.scheduler import NodeInventory,Scheduler
-from sandbox_harness.runtime import StagedRuntimeObject
-from sandbox_harness.store import Store
+from sandbox_harness.services.job_worker.harness_job import (HarnessJobAdapter, JobGrantFactory, SandboxChildBackend)
+from sandbox_harness.common.execution.job_adapters import (AdapterStatus, JobExecutionContext, PreAcceptFailure, SubmissionOutcomeUnknown, SubmissionInterrupted)
+from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobExpectedOutput, JobKind, JobRequest, JobState, OutputDisposition)
+from sandbox_harness.common.execution.job_worker import (JobWorker)
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate)
+from sandbox_harness.common.storage.objects import (ObjectStore)
+from sandbox_harness.common.sandbox.sandbox import (Sandbox, SandboxCapacityUnavailable, SandboxNotFound)
+from sandbox_harness.common.contracts.sandbox_contracts import (SandboxRuntimeRoute)
+from sandbox_harness.common.scheduling.scheduler import (NodeInventory, Scheduler)
+from sandbox_harness.common.sandbox.runtime import (StagedRuntimeObject)
+from sandbox_harness.common.db.store import (Store)
 
 
 def sandbox_receipt(sandbox,**extra):
@@ -64,7 +62,8 @@ async def test_child_harness_grant_can_read_its_scoped_execution_catalog():
 
 @pytest.mark.parametrize('adapter',['child-harness','reviewer-harness'])
 async def test_job_grant_factory_crossing_second_keeps_parent_expiry(monkeypatch,adapter):
-    from sandbox_harness import grants,capability
+    import sandbox_harness.common.security.grants as grants
+    import sandbox_harness.common.security.capability as capability
     ticks=iter([1000,1001,1002])
     clock=SimpleNamespace(time=lambda:next(ticks))
     monkeypatch.setattr(grants,'time',clock);monkeypatch.setattr(capability,'time',clock)
@@ -97,7 +96,7 @@ async def test_child_harness_acceptance_status_result_and_cleanup(tmp_path):
         reservations=[]
         async with store.connections() as db:
             from sqlalchemy import select
-            from sandbox_harness.store import ResourceReservationRow
+            from sandbox_harness.common.db.store import (ResourceReservationRow)
             reservations=list((await db.execute(select(ResourceReservationRow))).scalars())
         assert reservations[0].state=='released'
     finally:await store.close()
@@ -576,7 +575,7 @@ async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(
     backend=SandboxChildBackend(pool=Pool(),runtime=Runtime(),store=Store(),objects=Objects(),
         settings=settings,token_factory=token,profile_resolver=Profiles())
     backend._ensure_collector=lambda *args:None
-    input_value=__import__('sandbox_harness.job_contracts',fromlist=['JobArtifactInput']).JobArtifactInput(
+    input_value=__import__('sandbox_harness.common.contracts.job_contracts',fromlist=['JobArtifactInput']).JobArtifactInput(
         artifact_id=artifact.id,artifact_role="report")
     frozen=request().model_copy(update={"input_artifacts":(input_value,)})
     context=JobExecutionContext(job=SimpleNamespace(id="c"*32,thread_id="d"*32,
@@ -608,9 +607,9 @@ async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(
 
 
 async def test_child_reconciles_delayed_allocation_before_one_runtime_submission(tmp_path):
-    from sandbox_harness.pool import SandboxPool
-    from sandbox_harness.sandbox import FakeSandboxBackend
-    from sandbox_harness.sandbox_contracts import SandboxCreateOutcomeUnknown
+    from sandbox_harness.common.sandbox.pool import (SandboxPool)
+    from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
+    from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCreateOutcomeUnknown)
     class LateCreate(FakeSandboxBackend):
         calls=0;lookups=0;delayed=False
         async def create(self,value):
@@ -688,7 +687,7 @@ async def test_terminal_job_keeps_prior_reservation_cleanup_even_without_allocat
 @pytest.mark.parametrize('takeover',[False,True])
 async def test_unaccepted_allocation_cleanup_keeps_original_reservation_generation(tmp_path,takeover):
     from dataclasses import asdict
-    from sandbox_harness.sandbox import FakeSandboxBackend
+    from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
     store,adapter,_,job=await setup(tmp_path,AdapterStatus(False))
     try:
         first=await store.claim_job(job.id,'first','node',30)
@@ -724,10 +723,10 @@ async def test_unaccepted_allocation_cleanup_keeps_original_reservation_generati
 @pytest.mark.parametrize('reviewer',[False,True])
 async def test_cancelled_allocation_retains_durable_cleanup_and_recovery(
         tmp_path,replace_worker,mode,reviewer):
-    from sandbox_harness.pool import SandboxPool
-    from sandbox_harness.sandbox import FakeSandboxBackend
-    from sandbox_harness.sandbox_contracts import SandboxCreateOutcomeUnknown
-    from sandbox_harness.reviewer import ReviewerJobAdapter
+    from sandbox_harness.common.sandbox.pool import (SandboxPool)
+    from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
+    from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCreateOutcomeUnknown)
+    from sandbox_harness.services.job_worker.reviewer import (ReviewerJobAdapter)
     from contextlib import asynccontextmanager
     class PendingCreate(FakeSandboxBackend):
         created=asyncio.Event();request_return=asyncio.Event();reconciled=asyncio.Event()
@@ -854,8 +853,8 @@ async def test_cancelled_allocation_retains_durable_cleanup_and_recovery(
 
 async def test_pending_allocation_fences_cleanup_identity_and_provider_switch(tmp_path):
     from dataclasses import asdict,replace
-    from sandbox_harness.sandbox import FakeSandboxBackend
-    from sandbox_harness.sandbox_contracts import SandboxHandle
+    from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
+    from sandbox_harness.common.contracts.sandbox_contracts import (SandboxHandle)
     store,adapter,_,job=await setup(tmp_path,AdapterStatus(False))
     try:
         attempt=await store.claim_job(job.id,'worker','node',30)

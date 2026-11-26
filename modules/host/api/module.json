@@ -4,20 +4,20 @@
   "kind": "service",
   "location": "host",
   "sources": [
-    "src/sandbox_harness/main.py",
-    "src/sandbox_harness/app.py",
-    "src/sandbox_harness/broker.py",
-    "src/sandbox_harness/sandbox_inspector.py",
-    "src/sandbox_harness/document_preview.py",
-    "src/sandbox_harness/execution_graph.py",
-    "src/sandbox_harness/job_continuation.py",
-    "src/sandbox_harness/auth.py",
-    "src/sandbox_harness/sessions.py",
-    "src/sandbox_harness/model_discovery.py"
+    "src/sandbox_harness/services/api/main.py",
+    "src/sandbox_harness/services/api/app.py",
+    "src/sandbox_harness/services/api/broker.py",
+    "src/sandbox_harness/services/api/sandbox_inspector.py",
+    "src/sandbox_harness/services/api/document_preview.py",
+    "src/sandbox_harness/services/api/execution_graph.py",
+    "src/sandbox_harness/services/api/job_continuation.py",
+    "src/sandbox_harness/common/security/auth.py",
+    "src/sandbox_harness/services/api/sessions.py",
+    "src/sandbox_harness/services/api/model_discovery.py"
   ],
   "source_roots": [],
   "entry_points": {
-    "api": "sandbox_harness.main:run"
+    "api": "sandbox_harness.services.api.main:run"
   },
   "common_modules": [
     "common/artifacts",
@@ -67,8 +67,10 @@
   ],
   "external_inputs": [],
   "resources": [
-    "web/dist",
-    "runtime/skills/manifest.json"
+    "deploy/job-catalog.example.json",
+    "deploy/profile-catalog.example.json",
+    "runtime/skills/manifest.json",
+    "web/dist"
   ],
   "host_credentials_allowed": true,
   "verification": [

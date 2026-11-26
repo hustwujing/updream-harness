@@ -3,20 +3,8 @@ from datetime import timedelta
 import pytest
 from pydantic import ValidationError
 
-from sandbox_harness.domain import identifier, now
-from sandbox_harness.job_contracts import (
-    HARD_JOB_GROUP_LIMIT,
-    JobArtifactOutput,
-    JobGroupCreate,
-    JobGroupDraftCreate,
-    JobGroupDraftState,
-    JobGroupState,
-    JobKind,
-    JobRequest,
-    JobState,
-    OutputDisposition,
-    TERMINAL_JOB_STATES,
-)
+from sandbox_harness.common.contracts.domain import (identifier, now)
+from sandbox_harness.common.contracts.job_contracts import (HARD_JOB_GROUP_LIMIT, JobArtifactOutput, JobGroupCreate, JobGroupDraftCreate, JobGroupDraftState, JobGroupState, JobKind, JobRequest, JobState, OutputDisposition, TERMINAL_JOB_STATES)
 
 
 def request(local_job_id: str = "render") -> JobRequest:

@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.job_catalog import JobCatalog, OperationDescriptor
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.catalog.job_catalog import (JobCatalog, OperationDescriptor)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -101,7 +101,7 @@ def test_example_job_catalog_is_parseable_and_digest_verified():
         'model3d.generate','model3d.transform'}
     assert {row.id for row in value.payload.capabilities}==capability_ids
     capability_by_id={row.id:row for row in value.payload.capabilities}
-    from sandbox_harness.media_job_adapter import CAPABILITY_SCOPES
+    from sandbox_harness.services.job_worker.media_job_adapter import (CAPABILITY_SCOPES)
     assert set(CAPABILITY_SCOPES)==capability_ids
     assert capability_by_id['image.generate'].parameter_schema['properties']['kind']=={'const':'image'}
     assert capability_by_id['video.generate'].parameter_schema['properties']['generation_mode']['enum']==[

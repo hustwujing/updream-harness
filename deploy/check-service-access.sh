@@ -7,10 +7,10 @@ cd "$project_root"
 setfacl -R -m "u:${service_user}:rX" src web/dist .venv/bin .venv/lib/python*/site-packages
 runuser -u "$service_user" -- .venv/bin/python - <<'PY'
 from pathlib import Path
-import sandbox_harness.app
-import sandbox_harness.gateway
-import sandbox_harness.media_service
-import sandbox_harness.site_service
+import sandbox_harness.services.api.app
+import sandbox_harness.services.sandbox_gateway.gateway
+import sandbox_harness.services.media_worker.media_service
+import sandbox_harness.services.site_worker.site_service
 for file in Path('web/dist').rglob('*'):
     if file.is_file():
         with file.open('rb') as stream:

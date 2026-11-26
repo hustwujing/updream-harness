@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sandbox_harness.job_errors import JOB_ERROR_CONTRACTS
+from sandbox_harness.common.contracts.job_errors import (JOB_ERROR_CONTRACTS)
 
 MEDIA_ERROR_CODES=("provider_input_invalid","provider_content_policy_rejected",
     "provider_authentication_failed","provider_permission_denied","provider_rate_limited",

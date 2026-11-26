@@ -13,9 +13,9 @@ import httpx
 from fastapi import FastAPI,Request
 from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import ExportLogsServiceRequest
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
-from sandbox_harness import observability as obs
-from sandbox_harness.log_query import query
-from sandbox_harness.telemetry_ingest import decode_otlp
+import sandbox_harness.common.observability.observability as obs
+from sandbox_harness.tools.log_query import (query)
+from sandbox_harness.common.observability.telemetry_ingest import (decode_otlp)
 
 
 def test_runtime_console_json_handler_emits_safe_fixed_schema():
@@ -191,10 +191,10 @@ def test_timeline_deduplicates_imported_logs_and_spans(telemetry):
 
 
 async def test_gateway_receiver_requires_scope_and_does_not_consume_model_budget(telemetry,tmp_path,monkeypatch):
-    import sandbox_harness.gateway as gateway
-    from sandbox_harness.capability import CapabilityCodec
-    from sandbox_harness.config import Settings
-    from sandbox_harness.domain import Harness
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
+    from sandbox_harness.common.security.capability import (CapabilityCodec)
+    from sandbox_harness.common.configuration.config import (Settings)
+    from sandbox_harness.common.contracts.domain import (Harness)
     keys=[]
     class Redis:
         async def exists(self,key):return 0
@@ -233,7 +233,7 @@ async def test_gateway_receiver_requires_scope_and_does_not_consume_model_budget
 
 
 async def test_trace_context_is_durable_and_stale_owner_cannot_replace_it(tmp_path,telemetry):
-    from sandbox_harness.store import Store
+    from sandbox_harness.common.db.store import (Store)
     from test_second_review import seed
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'trace.db'));await store.initialize()
     try:
@@ -252,7 +252,7 @@ async def test_trace_context_is_durable_and_stale_owner_cannot_replace_it(tmp_pa
 
 
 def test_request_timeline_expands_to_turn_and_skips_corrupt_lines(tmp_path,monkeypatch,capsys):
-    from sandbox_harness.log_query import main
+    from sandbox_harness.tools.log_query import (main)
     records=[{'signal':'log','timestamp':'2026-11-10T00:00:00+00:00','event_name':'turn.accepted','event_id':'a','resource':{},'attributes':{'updream.request_id':'request-a','updream.turn_id':'turn-a'}},
         {'signal':'log','timestamp':'2026-11-10T00:00:01+00:00','event_name':'runtime.finished','event_id':'b','resource':{},'attributes':{'updream.request_id':'different','updream.turn_id':'turn-a'}}]
     (tmp_path/'test.telemetry.jsonl').write_text('\n'.join(json.dumps(row) for row in records)+'\n[]\npartial-json\n')
@@ -262,14 +262,14 @@ def test_request_timeline_expands_to_turn_and_skips_corrupt_lines(tmp_path,monke
 
 
 async def test_shutdown_does_not_start_queued_successor(tmp_path,monkeypatch):
-    from sandbox_harness.broker import Broker
-    from sandbox_harness.store import Store
-    from sandbox_harness.config import Settings
-    from sandbox_harness.objects import ObjectStore
-    from sandbox_harness.pool import SandboxPool
-    from sandbox_harness.sandbox import FakeSandboxBackend
-    from sandbox_harness.catalog import HarnessCatalog
-    from sandbox_harness.domain import Harness,TurnState
+    from sandbox_harness.services.api.broker import (Broker)
+    from sandbox_harness.common.db.store import (Store)
+    from sandbox_harness.common.configuration.config import (Settings)
+    from sandbox_harness.common.storage.objects import (ObjectStore)
+    from sandbox_harness.common.sandbox.pool import (SandboxPool)
+    from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
+    from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+    from sandbox_harness.common.contracts.domain import (Harness, TurnState)
     from test_second_review import seed
     from test_broker import Runtime
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'close.db'));await store.initialize()
@@ -311,8 +311,8 @@ def test_source_tool_timing_pairs_ids_and_interrupts_unfinished_tools(telemetry)
 
 
 async def test_revoke_audit_uses_authenticated_business_ids_and_propagated_trace(telemetry,tmp_path,monkeypatch):
-    import sandbox_harness.gateway as gateway
-    from sandbox_harness.config import Settings
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
+    from sandbox_harness.common.configuration.config import (Settings)
     class Redis:
         async def set(self,*args,**kwargs):pass
         async def ping(self):return True
@@ -349,7 +349,7 @@ def test_retention_prunes_expired_segments_even_without_new_events(tmp_path):
 
 def test_authenticated_telemetry_claims_fill_missing_business_identity():
     from types import SimpleNamespace
-    from sandbox_harness.telemetry_ingest import claim_attributes
+    from sandbox_harness.common.observability.telemetry_ingest import (claim_attributes)
     claims=SimpleNamespace(turn_id='turn',thread_id='thread',sandbox_id='sandbox')
     value=claim_attributes(claims,{})
     assert value['updream.turn_id']=='turn' and value['updream.thread_id']=='thread'
@@ -363,7 +363,7 @@ def test_authenticated_telemetry_claims_fill_missing_business_identity():
 
 
 def test_related_log_query_scans_each_file_once_and_retains_missing_ids(tmp_path,monkeypatch):
-    from sandbox_harness.log_query import query
+    from sandbox_harness.tools.log_query import (query)
     records=[
         {'signal':'log','timestamp':'2026-01-01T00:00:00Z','event_name':'a',
             'attributes':{'updream.request_id':'request','updream.turn_id':'turn'}},

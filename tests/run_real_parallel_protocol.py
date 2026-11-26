@@ -267,11 +267,10 @@ async def wait_continuations(client,thread_id,timeout=300,*,minimum=1,maximum=No
 
 async def artifact_boundary(client,args,identity,*,requires_review:bool,verdict:str)->dict:
     thread,turn=await origin(client,args,identity);settings=load_platform_settings()
-    from sandbox_harness.app import object_store
-    from sandbox_harness.artifact_gateway import ArtifactEmission,ArtifactGateway
-    from sandbox_harness.job_contracts import (JobExpectedOutput,JobGroupCreate,JobKind,
-        JobRequest,JobState,OutputDisposition)
-    from sandbox_harness.store import Store
+    from sandbox_harness.services.api.app import (object_store)
+    from sandbox_harness.common.artifacts.artifact_gateway import (ArtifactEmission, ArtifactGateway)
+    from sandbox_harness.common.contracts.job_contracts import (JobExpectedOutput, JobGroupCreate, JobKind, JobRequest, JobState, OutputDisposition)
+    from sandbox_harness.common.db.store import (Store)
     store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
     owner=(await store.get_thread(thread['id'])).owner_id
     request=JobRequest(local_job_id='review-boundary',kind=JobKind.OPERATION,adapter='fixture',
@@ -304,7 +303,7 @@ def load_platform_settings():
     path=Path(os.environ.get('SANDBOX_HARNESS_ENV_FILE',ROOT/'.data/config/platform.env'))
     for key,value in dotenv_values(path).items():
         if value is not None:os.environ[key]=value
-    from sandbox_harness.config import load_settings
+    from sandbox_harness.common.configuration.config import (load_settings)
     return load_settings()
 
 
@@ -324,8 +323,8 @@ async def prepare(client,thread,turn,jobs,identity,*,suppress_continuation:bool=
 
 async def register_case_asset(thread_id:str,turn_id:str,path:Path):
     settings=load_platform_settings()
-    from sandbox_harness.app import object_store
-    from sandbox_harness.store import Store
+    from sandbox_harness.services.api.app import (object_store)
+    from sandbox_harness.common.db.store import (Store)
     data=path.read_bytes();objects=object_store(settings)
     object_ref,digest=await asyncio.to_thread(objects.put,data)
     store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
@@ -339,7 +338,7 @@ async def register_case_asset(thread_id:str,turn_id:str,path:Path):
 
 async def job_artifacts(job_ids:list[str]):
     settings=load_platform_settings()
-    from sandbox_harness.store import Store
+    from sandbox_harness.common.db.store import (Store)
     store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
     try:
         return {job_id:await store.list_job_artifacts(job_id) for job_id in job_ids}
@@ -349,7 +348,7 @@ async def job_artifacts(job_ids:list[str]):
 async def attempts_overlap(job_ids:list[str])->bool:
     settings=load_platform_settings()
     from sqlalchemy import select
-    from sandbox_harness.store import JobAttemptRow,Store
+    from sandbox_harness.common.db.store import (JobAttemptRow, Store)
     store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
     try:
         async with store.connections() as db:
@@ -365,7 +364,7 @@ async def attempts_overlap(job_ids:list[str])->bool:
 async def verify_provider_coverage(thread_id:str,jobs:list[dict],expected:dict[str,dict]):
     settings=load_platform_settings()
     from sqlalchemy import select
-    from sandbox_harness.store import JobAttemptRow,Store
+    from sandbox_harness.common.db.store import (JobAttemptRow, Store)
     store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
     evidence={}
     try:
@@ -472,8 +471,8 @@ async def case_skill_coverage(client,args,identity:str):
     if len(completed)>1 and not await attempts_overlap([row['id'] for row in completed]):
         raise AssertionError('skill coverage attempts did not overlap')
     settings=load_platform_settings()
-    from sandbox_harness.app import object_store
-    from sandbox_harness.store import Store
+    from sandbox_harness.services.api.app import (object_store)
+    from sandbox_harness.common.db.store import (Store)
     store=Store(settings.database_url,settings.redis_url,settings.redis_prefix);objects=object_store(settings)
     evidence={}
     try:
@@ -544,8 +543,8 @@ async def case_k07(client,args):
     if not await attempts_overlap([row['id'] for row in completed]):
         raise AssertionError('visual operation attempts did not overlap')
     settings=load_platform_settings()
-    from sandbox_harness.app import object_store
-    from sandbox_harness.store import Store
+    from sandbox_harness.services.api.app import (object_store)
+    from sandbox_harness.common.db.store import (Store)
     store=Store(settings.database_url,settings.redis_url,settings.redis_prefix);objects=object_store(settings)
     try:
         by_local={row['local_job_id']:row for row in completed}
@@ -590,7 +589,7 @@ async def case_k08(client,args):
     if not await attempts_overlap([row['id'] for row in completed]):
         raise AssertionError('audio/video operation attempts did not overlap')
     settings=load_platform_settings()
-    from sandbox_harness.store import Store
+    from sandbox_harness.common.db.store import (Store)
     store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
     try:descriptors={
         (await store.get_job_request(row['id'])).descriptor_id for row in completed}
@@ -871,8 +870,8 @@ async def case_k14(client,args):
 async def case_p01(client,args):
     thread,turn=await origin(client,args,'P01')
     settings=load_platform_settings()
-    from sandbox_harness.app import object_store
-    from sandbox_harness.store import Store
+    from sandbox_harness.services.api.app import (object_store)
+    from sandbox_harness.common.db.store import (Store)
     data=(ROOT/'tests/real_cases/assets/poster.png').read_bytes()
     objects=object_store(settings);object_ref,digest=await asyncio.to_thread(objects.put,data)
     store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
@@ -1078,7 +1077,7 @@ async def case_p13(client,args):
     if completed['state']!='SUCCEEDED':raise AssertionError('recovered child did not succeed')
     settings=load_platform_settings()
     from sqlalchemy import select
-    from sandbox_harness.store import JobAttemptRow,Store
+    from sandbox_harness.common.db.store import (JobAttemptRow, Store)
     store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
     try:
         async with store.connections() as db:
@@ -1109,8 +1108,8 @@ async def case_p15(client,args):
 
 async def case_p16(client,args):
     thread,turn=await origin(client,args,'P16');settings=load_platform_settings()
-    from sandbox_harness.job_contracts import JobGroupCreate,JobKind,JobRequest,JobState
-    from sandbox_harness.store import Store
+    from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobKind, JobRequest, JobState)
+    from sandbox_harness.common.db.store import (Store)
     store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
     try:
         owner=(await store.get_thread(thread['id'])).owner_id
@@ -1141,10 +1140,10 @@ async def case_p16(client,args):
 
 async def case_p17(client,args):
     thread,turn=await origin(client,args,'P17');settings=load_platform_settings()
-    from sandbox_harness.job_adapters import AdapterStatus,BaseJobAdapter,SubmissionOutcomeUnknown
-    from sandbox_harness.job_contracts import JobGroupCreate,JobKind,JobRequest,JobState
-    from sandbox_harness.job_worker import JobWorker
-    from sandbox_harness.store import Store
+    from sandbox_harness.common.execution.job_adapters import (AdapterStatus, BaseJobAdapter, SubmissionOutcomeUnknown)
+    from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobKind, JobRequest, JobState)
+    from sandbox_harness.common.execution.job_worker import (JobWorker)
+    from sandbox_harness.common.db.store import (Store)
     class LostResponseAdapter(BaseJobAdapter):
         def __init__(self):self.submit_calls=0;self.status_calls=0;self.handles=[]
         async def submit(self,context):
@@ -1194,11 +1193,10 @@ async def case_p18(client,args):
 
 async def case_p19(client,args):
     thread,turn=await origin(client,args,'P19');settings=load_platform_settings()
-    from sandbox_harness.app import object_store
-    from sandbox_harness.artifact_gateway import ArtifactEmission,ArtifactGateway
-    from sandbox_harness.job_contracts import (JobExpectedOutput,JobGroupCreate,JobKind,
-        JobRequest,JobState,OutputDisposition)
-    from sandbox_harness.store import Store
+    from sandbox_harness.services.api.app import (object_store)
+    from sandbox_harness.common.artifacts.artifact_gateway import (ArtifactEmission, ArtifactGateway)
+    from sandbox_harness.common.contracts.job_contracts import (JobExpectedOutput, JobGroupCreate, JobKind, JobRequest, JobState, OutputDisposition)
+    from sandbox_harness.common.db.store import (Store)
     store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
     try:
         owner=(await store.get_thread(thread['id'])).owner_id
@@ -1322,7 +1320,7 @@ async def case_p22(client,args):
 
 async def case_p23(client,args):
     from sqlalchemy import select
-    from sandbox_harness.store import Store,JobGroupRow,JobRow,JobAttemptRow
+    from sandbox_harness.common.db.store import (Store, JobGroupRow, JobRow, JobAttemptRow)
 
     identity='P23-'+uuid.uuid4().hex[:8]
     response=require(await client.post('api/threads',json={'harness':args.harness,'model':args.model,
@@ -1394,7 +1392,7 @@ async def case_p24(client,args):
     await wait_turn(client,turn['id'],args.timeout)
     catalog=require(await client.get('api/catalog/execution')).json()
     settings=load_platform_settings()
-    from sandbox_harness.store import Store
+    from sandbox_harness.common.db.store import (Store)
     input_store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
     try:
         owner=(await input_store.get_thread(thread['id'])).owner_id
@@ -1432,7 +1430,7 @@ async def case_p24(client,args):
     child=await wait_job(client,parent_job['id'],args.timeout)
     if child['state']!='SUCCEEDED':raise AssertionError('Child did not resume successfully: '+json.dumps(child))
     from sqlalchemy import select
-    from sandbox_harness.store import Store,JobRow
+    from sandbox_harness.common.db.store import (Store, JobRow)
     store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
     try:
         async with store.connections() as db:
@@ -1586,7 +1584,7 @@ async def case_p27(client,args):
     _,continuations=await wait_continuations(client,thread['id'],maximum=1)
     settings=load_platform_settings()
     from sqlalchemy import select
-    from sandbox_harness.store import JobAttemptRow,Store
+    from sandbox_harness.common.db.store import (JobAttemptRow, Store)
     store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
     try:
         async with store.connections() as db:

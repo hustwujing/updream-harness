@@ -4,10 +4,10 @@ from datetime import timedelta
 
 import pytest
 
-from sandbox_harness.domain import identifier
-from sandbox_harness.domain import now
-from sandbox_harness.job_contracts import JobGroupDraftCreate, JobKind, JobRequest
-from sandbox_harness.store import Store
+from sandbox_harness.common.contracts.domain import (identifier)
+from sandbox_harness.common.contracts.domain import (now)
+from sandbox_harness.common.contracts.job_contracts import (JobGroupDraftCreate, JobKind, JobRequest)
+from sandbox_harness.common.db.store import (Store)
 
 
 POSTGRES_URL=os.environ.get('PARALLEL_TEST_POSTGRES_URL','')

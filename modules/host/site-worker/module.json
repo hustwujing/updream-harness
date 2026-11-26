@@ -4,12 +4,12 @@
   "kind": "service",
   "location": "host",
   "sources": [
-    "src/sandbox_harness/site_service.py",
-    "src/sandbox_harness/site_worker.py"
+    "src/sandbox_harness/services/site_worker/site_service.py",
+    "src/sandbox_harness/services/site_worker/site_worker.py"
   ],
   "source_roots": [],
   "entry_points": {
-    "site-worker": "sandbox_harness.site_service:run"
+    "site-worker": "sandbox_harness.services.site_worker.site_service:run"
   },
   "common_modules": [
     "common/artifacts",

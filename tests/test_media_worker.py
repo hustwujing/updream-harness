@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 import httpx
 import pytest
 
-from sandbox_harness.media_worker import MediaWorker
-from sandbox_harness.media_reference_publisher import MediaReferencePreparationError
+from sandbox_harness.services.media_worker.media_worker import (MediaWorker)
+from sandbox_harness.services.media_worker.media_reference_publisher import (MediaReferencePreparationError)
 
 
 class Response:
@@ -98,7 +98,7 @@ async def test_video_recovery_polls_persisted_provider_job_without_resubmit(monk
     async def client_factory(): return client
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep", no_sleep)
     result = await value._ark_video({"id": "job", "generation": 1, "model": "sed2", "provider_job_id": "provider-video",
         "parameters": {"prompt": "test", "duration": 5}})
     assert result.status == "success" and result.provider_job_id == "provider-video"
@@ -115,7 +115,7 @@ async def test_audio_recovery_polls_persisted_provider_job_without_resubmit(monk
     async def client_factory(): return client
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep", no_sleep)
     result = await value._minimax_audio({"id": "job", "generation": 1, "model": "speech-2.8-turbo",
         "provider_job_id": "provider-audio", "parameters": {"text": "test"}})
     assert result.status == "success" and result.provider_job_id == "provider-audio"
@@ -138,7 +138,7 @@ async def test_audio_reference_uses_host_derived_cloned_voice(monkeypatch):
         async def invalidate(self,job,voice_id):raise AssertionError("active clone must not be invalidated")
     voices=Voices();value.voice_clones=voices
     monkeypatch.setattr(value,"_client",client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep",no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep",no_sleep)
     result=await value._minimax_audio({"id":"job","generation":1,"owner_id":"a"*64,
         "model":"speech-2.8-turbo","provider_job_id":"","parameters":{"text":"hello"},
         "references":[{"sha256":"1"*64,"role":"reference_audio","usage":"audio"}]})
@@ -169,7 +169,7 @@ async def test_audio_processing_keeps_polling_same_provider_job(monkeypatch):
     async def client_factory(): return clients.pop(0)
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep", no_sleep)
     job={"id":"job","generation":1, "model":"speech-2.8-turbo", "provider_job_id":"provider-audio",
         "provider_started_at":datetime.now(timezone.utc), "parameters":{"text":"test"}}
     pending = await value._minimax_audio(job)
@@ -186,7 +186,7 @@ async def test_audio_processing_past_reconciliation_window_returns_unknown(monke
     async def client_factory(): return client
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep", no_sleep)
     result = await value._minimax_audio({"id": "job", "generation": 1, "model": "speech-2.8-turbo",
         "provider_job_id": "provider-audio",
         "provider_started_at": datetime.fromtimestamp(0, timezone.utc),
@@ -204,7 +204,7 @@ async def test_audio_poll_http_failure_past_reconciliation_window_returns_unknow
     async def client_factory(): return client
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep", no_sleep)
     result = await value._minimax_audio({"id": "job", "generation": 1, "model": "speech-2.8-turbo",
         "provider_job_id": "provider-audio",
         "provider_started_at": datetime.fromtimestamp(0, timezone.utc),
@@ -219,7 +219,7 @@ async def test_audio_poll_authentication_failure_is_terminal(monkeypatch):
     async def client_factory():return client
     async def no_sleep(_):return None
     monkeypatch.setattr(value,"_client",client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep",no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep",no_sleep)
     result=await value._minimax_audio({"id":"job","generation":1,"model":"speech-2.8-turbo",
         "provider_job_id":"provider-audio","provider_started_at":datetime.now(timezone.utc),
         "parameters":{"text":"test"}})
@@ -280,7 +280,7 @@ async def test_seedance_edit_payload_orders_source_and_compiles_constraints(monk
     async def client_factory(): return client
     async def no_sleep(_): return None
     monkeypatch.setattr(value,"_client",client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep",no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep",no_sleep)
     references=[
         {"object_ref":"sha256:"+"1"*64,"role":"reference_image","usage":"style","mime":"image/png","size":100,"asset_uri":"asset://asset-image-1"},
         {"object_ref":"sha256:"+"2"*64,"role":"reference_video","usage":"edit_source","mime":"video/mp4","size":100,"asset_uri":"asset://asset-video-1"},
@@ -303,7 +303,7 @@ async def test_seedance_first_last_frame_payload_preserves_roles(monkeypatch):
     async def client_factory(): return client
     async def no_sleep(_): return None
     monkeypatch.setattr(value,"_client",client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep",no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep",no_sleep)
     refs=[{"object_ref":"sha256:"+"3"*64,"role":"first_frame","usage":"composition","mime":"image/png","size":100,"asset_uri":"asset://asset-first"},
         {"object_ref":"sha256:"+"4"*64,"role":"last_frame","usage":"composition","mime":"image/png","size":100,"asset_uri":"asset://asset-last"}]
     await value._ark_video({"id":"job","generation":1,"model":"sed2","provider_job_id":"",
@@ -327,7 +327,7 @@ async def test_dashscope_video_edit_submits_persists_and_returns_output(
     async def client_factory(): return client
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep", no_sleep)
     references = [
         {"kind": "video", "role": "reference_video", "usage": "edit_source",
             "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/video/source.mp4"},
@@ -358,7 +358,7 @@ async def test_dashscope_non_success_receipt_with_task_id_is_persisted(monkeypat
     async def client_factory(): return client
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep", no_sleep)
     result = await value._dashscope_video_edit({"id": "job", "generation": 1, "adapter": "wan27_video_edit",
         "provider_job_id": "", "references": [{"kind": "video", "role": "reference_video",
             "usage": "edit_source", "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/video/source.mp4"}],
@@ -375,7 +375,7 @@ async def test_dashscope_video_edit_recovery_only_polls_persisted_job(monkeypatc
     async def client_factory(): return client
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep", no_sleep)
     result = await value._dashscope_video_edit({"id": "job", "generation": 1, "adapter": "happyhorse_video_edit",
         "provider_job_id": "persisted-task", "generation_mode": "edit_video",
         "references": [{"kind": "video", "role": "reference_video", "usage": "edit_source",
@@ -415,7 +415,7 @@ async def test_dashscope_video_edit_invalid_poll_receipt_retries_same_job(monkey
     async def client_factory(): return client
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep", no_sleep)
     result = await value._dashscope_video_edit({"id": "job", "generation": 1, "adapter": "wan27_video_edit",
         "provider_job_id": "persisted", "references": [{"kind": "video", "role": "reference_video",
             "usage": "edit_source", "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/video/source.mp4"}],
@@ -430,7 +430,7 @@ async def test_dashscope_video_edit_invalid_poll_past_window_becomes_unknown(mon
     async def client_factory(): return client
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep", no_sleep)
     result = await value._dashscope_video_edit({"id": "job", "generation": 1, "adapter": "wan27_video_edit",
         "provider_job_id": "persisted", "provider_started_at": datetime.fromtimestamp(0, timezone.utc),
         "references": [{"kind": "video", "role": "reference_video", "usage": "edit_source",
@@ -446,7 +446,7 @@ async def test_dashscope_video_edit_provider_unknown_requires_reconciliation(mon
     async def client_factory(): return client
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep", no_sleep)
     result = await value._dashscope_video_edit({"id": "job", "generation": 1, "adapter": "wan27_video_edit",
         "provider_job_id": "persisted", "references": [{"kind": "video", "role": "reference_video",
             "usage": "edit_source", "public_url": "https://boss-shjd.biliapi.net/updream/aniforge/video/source.mp4"}],
@@ -461,7 +461,7 @@ async def test_video_poll_service_unavailable_releases_existing_provider_job(mon
     async def client_factory():return client
     async def no_sleep(_):return None
     monkeypatch.setattr(value,"_client",client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep",no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep",no_sleep)
     result=await value._ark_video({"id":"job","generation":1,"model":"sed2",
         "provider_job_id":"provider-video","parameters":{"prompt":"test","duration":5},
         "references":[]})
@@ -507,7 +507,7 @@ async def test_requesting_job_without_provider_id_becomes_unknown(monkeypatch):
 async def test_known_provider_result_unknown_has_distinct_error_and_releases_lease(monkeypatch):
     store = Store(); value = worker(store)
     async def unresolved(_):
-        return __import__('sandbox_harness.media_worker', fromlist=['ProviderResult']).ProviderResult(
+        return __import__('sandbox_harness.services.media_worker.media_worker', fromlist=['ProviderResult']).ProviderResult(
             "unknown", provider_job_id="provider-audio", error="still processing")
     monkeypatch.setattr(value, "_execute", unresolved)
     await value.process({"id":"job","generation":1, "kind":"audio", "model":"speech-2.8-turbo",
@@ -521,7 +521,7 @@ async def test_known_provider_result_unknown_has_distinct_error_and_releases_lea
 async def test_pending_provider_poll_releases_lease_with_delay(monkeypatch):
     store = Store(); value = worker(store)
     async def pending(_):
-        return __import__('sandbox_harness.media_worker', fromlist=['ProviderResult']).ProviderResult(
+        return __import__('sandbox_harness.services.media_worker.media_worker', fromlist=['ProviderResult']).ProviderResult(
             "pending", provider_job_id="provider-audio", error="still processing")
     monkeypatch.setattr(value, "_execute", pending)
     await value.process({"id":"job","generation":1, "kind":"audio", "model":"speech-2.8-turbo",
@@ -561,7 +561,7 @@ async def test_audio_poll_transport_timeout_past_window_becomes_unknown(monkeypa
 @pytest.mark.asyncio
 async def test_reference_preparation_phase_is_safe_to_resume(monkeypatch):
     store=Store();value=worker(store)
-    async def failed(_):return __import__('sandbox_harness.media_worker',fromlist=['ProviderResult']).ProviderResult(
+    async def failed(_):return __import__('sandbox_harness.services.media_worker.media_worker',fromlist=['ProviderResult']).ProviderResult(
         "failed",error="reference preparation resumed")
     monkeypatch.setattr(value,"_execute",failed)
     await value.process({"id":"job","generation":1,"kind":"video","model":"sed2","provider":"ark",
@@ -625,7 +625,7 @@ async def test_tripo_submission_persists_task_and_returns_model_and_preview(monk
     async def client_factory(): return client
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep", no_sleep)
     result = await value._tripo({"id": "job", "generation": 1, "model": "v3.1-20260211",
         "provider_job_id": "", "generation_mode": "text_to_model",
         "parameters": {"prompt": "a small cube", "texture": False, "pbr": False}})
@@ -645,7 +645,7 @@ async def test_tripo_recovery_only_polls_persisted_task(monkeypatch):
     async def client_factory(): return client
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep", no_sleep)
     result = await value._tripo({"id": "job", "generation": 1, "model": "v3.1-20260211",
         "provider_job_id": "persisted-task", "generation_mode": "text_to_model",
         "parameters": {"prompt": "ignored"}})
@@ -661,7 +661,7 @@ async def test_tripo_model_url_suffix_overrides_default_glb_expectation(monkeypa
     async def client_factory(): return client
     async def no_sleep(_): return None
     monkeypatch.setattr(value, "_client", client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep", no_sleep)
     result = await value._tripo({"id": "job", "generation": 1, "model": "v3.1-20260211",
         "provider_job_id": "persisted-task", "generation_mode": "text_to_model",
         "parameters": {"prompt": "phone"}})
@@ -678,7 +678,7 @@ async def test_tripo_model_url_suffix_overrides_default_glb_expectation(monkeypa
 async def test_deterministic_provider_result_validation_error_is_explicit_failure(monkeypatch):
     store = Store(); value = worker(store)
     async def execute(_):
-        return __import__('sandbox_harness.media_worker', fromlist=['ProviderResult']).ProviderResult(
+        return __import__('sandbox_harness.services.media_worker.media_worker', fromlist=['ProviderResult']).ProviderResult(
             "success", outputs=[{"role": "primary", "filename": "bad.glb",
                 "url": "https://result.test/bad.glb", "kind": "model3d"}])
     async def invalid_download(*_args, **_kwargs):
@@ -786,7 +786,7 @@ async def test_tripo_submit_429_honors_retry_after_without_losing_request(monkey
     async def client_factory(): return client
     async def no_sleep(seconds): sleeps.append(seconds)
     monkeypatch.setattr(value, "_client", client_factory)
-    monkeypatch.setattr("sandbox_harness.media_worker.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_worker.asyncio.sleep", no_sleep)
     result = await value._tripo({"id": "job", "generation": 1, "model": "v3.1-20260211",
         "provider_job_id": "", "generation_mode": "text_to_model",
         "parameters": {"prompt": "cube"}})
@@ -811,7 +811,7 @@ async def test_tripo_success_without_task_id_is_unknown_not_rejected(monkeypatch
 async def test_provider_output_http_failure_schedules_safe_download_retry(monkeypatch):
     store = Store(); value = worker(store)
     async def execute(_):
-        return __import__('sandbox_harness.media_worker', fromlist=['ProviderResult']).ProviderResult(
+        return __import__('sandbox_harness.services.media_worker.media_worker', fromlist=['ProviderResult']).ProviderResult(
             "success", provider_job_id="provider-task", outputs=[{"role": "primary",
                 "filename": "model.glb", "url": "https://result.test/model.glb", "kind": "model3d"}])
     async def failed_download(*_args, **_kwargs):

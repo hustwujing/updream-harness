@@ -11,7 +11,9 @@ import tarfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED_MODULES = ("__init__.py", "domain.py", "job_contracts.py", "media_catalog.py", "observability.py", "site_bundle.py")
+SHARED_MODULES = ("common/contracts/domain.py", "common/contracts/job_contracts.py",
+    "common/catalog/media_catalog.py", "common/observability/observability.py",
+    "common/sites/site_bundle.py")
 
 
 def add_file(archive: tarfile.TarFile, path: str, data: bytes) -> None:
@@ -24,7 +26,10 @@ def build(output_dir: Path, signing_key: Path) -> tuple[Path, Path, str, dict]:
     files: dict[str, bytes] = {}
     for source in sorted((ROOT / "src/sandbox_runtime").rglob("*.py")):
         files["site-packages/sandbox_runtime/" + source.relative_to(ROOT / "src/sandbox_runtime").as_posix()] = source.read_bytes()
+    shared = set(SHARED_MODULES)
     for name in SHARED_MODULES:
+        shared.update(str(parent / "__init__.py") for parent in Path(name).parents)
+    for name in sorted(shared):
         source = ROOT / "src/sandbox_harness" / name
         files["site-packages/sandbox_harness/" + name] = source.read_bytes()
     editppt = ROOT / "runtime/skills/image-to-editable-ppt/cli/editppt"

@@ -8,7 +8,7 @@ import uuid
 
 import httpx
 
-from sandbox_harness.site_bundle import build_site_archive, normalize_site_slug
+from sandbox_harness.common.sites.site_bundle import (build_site_archive, normalize_site_slug)
 from .state import capability_token_file
 
 

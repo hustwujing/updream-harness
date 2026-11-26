@@ -1,29 +1,28 @@
 from types import SimpleNamespace
 import pytest
 
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate
-from sandbox_harness.job_adapters import AdapterStatus,JobExecutionContext
-from sandbox_harness.job_contracts import (JobArtifactInput,JobExpectedOutput,JobGroupCreate,JobKind,
-    JobRequest,JobState,OutputDisposition)
-from sandbox_harness.media_render_adapter import MediaRenderOperationAdapter
-from sandbox_harness.objects import ObjectStore
-from sandbox_harness.sandbox import Sandbox
-from sandbox_harness.sandbox_contracts import SandboxRuntimeRoute
-from sandbox_harness.scheduler import NodeInventory,Scheduler
-from sandbox_harness.runtime import StagedRuntimeObject
-from sandbox_harness.store import Store
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate)
+from sandbox_harness.common.execution.job_adapters import (AdapterStatus, JobExecutionContext)
+from sandbox_harness.common.contracts.job_contracts import (JobArtifactInput, JobExpectedOutput, JobGroupCreate, JobKind, JobRequest, JobState, OutputDisposition)
+from sandbox_harness.services.job_worker.media_render_adapter import (MediaRenderOperationAdapter)
+from sandbox_harness.common.storage.objects import (ObjectStore)
+from sandbox_harness.common.sandbox.sandbox import (Sandbox)
+from sandbox_harness.common.contracts.sandbox_contracts import (SandboxRuntimeRoute)
+from sandbox_harness.common.scheduling.scheduler import (NodeInventory, Scheduler)
+from sandbox_harness.common.sandbox.runtime import (StagedRuntimeObject)
+from sandbox_harness.common.db.store import (Store)
 
 
 @pytest.mark.parametrize('phase',['allocating','preparing'])
 async def test_operation_unknown_create_survives_worker_replacement_without_runtime_replay(tmp_path,phase):
     import asyncio
     from test_harness_job import setup
-    from sandbox_harness.pool import SandboxPool
-    from sandbox_harness.sandbox import FakeSandboxBackend
-    from sandbox_harness.job_adapters import SubmissionInterrupted
-    from sandbox_harness.sandbox_contracts import SandboxCreateOutcomeUnknown
+    from sandbox_harness.common.sandbox.pool import (SandboxPool)
+    from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
+    from sandbox_harness.common.execution.job_adapters import (SubmissionInterrupted)
+    from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCreateOutcomeUnknown)
     class Provider(FakeSandboxBackend):
         started=asyncio.Event();calls=0;visible=False
         async def create(self,request):
@@ -126,7 +125,7 @@ async def test_worker_loss_after_reserve_recovers_original_capacity_without_subm
 @pytest.mark.parametrize('phase',['reserving_resources','awaiting_capacity','absent'])
 async def test_stale_recovery_cannot_release_new_worker_reservation(tmp_path,phase):
     from test_harness_job import setup
-    from sandbox_harness.job_adapters import reserve_job_resources,recover_resource_reservation
+    from sandbox_harness.common.execution.job_adapters import (reserve_job_resources, recover_resource_reservation)
     store,adapter,_,job=await setup(tmp_path,AdapterStatus(False))
     try:
         first=await store.claim_job(job.id,'first','node',30)
@@ -155,7 +154,7 @@ async def test_stale_recovery_cannot_release_new_worker_reservation(tmp_path,pha
 
 @pytest.mark.parametrize('failure',['','response_lost','mark_running','cancel_fence'])
 async def test_media_render_adapter_reserves_profile_injects_frozen_input_and_binds_output(tmp_path,failure):
-    from sandbox_harness.job_adapters import SubmissionOutcomeUnknown
+    from sandbox_harness.common.execution.job_adapters import (SubmissionOutcomeUnknown)
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'render-adapter.db'));await store.initialize()
     profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
     thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model='gpt-5.6',
@@ -230,7 +229,7 @@ async def test_media_render_adapter_reserves_profile_injects_frozen_input_and_bi
     try:
         await store.mark_job_submission_started(job.id,"worker",attempt.generation)
         if failure=='cancel_fence':
-            from sandbox_harness.job_adapters import PreAcceptCancelled
+            from sandbox_harness.common.execution.job_adapters import (PreAcceptCancelled)
             record=store.record_job_submission_allocation
             async def cancel_before_marker(*args,**kwargs):
                 if kwargs['receipt'].get('allocation_phase')=='runtime_submission':

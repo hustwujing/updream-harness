@@ -2,8 +2,8 @@ import base64
 
 import pytest
 
-from sandbox_harness.public_proxy import DestinationDenied, DestinationPolicy, proxy_token, public_address, reject
-from sandbox_harness.public_proxy import authority_header, parse_authority
+from sandbox_harness.services.sandbox_gateway.public_proxy import (DestinationDenied, DestinationPolicy, proxy_token, public_address, reject)
+from sandbox_harness.services.sandbox_gateway.public_proxy import (authority_header, parse_authority)
 
 
 def test_proxy_allows_public_and_rejects_internal_addresses():
@@ -14,7 +14,7 @@ def test_proxy_allows_public_and_rejects_internal_addresses():
 
 async def test_public_proxy_connect_failure_is_wrapped_with_safe_dimensions(monkeypatch):
     import asyncio
-    from sandbox_harness.public_proxy import PublicProxyConnectError,connect_public
+    from sandbox_harness.services.sandbox_gateway.public_proxy import (PublicProxyConnectError, connect_public)
     for failure in (ConnectionRefusedError('private.example'),OSError('private.example'),
             TimeoutError('private.example')):
         async def refused(*args,**kwargs):raise failure
@@ -29,8 +29,8 @@ async def test_public_proxy_connect_failure_is_wrapped_with_safe_dimensions(monk
 async def test_public_proxy_connect_and_unexpected_failures_keep_distinct_severity(monkeypatch):
     import asyncio,logging,time
     from types import SimpleNamespace
-    import sandbox_harness.public_proxy as proxy_module
-    from sandbox_harness.public_proxy import PublicProxyConnectError,start_proxy
+    import sandbox_harness.services.sandbox_gateway.public_proxy as proxy_module
+    from sandbox_harness.services.sandbox_gateway.public_proxy import (PublicProxyConnectError, start_proxy)
     events=[]
     monkeypatch.setattr(proxy_module,'event',lambda name,**fields:events.append((name,fields)))
     async def resolve(host,port,policy=None):return '8.8.8.8'
@@ -124,7 +124,7 @@ async def test_active_public_tunnel_is_registered_and_cancelled_on_revocation(mo
     import asyncio,time
     from collections import defaultdict
     from types import SimpleNamespace
-    from sandbox_harness.public_proxy import start_proxy
+    from sandbox_harness.services.sandbox_gateway.public_proxy import (start_proxy)
     registry=defaultdict(set)
     async def echo(reader,writer):
         try:
@@ -133,7 +133,7 @@ async def test_active_public_tunnel_is_registered_and_cancelled_on_revocation(mo
     server=await asyncio.start_server(echo,'127.0.0.1',0)
     port=server.sockets[0].getsockname()[1]
     async def resolve(host,port,policy=None):return '127.0.0.1'
-    monkeypatch.setattr('sandbox_harness.public_proxy.resolve_public',resolve)
+    monkeypatch.setattr('sandbox_harness.services.sandbox_gateway.public_proxy.resolve_public',resolve)
     async def authorize(token):return SimpleNamespace(nonce='grant',expires_at=time.time()+60)
     proxy=await start_proxy('127.0.0.1',0,authorize,connections=registry)
     reader,writer=await asyncio.open_connection('127.0.0.1',proxy.sockets[0].getsockname()[1])
@@ -155,10 +155,10 @@ async def test_active_public_tunnel_is_registered_and_cancelled_on_revocation(mo
 async def test_proxy_returns_distinct_policy_denied_code(monkeypatch):
     import asyncio,time
     from types import SimpleNamespace
-    from sandbox_harness.public_proxy import start_proxy
+    from sandbox_harness.services.sandbox_gateway.public_proxy import (start_proxy)
     async def denied(host,port,policy=None):
         raise DestinationDenied("denied")
-    monkeypatch.setattr('sandbox_harness.public_proxy.resolve_public',denied)
+    monkeypatch.setattr('sandbox_harness.services.sandbox_gateway.public_proxy.resolve_public',denied)
     async def authorize(token):return SimpleNamespace(nonce='grant',expires_at=time.time()+60)
     proxy=await start_proxy('127.0.0.1',0,authorize,policy=DestinationPolicy([],['blocked.example']))
     reader,writer=await asyncio.open_connection('127.0.0.1',proxy.sockets[0].getsockname()[1])
@@ -175,13 +175,13 @@ async def test_proxy_returns_distinct_policy_denied_code(monkeypatch):
 async def test_proxy_selects_destination_policy_from_capability(monkeypatch):
     import asyncio,time
     from types import SimpleNamespace
-    from sandbox_harness.public_proxy import start_proxy
+    from sandbox_harness.services.sandbox_gateway.public_proxy import (start_proxy)
     restricted=DestinationPolicy(['bilibili.com','*.bilibili.com'],[])
     public=DestinationPolicy([],[])
     async def resolve(host,port,policy=None):
         policy.check(host,{'8.8.8.8'})
         return '127.0.0.1'
-    monkeypatch.setattr('sandbox_harness.public_proxy.resolve_public',resolve)
+    monkeypatch.setattr('sandbox_harness.services.sandbox_gateway.public_proxy.resolve_public',resolve)
     async def authorize(token):
         return SimpleNamespace(nonce=token,expires_at=time.time()+60,
             network_access='public' if token == 'public' else 'restricted')
@@ -210,7 +210,7 @@ async def test_proxy_selects_destination_policy_from_capability(monkeypatch):
 async def test_http_proxy_canonicalizes_authority_and_rejects_ambiguous_framing(monkeypatch):
     import asyncio,time
     from types import SimpleNamespace
-    from sandbox_harness.public_proxy import start_proxy
+    from sandbox_harness.services.sandbox_gateway.public_proxy import (start_proxy)
     captured=[]
     async def upstream(reader,writer):
         try:
@@ -221,7 +221,7 @@ async def test_http_proxy_canonicalizes_authority_and_rejects_ambiguous_framing(
     server=await asyncio.start_server(upstream,'127.0.0.1',0)
     upstream_port=server.sockets[0].getsockname()[1]
     async def resolve(host,port,policy=None):return '127.0.0.1'
-    monkeypatch.setattr('sandbox_harness.public_proxy.resolve_public',resolve)
+    monkeypatch.setattr('sandbox_harness.services.sandbox_gateway.public_proxy.resolve_public',resolve)
     async def authorize(token):return SimpleNamespace(nonce='grant',expires_at=time.time()+60)
     proxy=await start_proxy('127.0.0.1',0,authorize,maximum_body=4,
         body_idle_timeout=.02,body_total_timeout=.1)
@@ -259,7 +259,7 @@ async def test_http_proxy_canonicalizes_authority_and_rejects_ambiguous_framing(
 
 async def test_resolver_checks_all_answers_against_address_policy(monkeypatch):
     import asyncio,socket
-    from sandbox_harness.public_proxy import resolve_public
+    from sandbox_harness.services.sandbox_gateway.public_proxy import (resolve_public)
     class Loop:
         async def getaddrinfo(self,host,port,type):
             assert host == 'allowed.example' and port == 443 and type == socket.SOCK_STREAM

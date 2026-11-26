@@ -4,13 +4,13 @@
   "kind": "service",
   "location": "host",
   "sources": [
-    "src/sandbox_harness/controlled_service.py",
-    "src/sandbox_harness/controlled_media_adapter.py",
-    "src/sandbox_harness/controlled_media_runner.py"
+    "src/sandbox_harness/services/controlled_worker/controlled_service.py",
+    "src/sandbox_harness/services/controlled_worker/controlled_media_adapter.py",
+    "src/sandbox_harness/services/controlled_worker/controlled_media_runner.py"
   ],
   "source_roots": [],
   "entry_points": {
-    "controlled-worker": "sandbox_harness.controlled_service:run"
+    "controlled-worker": "sandbox_harness.services.controlled_worker.controlled_service:run"
   },
   "common_modules": [
     "common/artifacts",

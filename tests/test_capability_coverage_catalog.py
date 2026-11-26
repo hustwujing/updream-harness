@@ -2,8 +2,8 @@ import hashlib
 import json
 from pathlib import Path
 
-from sandbox_harness.job_catalog import JobCatalog
-from sandbox_harness.media_catalog import MediaCatalog
+from sandbox_harness.common.catalog.job_catalog import (JobCatalog)
+from sandbox_harness.common.catalog.media_catalog import (MediaCatalog)
 
 
 ROOT=Path(__file__).resolve().parents[1]

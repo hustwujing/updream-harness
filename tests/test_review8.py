@@ -12,24 +12,15 @@ from pydantic import ValidationError
 from starlette.requests import Request
 
 import sandbox_runtime.app as runtime_app
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.broker import Broker
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import (
-    Attachment,
-    Harness,
-    ItemType,
-    ThreadCreate,
-    TurnCreate,
-    TurnInputCreate,
-    RuntimeResult,
-    TurnState,
-)
-from sandbox_harness.runtime import RuntimeClient, RuntimeTransferError
-from sandbox_harness.objects import ObjectStore
-from sandbox_harness.pool import SandboxPool
-from sandbox_harness.sandbox import FakeSandboxBackend, Sandbox
-from sandbox_harness.store import Store
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.services.api.broker import (Broker)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Attachment, Harness, ItemType, ThreadCreate, TurnCreate, TurnInputCreate, RuntimeResult, TurnState)
+from sandbox_harness.common.sandbox.runtime import (RuntimeClient, RuntimeTransferError)
+from sandbox_harness.common.storage.objects import (ObjectStore)
+from sandbox_harness.common.sandbox.pool import (SandboxPool)
+from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend, Sandbox)
+from sandbox_harness.common.db.store import (Store)
 
 
 class CountingStream(httpx.AsyncByteStream):
@@ -132,7 +123,7 @@ async def test_artifact_count_limit_is_public_turn_failure(tmp_path):
         async def checkpoint(self, sandbox, *, maximum):
             path = tmp_path / ("checkpoint-" + __import__('uuid').uuid4().hex)
             path.write_bytes(b"checkpoint")
-            from sandbox_harness.runtime import StagedRuntimeObject
+            from sandbox_harness.common.sandbox.runtime import (StagedRuntimeObject)
             return StagedRuntimeObject(path, 10, hashlib.sha256(b"checkpoint").hexdigest())
         async def artifacts(self, *args):
             raise RuntimeTransferError("artifact_count_limit_exceeded")

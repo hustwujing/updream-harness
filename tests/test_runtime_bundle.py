@@ -14,9 +14,9 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from sandbox_harness.domain import Harness
-from sandbox_harness.runtime import RuntimeClient
-from sandbox_harness.sandbox import Sandbox
+from sandbox_harness.common.contracts.domain import (Harness)
+from sandbox_harness.common.sandbox.runtime import (RuntimeClient)
+from sandbox_harness.common.sandbox.sandbox import (Sandbox)
 from sandbox_runtime import app as runtime_app
 from sandbox_runtime.instructions import RUNTIME_INSTRUCTIONS, runtime_instructions
 from sandbox_runtime.runtime_bundle import activate_runtime_bundle

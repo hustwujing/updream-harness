@@ -1,12 +1,12 @@
 import pytest
 
-from sandbox_harness.config import Settings
-from sandbox_harness.job_adapters import JobExecutionContext
-from sandbox_harness.job_contracts import JobState
-from sandbox_harness.job_errors import normalize_job_error
-from sandbox_harness.media_errors import classify_provider_error
-from sandbox_harness.media_job_adapter import MediaProviderJobAdapter
-from sandbox_harness.objects import ObjectStore
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.execution.job_adapters import (JobExecutionContext)
+from sandbox_harness.common.contracts.job_contracts import (JobState)
+from sandbox_harness.common.contracts.job_errors import (normalize_job_error)
+from sandbox_harness.services.media_worker.media_errors import (classify_provider_error)
+from sandbox_harness.services.job_worker.media_job_adapter import (MediaProviderJobAdapter)
+from sandbox_harness.common.storage.objects import (ObjectStore)
 from test_media_job_adapter import Catalog,setup
 from test_media_worker import Client,Response,worker
 
@@ -48,7 +48,7 @@ async def test_media_adapter_retains_confirmed_provider_rejection_semantics(tmp_
 @pytest.mark.parametrize('code,expected',[('provider_output_unavailable','completed'),('provider_submission_outcome_unknown','unknown')])
 def test_existing_execution_proof_does_not_downgrade_completed_or_unknown(code,expected):
     from datetime import datetime,timezone
-    from sandbox_harness.store import Store,MediaJobRow
+    from sandbox_harness.common.db.store import (Store, MediaJobRow)
     row=MediaJobRow(id='job',thread_id='thread',kind='image',model='image-model',provider='provider',adapter='adapter',
         execution_mode='async',cancellation_mode='supported',status='failed',phase='terminal',
         error_code=code,provider_job_id='upstream-job',output_role='candidate',created_at=datetime.now(timezone.utc))

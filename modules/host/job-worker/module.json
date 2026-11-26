@@ -4,16 +4,16 @@
   "kind": "service",
   "location": "host",
   "sources": [
-    "src/sandbox_harness/job_service.py",
-    "src/sandbox_harness/harness_job.py",
-    "src/sandbox_harness/media_render_adapter.py",
-    "src/sandbox_harness/media_job_adapter.py",
-    "src/sandbox_harness/image_decompose_adapter.py",
-    "src/sandbox_harness/reviewer.py"
+    "src/sandbox_harness/services/job_worker/job_service.py",
+    "src/sandbox_harness/services/job_worker/harness_job.py",
+    "src/sandbox_harness/services/job_worker/media_render_adapter.py",
+    "src/sandbox_harness/services/job_worker/media_job_adapter.py",
+    "src/sandbox_harness/services/job_worker/image_decompose_adapter.py",
+    "src/sandbox_harness/services/job_worker/reviewer.py"
   ],
   "source_roots": [],
   "entry_points": {
-    "job-worker": "sandbox_harness.job_service:run"
+    "job-worker": "sandbox_harness.services.job_worker.job_service:run"
   },
   "common_modules": [
     "common/artifacts",
@@ -56,7 +56,11 @@
   ],
   "native_requirements": [],
   "external_inputs": [],
-  "resources": [],
+  "resources": [
+    "deploy/job-catalog.example.json",
+    "deploy/profile-catalog.example.json",
+    "runtime/skills/manifest.json"
+  ],
   "host_credentials_allowed": true,
   "verification": [
     "declared source closure",

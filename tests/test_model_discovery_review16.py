@@ -4,10 +4,10 @@ import json
 import httpx
 import pytest
 
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import Harness
-from sandbox_harness.model_discovery import ModelDiscovery
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Harness)
+from sandbox_harness.services.api.model_discovery import (ModelDiscovery)
 
 
 def model_ids(catalog,harness):return [model.id for model in catalog.options[Harness(harness)].models]

@@ -4,8 +4,8 @@ import json
 from fastapi.testclient import TestClient
 import pytest
 
-from sandbox_harness.app import create_app
-from sandbox_harness.config import Settings
+from sandbox_harness.services.api.app import (create_app)
+from sandbox_harness.common.configuration.config import (Settings)
 from sandbox_runtime import job_cli
 from sandbox_runtime import review_cli
 
@@ -199,7 +199,7 @@ def test_sandbox_job_delegate_exposes_compact_example_and_schema_without_capabil
 
 
 def test_gateway_exposes_catalog_and_explicit_review_without_user_confirmation_routes(tmp_path):
-    from sandbox_harness.gateway import create_gateway
+    from sandbox_harness.services.sandbox_gateway.gateway import (create_gateway)
     gateway_settings=settings(tmp_path/'gateway').model_copy(update={'redis_url':'redis://127.0.0.1:6379/15'})
     paths={getattr(route,'path','') for route in create_gateway(gateway_settings).routes}
     assert '/v1/execution/catalog' in paths and '/v1/reviews' in paths
@@ -234,7 +234,7 @@ def test_sandbox_cli_and_gateway_cannot_confirm_user_authorized_group(tmp_path):
         job_cli.main(['confirm','--draft-id','draft'])
     app=create_app(settings(tmp_path))
     api_paths={getattr(route,'path','') for route in app.routes}
-    from sandbox_harness.gateway import create_gateway
+    from sandbox_harness.services.sandbox_gateway.gateway import (create_gateway)
     gateway_settings=settings(tmp_path/'gateway').model_copy(update={'redis_url':'redis://127.0.0.1:6379/15'})
     gateway_paths={getattr(route,'path','') for route in create_gateway(gateway_settings).routes}
     assert '/v1/job-group-drafts/{draft_id}/confirm' not in gateway_paths

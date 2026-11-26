@@ -1,8 +1,8 @@
 import asyncio
 
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.domain import Harness, ItemType, ThreadCreate, TurnCreate, TurnState
-from sandbox_harness.store import Store
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.contracts.domain import (Harness, ItemType, ThreadCreate, TurnCreate, TurnState)
+from sandbox_harness.common.db.store import (Store)
 
 
 async def main():

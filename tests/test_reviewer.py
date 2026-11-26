@@ -4,18 +4,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate
-from sandbox_harness.job_catalog import JobCatalog,JobCatalogPayload
-from sandbox_harness.job_coordinator import JobCoordinator
-from sandbox_harness.profiles import ProfileResolver
-from sandbox_harness.reviewer import (ReviewCandidate,ReviewRequest,ReviewerCoordinator,
-    ReviewerJobAdapter,ReviewSubmission,ReviewTrigger)
-from sandbox_harness.harness_job import HarnessJobAdapter,JobGrantFactory
-from sandbox_harness.job_adapters import AdapterStatus,JobExecutionContext
-from sandbox_harness.job_contracts import JobState
-from sandbox_harness.config import Settings
-from sandbox_harness.store import Store
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate)
+from sandbox_harness.common.catalog.job_catalog import (JobCatalog, JobCatalogPayload)
+from sandbox_harness.common.jobs.job_coordinator import (JobCoordinator)
+from sandbox_harness.common.catalog.profiles import (ProfileResolver)
+from sandbox_harness.services.job_worker.reviewer import (ReviewCandidate, ReviewRequest, ReviewerCoordinator, ReviewerJobAdapter, ReviewSubmission, ReviewTrigger)
+from sandbox_harness.services.job_worker.harness_job import (HarnessJobAdapter, JobGrantFactory)
+from sandbox_harness.common.execution.job_adapters import (AdapterStatus, JobExecutionContext)
+from sandbox_harness.common.contracts.job_contracts import (JobState)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.db.store import (Store)
 
 ROOT=Path(__file__).resolve().parents[1]
 

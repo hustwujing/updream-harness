@@ -9,7 +9,7 @@ not a public error contract.
 Every `FAILED`, `BLOCKED` or `UNKNOWN` Job result must expose:
 
 - `error_code`: stable machine-readable identity registered in
-  `src/sandbox_harness/job_errors.py`;
+  `src/sandbox_harness/common/contracts/job_errors.py`;
 - `error_message`: safe user-facing reason;
 - `error_guidance`: one concrete next action;
 - `failed_phase`: one of `input_validation`, `authorization`, `capacity`,

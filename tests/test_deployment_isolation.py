@@ -36,8 +36,8 @@ def test_parallel_deployment_has_every_authoritative_service():
     }
     assert {path.name for path in (ROOT/"deploy/systemd").glob("*.service")}==expected
     scripts=tomllib.loads((ROOT/"pyproject.toml").read_text())["project"]["scripts"]
-    assert scripts["sandbox-harness-parallel-job-worker"]=="sandbox_harness.job_service:run"
-    assert scripts["sandbox-harness-parallel-controlled-worker"]=="sandbox_harness.controlled_service:run"
+    assert scripts["sandbox-harness-parallel-job-worker"]=="sandbox_harness.services.job_worker.job_service:run"
+    assert scripts["sandbox-harness-parallel-controlled-worker"]=="sandbox_harness.services.controlled_worker.controlled_service:run"
     install=(ROOT/"deploy/install-units.sh").read_text()
     for name in expected:
         assert name in install
@@ -93,8 +93,8 @@ def test_service_account_can_read_descriptors_and_schema_startup_is_serialized()
     assert 'u:sandbox-harness:rx "$root/deploy"' in installer
     assert '"$root/deploy/job-catalog.example.json"' in installer
     assert 'find "$root/.venv" -type d -exec setfacl -m d:u:sandbox-harness:rX' in installer
-    assert 'import sandbox_harness.main; import defusedxml.ElementTree' in installer
-    store=(ROOT/"src/sandbox_harness/store.py").read_text()
+    assert 'import sandbox_harness.services.api.main; import defusedxml.ElementTree' in installer
+    store=(ROOT/"src/sandbox_harness/common/db/store.py").read_text()
     assert "pg_advisory_xact_lock" in store
     assert "SCHEMA_INITIALIZATION_LOCK_ID" in store
 

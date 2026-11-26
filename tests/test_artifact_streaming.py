@@ -48,10 +48,10 @@ def test_artifact_cli_posts_metadata_to_runtime_without_reading_file(tmp_path,mo
 
 async def test_gateway_streams_job_artifact_under_exact_output_grant(tmp_path,monkeypatch):
     from starlette.requests import Request
-    import sandbox_harness.gateway as gateway
-    from sandbox_harness.capability import CapabilityCodec
-    from sandbox_harness.config import Settings
-    from sandbox_harness.domain import Harness
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
+    from sandbox_harness.common.security.capability import (CapabilityCodec)
+    from sandbox_harness.common.configuration.config import (Settings)
+    from sandbox_harness.common.contracts.domain import (Harness)
     calls=[]
     class Redis:
         async def eval(self,*args):return 1

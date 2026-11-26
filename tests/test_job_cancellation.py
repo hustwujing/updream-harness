@@ -1,8 +1,8 @@
-from sandbox_harness.domain import TurnCreate
-from sandbox_harness.job_contracts import JobGroupCreate,JobKind,JobRequest,JobState
-from sandbox_harness.job_continuation import ContinuationDispatcher
-from sandbox_harness.job_worker import JobWorker
-from sandbox_harness.job_adapters import BaseJobAdapter
+from sandbox_harness.common.contracts.domain import (TurnCreate)
+from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobKind, JobRequest, JobState)
+from sandbox_harness.services.api.job_continuation import (ContinuationDispatcher)
+from sandbox_harness.common.execution.job_worker import (JobWorker)
+from sandbox_harness.common.execution.job_adapters import (BaseJobAdapter)
 from test_job_continuation import StoreBroker,setup,terminal_group
 
 

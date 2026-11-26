@@ -9,7 +9,7 @@ import uuid
 
 import httpx
 
-from sandbox_harness.sessions import COOKIE
+from sandbox_harness.services.api.sessions import (COOKIE)
 
 
 PROJECT_FILES = {

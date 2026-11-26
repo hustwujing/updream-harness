@@ -28,12 +28,12 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from run_real_sandbox_capacity import ROOT,fixture,append_audit,create_job,worker_main,wait_until
-from sandbox_harness.allocation_dispatch import AllocationService
-from sandbox_harness.job_contracts import JobState
-from sandbox_harness.objects import ObjectStore
-from sandbox_harness.sandbox_contracts import SandboxScope
-from sandbox_harness.sandbox_factory import build_sandbox_backend
-from sandbox_harness.store import Store,SandboxAllocationRow,JobRow,ResourceReservationRow,JobCleanupRow
+from sandbox_harness.services.allocation_worker.allocation_dispatch import (AllocationService)
+from sandbox_harness.common.contracts.job_contracts import (JobState)
+from sandbox_harness.common.storage.objects import (ObjectStore)
+from sandbox_harness.common.contracts.sandbox_contracts import (SandboxScope)
+from sandbox_harness.common.sandbox.sandbox_factory import (build_sandbox_backend)
+from sandbox_harness.common.db.store import (Store, SandboxAllocationRow, JobRow, ResourceReservationRow, JobCleanupRow)
 
 CASES=('AR02','AR03','AR04','AR01')
 

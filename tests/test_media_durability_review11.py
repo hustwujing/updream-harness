@@ -7,13 +7,13 @@ import httpx
 import pytest
 from sqlalchemy import update
 
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import Harness,MediaDraftCreate,ThreadCreate,TurnCreate,TurnState,now
-from sandbox_harness.media_catalog import MediaCatalog
-from sandbox_harness.media_worker import DownloadedMedia,MediaWorker,ProviderResult
-from sandbox_harness.objects import ObjectStore
-from sandbox_harness.store import MediaJobRow,Store
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Harness, MediaDraftCreate, ThreadCreate, TurnCreate, TurnState, now)
+from sandbox_harness.common.catalog.media_catalog import (MediaCatalog)
+from sandbox_harness.services.media_worker.media_worker import (DownloadedMedia, MediaWorker, ProviderResult)
+from sandbox_harness.common.storage.objects import (ObjectStore)
+from sandbox_harness.common.db.store import (MediaJobRow, Store)
 
 
 async def setup_job(tmp_path,name="media"):

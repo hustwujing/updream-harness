@@ -1,6 +1,6 @@
-from sandbox_harness.config import Settings, validate_service_settings
+from sandbox_harness.common.configuration.config import (Settings, validate_service_settings)
 import pytest
-from sandbox_harness.model_routes import ModelRoutes
+from sandbox_harness.common.models.model_routes import (ModelRoutes)
 
 
 def test_opensandbox_environment_contract(monkeypatch):
@@ -79,7 +79,7 @@ def test_opensandbox_rejects_development_signing_secrets():
     validate_service_settings(Settings(_env_file=None, backend="fake"))
 def test_public_proxy_connect_timeout_is_bounded():
     from pydantic import ValidationError
-    from sandbox_harness.config import Settings
+    from sandbox_harness.common.configuration.config import (Settings)
     assert Settings(backend='fake').public_proxy_connect_timeout_seconds==10
     for value in (0,61):
         with pytest.raises(ValidationError):

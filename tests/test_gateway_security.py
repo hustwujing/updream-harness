@@ -6,12 +6,11 @@ import struct
 import pytest
 from starlette.requests import Request
 
-from sandbox_harness.capability import CapabilityCodec
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import Harness
-from sandbox_harness.gateway import (bounded_request_body,enforce_model_output_budget,
-    estimate_model_input_tokens,model_endpoint_kind)
-from sandbox_harness.store import Store
+from sandbox_harness.common.security.capability import (CapabilityCodec)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Harness)
+from sandbox_harness.services.sandbox_gateway.gateway import (bounded_request_body, enforce_model_output_budget, estimate_model_input_tokens, model_endpoint_kind)
+from sandbox_harness.common.db.store import (Store)
 
 
 def claims(settings, *, nonce="", token_budget=10, max_requests=3, parent_nonce="",
@@ -89,8 +88,8 @@ def test_native_model_endpoint_policy_rejects_cross_protocol_and_unneeded_routes
 
 async def test_native_auxiliary_model_routes_preserve_payload_and_budget_semantics(tmp_path,monkeypatch):
     import httpx
-    import sandbox_harness.gateway as gateway
-    from sandbox_harness.model_activity import OutputProbe
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
+    from sandbox_harness.common.models.model_activity import (OutputProbe)
     class Redis:pass
     class SecurityStore:
         def __init__(self,*args,**kwargs):self.reservations=[];self.finalized=[]
@@ -160,7 +159,7 @@ async def test_native_auxiliary_model_routes_preserve_payload_and_budget_semanti
 
 
 async def test_local_budget_rejection_terminalizes_model_activity_before_upstream(tmp_path,monkeypatch):
-    import sandbox_harness.gateway as gateway
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
     class Redis:pass
     class SecurityStore:
         async def authorize_capability(self,*args,**kwargs):
@@ -244,7 +243,7 @@ async def test_request_limit_survives_gateway_store_restart_without_redis(tmp_pa
 
 
 async def test_gateway_revocation_survives_redis_reset(tmp_path,monkeypatch):
-    import sandbox_harness.gateway as gateway
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
     settings=Settings(backend="fake",data_root=tmp_path,
         database_url="sqlite+aiosqlite:///"+str(tmp_path/"redis-reset.db"))
     store=Store(settings.database_url);await store.initialize()
@@ -278,7 +277,7 @@ async def test_gateway_revocation_survives_redis_reset(tmp_path,monkeypatch):
 
 
 async def test_gateway_fails_closed_when_capability_authority_is_unavailable(tmp_path,monkeypatch):
-    import sandbox_harness.gateway as gateway
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
     class Redis:pass
     class BrokenStore:
         def __init__(self,*args,**kwargs):pass
@@ -332,7 +331,7 @@ async def test_concurrent_durable_request_counter_has_one_winner(tmp_path):
 
 
 def test_output_probe_reads_non_stream_and_three_native_usage_shapes():
-    from sandbox_harness.model_activity import OutputProbe
+    from sandbox_harness.common.models.model_activity import (OutputProbe)
     rows=[
         b'data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":4}}}\n\n',
         b'data: {"type":"message_start","message":{"usage":{"input_tokens":5}}}\n\n'
@@ -386,7 +385,7 @@ async def test_gateway_request_body_limits_declared_chunked_and_stalled_inputs()
 ])
 async def test_excessive_native_model_request_never_reaches_upstream(
         tmp_path,monkeypatch,name,harness,suffix,field):
-    import sandbox_harness.gateway as gateway
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
     class Redis:
         pass
     class SecurityStore:
@@ -422,8 +421,8 @@ async def test_excessive_native_model_request_never_reaches_upstream(
 
 async def model_gateway_fixture(tmp_path,monkeypatch,stream,content_type):
     import httpx
-    import sandbox_harness.gateway as gateway
-    from sandbox_harness.model_activity import OutputProbe
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
+    from sandbox_harness.common.models.model_activity import (OutputProbe)
     class Redis:pass
     class SecurityStore:
         def __init__(self,*args,**kwargs):self.finalized=[]
@@ -481,7 +480,7 @@ async def test_model_idle_before_first_byte_is_504(tmp_path,monkeypatch,content_
 @pytest.mark.parametrize("content_type",["text/event-stream","application/json"])
 async def test_model_idle_after_first_byte_is_detectable_failure(tmp_path,monkeypatch,content_type):
     import httpx
-    from sandbox_harness.gateway import ModelUpstreamIdleTimeout
+    from sandbox_harness.services.sandbox_gateway.gateway import (ModelUpstreamIdleTimeout)
     class Stream(httpx.AsyncByteStream):
         async def __aiter__(self):
             yield (b'data: {"type":"response.output_text.delta","delta":"partial"}\n\n'

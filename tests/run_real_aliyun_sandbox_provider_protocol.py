@@ -14,11 +14,10 @@ import uuid
 import httpx
 from dotenv import dotenv_values
 
-from sandbox_harness.config import load_settings
-from sandbox_harness.domain import Harness
-from sandbox_harness.sandbox_contracts import SandboxCreateRequest,SandboxNotFound,SandboxScope
-from sandbox_harness.sandbox_factory import (build_profile_resolver,build_sandbox_backend,
-    primary_provider_releases)
+from sandbox_harness.common.configuration.config import (load_settings)
+from sandbox_harness.common.contracts.domain import (Harness)
+from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCreateRequest, SandboxNotFound, SandboxScope)
+from sandbox_harness.common.sandbox.sandbox_factory import (build_profile_resolver, build_sandbox_backend, primary_provider_releases)
 
 
 ROOT=Path(__file__).resolve().parents[1]

@@ -4,17 +4,17 @@
   "kind": "service",
   "location": "host",
   "sources": [
-    "src/sandbox_harness/media_service.py",
-    "src/sandbox_harness/media_worker.py",
-    "src/sandbox_harness/image_decompose_provider.py",
-    "src/sandbox_harness/media_reference_publisher.py",
-    "src/sandbox_harness/ark_assets.py",
-    "src/sandbox_harness/minimax_voice.py",
-    "src/sandbox_harness/media_errors.py"
+    "src/sandbox_harness/services/media_worker/media_service.py",
+    "src/sandbox_harness/services/media_worker/media_worker.py",
+    "src/sandbox_harness/services/media_worker/image_decompose_provider.py",
+    "src/sandbox_harness/services/media_worker/media_reference_publisher.py",
+    "src/sandbox_harness/services/media_worker/ark_assets.py",
+    "src/sandbox_harness/services/media_worker/minimax_voice.py",
+    "src/sandbox_harness/services/media_worker/media_errors.py"
   ],
   "source_roots": [],
   "entry_points": {
-    "media-worker": "sandbox_harness.media_service:run"
+    "media-worker": "sandbox_harness.services.media_worker.media_service:run"
   },
   "common_modules": [
     "common/artifacts",

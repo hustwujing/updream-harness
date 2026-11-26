@@ -3,9 +3,9 @@ import hashlib
 import httpx
 import pytest
 
-from sandbox_harness.domain import Harness
-from sandbox_harness.runtime import RuntimeClient
-from sandbox_harness.sandbox import Sandbox
+from sandbox_harness.common.contracts.domain import (Harness)
+from sandbox_harness.common.sandbox.runtime import (RuntimeClient)
+from sandbox_harness.common.sandbox.sandbox import (Sandbox)
 from test_runtime_boundaries import runtime
 
 CHUNK=4*1024*1024

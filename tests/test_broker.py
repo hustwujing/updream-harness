@@ -7,17 +7,17 @@ import httpx
 import pytest
 from types import SimpleNamespace
 
-from sandbox_harness.broker import Broker,reconcile_native_model_error
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import EventKind, Harness, InteractionResponse, RuntimeEvent, RuntimeResult, ThreadCreate, TurnCreate, TurnInputCreate, TurnState, now
-from sandbox_harness.objects import ObjectStore
-from sandbox_harness.pool import SandboxPool
-from sandbox_harness.runtime import RuntimeStreamInterrupted, StagedRuntimeObject
-from sandbox_harness.sandbox import FakeSandboxBackend
-from sandbox_harness.sandbox_contracts import SandboxCreateRequest,SandboxHandle
-from sandbox_harness.sandbox_factory import SandboxProfileResolver
-from sandbox_harness.store import Store
+from sandbox_harness.services.api.broker import (Broker, reconcile_native_model_error)
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (EventKind, Harness, InteractionResponse, RuntimeEvent, RuntimeResult, ThreadCreate, TurnCreate, TurnInputCreate, TurnState, now)
+from sandbox_harness.common.storage.objects import (ObjectStore)
+from sandbox_harness.common.sandbox.pool import (SandboxPool)
+from sandbox_harness.common.sandbox.runtime import (RuntimeStreamInterrupted, StagedRuntimeObject)
+from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
+from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCreateRequest, SandboxHandle)
+from sandbox_harness.common.sandbox.sandbox_factory import (SandboxProfileResolver)
+from sandbox_harness.common.db.store import (Store)
 
 
 class Runtime:
@@ -125,8 +125,8 @@ async def test_turn_inventory_rejects_nonterminal_sandbox_without_handle():
 
 async def test_runtime_diagnostics_are_incremental_and_report_counter_deltas(monkeypatch):
     import logging
-    import sandbox_harness.broker as broker_module
-    import sandbox_harness.telemetry_ingest as ingest
+    import sandbox_harness.services.api.broker as broker_module
+    import sandbox_harness.common.observability.telemetry_ingest as ingest
     snapshots=[
         {'instance_id':'runtime-1','retained_from':1,'last_sequence':1,
             'records':[{'sequence':1}],'stats':{'dropped_records':4,'export_failures':1}},
@@ -153,8 +153,8 @@ async def test_runtime_diagnostics_are_incremental_and_report_counter_deltas(mon
 
 
 async def test_runtime_diagnostics_handle_instance_reset_rotation_and_bound(monkeypatch):
-    import sandbox_harness.broker as broker_module
-    import sandbox_harness.telemetry_ingest as ingest
+    import sandbox_harness.services.api.broker as broker_module
+    import sandbox_harness.common.observability.telemetry_ingest as ingest
     class RuntimeDiagnostics:
         def __init__(self):self.after=[];self.snapshots=[]
         async def diagnostics(self,sandbox,after):
@@ -637,7 +637,7 @@ async def test_broker_rejects_switching_harness_inside_a_conversation(tmp_path):
 
 
 async def test_broker_drains_appended_inputs_in_same_sandbox_session(tmp_path):
-    from sandbox_harness.domain import Attachment
+    from sandbox_harness.common.contracts.domain import (Attachment)
     settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "append.db"),
         backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9", session_keepalive_seconds=0)
     store = Store(settings.database_url); await store.initialize(); objects = ObjectStore(tmp_path / "objects")
@@ -682,7 +682,7 @@ async def test_broker_drains_appended_inputs_in_same_sandbox_session(tmp_path):
 
 
 async def test_broker_delivers_live_input_and_marks_it_applied_at_turn_boundary(tmp_path):
-    from sandbox_harness.domain import Attachment
+    from sandbox_harness.common.contracts.domain import (Attachment)
     settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "live.db"),
         backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9", session_keepalive_seconds=0)
     store = Store(settings.database_url); await store.initialize(); objects = ObjectStore(tmp_path / "objects")
@@ -730,7 +730,7 @@ async def test_broker_delivers_live_input_and_marks_it_applied_at_turn_boundary(
 
 @pytest.mark.parametrize('recovery_mode',['journal','completed_receipt'])
 async def test_broker_reattaches_expired_running_turn_and_replays_runtime_journal(tmp_path,recovery_mode):
-    from sandbox_harness.profiles import ProviderRelease
+    from sandbox_harness.common.catalog.profiles import (ProviderRelease)
     settings = Settings(data_root=tmp_path, database_url="sqlite+aiosqlite:///" + str(tmp_path / "recover.db"),
         backend="fake", gateway_signing_key="k" * 32, gateway_url="http://127.0.0.1:9",
         session_keepalive_seconds=0, recovery_scan_seconds=300)
@@ -858,7 +858,7 @@ async def test_recovery_waits_for_transient_runtime_health_then_reattaches(tmp_p
 async def test_reconciliation_lease_loss_cancels_stalled_external_work_before_takeover(tmp_path):
     from datetime import timedelta
     from sqlalchemy import update
-    from sandbox_harness.store import TurnRow
+    from sandbox_harness.common.db.store import (TurnRow)
     class Backend(FakeSandboxBackend):
         entered=asyncio.Event();calls=0;blocked_task=None;old_task_deleted=False
         async def get(self,sandbox_id):

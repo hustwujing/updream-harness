@@ -3,13 +3,13 @@ import asyncio,json,os,time,uuid
 from pathlib import Path
 from dotenv import dotenv_values
 import httpx
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import Harness,RuntimeResult
-from sandbox_harness.capability import CapabilityCodec
-from sandbox_harness.sandbox import OpenSandboxBackend
-from sandbox_harness.sandbox_contracts import SandboxUpdate
-from sandbox_harness.runtime import RuntimeClient
-from sandbox_harness.observability import configure,operation,telemetry,carrier
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Harness, RuntimeResult)
+from sandbox_harness.common.security.capability import (CapabilityCodec)
+from sandbox_harness.common.sandbox.sandbox import (OpenSandboxBackend)
+from sandbox_harness.common.contracts.sandbox_contracts import (SandboxUpdate)
+from sandbox_harness.common.sandbox.runtime import (RuntimeClient)
+from sandbox_harness.common.observability.observability import (configure, operation, telemetry, carrier)
 
 FIXTURE="import sys,json\nsys.stdin.readline()\nprint(json.dumps({'type':'result','result':'fixture completed'}),flush=True)\n"
 

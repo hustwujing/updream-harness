@@ -1,7 +1,7 @@
 import pytest
 
-from sandbox_harness.capability import CapabilityCodec
-from sandbox_harness.domain import Harness
+from sandbox_harness.common.security.capability import (CapabilityCodec)
+from sandbox_harness.common.contracts.domain import (Harness)
 
 
 def test_capability_is_bound_to_route_and_expiry():

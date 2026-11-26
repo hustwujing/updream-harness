@@ -10,15 +10,15 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from sandbox_harness.capability import CapabilityCodec
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import Harness
-from sandbox_harness.model_activity import OutputProbe
+from sandbox_harness.common.security.capability import (CapabilityCodec)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Harness)
+from sandbox_harness.common.models.model_activity import (OutputProbe)
 
 
 @pytest.fixture
 def ingress(tmp_path,monkeypatch):
-    import sandbox_harness.gateway as gateway
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
     state=SimpleNamespace(upstream=[],activities=[],reservations=[],reservation_error=None)
     class SecurityStore:
         async def authorize_capability(self,*args,**kwargs):
@@ -140,7 +140,7 @@ async def test_every_ingress_failure_finishes_started_model_activity(
 
 
 async def test_normalization_failure_finishes_model_activity(ingress,monkeypatch):
-    import sandbox_harness.gateway as gateway
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
     state,build=ingress;_,invoke=build()
     def invalid(*args,**kwargs):raise TypeError('invalid native request shape')
     monkeypatch.setattr(gateway,'normalize_model_request',invalid)

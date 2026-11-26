@@ -9,15 +9,15 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 import pytest
 
-from sandbox_harness.app import create_app
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import Harness, ThreadCreate, TurnCreate, now
-from sandbox_harness.objects import ObjectStore
-from sandbox_harness.site_bundle import build_site_archive, build_site_archive_from_files, validate_site_archive
-from sandbox_harness.site_worker import SiteWorker
-from sandbox_harness.store import Store
-from sandbox_harness.sessions import COOKIE, Sessions
+from sandbox_harness.services.api.app import (create_app)
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate, now)
+from sandbox_harness.common.storage.objects import (ObjectStore)
+from sandbox_harness.common.sites.site_bundle import (build_site_archive, build_site_archive_from_files, validate_site_archive)
+from sandbox_harness.services.site_worker.site_worker import (SiteWorker)
+from sandbox_harness.common.db.store import (Store)
+from sandbox_harness.services.api.sessions import (COOKIE, Sessions)
 
 
 def site(root: Path, title: str = "Hello") -> tuple[bytes, list]:

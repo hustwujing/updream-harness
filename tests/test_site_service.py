@@ -19,7 +19,7 @@ def test_site_worker_is_independent_and_runtime_cli_is_installed():
     runtime = (ROOT / "src/sandbox_runtime/instructions.py").read_text()
     assert "sandbox-harness-parallel-site-worker" in unit and "site-worker.log" in unit
     assert "sandbox-harness-parallel-site-worker.service" in install
-    assert 'sandbox-harness-site-worker = "sandbox_harness.site_service:run"' in project
+    assert 'sandbox-harness-site-worker = "sandbox_harness.services.site_worker.site_service:run"' in project
     assert 'sandbox-site = "sandbox_runtime.site_cli:main"' in project
     assert "sandbox-site prepare" in runtime and "temporary localhost" in runtime
 

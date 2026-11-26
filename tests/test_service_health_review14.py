@@ -5,10 +5,10 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-import sandbox_harness.gateway as gateway_module
-from sandbox_harness.app import create_app,web_distribution_digest
-from sandbox_harness.config import Settings
-from sandbox_harness.sandbox_inspector import SandboxInspector
+import sandbox_harness.services.sandbox_gateway.gateway as gateway_module
+from sandbox_harness.services.api.app import (create_app, web_distribution_digest)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.services.api.sandbox_inspector import (SandboxInspector)
 
 
 def settings(tmp_path,name="health"):

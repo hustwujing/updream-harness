@@ -6,10 +6,10 @@ from datetime import timedelta
 from sqlalchemy import text
 
 from test_allocation_dispatch import fixture
-from sandbox_harness.allocation_dispatch import AllocationClient, AllocationService
-from sandbox_harness.sandbox import FakeSandboxBackend
-from sandbox_harness.store import SandboxAllocationRow
-from sandbox_harness.domain import now
+from sandbox_harness.services.allocation_worker.allocation_dispatch import (AllocationClient, AllocationService)
+from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
+from sandbox_harness.common.db.store import (SandboxAllocationRow)
+from sandbox_harness.common.contracts.domain import (now)
 
 
 async def unknown(store, client, context, request):

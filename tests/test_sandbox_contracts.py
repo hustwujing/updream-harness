@@ -2,23 +2,8 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from sandbox_harness.domain import Harness
-from sandbox_harness.sandbox_contracts import (
-    SandboxAuthenticationFailed,
-    SandboxCapacityUnavailable,
-    SandboxCreateOutcomeUnknown,
-    SandboxCreateRequest,
-    SandboxCapabilities,
-    SandboxEndpoint,
-    SandboxEndpointUnavailable,
-    SandboxHandle,
-    SandboxProfile,
-    SandboxProfileUnavailable,
-    SandboxProviderUnavailable,
-    SandboxRateLimited,
-    SandboxRuntimeRoute,
-    Sandbox,
-)
+from sandbox_harness.common.contracts.domain import (Harness)
+from sandbox_harness.common.contracts.sandbox_contracts import (SandboxAuthenticationFailed, SandboxCapacityUnavailable, SandboxCreateOutcomeUnknown, SandboxCreateRequest, SandboxCapabilities, SandboxEndpoint, SandboxEndpointUnavailable, SandboxHandle, SandboxProfile, SandboxProfileUnavailable, SandboxProviderUnavailable, SandboxRateLimited, SandboxRuntimeRoute, Sandbox)
 
 
 def profile(**changes):

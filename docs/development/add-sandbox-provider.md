@@ -25,15 +25,15 @@ automatically discovered plugin. Once registered and verified, select it with
 
 | Source | Responsibility |
 | --- | --- |
-| [sandbox_contracts.py](../../src/sandbox_harness/sandbox_contracts.py) | Backend protocol, capabilities, profiles, handles, endpoints, routes and typed errors |
-| [sandbox_factory.py](../../src/sandbox_harness/sandbox_factory.py) | Backend construction, capability gate, registry routing and frozen profile resolution |
-| [config.py](../../src/sandbox_harness/config.py) / [profiles.py](../../src/sandbox_harness/profiles.py) | Supported backend selection, configuration and provider release matrix |
-| [job_allocation.py](../../src/sandbox_harness/job_allocation.py) / [allocation_dispatch.py](../../src/sandbox_harness/allocation_dispatch.py) | Platform-owned allocation intent, create response, recovery and reservation ownership |
-| [pool.py](../../src/sandbox_harness/pool.py) / [store.py](../../src/sandbox_harness/store.py) | Attachment compatibility, capacity, durable handles and generation fencing |
-| [runtime.py](../../src/sandbox_harness/runtime.py) / [sandbox_inspector.py](../../src/sandbox_harness/sandbox_inspector.py) | Runtime requests, endpoint refresh, takeover and terminal routing |
+| [sandbox_contracts.py](../../src/sandbox_harness/common/contracts/sandbox_contracts.py) | Backend protocol, capabilities, profiles, handles, endpoints, routes and typed errors |
+| [sandbox_factory.py](../../src/sandbox_harness/common/sandbox/sandbox_factory.py) | Backend construction, capability gate, registry routing and frozen profile resolution |
+| [config.py](../../src/sandbox_harness/common/configuration/config.py) / [profiles.py](../../src/sandbox_harness/common/catalog/profiles.py) | Supported backend selection, configuration and provider release matrix |
+| [job_allocation.py](../../src/sandbox_harness/common/sandbox/job_allocation.py) / [allocation_dispatch.py](../../src/sandbox_harness/services/allocation_worker/allocation_dispatch.py) | Platform-owned allocation intent, create response, recovery and reservation ownership |
+| [pool.py](../../src/sandbox_harness/common/sandbox/pool.py) / [store.py](../../src/sandbox_harness/common/db/store.py) | Attachment compatibility, capacity, durable handles and generation fencing |
+| [runtime.py](../../src/sandbox_harness/common/sandbox/runtime.py) / [sandbox_inspector.py](../../src/sandbox_harness/services/api/sandbox_inspector.py) | Runtime requests, endpoint refresh, takeover and terminal routing |
 
-Use [sandbox_opensandbox.py](../../src/sandbox_harness/sandbox_opensandbox.py) and
-[sandbox_aliyun.py](../../src/sandbox_harness/sandbox_aliyun.py) as adapter examples,
+Use [sandbox_opensandbox.py](../../src/sandbox_harness/common/sandbox/sandbox_opensandbox.py) and
+[sandbox_aliyun.py](../../src/sandbox_harness/common/sandbox/sandbox_aliyun.py) as adapter examples,
 not as permission to copy provider assumptions into shared workers.
 
 ## Required capabilities

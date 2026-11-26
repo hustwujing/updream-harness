@@ -1,8 +1,8 @@
 import asyncio
 import pytest
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.domain import Harness, ThreadCreate, TurnCreate, TurnState
-from sandbox_harness.store import Store
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate, TurnState)
+from sandbox_harness.common.db.store import (Store)
 
 async def seed(store):
     profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
@@ -27,9 +27,9 @@ async def test_queued_turn_cannot_be_claimed_by_another_broker(tmp_path):
 async def test_turn_queue_sequence_orders_tied_timestamps_repair_and_cancellation(tmp_path,monkeypatch):
     from datetime import datetime,timezone
     from sqlalchemy import select,update
-    from sandbox_harness.store import ThreadRow,TurnOrderRow
+    from sandbox_harness.common.db.store import (ThreadRow, TurnOrderRow)
     fixed=datetime(2026,1,1,tzinfo=timezone.utc)
-    monkeypatch.setattr('sandbox_harness.store.now',lambda:fixed)
+    monkeypatch.setattr('sandbox_harness.common.db.store.now',lambda:fixed)
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'turn-order.db'));await store.initialize()
     try:
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
@@ -93,8 +93,8 @@ async def test_old_checkpoint_writer_is_fenced(tmp_path):
 async def test_expired_turn_lease_fences_every_worker_mutation_before_takeover(tmp_path):
     from datetime import timedelta
     from sqlalchemy import update
-    from sandbox_harness.domain import EventKind,ItemType,RuntimeEvent,now
-    from sandbox_harness.store import TurnRow
+    from sandbox_harness.common.contracts.domain import (EventKind, ItemType, RuntimeEvent, now)
+    from sandbox_harness.common.db.store import (TurnRow)
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'expired-writes.db'));await store.initialize()
     try:
         thread,turn,_=await seed(store)
@@ -135,8 +135,8 @@ async def test_expired_turn_lease_fences_every_worker_mutation_before_takeover(t
 
 async def test_runtime_transcript_and_receipt_are_atomic_and_idempotent(tmp_path,monkeypatch):
     from sqlalchemy.ext.asyncio import AsyncSession
-    from sandbox_harness.domain import RuntimeEvent,EventKind
-    from sandbox_harness.store import EventRow
+    from sandbox_harness.common.contracts.domain import (RuntimeEvent, EventKind)
+    from sandbox_harness.common.db.store import (EventRow)
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'events.db'));await store.initialize()
     try:
         thread,turn,_=await seed(store)
@@ -158,7 +158,7 @@ async def test_runtime_transcript_and_receipt_are_atomic_and_idempotent(tmp_path
     finally:await store.close()
 
 async def test_late_delivery_error_cannot_undo_a_completed_input(tmp_path):
-    from sandbox_harness.domain import TurnInputCreate
+    from sandbox_harness.common.contracts.domain import (TurnInputCreate)
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'input.db'));await store.initialize()
     try:
         _,turn,_=await seed(store)
@@ -170,7 +170,7 @@ async def test_late_delivery_error_cannot_undo_a_completed_input(tmp_path):
 
 
 async def test_failed_input_is_terminal_and_old_execution_cannot_deliver(tmp_path):
-    from sandbox_harness.domain import TurnInputCreate
+    from sandbox_harness.common.contracts.domain import (TurnInputCreate)
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'input-failed.db'));await store.initialize()
     try:
         _,turn,_=await seed(store)
@@ -196,11 +196,11 @@ async def test_failed_input_is_terminal_and_old_execution_cannot_deliver(tmp_pat
     finally:await store.close()
 
 async def test_slow_cleanup_keeps_heartbeat_running(tmp_path,monkeypatch):
-    from sandbox_harness.broker import Broker
-    from sandbox_harness.config import Settings
-    from sandbox_harness.objects import ObjectStore
-    from sandbox_harness.pool import SandboxPool
-    from sandbox_harness.sandbox import FakeSandboxBackend
+    from sandbox_harness.services.api.broker import (Broker)
+    from sandbox_harness.common.configuration.config import (Settings)
+    from sandbox_harness.common.storage.objects import (ObjectStore)
+    from sandbox_harness.common.sandbox.pool import (SandboxPool)
+    from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
     from test_broker import Runtime
     class SlowDelete(FakeSandboxBackend):
         deleting=False
@@ -230,13 +230,13 @@ async def test_slow_cleanup_keeps_heartbeat_running(tmp_path,monkeypatch):
 
 async def test_old_worker_does_not_cancel_runtime_after_lease_takeover(tmp_path):
     from datetime import timedelta
-    from sandbox_harness.domain import now
-    from sandbox_harness.store import TurnRow
-    from sandbox_harness.broker import Broker
-    from sandbox_harness.config import Settings
-    from sandbox_harness.objects import ObjectStore
-    from sandbox_harness.pool import SandboxPool
-    from sandbox_harness.sandbox import FakeSandboxBackend
+    from sandbox_harness.common.contracts.domain import (now)
+    from sandbox_harness.common.db.store import (TurnRow)
+    from sandbox_harness.services.api.broker import (Broker)
+    from sandbox_harness.common.configuration.config import (Settings)
+    from sandbox_harness.common.storage.objects import (ObjectStore)
+    from sandbox_harness.common.sandbox.pool import (SandboxPool)
+    from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
     from test_broker import AppendedInputRuntime
     class Runtime(AppendedInputRuntime):
         cancelled=0
@@ -284,8 +284,8 @@ async def test_old_artifact_publisher_is_fenced(tmp_path):
 def test_input_lost_receipt_is_unknown_not_a_new_execution(tmp_path):
     import httpx
     from fastapi.testclient import TestClient
-    from sandbox_harness.app import create_app
-    from sandbox_harness.config import Settings
+    from sandbox_harness.services.api.app import (create_app)
+    from sandbox_harness.common.configuration.config import (Settings)
     app=create_app(Settings(backend='fake',database_url='sqlite+aiosqlite:///'+str(tmp_path/'lost-reply.db'),
         redis_url='',data_root=tmp_path,object_backend='local',model_catalog_discovery=False))
     app.state.broker._schedule=lambda turn_id:None

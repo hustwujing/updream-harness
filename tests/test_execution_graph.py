@@ -1,12 +1,11 @@
 from datetime import timedelta
 import json
 
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.domain import EventKind,Harness,ItemType,ThreadCreate,TurnCreate,TurnState,now
-from sandbox_harness.execution_graph import ExecutionGraphProjector
-from sandbox_harness.job_contracts import JobGroupCreate,JobGroupDraftCreate,JobKind,JobRequest,JobState
-from sandbox_harness.store import (JobActivityRow,JobArtifactRow,JobOutboxRow,JobRow,MediaBatchRow,
-    MediaDraftRow,MediaJobRow,ReviewGateRow,Store,TurnRow)
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.contracts.domain import (EventKind, Harness, ItemType, ThreadCreate, TurnCreate, TurnState, now)
+from sandbox_harness.services.api.execution_graph import (ExecutionGraphProjector)
+from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobGroupDraftCreate, JobKind, JobRequest, JobState)
+from sandbox_harness.common.db.store import (JobActivityRow, JobArtifactRow, JobOutboxRow, JobRow, MediaBatchRow, MediaDraftRow, MediaJobRow, ReviewGateRow, Store, TurnRow)
 from sqlalchemy import select,update
 
 
@@ -314,7 +313,7 @@ async def test_collapsed_graph_keeps_active_group_ancestor_closure_and_gate(tmp_
                 receipt_json='{}',warning='optional_review_unavailable',created_at=now(),updated_at=now()))
         await store.upsert_interaction(thread.id,turns[-1].id,'execution','pending-decision',
             'approval',{'prompt':'确认后续操作'})
-        monkeypatch.setattr('sandbox_harness.execution_graph.MAX_NODES',10)
+        monkeypatch.setattr('sandbox_harness.services.api.execution_graph.MAX_NODES',10)
         graph=await ExecutionGraphProjector(store).snapshot(thread.id,'owner')
         ids={node['id'] for node in graph['nodes']}
         assert f'turn:{turns[0].id}:primary' in ids and 'group:'+group.id in ids

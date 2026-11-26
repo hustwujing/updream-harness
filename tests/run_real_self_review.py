@@ -11,15 +11,15 @@ from pathlib import Path
 
 import httpx
 from dotenv import dotenv_values
-from sandbox_harness.broker import Broker
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import Harness, ThreadCreate, TurnCreate
-from sandbox_harness.objects import ObjectStore
-from sandbox_harness.pool import SandboxPool
-from sandbox_harness.runtime import RuntimeClient
-from sandbox_harness.sandbox import OpenSandboxBackend
-from sandbox_harness.store import Store
+from sandbox_harness.services.api.broker import (Broker)
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate)
+from sandbox_harness.common.storage.objects import (ObjectStore)
+from sandbox_harness.common.sandbox.pool import (SandboxPool)
+from sandbox_harness.common.sandbox.runtime import (RuntimeClient)
+from sandbox_harness.common.sandbox.sandbox import (OpenSandboxBackend)
+from sandbox_harness.common.db.store import (Store)
 
 FIXTURE = """import sys,json,time
 from pathlib import Path

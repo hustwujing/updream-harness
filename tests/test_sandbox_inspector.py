@@ -5,16 +5,16 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.app import create_app, sandbox_preview_target
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import Harness, ThreadCreate, TurnCreate, TurnState, now
-from sandbox_harness.pool import SandboxPool
-from sandbox_harness.sandbox import FakeSandboxBackend
-from sandbox_harness.sandbox_inspector import SandboxInspector, TerminalTicketCodec, websocket_endpoint_headers
-from sandbox_harness.store import SandboxControlRow,Store
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.services.api.app import (create_app, sandbox_preview_target)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate, TurnState, now)
+from sandbox_harness.common.sandbox.pool import (SandboxPool)
+from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
+from sandbox_harness.services.api.sandbox_inspector import (SandboxInspector, TerminalTicketCodec, websocket_endpoint_headers)
+from sandbox_harness.common.db.store import (SandboxControlRow, Store)
 from sqlalchemy import update
-from sandbox_harness.runtime import StagedRuntimeObject
+from sandbox_harness.common.sandbox.runtime import (StagedRuntimeObject)
 from sandbox_runtime import app as runtime_app
 
 
@@ -51,7 +51,7 @@ async def test_sandbox_control_is_owner_scoped_and_blocks_active_turn(tmp_path):
         assert (await store.list_sandbox_audit(thread.id, owner))[0]["action"] == "terminal.created"
         await store.update_thread_checkpoint_idle(thread.id, owner, "sha256:" + "1" * 64)
         assert (await store.get_thread(thread.id, owner)).checkpoint_ref == "sha256:" + "1" * 64
-        from sandbox_harness.store import SandboxControlRow
+        from sandbox_harness.common.db.store import (SandboxControlRow)
         async with store.connections.begin() as db:
             row=await db.get(SandboxControlRow,thread.id,with_for_update=True)
             row.expires_at=now()-timedelta(seconds=1)
@@ -188,7 +188,7 @@ async def test_inspector_restore_takeover_terminal_port_and_release(tmp_path, mo
         monkeypatch.setattr(httpx,"create_ssl_context",lambda **kwargs:ssl_context)
         def connect(url,**kwargs):
             connections.append((url,kwargs));return "runtime-websocket"
-        monkeypatch.setattr("sandbox_harness.sandbox_inspector.websocket_connect",connect)
+        monkeypatch.setattr("sandbox_harness.services.api.sandbox_inspector.websocket_connect",connect)
         assert await inspector.terminal_connection(renewed["ticket"],owner,12)=="runtime-websocket"
         assert runtime.terminal_calls[-1]==("endpoint",sandbox.id,"pty-one",12)
         assert connections[0][0]=="wss://runtime/v1/pty/pty-one/ws?since=12"
@@ -262,7 +262,7 @@ def test_terminal_ticket_rejects_tamper_and_expiry(monkeypatch):
         pty_session_id="pty",ttl_seconds=10)
     assert codec.verify(value)["thread_id"]=="b"*32
     with pytest.raises(ValueError):codec.verify(value+"x")
-    monkeypatch.setattr("sandbox_harness.sandbox_inspector.time.time",lambda:10_000)
+    monkeypatch.setattr("sandbox_harness.services.api.sandbox_inspector.time.time",lambda:10_000)
     with pytest.raises(ValueError,match="expired"):codec.verify(codec.issue(owner_id="a"*64,
         thread_id="b"*32,sandbox_id="sandbox",pty_session_id="pty",ttl_seconds=-1))
 

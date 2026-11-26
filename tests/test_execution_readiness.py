@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from sandbox_harness.execution_readiness import ExecutionReadiness
+from sandbox_harness.common.catalog.execution_readiness import (ExecutionReadiness)
 
 
 async def test_readiness_generation_changes_only_when_health_changes():

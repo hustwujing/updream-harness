@@ -13,10 +13,10 @@ import uuid
 import httpx
 from dotenv import dotenv_values
 
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import Harness
-from sandbox_harness.runtime import RuntimeClient
-from sandbox_harness.sandbox import OpenSandboxBackend
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Harness)
+from sandbox_harness.common.sandbox.runtime import (RuntimeClient)
+from sandbox_harness.common.sandbox.sandbox import (OpenSandboxBackend)
 
 
 FIXTURE="""import json,sys,time

@@ -1,4 +1,4 @@
-from sandbox_harness.errors import public_failure
+from sandbox_harness.common.contracts.errors import (public_failure)
 
 
 def test_provider_overload_and_transport_failures_have_actionable_public_reasons():

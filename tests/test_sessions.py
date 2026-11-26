@@ -1,4 +1,4 @@
-from sandbox_harness.sessions import Sessions
+from sandbox_harness.services.api.sessions import (Sessions)
 
 
 def test_signed_browser_session_is_stable_and_tampering_rotates_identity():

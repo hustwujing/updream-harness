@@ -4,10 +4,10 @@ import json
 import httpx
 import pytest
 
-from sandbox_harness.domain import Harness
-from sandbox_harness.runtime import RuntimeClient
-from sandbox_harness.sandbox import Sandbox
-from sandbox_harness.sandbox_contracts import SandboxEndpoint
+from sandbox_harness.common.contracts.domain import (Harness)
+from sandbox_harness.common.sandbox.runtime import (RuntimeClient)
+from sandbox_harness.common.sandbox.sandbox import (Sandbox)
+from sandbox_harness.common.contracts.sandbox_contracts import (SandboxEndpoint)
 
 
 def test_runtime_client_does_not_create_staging_until_a_transfer(tmp_path):
@@ -52,7 +52,7 @@ async def test_project_file_upload_recovers_lost_reply_with_identical_bytes(monk
     def client(**kwargs):
         kwargs['transport']=transport
         return original(**kwargs)
-    monkeypatch.setattr('sandbox_harness.runtime.httpx.AsyncClient',client)
+    monkeypatch.setattr('sandbox_harness.common.sandbox.runtime.httpx.AsyncClient',client)
     runtime=RuntimeClient(transport=transport)
     sandbox=Sandbox(id='sandbox',harness=Harness.CODEX,image='image',runtime_url='http://runtime',metadata={})
     payload=b'immutable-project-file'*1024
@@ -72,7 +72,7 @@ async def test_project_file_upload_does_not_retry_deterministic_rejection(monkey
     def client(**kwargs):
         kwargs['transport']=transport
         return original(**kwargs)
-    monkeypatch.setattr('sandbox_harness.runtime.httpx.AsyncClient',client)
+    monkeypatch.setattr('sandbox_harness.common.sandbox.runtime.httpx.AsyncClient',client)
     runtime=RuntimeClient(transport=transport)
     sandbox=Sandbox(id='sandbox',harness=Harness.CODEX,image='image',runtime_url='http://runtime',metadata={})
     with pytest.raises(httpx.HTTPStatusError):
@@ -227,7 +227,7 @@ async def test_runtime_bundle_status_reads_retry_before_configuration(tmp_path,m
     from collections import Counter
     waits=[]
     async def no_wait(seconds):waits.append(seconds)
-    monkeypatch.setattr('sandbox_harness.runtime.asyncio.sleep',no_wait)
+    monkeypatch.setattr('sandbox_harness.common.sandbox.runtime.asyncio.sleep',no_wait)
     digests={}
     for name in ['code','content']:
         directory=tmp_path/name;directory.mkdir();data=name.encode()
@@ -258,7 +258,7 @@ async def test_runtime_bundle_status_retry_is_bounded_and_rejects_permanent_erro
     import hashlib
     waits=[];calls=[]
     async def no_wait(seconds):waits.append(seconds)
-    monkeypatch.setattr('sandbox_harness.runtime.asyncio.sleep',no_wait)
+    monkeypatch.setattr('sandbox_harness.common.sandbox.runtime.asyncio.sleep',no_wait)
     data=b'code';digest=hashlib.sha256(data).hexdigest()
     (tmp_path/(digest+'.tar')).write_bytes(data);(tmp_path/(digest+'.sig')).write_bytes(b'signature')
     def respond(request):calls.append((request.method,request.url.path));return httpx.Response(status)
@@ -275,7 +275,7 @@ async def test_runtime_bundle_status_retry_is_bounded_and_rejects_permanent_erro
 async def test_runtime_configuration_retries_transient_code_bundle_upload(tmp_path,monkeypatch):
     waits=[]
     async def no_wait(seconds):waits.append(seconds)
-    monkeypatch.setattr('sandbox_harness.runtime.asyncio.sleep',no_wait)
+    monkeypatch.setattr('sandbox_harness.common.sandbox.runtime.asyncio.sleep',no_wait)
     code=b"code-bundle";digest=__import__('hashlib').sha256(code).hexdigest()
     root=tmp_path/'code';root.mkdir();(root/(digest+'.tar')).write_bytes(code)
     (root/(digest+'.sig')).write_bytes(b'signature')
@@ -303,7 +303,7 @@ async def test_runtime_configuration_retries_transient_code_bundle_upload(tmp_pa
 async def test_runtime_configuration_does_not_retry_deterministic_bundle_rejection(tmp_path,monkeypatch):
     waits=[]
     async def no_wait(seconds):waits.append(seconds)
-    monkeypatch.setattr('sandbox_harness.runtime.asyncio.sleep',no_wait)
+    monkeypatch.setattr('sandbox_harness.common.sandbox.runtime.asyncio.sleep',no_wait)
     code=b"code-bundle";digest=__import__('hashlib').sha256(code).hexdigest()
     root=tmp_path/'code';root.mkdir();(root/(digest+'.tar')).write_bytes(code)
     (root/(digest+'.sig')).write_bytes(b'signature')
@@ -354,11 +354,11 @@ async def test_broken_runtime_stream_reattaches_without_resubmitting_input():
 
 async def test_runtime_stream_recovery_is_bounded_and_never_replays_post(monkeypatch):
     import pytest
-    from sandbox_harness.runtime import RuntimeStreamInterrupted
+    from sandbox_harness.common.sandbox.runtime import (RuntimeStreamInterrupted)
     calls = []
     waits = []
     async def no_wait(seconds): waits.append(seconds)
-    monkeypatch.setattr('sandbox_harness.runtime.asyncio.sleep', no_wait)
+    monkeypatch.setattr('sandbox_harness.common.sandbox.runtime.asyncio.sleep', no_wait)
     def respond(request):
         calls.append(request.method)
         return httpx.Response(200, text='') if request.method == 'POST' else httpx.Response(404)

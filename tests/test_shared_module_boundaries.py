@@ -9,12 +9,12 @@ import pytest
 
 
 def test_controlled_file_transport_is_owned_by_common():
-    from sandbox_harness.controlled_media_adapter import staged_file_chunks
+    from sandbox_harness.services.controlled_worker.controlled_media_adapter import (staged_file_chunks)
     assert staged_file_chunks.__module__ == "sandbox_harness.common.storage.files"
 
 
 def test_media_process_and_network_policy_are_owned_by_common():
-    from sandbox_harness.media_worker import _process_start, normalize_host, public_address
+    from sandbox_harness.services.media_worker.media_worker import (_process_start, normalize_host, public_address)
     assert _process_start.__module__ == "sandbox_harness.common.process.identity"
     assert normalize_host.__module__ == "sandbox_harness.common.security.network"
     assert public_address.__module__ == "sandbox_harness.common.security.network"
@@ -24,7 +24,7 @@ def test_media_process_and_network_policy_are_owned_by_common():
 
 
 def test_allocation_client_does_not_import_allocation_service():
-    from sandbox_harness.allocation_dispatch import AllocationClient
+    from sandbox_harness.services.allocation_worker.allocation_dispatch import (AllocationClient)
     assert AllocationClient.__module__ == "sandbox_harness.common.sandbox.allocation_client"
     source = inspect.getsource(inspect.getmodule(AllocationClient))
     tree = ast.parse(source)
@@ -33,18 +33,18 @@ def test_allocation_client_does_not_import_allocation_service():
 
 
 def test_review_coordination_is_independent_of_execution_adapter():
-    from sandbox_harness.reviewer import ReviewerCoordinator, ReviewerJobAdapter
+    from sandbox_harness.services.job_worker.reviewer import (ReviewerCoordinator, ReviewerJobAdapter)
     assert ReviewerCoordinator.__module__ == "sandbox_harness.common.jobs.review"
     assert ReviewerCoordinator.__module__ != ReviewerJobAdapter.__module__
 
 
 def test_media_error_contract_does_not_require_provider_transport():
-    from sandbox_harness.store import media_error_guidance
+    from sandbox_harness.common.db.store import (media_error_guidance)
     assert media_error_guidance.__module__ == "sandbox_harness.common.contracts.media_errors"
 
 
 async def test_shared_file_stream_preserves_bytes_and_partial_tail(tmp_path):
-    from sandbox_harness.controlled_media_adapter import staged_file_chunks
+    from sandbox_harness.services.controlled_worker.controlled_media_adapter import (staged_file_chunks)
     path = tmp_path / "bytes"
     path.write_bytes(bytes(range(256)) * 17)
     chunks = [chunk async for chunk in staged_file_chunks(path, 1024)]

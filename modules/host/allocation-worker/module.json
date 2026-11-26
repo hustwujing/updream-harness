@@ -4,12 +4,12 @@
   "kind": "service",
   "location": "host",
   "sources": [
-    "src/sandbox_harness/allocation_service.py",
-    "src/sandbox_harness/allocation_dispatch.py"
+    "src/sandbox_harness/services/allocation_worker/allocation_service.py",
+    "src/sandbox_harness/services/allocation_worker/allocation_dispatch.py"
   ],
   "source_roots": [],
   "entry_points": {
-    "allocation-worker": "sandbox_harness.allocation_service:main"
+    "allocation-worker": "sandbox_harness.services.allocation_worker.allocation_service:main"
   },
   "common_modules": [
     "common/artifacts",

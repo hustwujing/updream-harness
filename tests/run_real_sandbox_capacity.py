@@ -27,23 +27,22 @@ from sqlalchemy import select,text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.allocation_dispatch import AllocationClient,AllocationService
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate
-from sandbox_harness.harness_job import JobGrantFactory
-from sandbox_harness.job_contracts import JobArtifactInput,JobExpectedOutput,JobGroupCreate,JobRequest,JobState
-from sandbox_harness.job_worker import JobWorker
-from sandbox_harness.media_render_adapter import MediaRenderOperationAdapter
-from sandbox_harness.objects import ObjectStore
-from sandbox_harness.pool import SandboxPool
-from sandbox_harness.profiles import ProviderRelease
-from sandbox_harness.runtime import RuntimeClient
-from sandbox_harness.sandbox_contracts import (SandboxCreateRequest,SandboxProfile,SandboxScope,
-    SandboxCapacityUnavailable,SandboxRateLimited)
-from sandbox_harness.sandbox_factory import build_sandbox_backend,build_profile_resolver
-from sandbox_harness.scheduler import NodeInventory,ResourceRequest,Scheduler
-from sandbox_harness.store import JobAttemptRow,Store
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.services.allocation_worker.allocation_dispatch import (AllocationClient, AllocationService)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate)
+from sandbox_harness.services.job_worker.harness_job import (JobGrantFactory)
+from sandbox_harness.common.contracts.job_contracts import (JobArtifactInput, JobExpectedOutput, JobGroupCreate, JobRequest, JobState)
+from sandbox_harness.common.execution.job_worker import (JobWorker)
+from sandbox_harness.services.job_worker.media_render_adapter import (MediaRenderOperationAdapter)
+from sandbox_harness.common.storage.objects import (ObjectStore)
+from sandbox_harness.common.sandbox.pool import (SandboxPool)
+from sandbox_harness.common.catalog.profiles import (ProviderRelease)
+from sandbox_harness.common.sandbox.runtime import (RuntimeClient)
+from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCreateRequest, SandboxProfile, SandboxScope, SandboxCapacityUnavailable, SandboxRateLimited)
+from sandbox_harness.common.sandbox.sandbox_factory import (build_sandbox_backend, build_profile_resolver)
+from sandbox_harness.common.scheduling.scheduler import (NodeInventory, ResourceRequest, Scheduler)
+from sandbox_harness.common.db.store import (JobAttemptRow, Store)
 
 ROOT=Path(__file__).resolve().parents[1]
 CASES=('RC01','RC02','RC03','RC04','RC05','RC06','RC07')
@@ -204,7 +203,7 @@ async def run_case(case,raw,path,store,backend,profile):
             return (await db.scalars(select(JobAttemptRow).where(JobAttemptRow.job_id==job_id)
                 .order_by(JobAttemptRow.generation.desc()).limit(1))).first()
     async def node_ready():
-        from sandbox_harness.store import NodeRow
+        from sandbox_harness.common.db.store import (NodeRow)
         ready=settings.data_root/f"worker-ready-{raw['worker_generation']}.json"
         if not ready.exists() or json.loads(ready.read_text()).get('pid')!=process.pid:return False
         async with store.connections() as db:
@@ -382,9 +381,9 @@ async def run(args):
         'cases':{},'database_removed':False,'source_state':{
             'dirty':bool(subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True)),
             'sha256':{name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in [
-                'tests/run_real_sandbox_capacity.py','src/sandbox_harness/job_worker.py',
-                'src/sandbox_harness/job_allocation.py','src/sandbox_harness/allocation_dispatch.py',
-                'src/sandbox_harness/store.py']}}}
+                'tests/run_real_sandbox_capacity.py','src/sandbox_harness/common/execution/job_worker.py',
+                'src/sandbox_harness/common/sandbox/job_allocation.py','src/sandbox_harness/services/allocation_worker/allocation_dispatch.py',
+                'src/sandbox_harness/common/db/store.py']}}}
     try:
         for case in selected:
             started=time.monotonic();value=await run_case(case,raw,path,store,backend,profile)

@@ -4,10 +4,10 @@ from dataclasses import replace
 import pytest
 from test_allocation_dispatch import fixture
 from test_allocation_recovery import issued_allocation
-from sandbox_harness.domain import Harness
-from sandbox_harness.pool import SandboxPool
-from sandbox_harness.sandbox import FakeSandboxBackend
-from sandbox_harness.store import SandboxAllocationRow,JobCleanupRow
+from sandbox_harness.common.contracts.domain import (Harness)
+from sandbox_harness.common.sandbox.pool import (SandboxPool)
+from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
+from sandbox_harness.common.db.store import (SandboxAllocationRow, JobCleanupRow)
 from sqlalchemy import select
 
 async def test_lowered_limit_debt_adoption_failed_delete_and_release(tmp_path):

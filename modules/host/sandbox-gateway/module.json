@@ -4,12 +4,12 @@
   "kind": "service",
   "location": "host",
   "sources": [
-    "src/sandbox_harness/gateway.py",
-    "src/sandbox_harness/public_proxy.py"
+    "src/sandbox_harness/services/sandbox_gateway/gateway.py",
+    "src/sandbox_harness/services/sandbox_gateway/public_proxy.py"
   ],
   "source_roots": [],
   "entry_points": {
-    "sandbox-gateway": "sandbox_harness.gateway:run"
+    "sandbox-gateway": "sandbox_harness.services.sandbox_gateway.gateway:run"
   },
   "common_modules": [
     "common/artifacts",
@@ -52,7 +52,11 @@
   ],
   "native_requirements": [],
   "external_inputs": [],
-  "resources": [],
+  "resources": [
+    "deploy/job-catalog.example.json",
+    "deploy/profile-catalog.example.json",
+    "runtime/skills/manifest.json"
+  ],
   "host_credentials_allowed": true,
   "verification": [
     "declared source closure",

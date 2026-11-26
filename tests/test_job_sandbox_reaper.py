@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
-from sandbox_harness.broker import Broker
-from sandbox_harness.sandbox_contracts import SandboxHandle
+from sandbox_harness.services.api.broker import (Broker)
+from sandbox_harness.common.contracts.sandbox_contracts import (SandboxHandle)
 
 
 async def test_orphan_reaper_preserves_sandbox_owned_by_nonterminal_job():

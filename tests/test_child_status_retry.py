@@ -3,10 +3,10 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import Harness
-from sandbox_harness.harness_job import SandboxChildBackend
-from sandbox_harness.sandbox import Sandbox
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Harness)
+from sandbox_harness.services.job_worker.harness_job import (SandboxChildBackend)
+from sandbox_harness.common.sandbox.sandbox import (Sandbox)
 
 
 def failure(status):
@@ -43,7 +43,7 @@ async def test_child_recovery_retries_transient_runtime_proxy_status(monkeypatch
             return {'result':None}
 
     async def no_sleep(_):return None
-    monkeypatch.setattr('sandbox_harness.harness_job.asyncio.sleep',no_sleep)
+    monkeypatch.setattr('sandbox_harness.services.job_worker.harness_job.asyncio.sleep',no_sleep)
     runtime=Runtime();backend=SandboxChildBackend(pool=Pool(),runtime=runtime,
         store=SimpleNamespace(),objects=SimpleNamespace(),
         settings=Settings(backend='fake',data_root=tmp_path),token_factory=lambda *args:None)

@@ -6,14 +6,14 @@ from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 import pytest
 
-from sandbox_harness.app import create_app
-from sandbox_harness.auth import AUTH_COOKIE, AccountAuth, normalize_username, token_hash
-from sandbox_harness.config import Settings
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.domain import Harness, ThreadCreate, TurnCreate, TurnState, now
-from sandbox_harness.job_contracts import JobGroupCreate, JobGroupDraftCreate, JobKind, JobRequest
-from sandbox_harness.sessions import COOKIE
-from sandbox_harness.store import Base, OWNER_MIGRATION_TABLES, Store
+from sandbox_harness.services.api.app import (create_app)
+from sandbox_harness.common.security.auth import (AUTH_COOKIE, AccountAuth, normalize_username, token_hash)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate, TurnState, now)
+from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobGroupDraftCreate, JobKind, JobRequest)
+from sandbox_harness.services.api.sessions import (COOKIE)
+from sandbox_harness.common.db.store import (Base, OWNER_MIGRATION_TABLES, Store)
 
 
 async def test_account_password_sessions_and_rotation(tmp_path):

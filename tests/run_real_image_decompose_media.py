@@ -26,16 +26,16 @@ import httpx
 from PIL import Image
 from sqlalchemy import select
 
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import Harness,ThreadCreate,TurnCreate,TurnState
-from sandbox_harness.image_decompose_adapter import ImageDecomposeAdapter
-from sandbox_harness.image_decompose_provider import ImageDecomposeProvider
-from sandbox_harness.job_contracts import JobArtifactInput,JobExpectedOutput,JobGroupCreate,JobRequest
-from sandbox_harness.job_worker import JobWorker
-from sandbox_harness.media_worker import MediaWorker
-from sandbox_harness.objects import ObjectStore
-from sandbox_harness.store import MediaJobRow,MediaOutboxRow,Store
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate, TurnState)
+from sandbox_harness.services.job_worker.image_decompose_adapter import (ImageDecomposeAdapter)
+from sandbox_harness.services.media_worker.image_decompose_provider import (ImageDecomposeProvider)
+from sandbox_harness.common.contracts.job_contracts import (JobArtifactInput, JobExpectedOutput, JobGroupCreate, JobRequest)
+from sandbox_harness.common.execution.job_worker import (JobWorker)
+from sandbox_harness.services.media_worker.media_worker import (MediaWorker)
+from sandbox_harness.common.storage.objects import (ObjectStore)
+from sandbox_harness.common.db.store import (MediaJobRow, MediaOutboxRow, Store)
 
 ROOT=Path(__file__).resolve().parents[1]
 CASES=('DM01','DM02','DM03','DM04')

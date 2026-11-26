@@ -4,12 +4,12 @@ import io
 from PIL import Image
 import pytest
 
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.domain import Harness, MediaReferenceInput, ThreadCreate
-from sandbox_harness.media_catalog import MediaCatalog
-from sandbox_harness.media_references import resolve_media_references
-from sandbox_harness.objects import ObjectStore, S3ObjectStore
-from sandbox_harness.store import Store
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.contracts.domain import (Harness, MediaReferenceInput, ThreadCreate)
+from sandbox_harness.common.catalog.media_catalog import (MediaCatalog)
+from sandbox_harness.common.catalog.media_references import (resolve_media_references)
+from sandbox_harness.common.storage.objects import (ObjectStore, S3ObjectStore)
+from sandbox_harness.common.db.store import (Store)
 
 
 def image_reference(role="reference_image", usage="subject", *, identifier="f" * 32):

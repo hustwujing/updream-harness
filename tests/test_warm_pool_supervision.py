@@ -4,8 +4,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from sandbox_harness.app import create_app,supervise_warm_pool
-from sandbox_harness.config import Settings
+from sandbox_harness.services.api.app import (create_app, supervise_warm_pool)
+from sandbox_harness.common.configuration.config import (Settings)
 
 
 class App:

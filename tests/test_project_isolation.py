@@ -2,7 +2,7 @@ from pathlib import Path
 
 import tomllib
 
-from sandbox_harness.config import Settings
+from sandbox_harness.common.configuration.config import (Settings)
 
 
 ROOT = Path(__file__).resolve().parents[1]

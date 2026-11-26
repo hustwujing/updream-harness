@@ -13,13 +13,13 @@ class CapabilityStoreStub:
     async def revoke_capability(self,nonce,expires_at):pass
 from fastapi import HTTPException
 
-from sandbox_harness.gateway import bytes_with_idle_timeout, send_with_start_timeout, upstream_suffix
+from sandbox_harness.services.sandbox_gateway.gateway import (bytes_with_idle_timeout, send_with_start_timeout, upstream_suffix)
 
 
 def test_gateway_media_validation_reports_field_path_without_echoing_input():
     from pydantic import ValidationError
-    from sandbox_harness.domain import MediaDraftCreate
-    from sandbox_harness.gateway import validation_detail
+    from sandbox_harness.common.contracts.domain import (MediaDraftCreate)
+    from sandbox_harness.services.sandbox_gateway.gateway import (validation_detail)
     with pytest.raises(ValidationError) as error:
         MediaDraftCreate.model_validate({"kind":"video","model":"sed2",
             "generation_mode":"first_frame","parameters":{"prompt":"test"},
@@ -38,7 +38,7 @@ def test_gateway_normalizes_native_client_v1_paths_against_versioned_base_url():
 
 
 def test_gateway_adapts_legacy_claude_thinking_for_adaptive_only_models():
-    from sandbox_harness.gateway import normalize_model_request
+    from sandbox_harness.services.sandbox_gateway.gateway import (normalize_model_request)
     payload={"model":"ignored","thinking":{"type":"enabled","budget_tokens":32000},
         "messages":[{"role":"user","content":"hello"}]}
     normalized=normalize_model_request(payload,harness="claude",model="claude-opus-5-5",
@@ -50,7 +50,7 @@ def test_gateway_adapts_legacy_claude_thinking_for_adaptive_only_models():
 
 
 def test_gateway_does_not_rewrite_legacy_or_non_claude_thinking():
-    from sandbox_harness.gateway import normalize_model_request
+    from sandbox_harness.services.sandbox_gateway.gateway import (normalize_model_request)
     payload={"thinking":{"type":"enabled","budget_tokens":32000}}
     assert normalize_model_request(payload,harness="claude",model="claude-4.6-sonnet",
         suffix="/messages")["thinking"]==payload["thinking"]
@@ -59,8 +59,8 @@ def test_gateway_does_not_rewrite_legacy_or_non_claude_thinking():
 
 
 def test_gateway_rejects_invalid_public_proxy_policy_at_startup(tmp_path):
-    from sandbox_harness.config import Settings
-    from sandbox_harness.gateway import create_gateway
+    from sandbox_harness.common.configuration.config import (Settings)
+    from sandbox_harness.services.sandbox_gateway.gateway import (create_gateway)
     settings=Settings(backend='fake',database_url='sqlite+aiosqlite:///'+str(tmp_path/'gateway.db'),
         public_proxy_allowlist=['https://example.com'])
     with pytest.raises(ValueError,match='Invalid public proxy destination rule'):
@@ -78,7 +78,7 @@ async def test_gateway_fails_model_request_when_upstream_never_starts_response()
 
 
 async def test_gateway_closes_stream_after_idle_timeout():
-    from sandbox_harness.gateway import ModelUpstreamIdleTimeout
+    from sandbox_harness.services.sandbox_gateway.gateway import (ModelUpstreamIdleTimeout)
     class Response:
         async def aiter_bytes(self):
             yield b"first"
@@ -93,10 +93,10 @@ async def test_gateway_closes_stream_after_idle_timeout():
 
 async def test_gateway_media_status_is_capability_and_thread_scoped(tmp_path, monkeypatch):
     from starlette.requests import Request
-    import sandbox_harness.gateway as gateway
-    from sandbox_harness.capability import CapabilityCodec
-    from sandbox_harness.config import Settings
-    from sandbox_harness.domain import Harness
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
+    from sandbox_harness.common.security.capability import (CapabilityCodec)
+    from sandbox_harness.common.configuration.config import (Settings)
+    from sandbox_harness.common.contracts.domain import (Harness)
     calls = []
     class Redis:
         async def eval(self, *args): return 1
@@ -122,10 +122,10 @@ async def test_gateway_job_artifact_fetch_is_turn_scoped_and_redacted(tmp_path,m
     import json
     from types import SimpleNamespace
     from starlette.requests import Request
-    import sandbox_harness.gateway as gateway
-    from sandbox_harness.capability import CapabilityCodec
-    from sandbox_harness.config import Settings
-    from sandbox_harness.domain import Harness
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
+    from sandbox_harness.common.security.capability import (CapabilityCodec)
+    from sandbox_harness.common.configuration.config import (Settings)
+    from sandbox_harness.common.contracts.domain import (Harness)
     artifact_id='f'*32;payload=b'reviewed-candidate';digest=__import__('hashlib').sha256(payload).hexdigest()
     class Redis:
         async def eval(self,*args):return 1
@@ -201,10 +201,10 @@ async def test_gateway_job_artifact_fetch_is_turn_scoped_and_redacted(tmp_path,m
 async def test_gateway_continuously_validates_job_grant_headers_and_parameters(tmp_path, monkeypatch):
     import hashlib,json
     from starlette.requests import Request
-    import sandbox_harness.gateway as gateway
-    from sandbox_harness.capability import CapabilityCodec
-    from sandbox_harness.config import Settings
-    from sandbox_harness.domain import Harness
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
+    from sandbox_harness.common.security.capability import (CapabilityCodec)
+    from sandbox_harness.common.configuration.config import (Settings)
+    from sandbox_harness.common.contracts.domain import (Harness)
     class Redis:
         async def eval(self,*args):return 1
     class Store(CapabilityStoreStub):
@@ -252,10 +252,10 @@ async def test_job_execution_catalog_is_filtered_to_the_signed_grant(tmp_path,mo
     import json
     from types import SimpleNamespace
     from starlette.requests import Request
-    import sandbox_harness.gateway as gateway
-    from sandbox_harness.capability import CapabilityCodec
-    from sandbox_harness.config import Settings
-    from sandbox_harness.domain import Harness
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
+    from sandbox_harness.common.security.capability import (CapabilityCodec)
+    from sandbox_harness.common.configuration.config import (Settings)
+    from sandbox_harness.common.contracts.domain import (Harness)
     artifact_id='f'*32
     class Redis:
         async def eval(self,*args):return 1
@@ -330,10 +330,10 @@ async def test_inline_artifact_inspect_is_fenced_by_job_operation_and_artifact_g
     import json
     from types import SimpleNamespace
     from starlette.requests import Request
-    import sandbox_harness.gateway as gateway
-    from sandbox_harness.capability import CapabilityCodec
-    from sandbox_harness.config import Settings
-    from sandbox_harness.domain import Harness
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
+    from sandbox_harness.common.security.capability import (CapabilityCodec)
+    from sandbox_harness.common.configuration.config import (Settings)
+    from sandbox_harness.common.contracts.domain import (Harness)
     class Redis:
         async def eval(self,*args):return 1
     artifact_id='f'*32
@@ -377,10 +377,10 @@ async def test_gateway_site_prepare_is_capability_scoped_and_turn_bound(tmp_path
     import io
     import tarfile
     from starlette.requests import Request
-    import sandbox_harness.gateway as gateway
-    from sandbox_harness.capability import CapabilityCodec
-    from sandbox_harness.config import Settings
-    from sandbox_harness.domain import Harness
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
+    from sandbox_harness.common.security.capability import (CapabilityCodec)
+    from sandbox_harness.common.configuration.config import (Settings)
+    from sandbox_harness.common.contracts.domain import (Harness)
     calls = []
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode="w") as archive:
@@ -446,10 +446,10 @@ async def test_gateway_media_prepare_creates_turn_bound_draft(tmp_path, monkeypa
     import json
     from types import SimpleNamespace
     from starlette.requests import Request
-    import sandbox_harness.gateway as gateway
-    from sandbox_harness.capability import CapabilityCodec
-    from sandbox_harness.config import Settings
-    from sandbox_harness.domain import Harness
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
+    from sandbox_harness.common.security.capability import (CapabilityCodec)
+    from sandbox_harness.common.configuration.config import (Settings)
+    from sandbox_harness.common.contracts.domain import (Harness)
     calls = []
     expirations = []
     class Redis:
@@ -486,7 +486,7 @@ async def test_gateway_media_prepare_creates_turn_bound_draft(tmp_path, monkeypa
     result = await endpoint(request)
     assert result["id"] == "draft-1" and result["requires_confirmation"] is True
     assert calls == [("owner-1", "thread-1", turn_id, "image", "seedream-5.0", {"prompt": "test"})]
-    assert 23 * 3600 < (expirations[0] - __import__('sandbox_harness.domain',fromlist=['now']).now()).total_seconds() <= 24 * 3600
+    assert 23 * 3600 < (expirations[0] - __import__('sandbox_harness.common.contracts.domain',fromlist=['now']).now()).total_seconds() <= 24 * 3600
     commit_endpoint = next(route.endpoint for route in app.routes
         if getattr(route, "path", None) == "/v1/media/batch/commit")
     async def empty_receive():return {"type":"http.request","body":b"","more_body":False}
@@ -500,10 +500,10 @@ async def test_gateway_media_prepare_creates_turn_bound_draft(tmp_path, monkeypa
 async def test_gateway_media_candidate_content_and_promotion_are_thread_scoped(tmp_path, monkeypatch):
     import json
     from starlette.requests import Request
-    import sandbox_harness.gateway as gateway
-    from sandbox_harness.capability import CapabilityCodec
-    from sandbox_harness.config import Settings
-    from sandbox_harness.domain import Harness
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
+    from sandbox_harness.common.security.capability import (CapabilityCodec)
+    from sandbox_harness.common.configuration.config import (Settings)
+    from sandbox_harness.common.contracts.domain import (Harness)
     promoted = []
     class Redis:
         async def eval(self, *args): return 1
@@ -547,11 +547,11 @@ async def test_gateway_media_candidate_content_and_promotion_are_thread_scoped(t
 async def test_terminal_model_step_is_saved_before_last_frame_is_forwarded(tmp_path, monkeypatch):
     import httpx,json
     from starlette.requests import Request
-    import sandbox_harness.gateway as gateway
-    from sandbox_harness.model_activity import OutputProbe
-    from sandbox_harness.config import Settings
-    from sandbox_harness.domain import Harness
-    from sandbox_harness.capability import CapabilityCodec
+    import sandbox_harness.services.sandbox_gateway.gateway as gateway
+    from sandbox_harness.common.models.model_activity import (OutputProbe)
+    from sandbox_harness.common.configuration.config import (Settings)
+    from sandbox_harness.common.contracts.domain import (Harness)
+    from sandbox_harness.common.security.capability import (CapabilityCodec)
     class Redis:
         async def eval(self,*args):return 1
         async def exists(self,*args):return 0

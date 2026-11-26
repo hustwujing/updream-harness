@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from sandbox_harness.media_catalog import MediaCatalog, estimate_audio_duration_seconds
-from sandbox_harness.media_references import inspect_reference
+from sandbox_harness.common.catalog.media_catalog import (MediaCatalog, estimate_audio_duration_seconds)
+from sandbox_harness.common.catalog.media_references import (inspect_reference)
 
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -331,7 +331,7 @@ def test_seedance_reference_modes_are_gated_by_ark_asset_configuration():
 
 
 def test_domain_enums_and_public_media_catalog_cannot_drift():
-    from sandbox_harness.domain import MediaDraftCreate,MediaReferenceInput
+    from sandbox_harness.common.contracts.domain import (MediaDraftCreate, MediaReferenceInput)
     reference=MediaReferenceInput.model_json_schema()["properties"]
     roles=set(reference["role"]["enum"]);usages=set(reference["usage"]["enum"])
     draft=MediaDraftCreate.model_json_schema()["properties"]["generation_mode"]

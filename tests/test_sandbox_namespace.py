@@ -6,12 +6,11 @@ import time
 import httpx
 import pytest
 
-from sandbox_harness.domain import Harness
-from sandbox_harness.sandbox import (FakeSandboxBackend,OpenSandboxBackend,
-    SandboxCapacityUnavailable,SandboxNotFound,SandboxProfileUnavailable)
-from sandbox_harness.pool import SandboxPool
-from sandbox_harness.sandbox_contracts import SandboxScope
-from sandbox_harness.sandbox_contracts import SandboxCreateRequest
+from sandbox_harness.common.contracts.domain import (Harness)
+from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend, OpenSandboxBackend, SandboxCapacityUnavailable, SandboxNotFound, SandboxProfileUnavailable)
+from sandbox_harness.common.sandbox.pool import (SandboxPool)
+from sandbox_harness.common.contracts.sandbox_contracts import (SandboxScope)
+from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCreateRequest)
 
 
 class SlowCreateBackend(FakeSandboxBackend):
@@ -218,7 +217,7 @@ async def test_opensandbox_ttl_renew_does_not_mutate_ownership_metadata():
     backend = OpenSandboxBackend("http://opensandbox", "", 3600, "sandbox-harness")
     await backend.client.aclose(); backend.client = httpx.AsyncClient(
         base_url="http://opensandbox", transport=httpx.MockTransport(respond))
-    sandbox = __import__('sandbox_harness.sandbox', fromlist=['Sandbox']).Sandbox(
+    sandbox = __import__('sandbox_harness.common.sandbox.sandbox', fromlist=['Sandbox']).Sandbox(
         id="sandbox-one", harness=Harness.CODEX, image="image", runtime_url="http://runtime", metadata={})
     try:
         await backend.renew(sandbox,force=True)
@@ -247,7 +246,7 @@ async def test_opensandbox_refreshes_runtime_endpoint_before_proxy_url_expires()
     backend=OpenSandboxBackend('http://opensandbox','',3600,'sandbox-harness')
     await backend.client.aclose();backend.client=httpx.AsyncClient(
         base_url='http://opensandbox',transport=httpx.MockTransport(respond))
-    sandbox=__import__('sandbox_harness.sandbox',fromlist=['Sandbox']).Sandbox(
+    sandbox=__import__('sandbox_harness.common.sandbox.sandbox',fromlist=['Sandbox']).Sandbox(
         id='sandbox-one',harness=Harness.CODEX,image='image',runtime_url='http://runtime-old',
         metadata={},expires_at_monotonic=time.monotonic()+3000)
     try:
@@ -708,7 +707,7 @@ async def test_pool_skips_incompatible_warm_sandbox_and_rejects_incompatible_ado
 
 
 async def test_durable_allocation_keeps_one_slot_until_late_adoption():
-    from sandbox_harness.sandbox_contracts import SandboxCreateOutcomeUnknown
+    from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCreateOutcomeUnknown)
     class Backend(FakeSandboxBackend):
         creates=[]
         async def create(self,request):

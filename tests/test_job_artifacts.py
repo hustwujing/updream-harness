@@ -3,13 +3,13 @@ import zipfile
 
 import pytest
 
-from sandbox_harness.artifact_gateway import ArtifactEmission, ArtifactGateway, MimeRegistry
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.domain import Harness,ItemType,ThreadCreate,TurnCreate
-from sandbox_harness.job_contracts import JobGroupCreate, JobKind, JobRequest, JobState, OutputDisposition
-from sandbox_harness.objects import ObjectStore
-from sandbox_harness.store import Store
-from sandbox_harness.store import ProjectFileRow
+from sandbox_harness.common.artifacts.artifact_gateway import (ArtifactEmission, ArtifactGateway, MimeRegistry)
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.contracts.domain import (Harness, ItemType, ThreadCreate, TurnCreate)
+from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobKind, JobRequest, JobState, OutputDisposition)
+from sandbox_harness.common.storage.objects import (ObjectStore)
+from sandbox_harness.common.db.store import (Store)
+from sandbox_harness.common.db.store import (ProjectFileRow)
 from sqlalchemy import select
 
 

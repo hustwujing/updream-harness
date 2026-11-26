@@ -1,9 +1,9 @@
 from fastapi.testclient import TestClient
 import httpx
 
-from sandbox_harness.app import create_app
-from sandbox_harness.config import Settings
-from sandbox_harness.sessions import COOKIE, Sessions
+from sandbox_harness.services.api.app import (create_app)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.services.api.sessions import (COOKIE, Sessions)
 
 
 def test_threads_and_uploads_are_scoped_to_signed_browser_owner(tmp_path):
@@ -166,7 +166,7 @@ def test_slow_model_probe_does_not_block_api_startup(tmp_path, monkeypatch):
     import asyncio
     async def unavailable(self):
         await asyncio.Event().wait()
-    monkeypatch.setattr('sandbox_harness.model_discovery.ModelDiscovery.refresh', unavailable)
+    monkeypatch.setattr('sandbox_harness.services.api.model_discovery.ModelDiscovery.refresh', unavailable)
     settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'startup.db'),
         redis_url='',backend='fake',object_backend='local',model_catalog_discovery=True,
         session_signing_key='startup-browser-session-secret')

@@ -5,8 +5,8 @@ from types import SimpleNamespace
 import pytest
 from pptx import Presentation
 
-from sandbox_harness.document_preview import is_presentation, presentation_pdf
-from sandbox_harness.app import SAFE_INLINE_MIMES
+from sandbox_harness.services.api.document_preview import (is_presentation, presentation_pdf)
+from sandbox_harness.services.api.app import (SAFE_INLINE_MIMES)
 
 
 ROOT = __import__("pathlib").Path(__file__).resolve().parents[1]
@@ -23,7 +23,7 @@ def test_presentation_preview_converts_and_reuses_content_cache(tmp_path, monkey
         mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
         digest=digest, cache_root=tmp_path, maximum=10_000_000)
     assert first.startswith(b"%PDF-")
-    monkeypatch.setattr("sandbox_harness.document_preview.subprocess.run",
+    monkeypatch.setattr("sandbox_harness.services.api.document_preview.subprocess.run",
         lambda *args, **kwargs: pytest.fail("cached preview should not run LibreOffice"))
     assert presentation_pdf(data, filename="deck.pptx",
         mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -47,7 +47,7 @@ def test_presentation_preview_isolates_shared_extension_cache(tmp_path, monkeypa
         Path = __import__("pathlib").Path
         Path(argv[argv.index("--outdir") + 1], "presentation.pdf").write_bytes(b"%PDF-isolated")
         return SimpleNamespace(returncode=0, stderr=b"")
-    monkeypatch.setattr("sandbox_harness.document_preview.subprocess.run", convert)
+    monkeypatch.setattr("sandbox_harness.services.api.document_preview.subprocess.run", convert)
     result = presentation_pdf(data, filename="deck.pptx", mime="application/octet-stream",
         digest=sha256(data).hexdigest(), cache_root=tmp_path, maximum=10_000_000)
     assert result == b"%PDF-isolated"

@@ -1,6 +1,6 @@
 import pytest
 
-from sandbox_harness.media_errors import classify_provider_error, media_error_guidance
+from sandbox_harness.services.media_worker.media_errors import (classify_provider_error, media_error_guidance)
 
 
 @pytest.mark.parametrize(("status", "provider_code", "expected"), [

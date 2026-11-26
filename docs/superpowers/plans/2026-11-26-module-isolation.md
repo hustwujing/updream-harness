@@ -97,14 +97,14 @@ new canonical CLI `sandbox-harness-parallel-sandbox-gateway`. Entry-point and
 module manifest identities are authoritative; existing operator aliases may
 forward during migration, without duplicate implementations.
 
-- [ ] Add failing service import-boundary and Runtime bundle closure tests.
-- [ ] Move all mapped modules, rewrite source and test imports/patch targets,
+- [x] Add failing service import-boundary and Runtime bundle closure tests.
+- [x] Move all mapped modules, rewrite source and test imports/patch targets,
   split controlled fixed scripts from host launcher and update resource lookup.
-- [ ] Update signed Code Bundle builder to include only declared portable common;
+- [x] Update signed Code Bundle builder to include only declared portable common;
   keep allowed package roots, wire protocol and old retained bundle identities.
-- [ ] Replace `__file__.parents` checkout assumptions with explicit packaged
+- [x] Replace `__file__.parents` checkout assumptions with explicit packaged
   resource resolution; add tests with absent repository cwd and relocated assets.
-- [ ] Run focused API/worker/Runtime/CLI tests and full collection/import checks;
+- [x] Run focused API/worker/Runtime/CLI tests and full collection/import checks;
   fix source-reference tests to check new authoritative locations, then commit.
 
 ## Task 4: Shared database source separation
@@ -186,3 +186,8 @@ Task 2 evidence: five red boundary tests, 157 focused passes and 40 additional
 allocation/recovery passes. Independent review confirmed 19 extracted definitions
 retain identical AST bodies and caught a relocated client-clock monkeypatch;
 that regression was reproduced and its mock target corrected.
+
+Task 3 evidence: 12 red package/boundary tests; 28 boundary and 58 focused passes.
+Full Python verification after correcting the sandbox-gateway Skill resource
+lookup and current design traceability paths: 1412 passed, 14 skipped. Old
+production remains pinned to the verified 8b79ea5 read-only snapshot.

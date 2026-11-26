@@ -4,11 +4,9 @@ import httpx
 import pytest
 import re
 
-from sandbox_harness.domain import Harness
-from sandbox_harness.sandbox_contracts import (
-    Sandbox,SandboxCreateOutcomeUnknown,SandboxCreateRequest,SandboxEndpoint,SandboxProfile,
-    SandboxScope,SandboxState)
-from sandbox_harness.sandbox_opensandbox import OpenSandboxBackend
+from sandbox_harness.common.contracts.domain import (Harness)
+from sandbox_harness.common.contracts.sandbox_contracts import (Sandbox, SandboxCreateOutcomeUnknown, SandboxCreateRequest, SandboxEndpoint, SandboxProfile, SandboxScope, SandboxState)
+from sandbox_harness.common.sandbox.sandbox_opensandbox import (OpenSandboxBackend)
 
 
 def request():
@@ -170,7 +168,7 @@ async def test_opensandbox_unknown_create_inventory_rate_limit_stays_outcome_unk
         if http_request.url.path=="/v1/sandboxes":return httpx.Response(429)
         raise AssertionError(str(http_request.url))
     async def no_sleep(_):return None
-    monkeypatch.setattr("sandbox_harness.sandbox_opensandbox.asyncio.sleep",no_sleep)
+    monkeypatch.setattr("sandbox_harness.common.sandbox.sandbox_opensandbox.asyncio.sleep",no_sleep)
     backend=OpenSandboxBackend("http://opensandbox","",300,"test-namespace",
         transport=httpx.MockTransport(respond))
     try:

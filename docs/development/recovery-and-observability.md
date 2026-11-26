@@ -19,7 +19,7 @@ to repeat the RPC. Cleanup confirms deletion before capacity release, and
 preparation recovery persists absence before releasing the original reservation.
 
 When `SANDBOX_HARNESS_JOB_ALLOCATION_DISPATCHER_ENABLED=true`, run
-`python -m sandbox_harness.allocation_service` independently of the JobWorker.
+`python -m sandbox_harness.services.allocation_worker.allocation_service` independently of the JobWorker.
 `allocation_dispatch.py` stores provider create requests and responses in
 `sandbox_allocations`. Job deadlines and Worker replacement stop waiting without
 cancelling that service's in-flight create. Its own lost SENDING lease remains

@@ -3,11 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from sandbox_harness.controlled_media_runner import (
-    CONDA_ENV_PREFIXES,RUNTIME_MOUNT,ControlledOperationError,THREAD_ENVIRONMENT,_base_args,_gpu_uuid,
-    _require_audio_stream,_thread_environment_args,probe_controlled_gpu,
-    _transcribe,
-)
+from sandbox_harness.services.controlled_worker.controlled_media_runner import (CONDA_ENV_PREFIXES, RUNTIME_MOUNT, ControlledOperationError, THREAD_ENVIRONMENT, _base_args, _gpu_uuid, _require_audio_stream, _thread_environment_args, probe_controlled_gpu, _transcribe)
 
 
 def test_controlled_bwrap_exposes_read_only_gpu_system_topology(tmp_path):
@@ -29,7 +25,7 @@ def test_controlled_bwrap_exposes_read_only_gpu_system_topology(tmp_path):
 
 
 def test_reserved_gpu_index_resolves_to_host_uuid(monkeypatch):
-    monkeypatch.setattr('sandbox_harness.controlled_media_runner.subprocess.check_output',
+    monkeypatch.setattr('sandbox_harness.services.controlled_worker.controlled_media_runner.subprocess.check_output',
         lambda *args,**kwargs:'0, GPU-aaaa-bbbb\n7, GPU-cccc-dddd\n')
 
     assert _gpu_uuid('7')=='GPU-cccc-dddd'
@@ -47,12 +43,12 @@ def test_controlled_scientific_runtimes_have_bounded_thread_pools():
 def test_controlled_gpu_probe_uses_exact_sam3_python_and_returns_health(tmp_path,monkeypatch):
     runtime=tmp_path/'runtime';(runtime/'envs/sam3/bin').mkdir(parents=True)
     observed=[]
-    monkeypatch.setattr('sandbox_harness.controlled_media_runner.pwd.getpwnam',
+    monkeypatch.setattr('sandbox_harness.services.controlled_worker.controlled_media_runner.pwd.getpwnam',
         lambda name:type('Account',(),{'pw_uid':10001,'pw_gid':10001})())
-    monkeypatch.setattr('sandbox_harness.controlled_media_runner.os.chown',lambda *args:None)
-    monkeypatch.setattr('sandbox_harness.controlled_media_runner._gpu_isolation_args',
+    monkeypatch.setattr('sandbox_harness.services.controlled_worker.controlled_media_runner.os.chown',lambda *args:None)
+    monkeypatch.setattr('sandbox_harness.services.controlled_worker.controlled_media_runner._gpu_isolation_args',
         lambda work,runtime,index:['bwrap',index])
-    monkeypatch.setattr('sandbox_harness.controlled_media_runner._run',
+    monkeypatch.setattr('sandbox_harness.services.controlled_worker.controlled_media_runner._run',
         lambda args,work,timeout:observed.append((args,work,timeout)))
     assert probe_controlled_gpu('3',runtime,tmp_path/'probes')
     assert observed[0][0][:2]==['bwrap','3']
@@ -63,7 +59,7 @@ def test_controlled_gpu_probe_uses_exact_sam3_python_and_returns_health(tmp_path
 def test_transcribe_rejects_media_without_audio_before_model_execution(tmp_path,monkeypatch):
     source=tmp_path/'silent.mp4';source.write_bytes(b'video')
     result=type('Result',(),{'returncode':0,'stdout':'{"streams": []}','stderr':''})()
-    monkeypatch.setattr('sandbox_harness.controlled_media_runner.subprocess.run',
+    monkeypatch.setattr('sandbox_harness.services.controlled_worker.controlled_media_runner.subprocess.run',
         lambda *args,**kwargs:result)
 
     with pytest.raises(ControlledOperationError) as raised:_require_audio_stream(source)
@@ -77,15 +73,15 @@ def test_transcribe_rejects_media_without_audio_before_model_execution(tmp_path,
 def test_transcribe_uses_runtime_mount_model_path_inside_bwrap(tmp_path,monkeypatch):
     runtime=tmp_path/'runtime';work=tmp_path/'work';work.mkdir()
     source=work/'speech.wav';source.write_bytes(b'audio')
-    monkeypatch.setattr('sandbox_harness.controlled_media_runner._require_audio_stream',lambda path:None)
-    monkeypatch.setattr('sandbox_harness.controlled_media_runner._base_args',
+    monkeypatch.setattr('sandbox_harness.services.controlled_worker.controlled_media_runner._require_audio_stream',lambda path:None)
+    monkeypatch.setattr('sandbox_harness.services.controlled_worker.controlled_media_runner._base_args',
         lambda work,runtime:['bwrap'])
     def run(args,work,timeout):
         request=json.loads((work/'request.json').read_text())
         assert request['model']=='/runtime/models/media-foundation/faster-whisper-small'
         (work/'transcript.json').write_text(json.dumps({'language':'zh','segments':[{'text':'ok'}]}))
         (work/'transcript.txt').write_text('ok\n');(work/'transcript.srt').write_text('1\nok\n')
-    monkeypatch.setattr('sandbox_harness.controlled_media_runner._run',run)
+    monkeypatch.setattr('sandbox_harness.services.controlled_worker.controlled_media_runner._run',run)
     result=_transcribe(work,source,{'language':'zh','beam_size':3},runtime)
     assert {row['role'] for row in result['outputs']}=={
         'transcript_json','transcript_text','transcript_srt'}

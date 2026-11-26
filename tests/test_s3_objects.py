@@ -2,7 +2,7 @@ from io import BytesIO
 
 import pytest
 
-from sandbox_harness.objects import S3ObjectStore
+from sandbox_harness.common.storage.objects import (S3ObjectStore)
 
 
 class S3:

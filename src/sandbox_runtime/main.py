@@ -1,6 +1,6 @@
 import uvicorn
 import os
-from sandbox_harness.observability import configure
+from sandbox_harness.common.observability.observability import (configure)
 from .state import runtime_state_dir
 
 

@@ -51,7 +51,7 @@ Keep credentials in ignored environment files, never in source or test fixtures.
 ```bash
 .venv/bin/pytest -q tests/test_store.py tests/test_broker.py
 npm --prefix web run build
-.venv/bin/uvicorn sandbox_harness.app:create_app --factory --reload --port 22766
+.venv/bin/uvicorn sandbox_harness.services.api.app:create_app --factory --reload --port 22766
 ```
 
 The full Python suite is `.venv/bin/pytest`. `pyproject.toml` redirects pytest

@@ -106,19 +106,21 @@ runtime-media = [
 ]
 
 [project.scripts]
-sandbox-harness-api = "sandbox_harness.main:run"
-sandbox-harness-gateway = "sandbox_harness.gateway:run"
-sandbox-harness-media-worker = "sandbox_harness.media_service:run"
-sandbox-harness-site-worker = "sandbox_harness.site_service:run"
-sandbox-harness-logs = "sandbox_harness.log_query:main"
-sandbox-harness-user = "sandbox_harness.auth_cli:main"
+sandbox-harness-parallel-sandbox-gateway = "sandbox_harness.services.sandbox_gateway.gateway:run"
+sandbox-harness-parallel-allocation-worker = "sandbox_harness.services.allocation_worker.allocation_service:main"
+sandbox-harness-api = "sandbox_harness.services.api.main:run"
+sandbox-harness-gateway = "sandbox_harness.services.sandbox_gateway.gateway:run"
+sandbox-harness-media-worker = "sandbox_harness.services.media_worker.media_service:run"
+sandbox-harness-site-worker = "sandbox_harness.services.site_worker.site_service:run"
+sandbox-harness-logs = "sandbox_harness.tools.log_query:main"
+sandbox-harness-user = "sandbox_harness.tools.auth_cli:main"
 sandbox-harness-runtime = "sandbox_runtime.main:run"
-sandbox-harness-parallel-api = "sandbox_harness.main:run"
-sandbox-harness-parallel-gateway = "sandbox_harness.gateway:run"
-sandbox-harness-parallel-job-worker = "sandbox_harness.job_service:run"
-sandbox-harness-parallel-controlled-worker = "sandbox_harness.controlled_service:run"
-sandbox-harness-parallel-media-worker = "sandbox_harness.media_service:run"
-sandbox-harness-parallel-site-worker = "sandbox_harness.site_service:run"
+sandbox-harness-parallel-api = "sandbox_harness.services.api.main:run"
+sandbox-harness-parallel-gateway = "sandbox_harness.services.sandbox_gateway.gateway:run"
+sandbox-harness-parallel-job-worker = "sandbox_harness.services.job_worker.job_service:run"
+sandbox-harness-parallel-controlled-worker = "sandbox_harness.services.controlled_worker.controlled_service:run"
+sandbox-harness-parallel-media-worker = "sandbox_harness.services.media_worker.media_service:run"
+sandbox-harness-parallel-site-worker = "sandbox_harness.services.site_worker.site_service:run"
 sandbox-background = "sandbox_runtime.background_cli:main"
 sandbox-interact = "sandbox_runtime.interaction_cli:main"
 sandbox-media = "sandbox_runtime.media_cli:main"
@@ -132,7 +134,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/sandbox_harness", "src/sandbox_runtime", "src/sandbox_bootstrap"]
+packages = ["src/sandbox_harness", "src/sandbox_runtime", "src/sandbox_bootstrap", "src/controlled_runtime"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -1,12 +1,11 @@
 import pytest
 
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.domain import (Harness, PauseParticipantState, ThreadControlState,
-    ThreadCreate, TurnCreate, TurnState)
-from sandbox_harness.job_contracts import JobGroupCreate, JobKind, JobRequest, JobState
-from sandbox_harness.job_adapters import AdapterStatus, AdapterSubmission, BaseJobAdapter
-from sandbox_harness.job_worker import JobWorker
-from sandbox_harness.store import Store
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.contracts.domain import (Harness, PauseParticipantState, ThreadControlState, ThreadCreate, TurnCreate, TurnState)
+from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobKind, JobRequest, JobState)
+from sandbox_harness.common.execution.job_adapters import (AdapterStatus, AdapterSubmission, BaseJobAdapter)
+from sandbox_harness.common.execution.job_worker import (JobWorker)
+from sandbox_harness.common.db.store import (Store)
 
 
 def request(name: str, kind: JobKind) -> JobRequest:

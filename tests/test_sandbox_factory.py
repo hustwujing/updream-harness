@@ -1,15 +1,13 @@
 import httpx
 import pytest
 
-from sandbox_harness.config import Settings
-from sandbox_harness.domain import Harness
-from sandbox_harness.pool import SandboxPool
-from sandbox_harness.runtime import RuntimeClient
-from sandbox_harness.sandbox import AliyunSandboxBackend,FakeSandboxBackend,OpenSandboxBackend
-from sandbox_harness.sandbox_contracts import (SandboxCapabilities,SandboxCreateRequest,SandboxHandle,
-    SandboxProviderUnavailable)
-from sandbox_harness.sandbox_factory import (SandboxBackendRegistry,SandboxProfileResolver,
-    build_sandbox_backend)
+from sandbox_harness.common.configuration.config import (Settings)
+from sandbox_harness.common.contracts.domain import (Harness)
+from sandbox_harness.common.sandbox.pool import (SandboxPool)
+from sandbox_harness.common.sandbox.runtime import (RuntimeClient)
+from sandbox_harness.common.sandbox.sandbox import (AliyunSandboxBackend, FakeSandboxBackend, OpenSandboxBackend)
+from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCapabilities, SandboxCreateRequest, SandboxHandle, SandboxProviderUnavailable)
+from sandbox_harness.common.sandbox.sandbox_factory import (SandboxBackendRegistry, SandboxProfileResolver, build_sandbox_backend)
 
 
 def test_backend_factory_is_the_single_provider_construction_boundary(tmp_path):

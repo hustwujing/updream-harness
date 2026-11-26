@@ -7,10 +7,10 @@ import pytest
 import httpx
 from sqlalchemy import select
 
-from sandbox_harness.catalog import HarnessCatalog
-from sandbox_harness.domain import Harness, MediaDraftCreate, ThreadCreate, TurnCreate, now
-from sandbox_harness.media_reference_publisher import MediaReferencePreparationError, MediaReferencePublisher
-from sandbox_harness.store import MediaReferenceAssetRow,Store
+from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
+from sandbox_harness.common.contracts.domain import (Harness, MediaDraftCreate, ThreadCreate, TurnCreate, now)
+from sandbox_harness.services.media_worker.media_reference_publisher import (MediaReferencePreparationError, MediaReferencePublisher)
+from sandbox_harness.common.db.store import (MediaReferenceAssetRow, Store)
 
 
 DATA=b"reference-media-bytes"
@@ -82,9 +82,9 @@ async def test_reference_publisher_uploads_activates_and_reuses_cached_asset(tmp
     try:
         value=await job(store);objects=Objects();publisher=MediaReferencePublisher(settings(),store,objects,"worker")
         ark=Ark();publisher.ark=ark
-        monkeypatch.setattr("sandbox_harness.media_reference_publisher.httpx.AsyncClient",lambda **_:HttpClient())
+        monkeypatch.setattr("sandbox_harness.services.media_worker.media_reference_publisher.httpx.AsyncClient",lambda **_:HttpClient())
         async def no_sleep(_):return None
-        monkeypatch.setattr("sandbox_harness.media_reference_publisher.asyncio.sleep",no_sleep)
+        monkeypatch.setattr("sandbox_harness.services.media_worker.media_reference_publisher.asyncio.sleep",no_sleep)
         ready=await publisher.prepare(value,require_ark=True)
         assert ready[0]["asset_uri"]=="asset://asset-test"
         assert ready[0]["public_url"].startswith("https://boss-shjd.biliapi.net/updream/aniforge/image/")
@@ -115,9 +115,9 @@ async def test_reference_publisher_recovers_or_retries_transient_put_read_error(
                 return await super().put(*args,**kwargs)
         objects=FlakyObjects();client=FlakyClient()
         publisher=MediaReferencePublisher(settings(),store,objects,"worker")
-        monkeypatch.setattr("sandbox_harness.media_reference_publisher.httpx.AsyncClient",lambda **_:client)
+        monkeypatch.setattr("sandbox_harness.services.media_worker.media_reference_publisher.httpx.AsyncClient",lambda **_:client)
         async def no_sleep(_):return None
-        monkeypatch.setattr("sandbox_harness.media_reference_publisher.asyncio.sleep",no_sleep)
+        monkeypatch.setattr("sandbox_harness.services.media_worker.media_reference_publisher.asyncio.sleep",no_sleep)
 
         ready=await publisher.prepare(value,require_ark=False)
 
@@ -139,7 +139,7 @@ async def test_reference_publisher_does_not_replay_put_after_dropped_success_res
                     request=httpx.Request("PUT",args[0]))
         client=DroppedResponseClient()
         publisher=MediaReferencePublisher(settings(),store,objects,"worker")
-        monkeypatch.setattr("sandbox_harness.media_reference_publisher.httpx.AsyncClient",lambda **_:client)
+        monkeypatch.setattr("sandbox_harness.services.media_worker.media_reference_publisher.httpx.AsyncClient",lambda **_:client)
 
         ready=await publisher.prepare(value,require_ark=False)
 
@@ -154,7 +154,7 @@ async def test_reference_publisher_fails_before_seedance_when_ark_credentials_mi
     try:
         value=await job(store);objects=Objects();publisher=MediaReferencePublisher(settings(
             ark_access_key="",ark_secret_key="",ark_asset_group_id=""),store,objects,"worker")
-        monkeypatch.setattr("sandbox_harness.media_reference_publisher.httpx.AsyncClient",lambda **_:HttpClient())
+        monkeypatch.setattr("sandbox_harness.services.media_worker.media_reference_publisher.httpx.AsyncClient",lambda **_:HttpClient())
         with pytest.raises(MediaReferencePreparationError,match="credentials_unavailable"):
             await publisher.prepare(value,require_ark=True)
         cached=await store.get_media_reference_asset(DIGEST)
@@ -198,7 +198,7 @@ async def test_reference_asset_creation_is_atomic_for_parallel_provider_jobs(tmp
 async def test_parallel_jobs_with_one_worker_serialize_shared_reference_publication(tmp_path,monkeypatch):
     store=Store("sqlite+aiosqlite:///"+str(tmp_path/"publisher-shared-worker.db"));await store.initialize()
     objects=Objects();publisher=MediaReferencePublisher(settings(),store,objects,"w"*64)
-    monkeypatch.setattr("sandbox_harness.media_reference_publisher.httpx.AsyncClient",lambda **_:HttpClient())
+    monkeypatch.setattr("sandbox_harness.services.media_worker.media_reference_publisher.httpx.AsyncClient",lambda **_:HttpClient())
     async def progress_only(*args,**kwargs):return True
     monkeypatch.setattr(store,"update_media_job",progress_only)
     reference={"sha256":DIGEST,"kind":"image","mime":"image/png","size":len(DATA),
@@ -228,7 +228,7 @@ async def test_reference_publisher_recovers_lost_create_receipt_by_asset_name(tm
             async def create(self,reference):raise AssertionError("must reuse recovered asset")
             async def get(self,asset_id):return {"Status":"Active"}
         publisher.ark=ExistingArk()
-        monkeypatch.setattr("sandbox_harness.media_reference_publisher.httpx.AsyncClient",lambda **_:HttpClient())
+        monkeypatch.setattr("sandbox_harness.services.media_worker.media_reference_publisher.httpx.AsyncClient",lambda **_:HttpClient())
         ready=await publisher.prepare(value,require_ark=True)
         assert ready[0]["asset_uri"]=="asset://asset-recovered"
     finally:await store.close()
@@ -245,7 +245,7 @@ async def test_reference_publisher_stops_before_seedance_on_ark_failed_status(tm
             async def create(self,reference):return "asset-failed"
             async def get(self,asset_id):return {"Status":"Failed","Error":{"Code":"InvalidMedia"}}
         publisher.ark=FailedArk()
-        monkeypatch.setattr("sandbox_harness.media_reference_publisher.httpx.AsyncClient",lambda **_:HttpClient())
+        monkeypatch.setattr("sandbox_harness.services.media_worker.media_reference_publisher.httpx.AsyncClient",lambda **_:HttpClient())
         with pytest.raises(MediaReferencePreparationError,match="InvalidMedia"):
             await publisher.prepare(value,require_ark=True)
         cached=await store.get_media_reference_asset(DIGEST)

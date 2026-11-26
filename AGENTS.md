@@ -44,7 +44,7 @@ claims made by documentation.
 
 ## Development Discipline
 
-- Treat `src/sandbox_harness/domain.py`, `store.py`, the API routes and tests as
+- Treat `src/sandbox_harness/common/contracts/domain.py`, `store.py`, the API routes and tests as
   the source of truth. If documentation disagrees, verify the behavior and fix
   the documentation in the same change.
 - Keep generated data, dependencies, caches, logs, databases and temporary
