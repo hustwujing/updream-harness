@@ -8,7 +8,7 @@ import shutil
 from typing import Any,Awaitable,Callable
 
 from .artifact_gateway import ArtifactEmission,ArtifactGateway
-from .harness_job import staged_file_chunks
+from .common.storage.files import staged_file_chunks
 from .job_adapters import (AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExecutionContext,
     PreAcceptFailure,SubmissionRecovery)
 from .job_contracts import JobState

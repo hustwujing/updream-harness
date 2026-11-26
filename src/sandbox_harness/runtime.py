@@ -18,6 +18,7 @@ from urllib.parse import urljoin
 
 import httpx
 
+from .common.process.identity import _process_start
 from .domain import Attachment, RuntimeEvent, RuntimeResult
 from .sandbox import Sandbox
 from .sandbox_contracts import SandboxBackend
@@ -50,11 +51,6 @@ class StagedRuntimeObject:
         self.path.unlink(missing_ok=True)
 
 
-def _process_start(pid: int) -> str:
-    try:
-        return Path(f"/proc/{pid}/stat").read_text().split()[21]
-    except (OSError, IndexError):
-        return ""
 
 
 def _reap_stale_downloads(root: Path) -> None:

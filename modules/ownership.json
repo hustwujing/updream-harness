@@ -66,6 +66,58 @@
       "owner": "common/catalog",
       "target": "src/sandbox_harness/common/catalog/catalog.py"
     },
+    "src/sandbox_harness/common/__init__.py": {
+      "owner": "namespace initializer",
+      "target": "src/sandbox_harness/common/__init__.py"
+    },
+    "src/sandbox_harness/common/contracts/__init__.py": {
+      "owner": "common/contracts",
+      "target": "src/sandbox_harness/common/contracts/__init__.py"
+    },
+    "src/sandbox_harness/common/contracts/media_errors.py": {
+      "owner": "common/contracts",
+      "target": "src/sandbox_harness/common/contracts/media_errors.py"
+    },
+    "src/sandbox_harness/common/jobs/__init__.py": {
+      "owner": "common/jobs",
+      "target": "src/sandbox_harness/common/jobs/__init__.py"
+    },
+    "src/sandbox_harness/common/jobs/review.py": {
+      "owner": "common/jobs",
+      "target": "src/sandbox_harness/common/jobs/review.py"
+    },
+    "src/sandbox_harness/common/process/__init__.py": {
+      "owner": "common/process",
+      "target": "src/sandbox_harness/common/process/__init__.py"
+    },
+    "src/sandbox_harness/common/process/identity.py": {
+      "owner": "common/process",
+      "target": "src/sandbox_harness/common/process/identity.py"
+    },
+    "src/sandbox_harness/common/sandbox/__init__.py": {
+      "owner": "common/sandbox",
+      "target": "src/sandbox_harness/common/sandbox/__init__.py"
+    },
+    "src/sandbox_harness/common/sandbox/allocation_client.py": {
+      "owner": "common/sandbox",
+      "target": "src/sandbox_harness/common/sandbox/allocation_client.py"
+    },
+    "src/sandbox_harness/common/security/__init__.py": {
+      "owner": "common/security",
+      "target": "src/sandbox_harness/common/security/__init__.py"
+    },
+    "src/sandbox_harness/common/security/network.py": {
+      "owner": "common/security",
+      "target": "src/sandbox_harness/common/security/network.py"
+    },
+    "src/sandbox_harness/common/storage/__init__.py": {
+      "owner": "common/storage",
+      "target": "src/sandbox_harness/common/storage/__init__.py"
+    },
+    "src/sandbox_harness/common/storage/files.py": {
+      "owner": "common/storage",
+      "target": "src/sandbox_harness/common/storage/files.py"
+    },
     "src/sandbox_harness/config.py": {
       "owner": "common/configuration",
       "target": "src/sandbox_harness/common/configuration/config.py"

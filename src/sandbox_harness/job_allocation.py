@@ -9,7 +9,7 @@ from .sandbox import Sandbox,SandboxCapacityUnavailable,SandboxNotFound,SandboxR
 from .sandbox_contracts import (SandboxCreateOutcomeUnknown,SandboxEndpointUnavailable,
     SandboxHandle,SandboxProfile,SandboxProfileUnavailable,SandboxProviderUnavailable)
 from .sandbox_factory import SandboxProfileResolver
-from .allocation_dispatch import AllocationAbsent,allocation_key
+from .common.sandbox.allocation_client import AllocationAbsent,allocation_key
 
 
 class SandboxAllocationOwner:

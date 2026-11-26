@@ -36,7 +36,7 @@ from .profiles import ProfileResolver
 from .sandbox_factory import release_provider
 from .catalog import HarnessCatalog
 from .execution_readiness import ExecutionReadiness
-from .reviewer import ReviewSubmission,ReviewerCoordinator
+from .common.jobs.review import ReviewSubmission,ReviewerCoordinator
 from .config import Settings, load_settings, validate_service_settings
 from .domain import Harness, MediaDraftCreate, now
 from .model_routes import ModelRoutes

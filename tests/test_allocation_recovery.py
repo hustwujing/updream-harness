@@ -47,7 +47,7 @@ async def test_uncertain_creation_has_a_bounded_wait_without_reissuing(tmp_path,
         await client.enqueue(context, request)
         await AllocationService(store, provider).run_once()
         future = now()+timedelta(seconds=91)
-        monkeypatch.setattr('sandbox_harness.allocation_dispatch.now', lambda: future)
+        monkeypatch.setattr('sandbox_harness.common.sandbox.allocation_client.now', lambda: future)
         with pytest.raises(RuntimeError, match='allocation_recovery_required'):
             await asyncio.wait_for(client.create(context, request), .5)
         assert provider.calls == 1
@@ -64,7 +64,7 @@ async def test_waiting_for_dispatch_does_not_start_uncertain_creation_deadline(t
     try:
         await client.enqueue(context, request)
         future = now()+timedelta(hours=1)
-        monkeypatch.setattr('sandbox_harness.allocation_dispatch.now', lambda: future)
+        monkeypatch.setattr('sandbox_harness.common.sandbox.allocation_client.now', lambda: future)
         task = asyncio.create_task(client.create(context, request))
         await asyncio.sleep(.05)
         assert not task.done()
@@ -363,7 +363,7 @@ async def test_old_schema_upgrade_keeps_legacy_unknown_and_does_not_invent_recov
             await db.execute(text('ALTER TABLE jobs DROP COLUMN allocation_replacements'))
         await store.initialize();await store.initialize()
         future=now()+timedelta(hours=2)
-        monkeypatch.setattr('sandbox_harness.allocation_dispatch.now',lambda:future)
+        monkeypatch.setattr('sandbox_harness.common.sandbox.allocation_client.now',lambda:future)
         task=asyncio.create_task(client.create(context,request))
         await asyncio.sleep(.05)
         assert not task.done()

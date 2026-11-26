@@ -30,9 +30,9 @@ from .media_reference_publisher import MediaReferencePreparationError, MediaRefe
 from .minimax_voice import MiniMaxVoiceCloneError, MiniMaxVoiceClonePending, MiniMaxVoiceClones
 from .observability import event
 from .objects import ObjectStore, S3ObjectStore
-from .public_proxy import normalize_host,public_address
+from .common.security.network import normalize_host,public_address
 from .store import Store
-from .runtime import _process_start
+from .common.process.identity import _process_start
 
 
 class MediaWorker:

@@ -9,7 +9,7 @@ import signal
 import time
 
 from .config import Settings, load_settings
-from .allocation_dispatch import AllocationClient
+from .common.sandbox.allocation_client import AllocationClient
 from .domain import Harness
 from .harness_job import HarnessJobAdapter, JobGrantFactory, SandboxChildBackend
 from .image_decompose_adapter import ImageDecomposeAdapter
@@ -24,7 +24,8 @@ from .objects import object_store
 from .observability import configure,event
 from .pool import SandboxPool
 from .profiles import ProfileResolver
-from .reviewer import ReviewerCoordinator,ReviewerJobAdapter,ReviewSubmission,ReviewTrigger
+from .reviewer import ReviewerJobAdapter
+from .common.jobs.review import ReviewerCoordinator,ReviewSubmission,ReviewTrigger
 from .runtime import RuntimeClient
 from . import sandbox_factory
 from .scheduler import NodeProfile, Scheduler

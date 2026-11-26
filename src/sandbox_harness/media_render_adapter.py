@@ -8,7 +8,8 @@ import httpx
 
 from .artifact_gateway import ArtifactEmission,ArtifactGateway
 from .domain import Harness
-from .harness_job import HarnessJobAdapter, staged_file_chunks
+from .harness_job import HarnessJobAdapter
+from .common.storage.files import staged_file_chunks
 from .job_allocation import SandboxAllocationOwner
 from .job_adapters import (AdapterStatus,AdapterSubmission,BaseJobAdapter,JobExecutionContext,
     PreAcceptFailure,PreAcceptCancelled,SubmissionRecovery,SubmissionOutcomeUnknown,

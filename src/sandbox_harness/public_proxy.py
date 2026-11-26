@@ -7,6 +7,7 @@ import ipaddress
 import re
 import socket
 import time
+from .common.security.network import normalize_host, public_address
 from .observability import event,bind,operation,enrich,add_link,observed
 import logging
 from urllib.parse import urlsplit
@@ -14,7 +15,6 @@ from urllib.parse import urlsplit
 
 MAX_HEADER = 64 * 1024
 ALLOWED_PORTS = {80, 443}
-DOMAIN_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 
 
@@ -37,20 +37,6 @@ class PublicProxyConnectError(ConnectionError):
         self.address_family=address_family
 
 
-def normalize_host(value: str) -> str:
-    host = value.strip().strip("[]").rstrip(".").lower()
-    if not host or "://" in host or any(character in host for character in "/?#@"):
-        raise ValueError("Invalid proxy destination")
-    try:
-        return str(ipaddress.ip_address(host))
-    except ValueError:
-        try:
-            host = host.encode("idna").decode("ascii")
-        except UnicodeError as exc:
-            raise ValueError("Invalid proxy destination") from exc
-        if len(host) > 253 or not all(DOMAIN_LABEL.fullmatch(label) for label in host.split(".")):
-            raise ValueError("Invalid proxy destination")
-        return host
 
 
 @dataclass(frozen=True)
@@ -122,9 +108,6 @@ async def reject(writer: asyncio.StreamWriter, status: int, code: str) -> None:
     await writer.drain()
 
 
-def public_address(value: str) -> bool:
-    address = ipaddress.ip_address(value)
-    return address.is_global and not address.is_multicast
 
 
 async def resolve_public(host: str, port: int, policy: DestinationPolicy | None = None) -> str:

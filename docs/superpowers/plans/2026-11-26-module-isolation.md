@@ -79,11 +79,11 @@ focused helper tests. Source locations follow common directories in the spec.
 `staged_file_chunks`, process identity, network policy helpers, allocation request/
 client protocol, reviewer coordinator and adapter contracts.
 
-- [ ] Add boundary regression tests covering Controlled→Harness and Media→Runtime/
+- [x] Add boundary regression tests covering Controlled→Harness and Media→Runtime/
   Gateway imports and allocation client importing a service loop; observe failures.
-- [ ] Extract the existing helpers and shared contracts without behavior changes;
+- [x] Extract the existing helpers and shared contracts without behavior changes;
   keep implementation transport/service logic with its owner.
-- [ ] Run existing controlled/media/Job/allocation/reviewer/client tests plus the
+- [x] Run existing controlled/media/Job/allocation/reviewer/client tests plus the
   boundary tests; commit the coherent shared-library extraction.
 
 ## Task 3: Service/common packages and Runtime boundaries
@@ -181,3 +181,8 @@ existing real-case/fault runners updated for canonical entry points and units.
   Any external blocked case remains failed/unrun; no unsupported passing claim.
 - [ ] Record all 184 results, per-module versions, cleanup and rollout receipts;
   preserve referenced old releases/unknown allocations, scan secrets and push.
+
+Task 2 evidence: five red boundary tests, 157 focused passes and 40 additional
+allocation/recovery passes. Independent review confirmed 19 extracted definitions
+retain identical AST bodies and caught a relocated client-clock monkeypatch;
+that regression was reproduced and its mock target corrected.

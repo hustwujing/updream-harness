@@ -20,7 +20,7 @@ from .observability import observed
 from .domain import AccountView, CapabilityClaims, RuntimeEvent, Artifact, Event, EventKind, Harness, Interaction, Item, ItemType, ProjectFile, TurnProjectFileSnapshot, ThreadCreate, ThreadView, ThreadControlState, ThreadControlView, PauseParticipantState, PauseParticipantView, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, TERMINAL, identifier, now, MediaDraftView, MediaJobView, MediaJobOutputView, MediaReferenceUploadView, SiteDeployJobView, SiteDraftView, SiteProjectView, SiteVersionView
 from .catalog import ResolvedProfile
 from .events import RedisEventBus
-from .media_errors import media_error_guidance
+from .common.contracts.media_errors import media_error_guidance
 from .media_provider import MediaCancellationRequested
 from .job_errors import ArtifactCollectionCardinalityError,ArtifactValidationError,job_error_payload,normalize_job_error
 from .activity_projection import merge_projection_payload,projection_instruction

@@ -8,6 +8,7 @@ from pathlib import Path
 import time
 from typing import Any, Awaitable, Callable, Protocol
 
+from .common.storage.files import staged_file_chunks
 from .domain import Harness
 from .job_allocation import SandboxAllocationOwner
 from .grants import GrantAuthority,JobGrantRequest,TurnGrantRequest
@@ -26,10 +27,6 @@ from .objects import object_chunks
 from .profiles import ProviderRelease
 
 
-async def staged_file_chunks(path: Path, chunk_size: int = 1024 * 1024):
-    with path.open("rb") as stream:
-        while chunk := await asyncio.to_thread(stream.read, chunk_size):
-            yield chunk
 
 
 def verify_runtime_artifact(staged, metadata: dict) -> None:
