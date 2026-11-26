@@ -92,6 +92,16 @@ def worker(store=None, objects=None):
 
 
 @pytest.mark.asyncio
+async def test_seedream_uses_dedicated_image_request_timeout():
+    value=worker();value.settings.image_task_timeout_seconds=321
+    client=await value._image_client()
+    try:
+        assert client.timeout.connect==10 and client.timeout.read==321
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_video_recovery_polls_persisted_provider_job_without_resubmit(monkeypatch):
     value = worker()
     client = Client([Response({"status": "succeeded", "content": {"video_url": "https://result.test/video.mp4"}})])

@@ -150,6 +150,7 @@ class Settings(BaseSettings):
     media_draft_ttl_seconds: int = Field(default=24 * 3600, ge=600, le=7 * 86400)
     media_worker_concurrency: int = Field(default=6, ge=1, le=32)
     audio_worker_concurrency: int = Field(default=6, ge=1, le=16)
+    image_task_timeout_seconds: int = Field(default=300, ge=60, le=3600)
     audio_task_timeout_seconds: int = Field(default=2 * 3600, ge=600, le=24 * 3600)
     video_task_timeout_seconds: int = Field(default=2 * 3600, ge=600, le=24 * 3600)
     site_worker_concurrency: int = Field(default=2, ge=1, le=16)

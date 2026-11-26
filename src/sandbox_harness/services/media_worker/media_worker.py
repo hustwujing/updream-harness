@@ -366,6 +366,13 @@ class MediaWorker:
     async def _client(self):
         return httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10), follow_redirects=False, trust_env=False)
 
+    async def _image_client(self):
+        if "_client" in self.__dict__:
+            return await self._client()
+        timeout=getattr(self.settings,"image_task_timeout_seconds",300)
+        return httpx.AsyncClient(timeout=httpx.Timeout(timeout,connect=10),
+            follow_redirects=False,trust_env=False)
+
     async def _reference_url(self, reference: dict[str, Any]) -> str:
         value = reference.get("asset_uri") or reference.get("public_url") or ""
         if not value:
@@ -424,7 +431,7 @@ class MediaWorker:
             payload["image"] = urls[0] if len(urls) == 1 else urls
         if not await self.store.update_media_job(job["id"], self.owner, job["generation"], status="running", phase="requesting"):
             return ProviderResult("failed", error="media_job_lease_lost")
-        async with await self._client() as client:
+        async with await self._image_client() as client:
             response = await client.post(urljoin(base + "/", "images/generations"),
                 headers={"Authorization": "Bearer " + key}, json=payload)
         raw = response.json()
