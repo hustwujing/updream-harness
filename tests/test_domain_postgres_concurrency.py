@@ -89,3 +89,32 @@ async def test_postgres_schema_identity_detects_changed_varchar_length():
         async with database.engine.begin() as connection:
             await connection.execute(text("ALTER TABLE domain_outbox ALTER COLUMN id TYPE VARCHAR(64)"))
         await database.close()
+
+
+async def test_lifecycle_decision_recovery_is_idempotent_across_connections():
+    from sandbox_harness.common.db.domain_database import DomainScope
+    from sandbox_harness.common.db.lifecycle import LifecycleCoordinator, LifecycleParticipant, LifecycleProposal
+    databases = [DomainDatabase("core", URLS["core"]) for _ in range(6)]
+    targets = {name: DomainDatabase(name, URLS[name]) for name in ("media", "sites")}
+    coordinators = [LifecycleCoordinator(LifecycleParticipant(database)) for database in databases]
+    participants = {name: LifecycleParticipant(database) for name, database in targets.items()}
+    identity = uuid4().hex
+    proposal = LifecycleProposal(identity, identity, identity, 0, "archive", "archived")
+    try:
+        results = await asyncio.gather(*(c.start(proposal, set(targets)) for c in coordinators))
+        assert all(result.state == "pending" for result in results)
+        destinations = {name: p.handoff for name, p in participants.items()}
+        await asyncio.gather(*(c.handoff.relay(destinations) for c in coordinators))
+        await asyncio.gather(*(c.advance(identity) for c in coordinators))
+        # Lose replies after participant commits, then recover from another connection.
+        for command in await coordinators[0].pending_commands(identity):
+            await destinations[command.target].receive(command)
+        await asyncio.gather(*(c.handoff.relay(destinations) for c in coordinators))
+        results = await asyncio.gather(*(c.advance(identity) for c in coordinators))
+        assert all(result.state == "completed" for result in results)
+        for database in [databases[0], *targets.values()]:
+            async with database.transaction() as session:
+                scope = await session.get(DomainScope, proposal.scope_id)
+                assert (scope.generation, scope.state, scope.frozen_by) == (1, "archived", "")
+    finally:
+        await asyncio.gather(*(database.close() for database in databases + list(targets.values())))

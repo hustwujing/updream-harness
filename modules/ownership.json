@@ -190,6 +190,10 @@
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/job_terminal.py"
     },
+    "src/sandbox_harness/common/db/lifecycle.py": {
+      "owner": "common/db",
+      "target": "src/sandbox_harness/common/db/lifecycle.py"
+    },
     "src/sandbox_harness/common/db/media_drafts.py": {
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/media_drafts.py"

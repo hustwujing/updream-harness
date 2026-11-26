@@ -89,6 +89,34 @@ class DomainInbox(ProtocolBase):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class DomainScope(ProtocolBase):
+    __tablename__ = "domain_scopes"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    thread_id: Mapped[str] = mapped_column(String(32))
+    generation: Mapped[int] = mapped_column(Integer, default=0)
+    state: Mapped[str] = mapped_column(String(24), default="open")
+    frozen_by: Mapped[str] = mapped_column(String(64), default="")
+
+
+class DomainBarrier(ProtocolBase):
+    __tablename__ = "domain_barriers"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    proposal_json: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(String(24))
+    error_code: Mapped[str] = mapped_column(String(80), default="")
+
+
+class DomainLifecycle(ProtocolBase):
+    __tablename__ = "domain_lifecycles"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    proposal_json: Mapped[str] = mapped_column(Text)
+    participants_json: Mapped[str] = mapped_column(Text)
+    phase: Mapped[str] = mapped_column(String(24), index=True)
+    error_code: Mapped[str] = mapped_column(String(80), default="")
+
+
 PROTOCOL_TABLES = frozenset(ProtocolBase.metadata.tables)
 
 

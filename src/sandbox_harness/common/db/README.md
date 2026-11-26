@@ -21,6 +21,14 @@ Each destination handler is restricted to its local database; external Provider
 calls require their own durable execution intent. Failed streams back off without
 blocking independent streams. Receipts are replayable after reply or process loss.
 
+`lifecycle.py` persists prepare/commit/abort decisions and participant barriers.
+Core retains admission freezes until all decision receipts arrive. Owner and
+Thread epochs are separate: a remote admission must supply both captured
+epochs. Unknown outcomes stay pending; only a known refusal followed by all
+abort acknowledgements becomes a final refusal. Business check/effect callbacks
+must use only their supplied local transaction, and every new-work path must
+participate in admission. The protocol is not a replacement for those checks.
+
 These primitives are verified independently on SQLite and disposable PostgreSQL
 databases. The service entry points still use the original Store until their
 business transactions have been converted; these primitives alone are not a
