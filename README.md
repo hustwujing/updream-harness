@@ -40,7 +40,7 @@ on branch `sandbox-harness-platform-parallel-ali`.
 The current modular Ali candidate is verified at `75654ca`. Its product catalog
 contains 175 cases: the previous 169 cases plus XDB01-XDB06 for the split
 Accounts, Core, Media and Sites protocols. The composite gate is 175/175 with
-zero program or external failures and a mean duration of 284.003 seconds.
+zero program or external failures and a mean duration of 283.924 seconds.
 Python verification passed 1506 tests with 21 environment-dependent skips;
 frontend verification passed 28 tests and the production build. See the
 [175-case cross-database report](docs/test-evidence/ali-cross-database-175-case-report.md).
@@ -56,6 +56,9 @@ a Core-coordinated lifecycle protocol. The deployed MediaWorker release is
 `737410af641777e6b2cab0ebbf7b44a94acbcb1c0b6dce3dfe1c9f3a09061480`; its
 cancel fence discards terminal Provider results before publication while still
 calling a real external cancel adapter when a durable Provider job ID exists.
+image-inference resolves the separately hashed external release
+`cec471fd7ba8ba8d7ecbbf369cbbe98321891074a003096fc54459a72ea2fd9a`
+without copying its 29 GiB model files.
 
 ## Services
 
