@@ -97,7 +97,7 @@ def test_critical_event_contract_reports_missing_required_fields(telemetry):
 def test_static_observability_calls_use_canonical_declared_fields():
     from sandbox_harness.common.observability.schema import ALIASES,canonical_name
     failures=[]
-    for path in (Path(__file__).parents[1]/'src'/'sandbox_harness').rglob('*.py'):
+    for path in (Path(__file__).parents[1]/'src').rglob('*.py'):
         tree=ast.parse(path.read_text())
         for node in ast.walk(tree):
             if not isinstance(node,ast.Call):continue
