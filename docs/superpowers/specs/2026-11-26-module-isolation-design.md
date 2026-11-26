@@ -85,7 +85,7 @@ src/
       job_worker/           # sandbox Child/Reviewer/Operation adapters
       allocation_worker/    # provider-create and reconciliation runner
       media_worker/         # external media lifecycle and provider transports
-      controlled_worker/    # bwrap Operation adapters and fixed programs
+      controlled_worker/    # host adapters and bwrap launcher; programs are separate
       site_worker/          # static site deployment runner
     common/
       contracts/            # serialized domain types, error/receipt contracts
@@ -142,7 +142,8 @@ rebuild and image gates under existing rules.
 
 Each `module.toml` defines identity, execution location, artifact type, applicable
 console/module entry, allowed source files, common dependencies, third-party dependencies, non-secret required config names,
-packaged data, runtime assets, compatible consumers and verification commands.
+packaged data, runtime assets, native OS/permission requirements, external build
+inputs, compatible consumers and verification commands.
 A static bundle/image manifest has no invented daemon entry point. Inference's manifest
 pins the existing materialized implementation/environment; do not copy model
 weights into application wheels or import source from predecessor projects.
@@ -237,6 +238,72 @@ service-startup configuration remain outside every sandbox bundle and image.
 Controlled fixed programs keep their existing minimal imports and receive only
 the specific portable helpers they actually need, compatible with their own
 interpreter. They do not install the host common distribution wholesale.
+
+## Completeness audit and non-obvious dependencies
+
+The follow-up audit checked console entry points, subprocess launch sites,
+service lifespans, image COPY/build inputs and browser worker loading. The 14
+module definitions cover the inspected implementation; no fifteenth product
+module or additional host service was identified. This is a source/design audit,
+not proof that the future isolated packages already work.
+
+A complete proposed ownership inventory covers **1,344 tracked deployment-input
+files** under `src`, `runtime`, `web`, `deploy`, `scripts` and workspace build
+metadata, with no unassigned paths. Test/documentation trees are outside that
+count except colocated web tests. The machine-readable inventory is
+`.data/evidence/module-isolation/full-source-coverage.json`. Ignored vendor files,
+materialized inference code, model environments and provider images require the
+external-input manifests below; tracked-file coverage cannot certify those bytes.
+
+| Execution or input easy to overlook | Explicit owner and publication rule |
+| --- | --- |
+| API's Broker, inspector, Job continuation, Media outbox, draft expiry, catalog refresh and warm-pool loops | `api`; its lifespan starts/stops these tasks and their lease/recovery behavior is included in API upgrade/rollback checks |
+| Document conversion subprocess | `api`; `document_preview.py` and its LibreOffice install, config/resources, writable cache and IPC requirements are packaged or declared together |
+| Sandbox `media.render`, `audio.process`, `media.concat_sequence` implementation | `sandbox-runtime`; preserve request/response/receipt compatibility with JobWorker's host adapter, including execution and cleanup; FFmpeg/ffprobe binaries are `sandbox-images` inputs |
+| `background_supervisor` and PTY/Harness child processes | `sandbox-runtime`; same signed Code Bundle, manifest entry paths and bounded shutdown/recovery checks; no extra host service |
+| Browser rendering, proxy bridge, Playwright patch, drawio and sandbox ASR helpers | `sandbox-images` with profile-specific native dependencies; sandbox ASR CLI and bwrap transcription program remain different owned entry points |
+| Browser PDF worker and lazy-loaded preview assets | `web-ui`; Vite output must include the PDF worker resolved by `DocumentPreview.jsx`, and production preview tests use packaged assets |
+| Registry publication, template publication, signature generation, catalog generation and module release/rollback commands | build/release tooling under `tools/build` and `tools/release`; signing/provider credentials stay on the host, outside artifacts |
+| Database initialization/upgrades and operational CLI commands | migration implementation in `common/db`; operator entry points in `tools/admin`; preserve idempotent SQLite/PostgreSQL upgrades and owner isolation |
+| Nginx/network/systemd/database setup and health/status scripts | infrastructure/release tooling with declared target environment; no new application-service count |
+| Test runners, fixtures, fault injection and evidence generation | `tools/test` and module-linked tests; excluded from production artifacts except explicitly declared shipped image probes |
+
+### Host-native requirements
+
+Python import/installation success is not a sufficient service startup gate.
+Host manifests also declare executable paths and compatible versions/capabilities,
+OS resources, execution identity, device/driver access, directory permissions,
+and writable data/cache locations. Required capabilities are checked by the
+service's own gate, without granting additional privilege merely to make a
+refactored package start.
+
+In particular, API declares `/usr/bin/libreoffice` and its conversion/IPC
+requirements and must actually convert a fixture. ControlledWorker declares
+`/usr/bin/bwrap`, `setpriv`, `ffprobe`, `nvidia-smi`, the system/helper interpreter
+and relevant device/driver capabilities; its isolated execution proof checks the
+actual runtime manifest and GPU ownership when the operation requires GPU.
+The exact paths/version constraints come from the validated deployment, not
+from whatever executable happens to be first on a release builder's PATH.
+
+### External and non-tracked build inputs
+
+`sandbox-images` must declare more than Dockerfiles. The present ASR overlay
+copies Whisper weights and smoke audio from an existing `ASR_SOURCE_IMAGE`.
+Codex/Claude layers copy pinned native clients from source images, and Draw.io
+uses an external vendor binary. Record immutable source image digests/content
+identities, binary/model hashes, verification probes, provenance/acquisition
+location and retention/reference ownership. Resolve a mutable source tag before
+building; a tag alone is not a reproducible release input.
+
+Existing mounted model/interpreter snapshots and inference implementation have
+the same explicit-reference requirement. Reuse validated local/registry artifacts
+without silently pulling a newer version or copying another project's mutable
+application tree. Keep current, rollback, active and unresolved-frozen references
+before deleting old images or source artifacts. Evidence for a new clean build
+must verify the full declared input closure even when caches were absent.
+
+These are publication requirements of existing modules and tooling, so the
+product-module count remains 14 and the host application-service count remains 8.
 
 ## sandbox-gateway naming and migration
 
@@ -438,7 +505,9 @@ change frozen profile identity. Provider selection remains configuration-driven.
    lease/ownership/atomicity/race gates before dependent moves ship.
 5. Build isolated service artifacts and install each in a clean environment with
    no repository cwd/PYTHONPATH. Verify process entry, data inclusion, service
-   config validation, dependency closure and cross-service import rejection.
+   config validation, Python/native/external-input closure, browser worker assets
+   and cross-service import rejection. Real conversion/controlled execution
+   supplements import checks; image builds verify pinned non-tracked inputs.
 6. Introduce per-service release descriptors, artifact compatibility selection,
    sandbox-gateway unit migration and tested rollback. Deploy on the
    Ali instance, record existing work first, restart the selected service and
