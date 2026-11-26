@@ -56,7 +56,7 @@ def test_every_host_temporary_write_boundary_reasserts_its_directory():
         'src/sandbox_harness/services/media_worker/image_decompose_provider.py':'ensure_private_directory(staging_root',
         'src/sandbox_harness/services/site_worker/site_worker.py':'ensure_private_directory(self.staging_root',
         'src/sandbox_harness/services/api/document_preview.py':'ensure_private_directory(cache_root',
-        'src/sandbox_harness/services/api/model_discovery.py':'ensure_private_directory(self.snapshot.parent',
+        'src/sandbox_harness/common/catalog/model_discovery.py':'ensure_private_directory(self.snapshot.parent',
         'src/sandbox_harness/services/sandbox_gateway/gateway.py':'ensure_private_directory(staging_root',
         'src/sandbox_harness/services/controlled_worker/controlled_media_adapter.py':'ensure_private_directory(work',
         'src/sandbox_harness/common/storage/objects.py':'ensure_private_directory(target.parent',
