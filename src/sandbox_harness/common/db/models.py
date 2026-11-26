@@ -1037,6 +1037,7 @@ OWNER_MIGRATION_ROWS = (
     SiteProjectRow, SiteDraftRow, SiteDeployJobRow,
     SandboxControlRow, SandboxPortGrantRow, SandboxAuditRow,
     JobGroupDraftRow, AuthorizationSnapshotRow, JobGroupRow, JobRow, BudgetAccountRow,
+    UsageLedgerRow,
 )
 
 

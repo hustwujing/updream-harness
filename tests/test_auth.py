@@ -200,7 +200,7 @@ def test_direct_registration_migrates_anonymous_threads_and_rotates_identity(tmp
         assert registered.status_code==200 and registered.json()['user']['username']=='direct.user'
         assert [row['id'] for row in client.get('/api/threads').json()]==[thread['id']]
         invalid_avatar=client.post('/api/auth/avatar',content=b'not-an-image')
-        assert invalid_avatar.status_code==422 and 'PNG' in invalid_avatar.json()['detail']
+        assert invalid_avatar.status_code==422 and invalid_avatar.json()['detail']=='request_invalid'
         png=b'\x89PNG\r\n\x1a\n'+b'avatar-bytes'
         avatar=client.post('/api/auth/avatar',content=png)
         assert avatar.status_code==200 and avatar.json()['user']['avatar_version']==1
