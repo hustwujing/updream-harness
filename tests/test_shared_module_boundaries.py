@@ -39,7 +39,7 @@ def test_review_coordination_is_independent_of_execution_adapter():
 
 
 def test_media_error_contract_does_not_require_provider_transport():
-    from sandbox_harness.common.db.store import (media_error_guidance)
+    from sandbox_harness.common.contracts.media_errors import media_error_guidance
     assert media_error_guidance.__module__ == "sandbox_harness.common.contracts.media_errors"
 
 

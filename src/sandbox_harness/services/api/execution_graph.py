@@ -1,4 +1,5 @@
 from __future__ import annotations
+from sandbox_harness.common.contracts.domain import now
 
 import hashlib
 import json
@@ -8,7 +9,7 @@ from sqlalchemy import case,func,or_,select
 
 from sandbox_harness.common.contracts.domain import (TERMINAL, TurnState)
 from sandbox_harness.common.contracts.job_errors import (JOB_ERROR_CONTRACTS)
-from sandbox_harness.common.db.store import (InteractionRow, JobDisplayActivityRow, JobArtifactRow, JobAttemptRow, JobGroupDraftRow, ItemRow, JobGroupRow, JobOutboxRow, JobRow, MediaBatchRow, MediaDraftRow, MediaJobRow, ResourceReservationRow, ReviewGateRow, ThreadRow, TurnOrderRow, TurnRow, now, utc_datetime)
+from sandbox_harness.common.db.store import (InteractionRow, JobDisplayActivityRow, JobArtifactRow, JobAttemptRow, JobGroupDraftRow, ItemRow, JobGroupRow, JobOutboxRow, JobRow, MediaBatchRow, MediaDraftRow, MediaJobRow, ResourceReservationRow, ReviewGateRow, ThreadRow, TurnOrderRow, TurnRow, utc_datetime)
 
 
 RUNNING_JOB_STATES={'CREATED','QUEUED','RUNNING','WAITING_EXTERNAL','CANCELLING','PAUSING'}
