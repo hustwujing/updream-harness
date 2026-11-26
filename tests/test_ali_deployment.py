@@ -344,6 +344,21 @@ def test_ali_service_runner_uses_only_ali_environment_and_logs():
     assert "0.0.0.0" not in source
 
 
+def test_ali_service_runner_limits_database_credentials_per_component():
+    source=(ROOT/"deploy/ali/run-service.sh").read_text()
+    assert "restrict_database_credentials" in source
+    assert "unset SANDBOX_HARNESS_ADMIN_DATABASE_URL SANDBOX_HARNESS_DATABASE_URL" in source
+    for value in ("SANDBOX_HARNESS_ACCOUNTS_DATABASE_URL",
+                  "SANDBOX_HARNESS_CORE_DATABASE_URL",
+                  "SANDBOX_HARNESS_MEDIA_DATABASE_URL",
+                  "SANDBOX_HARNESS_SITES_DATABASE_URL"):
+        assert source.count("unset "+value)>=1
+    for component in ("api)","sandbox-gateway-opensandbox|sandbox-gateway-aliyun)",
+                      "job-worker)","allocation-worker|controlled-worker)",
+                      "media-worker)","site-worker)","image-inference)"):
+        assert component in source
+
+
 def test_ali_image_builder_uses_only_ali_checkout_and_namespaces():
     source=(ROOT/"runtime/build-images.sh").read_text()
     assert "[[ \"$root\" == /data2/wujing03/sandbox-harness-platform-parallel-ali ]]" in source

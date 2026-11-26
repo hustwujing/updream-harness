@@ -15,6 +15,43 @@ mkdir -p "$log_root" "$root/.data/tmp"
 set -a
 source "$env_file"
 set +a
+
+restrict_database_credentials() {
+  unset SANDBOX_HARNESS_ADMIN_DATABASE_URL SANDBOX_HARNESS_DATABASE_URL
+  case "$component" in
+    api) ;;
+    sandbox-gateway-opensandbox|sandbox-gateway-aliyun)
+      unset SANDBOX_HARNESS_ACCOUNTS_DATABASE_URL
+      ;;
+    job-worker)
+      unset SANDBOX_HARNESS_ACCOUNTS_DATABASE_URL
+      unset SANDBOX_HARNESS_SITES_DATABASE_URL
+      ;;
+    allocation-worker|controlled-worker)
+      unset SANDBOX_HARNESS_ACCOUNTS_DATABASE_URL
+      unset SANDBOX_HARNESS_MEDIA_DATABASE_URL
+      unset SANDBOX_HARNESS_SITES_DATABASE_URL
+      ;;
+    media-worker)
+      unset SANDBOX_HARNESS_ACCOUNTS_DATABASE_URL
+      unset SANDBOX_HARNESS_CORE_DATABASE_URL
+      unset SANDBOX_HARNESS_SITES_DATABASE_URL
+      ;;
+    site-worker)
+      unset SANDBOX_HARNESS_ACCOUNTS_DATABASE_URL
+      unset SANDBOX_HARNESS_CORE_DATABASE_URL
+      unset SANDBOX_HARNESS_MEDIA_DATABASE_URL
+      ;;
+    image-inference)
+      unset SANDBOX_HARNESS_ACCOUNTS_DATABASE_URL
+      unset SANDBOX_HARNESS_CORE_DATABASE_URL
+      unset SANDBOX_HARNESS_MEDIA_DATABASE_URL
+      unset SANDBOX_HARNESS_SITES_DATABASE_URL
+      ;;
+  esac
+}
+restrict_database_credentials
+
 case "${SANDBOX_HARNESS_BACKEND:-}" in
   opensandbox) provider_gateway_host="172.31.0.1" ;;
   aliyun) provider_gateway_host="10.194.49.8" ;;
