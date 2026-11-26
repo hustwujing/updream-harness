@@ -14,7 +14,7 @@ from sandbox_harness.services.job_worker.harness_job import (HarnessJobAdapter, 
 from sandbox_harness.common.execution.job_adapters import (AdapterStatus, JobExecutionContext)
 from sandbox_harness.common.contracts.job_contracts import (JobState)
 from sandbox_harness.common.configuration.config import (Settings)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 ROOT=Path(__file__).resolve().parents[1]
 

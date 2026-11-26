@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import func,select
 
 from sandbox_harness.services.job_worker.image_decompose_adapter import (ImageDecomposeAdapter)
-from sandbox_harness.common.db.store import (MediaJobRow, Store)
+from test_support.legacy_store import (MediaJobRow, Store)
 from test_image_decompose_media import setup
 
 pytestmark=pytest.mark.skipif(not os.environ.get('PARALLEL_TEST_POSTGRES_URL'),

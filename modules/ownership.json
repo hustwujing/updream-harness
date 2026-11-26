@@ -274,10 +274,6 @@
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/sites.py"
     },
-    "src/sandbox_harness/common/db/store.py": {
-      "owner": "common/db",
-      "target": "src/sandbox_harness/common/db/store.py"
-    },
     "src/sandbox_harness/common/db/threads.py": {
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/threads.py"
@@ -285,10 +281,6 @@
     "src/sandbox_harness/common/db/turns.py": {
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/turns.py"
-    },
-    "src/sandbox_harness/common/db/upgrades.py": {
-      "owner": "common/db",
-      "target": "src/sandbox_harness/common/db/upgrades.py"
     },
     "src/sandbox_harness/common/db/views.py": {
       "owner": "common/db",

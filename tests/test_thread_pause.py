@@ -5,7 +5,7 @@ from sandbox_harness.common.contracts.domain import (Harness, PauseParticipantSt
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobKind, JobRequest, JobState)
 from sandbox_harness.common.execution.job_adapters import (AdapterStatus, AdapterSubmission, BaseJobAdapter)
 from sandbox_harness.common.execution.job_worker import (JobWorker)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 
 def request(name: str, kind: JobKind) -> JobRequest:

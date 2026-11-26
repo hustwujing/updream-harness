@@ -17,7 +17,7 @@ from sandbox_harness.common.sandbox.runtime import (RuntimeStreamInterrupted, St
 from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCreateRequest, SandboxHandle)
 from sandbox_harness.common.sandbox.sandbox_factory import (SandboxProfileResolver)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 
 class Runtime:
@@ -858,7 +858,7 @@ async def test_recovery_waits_for_transient_runtime_health_then_reattaches(tmp_p
 async def test_reconciliation_lease_loss_cancels_stalled_external_work_before_takeover(tmp_path):
     from datetime import timedelta
     from sqlalchemy import update
-    from sandbox_harness.common.db.store import (TurnRow)
+    from test_support.legacy_store import (TurnRow)
     class Backend(FakeSandboxBackend):
         entered=asyncio.Event();calls=0;blocked_task=None;old_task_deleted=False
         async def get(self,sandbox_id):

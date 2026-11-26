@@ -7,7 +7,7 @@ from test_allocation_recovery import issued_allocation
 from sandbox_harness.common.contracts.domain import (Harness)
 from sandbox_harness.common.sandbox.pool import (SandboxPool)
 from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
-from sandbox_harness.common.db.store import (SandboxAllocationRow, JobCleanupRow)
+from test_support.legacy_store import (SandboxAllocationRow, JobCleanupRow)
 from sqlalchemy import select
 
 async def test_lowered_limit_debt_adoption_failed_delete_and_release(tmp_path):

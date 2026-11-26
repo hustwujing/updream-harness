@@ -8,7 +8,7 @@ from sandbox_harness.common.contracts.domain import (Harness, TurnState, TurnInp
 from sandbox_harness.common.storage.objects import (ObjectStore)
 from sandbox_harness.common.sandbox.pool import (SandboxPool)
 from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 from test_second_review import seed
 from test_broker import AppendedInputRuntime
 

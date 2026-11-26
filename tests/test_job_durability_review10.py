@@ -7,7 +7,7 @@ from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.execution.job_adapters import (AdapterStatus, AdapterSubmission, BaseJobAdapter, SubmissionRecovery)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobKind, JobRequest, JobState)
 from sandbox_harness.common.execution.job_worker import (JobWorker)
-from sandbox_harness.common.db.store import (BudgetAccountRow, BudgetLedgerRow, BudgetReservationRow, JobOutboxRow, Store)
+from test_support.legacy_store import (BudgetAccountRow, BudgetLedgerRow, BudgetReservationRow, JobOutboxRow, Store)
 from sandbox_harness.common.scheduling.scheduler import (GPUInventory, NodeInventory, NodeProfile, ResourceRequest, Scheduler)
 
 
@@ -310,7 +310,7 @@ async def test_thread_delete_blocks_generic_cleanup_then_removes_complete_job_hi
         cleanup=(await store.claim_job_cleanups("cleanup",30,limit=1))[0]
         await store.finish_job_cleanup(cleanup["cleanup_id"],"cleanup",succeeded=True)
         if allocation_state:
-            from sandbox_harness.common.db.store import (SandboxAllocationRow)
+            from test_support.legacy_store import (SandboxAllocationRow)
             from sandbox_harness.common.contracts.domain import (now)
             async with store.connections.begin() as db:
                 db.add(SandboxAllocationRow(id='a'*64,namespace='test',provider='fake',
@@ -367,7 +367,7 @@ async def test_preaccept_cleanup_skips_external_quiescence_and_recovers_legacy_r
 
         # Old releases wrote this phase even though no external execution existed.
         async with store.connections.begin() as db:
-            from sandbox_harness.common.db.store import (JobCleanupRow)
+            from test_support.legacy_store import (JobCleanupRow)
             row=(await db.execute(__import__('sqlalchemy').select(JobCleanupRow).where(
                 JobCleanupRow.job_id==job.id).with_for_update())).scalar_one()
             row.phase='external_quiescence'
@@ -426,7 +426,7 @@ async def test_cleanup_phase_recovery_after_external_quiescence_and_capacity_rel
 
         # Re-open the capacity phase to model process death after idempotent release but before completion.
         async with store.connections.begin() as db:
-            from sandbox_harness.common.db.store import (JobCleanupRow)
+            from test_support.legacy_store import (JobCleanupRow)
             row=(await db.execute(__import__('sqlalchemy').select(JobCleanupRow).where(
                 JobCleanupRow.job_id==job.id).with_for_update())).scalar_one()
             row.state="pending";row.phase="capacity_release";row.claim_owner="";row.claim_expires_at=None

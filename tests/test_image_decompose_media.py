@@ -12,7 +12,7 @@ from sandbox_harness.services.job_worker.image_decompose_adapter import (ImageDe
 from sandbox_harness.common.execution.job_adapters import (JobExecutionContext)
 from sandbox_harness.common.contracts.job_contracts import (JobArtifactInput, JobExpectedOutput, JobGroupCreate, JobRequest)
 from sandbox_harness.common.storage.objects import (ObjectStore)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 
 def png():

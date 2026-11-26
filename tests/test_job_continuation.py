@@ -4,7 +4,7 @@ from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate, TurnInputCreate, TurnState)
 from sandbox_harness.services.api.job_continuation import (ContinuationDispatcher)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobKind, JobRequest, JobState)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 
 class StoreBroker:

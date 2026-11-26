@@ -2,7 +2,7 @@ import asyncio,os
 import pytest
 from sandbox_harness.common.contracts.domain import (identifier)
 from sandbox_harness.common.scheduling.scheduler import (NodeInventory, ResourceRequest, Scheduler)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 POSTGRES_URL=os.environ.get('PARALLEL_TEST_POSTGRES_URL','')
 pytestmark=pytest.mark.skipif(not POSTGRES_URL,reason='PARALLEL_TEST_POSTGRES_URL is not configured')

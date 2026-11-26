@@ -3,7 +3,7 @@ import pytest
 from types import SimpleNamespace
 from sandbox_harness.common.models.model_activity import (OutputProbe, ModelActivity)
 from sandbox_harness.common.contracts.domain import (EventKind, Harness, RuntimeEvent, ThreadCreate, TurnCreate, TurnState)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 
 def test_probe_ignores_headers_and_metadata_until_effective_model_output():

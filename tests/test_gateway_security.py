@@ -10,7 +10,7 @@ from sandbox_harness.common.security.capability import (CapabilityCodec)
 from sandbox_harness.common.configuration.config import (Settings)
 from sandbox_harness.common.contracts.domain import (Harness)
 from sandbox_harness.services.sandbox_gateway.gateway import (bounded_request_body, enforce_model_output_budget, estimate_model_input_tokens, model_endpoint_kind)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 
 def claims(settings, *, nonce="", token_budget=10, max_requests=3, parent_nonce="",

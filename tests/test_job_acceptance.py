@@ -1,7 +1,7 @@
 import pytest
 
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobKind, JobRequest)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 
 async def test_recovery_generation_cannot_double_consume_business_acceptance(tmp_path):

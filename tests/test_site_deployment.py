@@ -17,7 +17,7 @@ from sandbox_harness.common.storage.objects import (ObjectStore)
 from sandbox_harness.common.sites.site_bundle import (build_site_archive, build_site_archive_from_files, validate_site_archive)
 from sandbox_harness.services.site_worker.site_worker import (SiteWorker)
 from sandbox_harness.common.db.site_repository import (SiteRepository)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 from sandbox_harness.services.api.sessions import (COOKIE, Sessions)
 
 

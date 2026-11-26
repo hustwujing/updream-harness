@@ -9,7 +9,7 @@ from sandbox_harness.services.allocation_worker.allocation_dispatch import (Allo
 from sandbox_harness.common.contracts.domain import (now, Harness)
 from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCreateOutcomeUnknown)
-from sandbox_harness.common.db.store import (SandboxAllocationRow)
+from test_support.legacy_store import (SandboxAllocationRow)
 
 
 async def issued_allocation(store, context, request, provider):
@@ -99,7 +99,7 @@ async def test_new_allocations_use_short_provisioning_ttl(tmp_path):
 
 
 async def test_replacement_fences_old_attempt_and_keeps_original_cleanup_and_capacity(tmp_path):
-    from sandbox_harness.common.db.store import (JobRow, ResourceReservationRow)
+    from test_support.legacy_store import (JobRow, ResourceReservationRow)
     store,context,request=await fixture(tmp_path)
     provider=FakeSandboxBackend()
     try:
@@ -109,7 +109,7 @@ async def test_replacement_fences_old_attempt_and_keeps_original_cleanup_and_cap
         assert cleanup['generation']==context.generation and cleanup['state']=='pending'
         import json
         from sqlalchemy import select
-        from sandbox_harness.common.db.store import (JobCleanupRow)
+        from test_support.legacy_store import (JobCleanupRow)
         async with store.connections() as db:
             original=(await db.scalars(select(JobCleanupRow).where(JobCleanupRow.job_id==context.job.id))).one()
             assert json.loads(original.acceptance_receipt_json)==receipt
@@ -144,7 +144,7 @@ async def test_replacement_budget_is_durable_and_runtime_submission_is_never_rep
         second,_,_,_=await issued_allocation(store,context,request,provider)
         assert await store.replace_unstarted_allocation(context.job.id,'replacement',newer.generation,second)=='exhausted'
         from sqlalchemy import select
-        from sandbox_harness.common.db.store import (JobCleanupRow, JobRow)
+        from test_support.legacy_store import (JobCleanupRow, JobRow)
         async with store.connections() as db:
             assert (await db.get(JobRow,context.job.id)).allocation_replacements==1
             assert len((await db.scalars(select(JobCleanupRow).where(JobCleanupRow.job_id==context.job.id))).all())==2
@@ -173,7 +173,7 @@ async def test_worker_replacement_requires_extra_capacity_and_keeps_late_cleanup
     from sandbox_harness.common.sandbox.pool import (SandboxPool)
     from sandbox_harness.common.scheduling.scheduler import (Scheduler, NodeInventory)
     from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCapacityUnavailable)
-    from sandbox_harness.common.db.store import (JobAttemptRow, ResourceReservationRow)
+    from test_support.legacy_store import (JobAttemptRow, ResourceReservationRow)
 
     class Provider(FakeSandboxBackend):
         calls=0
@@ -275,7 +275,7 @@ async def test_worker_replacement_requires_extra_capacity_and_keeps_late_cleanup
 
 
 async def test_worker_loss_during_wait_keeps_original_generation_cleanup(tmp_path):
-    from sandbox_harness.common.db.store import (JobRow, JobCleanupRow)
+    from test_support.legacy_store import (JobRow, JobCleanupRow)
     from sqlalchemy import select
     store,context,request=await fixture(tmp_path)
     try:
@@ -296,7 +296,7 @@ async def test_worker_loss_during_wait_keeps_original_generation_cleanup(tmp_pat
 @pytest.mark.parametrize('winner',['ready','cancel'])
 async def test_ready_receipt_or_user_cancellation_prevents_replacement(tmp_path,winner):
     import json
-    from sandbox_harness.common.db.store import (JobRow)
+    from test_support.legacy_store import (JobRow)
     store,context,request=await fixture(tmp_path)
     provider=FakeSandboxBackend()
     try:
@@ -351,7 +351,7 @@ async def test_renewal_failure_keeps_ready_handle_for_cleanup(tmp_path):
 
 async def test_old_schema_upgrade_keeps_legacy_unknown_and_does_not_invent_recovery_deadline(tmp_path,monkeypatch):
     from sqlalchemy import text
-    from sandbox_harness.common.db.store import (JobRow)
+    from test_support.legacy_store import (JobRow)
     store,context,request=await fixture(tmp_path)
     provider=FakeSandboxBackend();client=AllocationClient(store,provider,poll_seconds=.01)
     task=None

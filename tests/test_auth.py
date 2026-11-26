@@ -13,7 +13,7 @@ from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate, TurnState, now)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobGroupDraftCreate, JobKind, JobRequest)
 from sandbox_harness.services.api.sessions import (COOKIE)
-from sandbox_harness.common.db.store import (Base, OWNER_MIGRATION_TABLES, Store)
+from test_support.legacy_store import (Base, OWNER_MIGRATION_TABLES, Store)
 
 
 async def test_account_password_sessions_and_rotation(tmp_path):

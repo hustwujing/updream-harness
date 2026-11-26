@@ -15,7 +15,7 @@ from sandbox_harness.common.sandbox.sandbox import (Sandbox, SandboxCapacityUnav
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxRuntimeRoute)
 from sandbox_harness.common.scheduling.scheduler import (NodeInventory, Scheduler)
 from sandbox_harness.common.sandbox.runtime import (StagedRuntimeObject)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 
 def sandbox_receipt(sandbox,**extra):
@@ -96,7 +96,7 @@ async def test_child_harness_acceptance_status_result_and_cleanup(tmp_path):
         reservations=[]
         async with store.connections() as db:
             from sqlalchemy import select
-            from sandbox_harness.common.db.store import (ResourceReservationRow)
+            from test_support.legacy_store import (ResourceReservationRow)
             reservations=list((await db.execute(select(ResourceReservationRow))).scalars())
         assert reservations[0].state=='released'
     finally:await store.close()

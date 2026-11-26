@@ -6,16 +6,16 @@ Do not encode retry safety in free-form `error_detail`.
 
 ## Applies to
 
-Read this before changing `domain.py`, `store.py`, Broker state transitions, API
-write endpoints, SSE, project files, interactions or cancellation.
+Read this before changing domain contracts, a domain repository, Broker state
+transitions, API writes, SSE, project files, interactions or cancellation.
 
 ## Actual durable schema
 
-`store.py` currently defines these tables:
-
-`threads`, `turns`, `events`, `turn_inputs`, `artifacts`, `items`, `uploads`,
-`project_files`, `turn_project_files`, `interactions`, media draft/job/output
-tables, and static-site project/draft/job/version/file tables.
+Accounts owns users, auth sessions and registration claims. Core owns Threads,
+Turns, events, inputs, artifacts, project files, interactions, Jobs, allocations
+and sandbox ownership. Media owns media drafts, Jobs, outputs and references.
+Sites owns site projects, drafts, deployment Jobs, versions and files. Each
+business session is rejected if it touches another authority's tables.
 
 There is no separate sandbox-attempt, checkpoint or capability-grant table.
 Sandbox identity, capability nonce, lease and Runtime cursor live on `turns`;
@@ -30,7 +30,7 @@ are not substitutes for database state.
 - `ThreadRow.active_turn_id` is the serialization head.
 - `ThreadRow.archived_at` removes a Thread from the default list. Archiving is
   allowed only after every Turn is terminal; archived Threads reject new Turns.
-- `Store.create_turn` rejects `delivery_mode=start` while a nonterminal active
+- `CoreRepository.create_turn` rejects `delivery_mode=start` while a nonterminal active
   Turn exists. Queued Turns do not become claimable until `claim_next_turn`
   advances the Thread pointer.
 - `(thread_id, idempotency_key)` is unique. Reusing the key with different
@@ -50,7 +50,7 @@ terminal = WAITING_USER | COMPLETED | FAILED | CANCELLED
 ```
 
 This diagram describes Broker behavior, not a database CHECK constraint.
-Changes must inspect all state sets in `store.py` and `broker.py`; duplicated
+Changes must inspect all state sets in Core transactions and Broker; duplicated
 terminal/acceptable-state sets are contract-sensitive.
 
 `AWAITING_USER` means a live Runtime execution is blocked on an interaction and
@@ -86,7 +86,7 @@ Optional multi-format source outputs may use `ArtifactGateway.emit_matching`
 with the frozen collection's MIME patterns. This is content-based selection
 before object persistence; default `emit` remains strict. Selected outputs must
 have dense positions and stable item keys across retries. Store's generation,
-role, disposition, MIME and cardinality checks remain authoritative; selection
+Core role, disposition, MIME and cardinality checks remain authoritative; selection
 never widens the contract or suppresses declared/content mismatch errors.
 
 Uploads and artifacts are immutable object references verified by SHA-256 and

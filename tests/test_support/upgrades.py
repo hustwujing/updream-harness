@@ -2,7 +2,7 @@
 from __future__ import annotations
 from sqlalchemy import (inspect as sqlalchemy_inspect, text)
 from sqlalchemy.exc import (OperationalError)
-from .models import (Base, SCHEMA_INITIALIZATION_LOCK_ID)
+from sandbox_harness.common.db.models import (Base, SCHEMA_INITIALIZATION_LOCK_ID)
 
 
 class UpgradesTransactions:

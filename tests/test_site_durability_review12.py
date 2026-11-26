@@ -16,7 +16,7 @@ from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, now)
 from sandbox_harness.common.storage.objects import (ObjectStore)
 from sandbox_harness.common.sites.site_bundle import (build_site_archive_from_files, stage_site_archive)
 from sandbox_harness.services.site_worker.site_worker import (SiteWorker)
-from sandbox_harness.common.db.store import (SiteDeployJobRow, Store)
+from test_support.legacy_store import (SiteDeployJobRow, Store)
 
 
 async def prepared(tmp_path,name="site",*,max_attempts=4):

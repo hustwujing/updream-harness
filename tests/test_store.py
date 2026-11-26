@@ -4,13 +4,13 @@ from datetime import timedelta
 from sandbox_harness.common.contracts.domain import (Attachment, EventKind, Harness, ItemType, RuntimeEvent, ThreadCreate, TurnCreate, TurnInputCreate, TurnState, now)
 from sandbox_harness.common.artifacts.artifact_gateway import (ArtifactEmission)
 from sandbox_harness.common.contracts.job_contracts import (JobExpectedOutput, JobGroupCreate, JobKind, JobRequest, JobState, OutputDisposition)
-from sandbox_harness.common.db.store import (MediaJobRow, Store, ThreadRow, TurnRow, valid_project_file_path)
+from test_support.legacy_store import (MediaJobRow, Store, ThreadRow, TurnRow, valid_project_file_path)
 import pytest
 
 
 async def test_prepared_input_artifacts_survive_replay_and_aliases_follow_input_sequence(tmp_path):
     from sqlalchemy import select,update
-    from sandbox_harness.common.db.store import (ArtifactRow)
+    from test_support.legacy_store import (ArtifactRow)
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'input-bindings.db'));await store.initialize()
     try:
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard');owner='owner'
@@ -697,7 +697,7 @@ async def test_interaction_response_claim_expires_and_preserves_idempotency(tmp_
             await store.claim_interaction_response(interaction.id, owner,
                 "response-claim-key", response, claim_owner="broker-two", lease_seconds=30)
         async with store.connections.begin() as db:
-            from sandbox_harness.common.db.store import (InteractionRow)
+            from test_support.legacy_store import (InteractionRow)
             row = await db.get(InteractionRow, interaction.id, with_for_update=True)
             row.response_expires_at = now() - timedelta(seconds=1)
         reclaimed, accepted = await store.claim_interaction_response(interaction.id, owner,

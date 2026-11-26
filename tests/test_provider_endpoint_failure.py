@@ -48,7 +48,7 @@ async def test_media_adapter_retains_confirmed_provider_rejection_semantics(tmp_
 @pytest.mark.parametrize('code,expected',[('provider_output_unavailable','completed'),('provider_submission_outcome_unknown','unknown')])
 def test_existing_execution_proof_does_not_downgrade_completed_or_unknown(code,expected):
     from datetime import datetime,timezone
-    from sandbox_harness.common.db.store import (Store, MediaJobRow)
+    from test_support.legacy_store import (Store, MediaJobRow)
     row=MediaJobRow(id='job',thread_id='thread',kind='image',model='image-model',provider='provider',adapter='adapter',
         execution_mode='async',cancellation_mode='supported',status='failed',phase='terminal',
         error_code=code,provider_job_id='upstream-job',output_role='candidate',created_at=datetime.now(timezone.utc))

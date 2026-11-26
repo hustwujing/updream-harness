@@ -8,8 +8,8 @@ from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.contracts.domain import (Harness, ItemType, ThreadCreate, TurnCreate)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobKind, JobRequest, JobState, OutputDisposition)
 from sandbox_harness.common.storage.objects import (ObjectStore)
-from sandbox_harness.common.db.store import (Store)
-from sandbox_harness.common.db.store import (ProjectFileRow)
+from test_support.legacy_store import (Store)
+from test_support.legacy_store import (ProjectFileRow)
 from sqlalchemy import select
 
 

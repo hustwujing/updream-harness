@@ -14,7 +14,7 @@ from sandbox_harness.common.execution.job_adapters import (AdapterStatus, JobExe
 from sandbox_harness.common.contracts.job_contracts import (JobArtifactInput, JobExpectedOutput, JobGroupCreate, JobKind, JobRequest, JobState, OutputDisposition)
 from sandbox_harness.common.storage.objects import (ObjectStore)
 from sandbox_harness.common.scheduling.scheduler import (GPUInventory, NodeInventory, NodeProfile, Scheduler)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 
 def png(mode='RGB',color='blue'):

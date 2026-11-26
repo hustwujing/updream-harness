@@ -12,7 +12,7 @@ from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, Turn
 from sandbox_harness.common.sandbox.pool import (SandboxPool)
 from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
 from sandbox_harness.services.api.sandbox_inspector import (SandboxInspector, TerminalTicketCodec, websocket_endpoint_headers)
-from sandbox_harness.common.db.store import (SandboxControlRow, Store)
+from test_support.legacy_store import (SandboxControlRow, Store)
 from sqlalchemy import update
 from sandbox_harness.common.sandbox.runtime import (StagedRuntimeObject)
 from sandbox_runtime import app as runtime_app
@@ -51,7 +51,7 @@ async def test_sandbox_control_is_owner_scoped_and_blocks_active_turn(tmp_path):
         assert (await store.list_sandbox_audit(thread.id, owner))[0]["action"] == "terminal.created"
         await store.update_thread_checkpoint_idle(thread.id, owner, "sha256:" + "1" * 64)
         assert (await store.get_thread(thread.id, owner)).checkpoint_ref == "sha256:" + "1" * 64
-        from sandbox_harness.common.db.store import (SandboxControlRow)
+        from test_support.legacy_store import (SandboxControlRow)
         async with store.connections.begin() as db:
             row=await db.get(SandboxControlRow,thread.id,with_for_update=True)
             row.expires_at=now()-timedelta(seconds=1)

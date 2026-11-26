@@ -233,7 +233,7 @@ async def test_gateway_receiver_requires_scope_and_does_not_consume_model_budget
 
 
 async def test_trace_context_is_durable_and_stale_owner_cannot_replace_it(tmp_path,telemetry):
-    from sandbox_harness.common.db.store import (Store)
+    from test_support.legacy_store import (Store)
     from test_second_review import seed
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'trace.db'));await store.initialize()
     try:
@@ -263,7 +263,7 @@ def test_request_timeline_expands_to_turn_and_skips_corrupt_lines(tmp_path,monke
 
 async def test_shutdown_does_not_start_queued_successor(tmp_path,monkeypatch):
     from sandbox_harness.services.api.broker import (Broker)
-    from sandbox_harness.common.db.store import (Store)
+    from test_support.legacy_store import (Store)
     from sandbox_harness.common.configuration.config import (Settings)
     from sandbox_harness.common.storage.objects import (ObjectStore)
     from sandbox_harness.common.sandbox.pool import (SandboxPool)

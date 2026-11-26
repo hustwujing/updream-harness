@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.contracts.domain import (Harness, MediaDraftCreate, ThreadCreate, TurnCreate, now)
 from sandbox_harness.services.media_worker.media_reference_publisher import (MediaReferencePreparationError, MediaReferencePublisher)
-from sandbox_harness.common.db.store import (MediaReferenceAssetRow, Store)
+from test_support.legacy_store import (MediaReferenceAssetRow, Store)
 
 
 DATA=b"reference-media-bytes"

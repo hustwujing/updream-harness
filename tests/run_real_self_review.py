@@ -19,7 +19,7 @@ from sandbox_harness.common.storage.objects import (ObjectStore)
 from sandbox_harness.common.sandbox.pool import (SandboxPool)
 from sandbox_harness.common.sandbox.runtime import (RuntimeClient)
 from sandbox_harness.common.sandbox.sandbox import (OpenSandboxBackend)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 FIXTURE = """import sys,json,time
 from pathlib import Path

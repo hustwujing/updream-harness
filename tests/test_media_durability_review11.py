@@ -13,7 +13,7 @@ from sandbox_harness.common.contracts.domain import (Harness, MediaDraftCreate, 
 from sandbox_harness.common.catalog.media_catalog import (MediaCatalog)
 from sandbox_harness.services.media_worker.media_worker import (DownloadedMedia, MediaWorker, ProviderResult)
 from sandbox_harness.common.storage.objects import (ObjectStore)
-from sandbox_harness.common.db.store import (MediaJobRow, Store)
+from test_support.legacy_store import (MediaJobRow, Store)
 
 
 async def setup_job(tmp_path,name="media"):

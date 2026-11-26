@@ -4,7 +4,7 @@ import importlib
 
 
 def test_store_domains_keep_one_orm_identity():
-    facade = importlib.import_module("sandbox_harness.common.db.store")
+    facade = importlib.import_module("test_support.legacy_store")
     models = importlib.import_module("sandbox_harness.common.db.models")
     assert facade.Base is models.Base
     for name in ("ThreadRow", "TurnRow", "JobRow", "JobAttemptRow", "SandboxAllocationRow",
@@ -14,7 +14,7 @@ def test_store_domains_keep_one_orm_identity():
 
 
 def test_domain_transactions_compose_the_original_store_surface():
-    from sandbox_harness.common.db.store import Store
+    from test_support.legacy_store import Store
     expected = {
         "create_turn": "turns",
         "transition_job": "job_terminal",
@@ -22,14 +22,16 @@ def test_domain_transactions_compose_the_original_store_surface():
         "enqueue_job_media_execution": "media_jobs",
         "publish_artifact": "files",
         "complete_site_job": "sites",
-        "initialize": "upgrades",
+        "initialize": "test_support.upgrades",
     }
     for method, owner in expected.items():
-        assert getattr(Store, method).__module__ == "sandbox_harness.common.db." + owner
+        expected_module=(owner if owner.startswith("test_support.")
+                         else "sandbox_harness.common.db."+owner)
+        assert getattr(Store, method).__module__ == expected_module
 
 
 async def test_domain_facade_uses_one_connection_registry(tmp_path):
-    from sandbox_harness.common.db.store import Store
+    from test_support.legacy_store import Store
     from sandbox_harness.common.db.models import Base
     from sqlalchemy import inspect
     store = Store("sqlite+aiosqlite:///" + str(tmp_path / "domains.db"))

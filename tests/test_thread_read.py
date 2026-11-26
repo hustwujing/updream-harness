@@ -1,7 +1,7 @@
 import pytest
 from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate, TurnState)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 
 async def seed(store):

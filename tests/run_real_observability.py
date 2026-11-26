@@ -24,7 +24,7 @@ from sandbox_harness.common.storage.objects import (ObjectStore)
 from sandbox_harness.common.sandbox.pool import (SandboxPool)
 from sandbox_harness.common.sandbox.runtime import (RuntimeClient)
 from sandbox_harness.common.sandbox.sandbox import (OpenSandboxBackend)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 from sandbox_harness.common.observability.observability import (configure, operation, telemetry)
 from sandbox_harness.tools.log_query import (query)
 

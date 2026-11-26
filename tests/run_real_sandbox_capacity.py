@@ -388,7 +388,7 @@ async def run(args):
             'sha256':{name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in [
                 'tests/run_real_sandbox_capacity.py','src/sandbox_harness/common/execution/job_worker.py',
                 'src/sandbox_harness/common/sandbox/job_allocation.py','src/sandbox_harness/services/allocation_worker/allocation_dispatch.py',
-                'src/sandbox_harness/common/db/store.py']}}}
+                'src/sandbox_harness/common/db/core.py']}}}
     try:
         for case in selected:
             started=time.monotonic();value=await run_case(case,raw,path,store,backend,profile)

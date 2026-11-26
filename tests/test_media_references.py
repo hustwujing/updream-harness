@@ -9,7 +9,7 @@ from sandbox_harness.common.contracts.domain import (Harness, MediaReferenceInpu
 from sandbox_harness.common.catalog.media_catalog import (MediaCatalog)
 from sandbox_harness.common.catalog.media_references import (resolve_media_references)
 from sandbox_harness.common.storage.objects import (ObjectStore, S3ObjectStore)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 
 def image_reference(role="reference_image", usage="subject", *, identifier="f" * 32):

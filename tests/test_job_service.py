@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from sandbox_harness.common.configuration.config import (Settings)
 from sandbox_harness.services.job_worker.job_service import (resolved_node_profiles, serve)
-from sandbox_harness.common.db.store import (NodeRow, Store)
+from test_support.legacy_store import (NodeRow, Store)
 
 
 ROOT=Path(__file__).resolve().parents[1]

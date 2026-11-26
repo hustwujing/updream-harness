@@ -8,7 +8,7 @@ from sandbox_harness.common.execution.job_adapters import (JobExecutionContext)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobRequest)
 from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCreateRequest)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 URL=os.environ.get('PARALLEL_TEST_POSTGRES_URL','')
 pytestmark=pytest.mark.skipif(not URL,reason='PARALLEL_TEST_POSTGRES_URL is not configured')
@@ -61,7 +61,7 @@ async def allocation_fixture(store, backend):
 
 
 async def test_concurrent_observers_claim_each_allocation_once():
-    from sandbox_harness.common.db.store import (SandboxAllocationRow)
+    from test_support.legacy_store import (SandboxAllocationRow)
     store=Store(URL);await store.initialize();other=Store(URL)
     class Provider(FakeSandboxBackend):
         reads=0
@@ -90,7 +90,7 @@ async def test_concurrent_observers_claim_each_allocation_once():
 
 async def test_postgres_upgrade_preserves_unknown_allocation_and_original_claim():
     from sqlalchemy import text
-    from sandbox_harness.common.db.store import (SandboxAllocationRow)
+    from test_support.legacy_store import (SandboxAllocationRow)
     store=Store(URL);await store.initialize()
     backend=FakeSandboxBackend(namespace='pg-upgrade-'+identifier())
     try:
@@ -120,7 +120,7 @@ async def test_postgres_upgrade_preserves_unknown_allocation_and_original_claim(
 async def test_runtime_submission_and_allocation_replacement_are_mutually_exclusive(replacement_first):
     from datetime import timedelta
     from sandbox_harness.common.contracts.domain import (now)
-    from sandbox_harness.common.db.store import (SandboxAllocationRow, JobRow)
+    from test_support.legacy_store import (SandboxAllocationRow, JobRow)
     store=Store(URL);await store.initialize();other=Store(URL)
     backend=FakeSandboxBackend(namespace='pg-replacement-'+identifier())
     try:

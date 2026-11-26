@@ -3,7 +3,7 @@ from sqlalchemy import update
 
 from sandbox_harness.common.scheduling.scheduler import (NodeInventory, ResourceRequest, Scheduler)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobKind, JobRequest, JobState)
-from sandbox_harness.common.db.store import (ResourceReservationRow, Store)
+from test_support.legacy_store import (ResourceReservationRow, Store)
 from sandbox_harness.common.contracts.domain import (now)
 from datetime import timedelta
 
@@ -150,7 +150,7 @@ async def test_scheduler_reaps_only_expired_terminal_stale_generation_without_li
 
 
 async def test_stale_reservation_reaper_cannot_erase_unknown_submission_without_cleanup(tmp_path):
-    from sandbox_harness.common.db.store import (JobRow, JobAttemptRow)
+    from test_support.legacy_store import (JobRow, JobAttemptRow)
     store,scheduler=await setup(tmp_path)
     try:
         await scheduler.register_node(node(generation=1))

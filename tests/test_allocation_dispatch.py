@@ -94,7 +94,7 @@ async def test_definitive_capacity_rejection_is_durable_and_retryable(tmp_path):
 
 async def test_allocator_loss_keeps_unknown_and_never_reissues_create(tmp_path):
     from sandbox_harness.services.allocation_worker.allocation_dispatch import (AllocationClient, AllocationService)
-    from sandbox_harness.common.db.store import (SandboxAllocationRow)
+    from test_support.legacy_store import (SandboxAllocationRow)
     from sandbox_harness.common.contracts.domain import (now)
     from datetime import timedelta
     class Provider(FakeSandboxBackend):
@@ -149,7 +149,7 @@ async def test_late_response_cleans_cancelled_waiter_and_original_reservation(tm
     request=replace(request,allocation_id=context.job.id+'-g'+str(context.generation))
     worker=JobWorker(store,{'child-harness':adapter},node_id='node',worker_id='job-worker')
     if user_cancel:
-        from sandbox_harness.common.db.store import (JobAttemptRow)
+        from test_support.legacy_store import (JobAttemptRow)
         from sqlalchemy import select
         async with store.connections() as db:
             attempt=(await db.scalars(select(JobAttemptRow).where(JobAttemptRow.job_id==context.job.id))).one()

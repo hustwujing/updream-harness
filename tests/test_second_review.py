@@ -2,7 +2,7 @@ import asyncio
 import pytest
 from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate, TurnState)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 async def seed(store):
     profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
@@ -27,7 +27,7 @@ async def test_queued_turn_cannot_be_claimed_by_another_broker(tmp_path):
 async def test_turn_queue_sequence_orders_tied_timestamps_repair_and_cancellation(tmp_path,monkeypatch):
     from datetime import datetime,timezone
     from sqlalchemy import select,update
-    from sandbox_harness.common.db.store import (ThreadRow, TurnOrderRow)
+    from test_support.legacy_store import (ThreadRow, TurnOrderRow)
     fixed=datetime(2026,1,1,tzinfo=timezone.utc)
     monkeypatch.setattr('sandbox_harness.common.db.turns.now',lambda:fixed)
     monkeypatch.setattr('sandbox_harness.common.db.threads.now',lambda:fixed)
@@ -95,7 +95,7 @@ async def test_expired_turn_lease_fences_every_worker_mutation_before_takeover(t
     from datetime import timedelta
     from sqlalchemy import update
     from sandbox_harness.common.contracts.domain import (EventKind, ItemType, RuntimeEvent, now)
-    from sandbox_harness.common.db.store import (TurnRow)
+    from test_support.legacy_store import (TurnRow)
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'expired-writes.db'));await store.initialize()
     try:
         thread,turn,_=await seed(store)
@@ -137,7 +137,7 @@ async def test_expired_turn_lease_fences_every_worker_mutation_before_takeover(t
 async def test_runtime_transcript_and_receipt_are_atomic_and_idempotent(tmp_path,monkeypatch):
     from sqlalchemy.ext.asyncio import AsyncSession
     from sandbox_harness.common.contracts.domain import (RuntimeEvent, EventKind)
-    from sandbox_harness.common.db.store import (EventRow)
+    from test_support.legacy_store import (EventRow)
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'events.db'));await store.initialize()
     try:
         thread,turn,_=await seed(store)
@@ -232,7 +232,7 @@ async def test_slow_cleanup_keeps_heartbeat_running(tmp_path,monkeypatch):
 async def test_old_worker_does_not_cancel_runtime_after_lease_takeover(tmp_path):
     from datetime import timedelta
     from sandbox_harness.common.contracts.domain import (now)
-    from sandbox_harness.common.db.store import (TurnRow)
+    from test_support.legacy_store import (TurnRow)
     from sandbox_harness.services.api.broker import (Broker)
     from sandbox_harness.common.configuration.config import (Settings)
     from sandbox_harness.common.storage.objects import (ObjectStore)

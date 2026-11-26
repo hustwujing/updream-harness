@@ -11,7 +11,7 @@ from sandbox_harness.common.contracts.job_contracts import (JobArtifactInput, Jo
 from sandbox_harness.services.job_worker.media_job_adapter import (MediaProviderJobAdapter)
 from sandbox_harness.common.storage.objects import (ObjectStore)
 from sandbox_harness.common.catalog.provider_preflight import (ProviderPreflight, ProviderPreflightError)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 
 class Catalog:

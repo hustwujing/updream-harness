@@ -95,7 +95,7 @@ def test_service_account_can_read_descriptors_and_schema_startup_is_serialized()
     assert 'find "$root/.venv" -type d -exec setfacl -m d:u:sandbox-harness:rX' in installer
     assert 'import sandbox_harness.services.api.main; import defusedxml.ElementTree' in installer
     import inspect
-    from sandbox_harness.common.db.store import Store
+    from test_support.legacy_store import Store
     store=inspect.getsource(Store.initialize)
     assert "pg_advisory_xact_lock" in store
     assert "SCHEMA_INITIALIZATION_LOCK_ID" in store

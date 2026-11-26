@@ -12,7 +12,7 @@ from sandbox_harness.common.sandbox.sandbox import (Sandbox)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxRuntimeRoute)
 from sandbox_harness.common.scheduling.scheduler import (NodeInventory, Scheduler)
 from sandbox_harness.common.sandbox.runtime import (StagedRuntimeObject)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 
 @pytest.mark.parametrize('phase',['allocating','preparing'])

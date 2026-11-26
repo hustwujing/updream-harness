@@ -20,7 +20,7 @@ from sandbox_harness.common.sandbox.runtime import (RuntimeClient, RuntimeTransf
 from sandbox_harness.common.storage.objects import (ObjectStore)
 from sandbox_harness.common.sandbox.pool import (SandboxPool)
 from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend, Sandbox)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 
 class CountingStream(httpx.AsyncByteStream):

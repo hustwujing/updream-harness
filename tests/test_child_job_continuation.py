@@ -1,5 +1,5 @@
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobKind, JobRequest, JobState)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 from sandbox_harness.services.api.job_continuation import (ContinuationDispatcher)
 
 

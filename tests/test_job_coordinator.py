@@ -8,7 +8,7 @@ from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, Turn
 from sandbox_harness.common.catalog.job_catalog import (JobCatalog, JobCatalogPayload)
 from sandbox_harness.common.contracts.job_contracts import (JobExpectedOutput, JobGroupCreate, JobKind, JobRequest, JobState, OutputDisposition)
 from sandbox_harness.common.jobs.job_coordinator import (JobCoordinator, JobGroupDraftUpdate)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 
 ROOT=__import__('pathlib').Path(__file__).resolve().parents[1]

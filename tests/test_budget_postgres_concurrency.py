@@ -7,7 +7,7 @@ import pytest
 from sandbox_harness.common.contracts.domain import (identifier)
 from sandbox_harness.common.contracts.domain import (now)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupDraftCreate, JobKind, JobRequest)
-from sandbox_harness.common.db.store import (Store)
+from test_support.legacy_store import (Store)
 
 
 POSTGRES_URL=os.environ.get('PARALLEL_TEST_POSTGRES_URL','')

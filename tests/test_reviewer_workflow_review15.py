@@ -16,7 +16,7 @@ from sandbox_harness.common.execution.job_worker import (JobWorker)
 from sandbox_harness.common.storage.objects import (ObjectStore)
 from sandbox_harness.common.catalog.profiles import (ProfileResolver)
 from sandbox_harness.services.job_worker.reviewer import (ReviewSubmission, ReviewerCoordinator, ReviewerJobAdapter)
-from sandbox_harness.common.db.store import (JobArtifactRow, JobOutboxRow, Store)
+from test_support.legacy_store import (JobArtifactRow, JobOutboxRow, Store)
 
 
 ROOT=Path(__file__).resolve().parents[1]
