@@ -25,6 +25,7 @@ from sandbox_harness.common.db.media_drafts import MediaDraftsTransactions
 from sandbox_harness.common.db.media_jobs import MediaJobsTransactions
 from sandbox_harness.common.db.sites import SitesTransactions
 from sandbox_harness.common.db.usage import UsageTransactions
+from sandbox_harness.common.db.provider_circuits import ProviderCircuitTransactions
 
 
 class Store(BaseConnections, UpgradesTransactions, CapabilitiesTransactions,
@@ -33,6 +34,7 @@ class Store(BaseConnections, UpgradesTransactions, CapabilitiesTransactions,
             AllocationsTransactions, CleanupTransactions, JobTerminalTransactions,
             JobArtifactsTransactions, AuthTransactions, EventsTransactions,
             UsageTransactions,
+            ProviderCircuitTransactions,
             ThreadsTransactions, SandboxTransactions, TurnsTransactions,
             FilesTransactions, InteractionsTransactions, MediaReferencesTransactions,
             MediaDraftsTransactions, MediaJobsTransactions, SitesTransactions):

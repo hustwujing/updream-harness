@@ -23,9 +23,17 @@ from sandbox_harness.common.sandbox.allocation_client import (AllocationAbsent, 
 
 
 class AllocationService:
-    def __init__(self,store,backend,*,owner='',lease_seconds=30):
+    def __init__(self,store,backend,*,owner='',lease_seconds=30,
+                 circuit_failure_threshold=3,circuit_open_seconds=30,circuit_probe_seconds=15):
         self.store=store;self.backend=backend;self.owner=owner or 'allocator-'+uuid.uuid4().hex
         self.lease_seconds=lease_seconds
+        self.circuit_failure_threshold=circuit_failure_threshold
+        self.circuit_open_seconds=circuit_open_seconds
+        self.circuit_probe_seconds=circuit_probe_seconds
+
+    def _circuit_key(self,request):
+        return hashlib.sha256((self.backend.provider+'\0'+
+            request.profile.compatibility_key).encode()).hexdigest()
 
     @asynccontextmanager
     async def _transaction(self):
@@ -80,6 +88,7 @@ class AllocationService:
                     or sandbox.compatibility_key!=request.profile.compatibility_key):
                 raise RuntimeError('sandbox_allocation_identity_mismatch')
             await self._finish(identity,'READY',handle=sandbox.handle)
+            await self.store.record_provider_success(self._circuit_key(request),self.owner)
             metric_outcome='success'
             event('sandbox.allocation.create.completed',allocation_id=identity,
                 job_id=value['job_id'],generation=value['job_generation'],provider=self.backend.provider,
@@ -87,6 +96,10 @@ class AllocationService:
                 duration_ms=round((asyncio.get_running_loop().time()-started)*1000,3))
         except tuple(REJECTIONS.values()) as exc:
             await self._finish(identity,'REJECTED',error_code=exc.code)
+            if not isinstance(exc,SandboxCapacityUnavailable):
+                await self.store.record_provider_failure(self._circuit_key(request),
+                    threshold=self.circuit_failure_threshold,
+                    open_seconds=self.circuit_open_seconds,owner=self.owner)
             metric_outcome='rejected'
             event('sandbox.allocation.create.rejected',level=30,allocation_id=identity,
                 job_id=value['job_id'],generation=value['job_generation'],provider=self.backend.provider,
@@ -100,6 +113,9 @@ class AllocationService:
                 state_after='UNKNOWN',outcome='cancelled');raise
         except Exception as exc:
             await self._finish(identity,'UNKNOWN')
+            await self.store.record_provider_failure(self._circuit_key(request),
+                threshold=self.circuit_failure_threshold,
+                open_seconds=self.circuit_open_seconds,owner=self.owner)
             event('sandbox.allocation.create.unknown',level=40,allocation_id=identity,
                 job_id=value['job_id'],generation=value['job_generation'],provider=self.backend.provider,
                 state_after='UNKNOWN',outcome='unknown',exc=exc,
@@ -133,6 +149,10 @@ class AllocationService:
                 current=await db.get(SandboxAllocationRow,identity)
                 if not current:continue
                 job_id=current.job_id
+                request=decode_request(current.request_json)
+            if not await self.store.allow_provider_create(self._circuit_key(request),self.owner,
+                    probe_seconds=self.circuit_probe_seconds):
+                continue
             async with self._transaction() as db:
                 job=await db.get(JobRow,job_id,with_for_update=True)
                 row=await db.get(SandboxAllocationRow,identity,with_for_update=True)

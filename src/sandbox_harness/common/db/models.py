@@ -745,6 +745,18 @@ class PlatformLeaderRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class ProviderCircuitRow(Base):
+    __tablename__ = "provider_circuits"
+    id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    state: Mapped[str] = mapped_column(String(20), index=True, default="closed", server_default="closed")
+    failure_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    opened_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    probe_owner: Mapped[str] = mapped_column(String(160), default="", server_default="")
+    probe_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    generation: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class SandboxAllocationRow(Base):
     __tablename__ = 'sandbox_allocations'
     id: Mapped[str] = mapped_column(String(64),primary_key=True)

@@ -20,7 +20,10 @@ async def serve(settings):
     store=CoreRepository(database_url,namespace=settings.namespace,
         **settings.handoff_options);await store.initialize()
     backend=build_sandbox_backend(settings)
-    service=AllocationService(store,backend,lease_seconds=settings.allocation_lease_seconds)
+    service=AllocationService(store,backend,lease_seconds=settings.allocation_lease_seconds,
+        circuit_failure_threshold=settings.provider_circuit_failure_threshold,
+        circuit_open_seconds=settings.provider_circuit_open_seconds,
+        circuit_probe_seconds=settings.provider_circuit_probe_seconds)
     stop=asyncio.Event();loop=asyncio.get_running_loop()
     for name in (signal.SIGINT,signal.SIGTERM):loop.add_signal_handler(name,stop.set)
     try:

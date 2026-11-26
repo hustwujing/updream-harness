@@ -29,6 +29,15 @@ class BaseConnections:
     async def _admit_job_draft(self, db, owner_id, draft_id):
         """Distributed repositories fence draft confirmation before row locks."""
 
+    @asynccontextmanager
+    async def transaction(self):
+        async with self.connections() as db:
+            async with db.begin():
+                if self.engine.dialect.name=="sqlite":
+                    connection=await db.connection()
+                    await connection.exec_driver_sql("BEGIN IMMEDIATE")
+                yield db
+
 
     @asynccontextmanager
     async def event_lock(self, turn_id: str):

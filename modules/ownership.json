@@ -274,6 +274,10 @@
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/pause.py"
     },
+    "src/sandbox_harness/common/db/provider_circuits.py": {
+      "owner": "common/db",
+      "target": "src/sandbox_harness/common/db/provider_circuits.py"
+    },
     "src/sandbox_harness/common/db/sandbox.py": {
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/sandbox.py"

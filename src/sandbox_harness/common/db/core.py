@@ -33,9 +33,10 @@ from .files import FilesTransactions
 from .interactions import InteractionsTransactions
 from .leaders import PlatformLeaderTransactions
 from .usage import UsageTransactions
+from .provider_circuits import ProviderCircuitTransactions
 
 
-class CoreRepository(CoreThreadLifecycle, DomainDatabase, BaseConnections, CapabilitiesTransactions, ViewsTransactions, PauseTransactions, BudgetsTransactions, JobActivityTransactions, JobGroupsTransactions, JobAttemptsTransactions, AllocationsTransactions, CleanupTransactions, JobTerminalTransactions, JobArtifactsTransactions, EventsTransactions, ThreadsTransactions, SandboxTransactions, TurnsTransactions, FilesTransactions, InteractionsTransactions, PlatformLeaderTransactions, UsageTransactions):
+class CoreRepository(CoreThreadLifecycle, DomainDatabase, BaseConnections, CapabilitiesTransactions, ViewsTransactions, PauseTransactions, BudgetsTransactions, JobActivityTransactions, JobGroupsTransactions, JobAttemptsTransactions, AllocationsTransactions, CleanupTransactions, JobTerminalTransactions, JobArtifactsTransactions, EventsTransactions, ThreadsTransactions, SandboxTransactions, TurnsTransactions, FilesTransactions, InteractionsTransactions, PlatformLeaderTransactions, UsageTransactions, ProviderCircuitTransactions):
     def __init__(self, database_url: str, redis_url: str = "", redis_prefix: str = "sandbox-harness:", *,
                  namespace: str, handoff_max_attempts: int = 8,
                  handoff_max_age_seconds: int = 900):

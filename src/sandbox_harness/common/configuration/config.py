@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     allocation_lease_seconds: float = Field(default=30,ge=3,le=300)
     allocation_recovery_seconds: float = Field(default=90,ge=10,le=900)
     allocation_provision_ttl_seconds: int = Field(default=300,ge=60,le=3600)
+    provider_circuit_failure_threshold: int = Field(default=3,ge=1,le=100)
+    provider_circuit_open_seconds: int = Field(default=30,ge=1,le=3600)
+    provider_circuit_probe_seconds: int = Field(default=15,ge=1,le=300)
     opensandbox_url: str = "http://127.0.0.1:28090"
     opensandbox_api_key: str = ""
     aliyun_sandbox_api_url: str = "https://api.cn-shanghai.sandbox.aliyuncs.com"
