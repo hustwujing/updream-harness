@@ -42,6 +42,7 @@ def _domain_url(admin, domain, password):
 
 def _updated_environment(source, values):
     keys={f"SANDBOX_HARNESS_{domain.upper()}_DATABASE_URL" for domain in DOMAINS}
+    keys.add("SANDBOX_HARNESS_DATABASE_URL")
     lines=[line for line in source.splitlines() if line.split("=",1)[0] not in keys]
     lines.extend(f"SANDBOX_HARNESS_{domain.upper()}_DATABASE_URL={values[domain]}"
                  for domain in DOMAINS)
@@ -52,7 +53,7 @@ async def provision(env_file=ENV):
     if ROOT != Path("/data2/wujing03/sandbox-harness-platform-parallel-ali"):
         raise RuntimeError("unexpected_project_root")
     source=env_file.read_text();configured=dotenv_values(env_file)
-    admin=_connection(configured.get("SANDBOX_HARNESS_DATABASE_URL", ""))
+    admin=_connection(configured.get("SANDBOX_HARNESS_ADMIN_DATABASE_URL", ""))
     passwords={}
     for domain in DOMAINS:
         existing=configured.get(f"SANDBOX_HARNESS_{domain.upper()}_DATABASE_URL")

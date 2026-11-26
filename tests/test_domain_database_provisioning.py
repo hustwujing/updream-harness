@@ -24,7 +24,8 @@ def test_domain_urls_have_distinct_roles_and_databases_without_secret_output():
 
 
 def test_platform_environment_update_is_idempotent_and_preserves_other_settings():
-    module=provisioner();source="SANDBOX_HARNESS_BACKEND=aliyun\nSANDBOX_HARNESS_CORE_DATABASE_URL=old\n"
+    module=provisioner();source=("SANDBOX_HARNESS_BACKEND=aliyun\n"
+        "SANDBOX_HARNESS_DATABASE_URL=legacy\nSANDBOX_HARNESS_CORE_DATABASE_URL=old\n")
     values={domain:f"postgresql+asyncpg://{domain}:secret@127.0.0.1:28433/{domain}"
             for domain in module.DOMAINS}
     first=module._updated_environment(source,values)
@@ -32,10 +33,13 @@ def test_platform_environment_update_is_idempotent_and_preserves_other_settings(
     assert first==second and "SANDBOX_HARNESS_BACKEND=aliyun" in first
     assert all(first.count(f"SANDBOX_HARNESS_{domain.upper()}_DATABASE_URL=")==1
                for domain in module.DOMAINS)
+    assert "SANDBOX_HARNESS_DATABASE_URL=" not in first
 
 
 def test_provisioner_revokes_public_connect_and_uses_non_privileged_roles():
     source=(ROOT/"deploy/ali/provision-domain-databases.py").read_text()
+    assert 'SANDBOX_HARNESS_ADMIN_DATABASE_URL' in source
+    assert 'configured.get("SANDBOX_HARNESS_DATABASE_URL"' not in source
     assert "REVOKE ALL ON DATABASE" in source
     assert "NOSUPERUSER NOCREATEDB NOCREATEROLE" in source
     assert "os.replace" in source and "0o600" in source

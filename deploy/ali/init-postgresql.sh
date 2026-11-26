@@ -23,12 +23,12 @@ fi
 set -a
 source "$env_file"
 set +a
-if [[ "$SANDBOX_HARNESS_DATABASE_URL" != *"@127.0.0.1:28433/sandbox_harness_parallel_ali" ]]; then
-  echo "database identity must be sandbox_harness_parallel_ali@127.0.0.1:28433" >&2
+if [[ "$SANDBOX_HARNESS_ADMIN_DATABASE_URL" != *"@127.0.0.1:28433/postgres" ]]; then
+  echo "admin database identity must be sandbox_harness_parallel_ali@127.0.0.1:28433/postgres" >&2
   exit 1
 fi
 
-credentials=${SANDBOX_HARNESS_DATABASE_URL#*//}
+credentials=${SANDBOX_HARNESS_ADMIN_DATABASE_URL#*//}
 credentials=${credentials%%@*}
 password=${credentials#*:}
 install -d -o sandbox-harness-db -g sandbox-harness-db -m 0700 \
@@ -51,15 +51,7 @@ runuser -u sandbox-harness-db -- /usr/lib/postgresql/16/bin/pg_ctl \
   -D "$data_root/data" -l "$log_file" \
   -o "-h 127.0.0.1 -p 28433 -k $socket_root" -w start
 trap 'runuser -u sandbox-harness-db -- /usr/lib/postgresql/16/bin/pg_ctl -D "$data_root/data" -m fast -w stop >/dev/null 2>&1 || true' EXIT
-export PGPASSWORD="$password"
-if ! /usr/lib/postgresql/16/bin/psql -h 127.0.0.1 -p 28433 \
-    -U sandbox_harness_parallel_ali -d postgres -Atc \
-    "select 1 from pg_database where datname='sandbox_harness_parallel_ali'" | grep -qx 1; then
-  /usr/lib/postgresql/16/bin/createdb -h 127.0.0.1 -p 28433 \
-    -U sandbox_harness_parallel_ali sandbox_harness_parallel_ali
-fi
-unset PGPASSWORD
 runuser -u sandbox-harness-db -- /usr/lib/postgresql/16/bin/pg_ctl \
   -D "$data_root/data" -m fast -w stop
 trap - EXIT
-echo "initialized sandbox_harness_parallel_ali at $data_root"
+echo "initialized Ali PostgreSQL cluster at $data_root"

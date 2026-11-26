@@ -76,10 +76,10 @@ def build_environment(source:dict[str,str],*,token=lambda:secrets.token_urlsafe(
         "SANDBOX_HARNESS_DATA_ROOT":str(DATA_ROOT),
         "SANDBOX_HARNESS_API_BIND_HOST":"127.0.0.1",
         "SANDBOX_HARNESS_API_BIND_PORT":str(identity.PORTS["api"]),
-        "SANDBOX_HARNESS_DATABASE_URL":(
+        "SANDBOX_HARNESS_ADMIN_DATABASE_URL":(
             f"postgresql+asyncpg://{identity.POSTGRES_IDENTITY}:"
             f"{quote(database_secret,safe='')}@127.0.0.1:{identity.PORTS['postgres']}/"
-            f"{identity.POSTGRES_IDENTITY}"),
+            "postgres"),
         "SANDBOX_HARNESS_NAMESPACE":identity.NAMESPACE,
         "SANDBOX_HARNESS_BACKEND":"opensandbox",
         "SANDBOX_HARNESS_REDIS_URL":source.get("SANDBOX_HARNESS_REDIS_URL","redis://127.0.0.1:6379/0"),

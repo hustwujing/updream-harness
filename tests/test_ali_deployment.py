@@ -58,7 +58,8 @@ def test_ali_environment_regenerates_service_secrets_and_isolates_paths():
     assert values["SANDBOX_HARNESS_OBJECT_PREFIX"]=="sandbox-harness-platform-parallel-ali/"
     assert values["SANDBOX_HARNESS_MODEL_CATALOG_SNAPSHOT_PATH"]==str(
         ALI_ROOT/".data/catalogs/model-catalog.json")
-    assert "@127.0.0.1:28433/sandbox_harness_parallel_ali" in values["SANDBOX_HARNESS_DATABASE_URL"]
+    assert "SANDBOX_HARNESS_DATABASE_URL" not in values
+    assert "@127.0.0.1:28433/postgres" in values["SANDBOX_HARNESS_ADMIN_DATABASE_URL"]
     assert values["SANDBOX_HARNESS_SESSION_SIGNING_KEY"]=="session-secret"
     assert values["SANDBOX_HARNESS_GATEWAY_SIGNING_KEY"]=="gateway-secret"
     assert values["SANDBOX_HARNESS_UPSTREAM_CODEX_KEY"]=="shared-provider-key"
@@ -111,8 +112,9 @@ def test_ali_postgresql_scripts_use_dedicated_cluster_under_data2():
 
 def test_ali_postgresql_initializer_validates_exact_environment_identity():
     source=(ROOT/"deploy/ali/init-postgresql.sh").read_text()
-    assert "SANDBOX_HARNESS_DATABASE_URL" in source
-    assert "@127.0.0.1:28433/sandbox_harness_parallel_ali" in source
+    assert "SANDBOX_HARNESS_ADMIN_DATABASE_URL" in source
+    assert "@127.0.0.1:28433/postgres" in source
+    assert "createdb" not in source
     assert "unexpected_project_root" in source
     assert "run as root" in source
 
