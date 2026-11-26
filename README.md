@@ -37,22 +37,25 @@ and [all case results](docs/test-evidence/ali-media-68d0274-cases.md). The publi
 repository is [hustwujing/updream-harness](https://github.com/hustwujing/updream-harness),
 on branch `sandbox-harness-platform-parallel-ali`.
 
-The current deployment is `8b79ea5`, with bounded allocation recovery, managed-file
-transfer and observer-restore fixes. Its affected-only 184-case composite gate is
-still incomplete: 173 cases meet expectations, while a closed upstream image
-endpoint blocks D02 plus ten unrun cases. K02 passed on the new images. Do not interpret the
-historical completed baselines as a pass for this current gate. See
-[allocation recovery and release evidence](docs/test-evidence/allocation-recovery.md).
+The current modular Ali candidate is verified at `75654ca`. Its product catalog
+contains 175 cases: the previous 169 cases plus XDB01-XDB06 for the split
+Accounts, Core, Media and Sites protocols. The composite gate is 175/175 with
+zero program or external failures and a mean duration of 284.003 seconds.
+Python verification passed 1506 tests with 21 environment-dependent skips;
+frontend verification passed 28 tests and the production build. See the
+[175-case cross-database report](docs/test-evidence/ali-cross-database-175-case-report.md).
 
-The modular Ali candidate is deployed as eight independently restartable services:
+The candidate is deployed as eight independently restartable services:
 API, sandbox-gateway, JobWorker, AllocationWorker, ControlledWorker, MediaWorker,
 SiteWorker and image-inference. Seven Python services resolve immutable descriptors
 under `.data/service-current/` and run from per-service source digests under
 `.data/service-releases/`; image-inference retains its separately materialized
 model/runtime boundary. Accounts, core execution, media and sites use four distinct
 PostgreSQL databases and roles. Cross-domain work uses durable ordered receipts and
-a Core-coordinated lifecycle protocol. Its fresh 169-case product gate is running;
-prior composite results do not count as final evidence for this candidate.
+a Core-coordinated lifecycle protocol. The deployed MediaWorker release is
+`737410af641777e6b2cab0ebbf7b44a94acbcb1c0b6dce3dfe1c9f3a09061480`; its
+cancel fence discards terminal Provider results before publication while still
+calling a real external cancel adapter when a durable Provider job ID exists.
 
 ## Services
 
