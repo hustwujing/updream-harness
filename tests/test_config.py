@@ -129,3 +129,17 @@ def test_gateway_signing_keyring_requires_distinct_bounded_ids():
     with pytest.raises(ValueError,match="too short"):
         validate_service_settings(current.model_copy(update={
             "gateway_previous_signing_key":"short","backend":"fake"}))
+
+
+def test_production_real_sandbox_requires_https_gateway(tmp_path):
+    value=Settings(_env_file=None,backend="opensandbox",deployment_environment="production",
+        gateway_url="http://gateway.internal",gateway_signing_key="g"*32,
+        gateway_control_key="c"*32,session_signing_key="s"*32,
+        runtime_bundle_digest="a"*64,runtime_code_bundle_digest="b"*64,
+        job_catalog_digest="c"*64,profile_catalog_digest="d"*64,
+        runtime_bundle_dir=tmp_path,runtime_code_bundle_dir=tmp_path)
+    (tmp_path/("a"*64+".tar")).write_bytes(b"runtime")
+    (tmp_path/("b"*64+".tar")).write_bytes(b"code")
+    with pytest.raises(ValueError,match="HTTPS"):
+        validate_service_settings(value)
+    validate_service_settings(value.model_copy(update={"gateway_url":"https://gateway.example"}))

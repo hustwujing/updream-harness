@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SANDBOX_HARNESS_", env_file=".env", extra="ignore")
 
     data_root: Path = Path(".data")
+    deployment_environment: Literal["local","test","production"] = "local"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     log_file_enabled: bool = True
     log_stdout_enabled: bool = False
@@ -255,6 +256,9 @@ def validate_service_settings(value: Settings) -> None:
     if (value.gateway_previous_signing_key
             and value.gateway_previous_signing_key_id==value.gateway_signing_key_id):
         raise ValueError("Gateway signing key ids must be distinct")
+    if (value.deployment_environment=="production" and value.backend!="fake"
+            and not value.gateway_url.startswith("https://")):
+        raise ValueError("Production Sandbox Gateway URL must use HTTPS")
     if value.backend != "fake":
         configured = (value.gateway_signing_key, value.gateway_control_key, value.session_signing_key)
         if any(secret in DEVELOPMENT_SECRETS for secret in configured):
