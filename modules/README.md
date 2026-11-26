@@ -21,3 +21,14 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/pytest tests/test_module_manifests.py
 
 Service artifacts, dependency environments, generated manifests and logs belong
 under `.data`. No credentials are stored in these source manifests.
+
+The source/resource artifact builder follows actual local Python imports and
+includes parent package initializers. It rejects cross-service implementation
+imports, external symlink resources and altered artifacts. Artifacts are
+content-addressed and explicitly marked `source-only` until dependency/native/
+external-runtime checks and launch verification are completed:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tools/build_module.py \
+  --module site-worker --output .data/module-artifacts
+```
