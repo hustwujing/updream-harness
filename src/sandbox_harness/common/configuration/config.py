@@ -15,6 +15,8 @@ class Settings(BaseSettings):
 
     data_root: Path = Path(".data")
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    log_file_enabled: bool = True
+    log_stdout_enabled: bool = False
     log_dir: Path = Path("logs")
     log_file_template: str = Field(default="{service}-{instance}.telemetry.jsonl", min_length=1, max_length=180)
     log_queue_size: int = Field(default=8192, ge=1, le=65536)

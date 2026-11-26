@@ -15,7 +15,9 @@ import pytest
 import httpx
 from fastapi import FastAPI,Request
 from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import ExportLogsServiceRequest
+from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import ExportMetricsServiceRequest
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 import sandbox_harness.common.observability.observability as obs
 from sandbox_harness.common.observability.diagnostics import DiagnosticCapture
 from sandbox_harness.tools.log_query import (query)
@@ -126,7 +128,8 @@ def test_log_path_and_filename_are_configurable_but_confined(tmp_path):
 
 def test_settings_centralize_operational_log_configuration(tmp_path):
     from sandbox_harness.common.configuration.config import Settings
-    settings=Settings(data_root=tmp_path,log_level='DEBUG',log_dir=Path('service-logs'),
+    settings=Settings(data_root=tmp_path,log_level='DEBUG',log_file_enabled=False,
+        log_stdout_enabled=True,log_dir=Path('service-logs'),
         log_file_template='{service}.{instance}.jsonl',log_queue_size=321,
         log_ring_capacity=654,log_max_bytes=8_000_000,runtime_log_max_bytes=4_000_000,
         log_segment_bytes=2_000_000,log_segment_max_age_seconds=600,
@@ -140,6 +143,7 @@ def test_settings_centralize_operational_log_configuration(tmp_path):
     runtime=obs.telemetry_configuration('runtime',tmp_path/'logs',settings)
 
     assert host['root']==tmp_path/'service-logs'
+    assert host['file_enabled'] is False and host['stdout_enabled'] is True
     assert host['filename_template']=='{service}.{instance}.jsonl'
     assert host['level']=='DEBUG' and host['queue_size']==321 and host['ring_capacity']==654
     assert host['max_bytes']==8_000_000 and runtime['max_bytes']==4_000_000
@@ -150,6 +154,16 @@ def test_settings_centralize_operational_log_configuration(tmp_path):
     assert diagnostic.path.name=='api.trace-debug.diagnostic.jsonl'
     assert diagnostic.trace_id=='a'*32 and diagnostic.max_body_bytes==1234
     assert diagnostic.max_bytes==5678 and diagnostic.ttl_seconds==6*3600
+
+
+def test_file_telemetry_can_be_disabled_for_platform_collected_stdout(tmp_path):
+    value=obs.Telemetry('api',tmp_path/'logs',file_enabled=False)
+    try:
+        value.put('import',{'signal':'log','event_name':'test.record','attributes':{}})
+        assert value.flush(3)
+        assert value.sink is None and not (tmp_path/'logs').exists()
+    finally:
+        value.close()
 
 
 def test_runtime_code_digest_is_the_service_release_when_host_release_is_absent(monkeypatch):
@@ -356,6 +370,34 @@ def test_queue_overload_and_disk_failure_do_not_block_business(tmp_path,monkeypa
     finally:release.set();value.close()
 
 
+def test_metrics_record_bounded_operation_and_health_dimensions(tmp_path,monkeypatch):
+    reader=InMemoryMetricReader()
+    value=obs.Telemetry('metrics-test',tmp_path,metric_readers=(reader,))
+    monkeypatch.setattr(obs,'_PROVIDER',value.provider)
+    monkeypatch.setattr(obs,'_TELEMETRY',value)
+    try:
+        with obs.operation('job.worker.poll',job_id='job-high-cardinality'):
+            pass
+        value.increment('dropped_records',2)
+
+        metrics={metric.name:metric for resource in reader.get_metrics_data().resource_metrics
+            for scope in resource.scope_metrics for metric in scope.metrics}
+        assert {'updream.operation.count','updream.operation.duration',
+            'updream.telemetry.condition'} <= set(metrics)
+        duration=metrics['updream.operation.duration'].data.data_points[0]
+        assert dict(duration.attributes)=={
+            'operation.name':'job.worker.poll','operation.outcome':'success'}
+        health=metrics['updream.telemetry.condition'].data.data_points[0]
+        assert dict(health.attributes)=={'telemetry.condition':'dropped_records'}
+        assert health.value==2
+        assert 'job-high-cardinality' not in json.dumps([
+            dict(point.attributes) for metric in metrics.values()
+            for point in metric.data.data_points])
+        assert value.metric_exporter is None
+    finally:
+        value.close()
+
+
 def test_retention_is_bounded_and_does_not_remove_other_files(tmp_path):
     sink=obs.JsonSink(tmp_path,'test','one',max_bytes=2048,days=7,segment_bytes=512)
     other=tmp_path/'user.txt';other.write_text('keep')
@@ -372,7 +414,7 @@ def test_json_sink_recovers_when_log_directory_is_removed_after_start(tmp_path):
     assert json.loads(sink.path.read_text())['event_name']=='after'
 
 
-def test_otlp_exports_both_signals_and_ingest_checks_business_scope(telemetry,monkeypatch):
+def test_otlp_exports_all_signals_and_ingest_checks_business_scope(telemetry,monkeypatch):
     captured=[];authorizations=[]
     class Handler(BaseHTTPRequestHandler):
         status=200
@@ -389,10 +431,17 @@ def test_otlp_exports_both_signals_and_ingest_checks_business_scope(telemetry,mo
         with obs.operation('runtime.execution',turn_id='turn-1',thread_id='thread-1',sandbox_id='box-1'):
             obs.event('runtime.finished')
         assert telemetry.flush(5)
-        assert {p for p,_ in captured}=={'/v1/logs','/v1/traces'}
+        assert telemetry.force_flush_metrics(5)
+        assert {p for p,_ in captured}=={'/v1/logs','/v1/traces','/v1/metrics'}
         assert set(authorizations)=={'Bearer test-observability'}
         claims=SimpleNamespace(turn_id='turn-1',thread_id='thread-1',sandbox_id='box-1')
         for path,data in captured:
+            if path.endswith('/metrics'):
+                parsed_metrics=ExportMetricsServiceRequest();parsed_metrics.ParseFromString(data)
+                names={metric.name for resource in parsed_metrics.resource_metrics
+                    for scope in resource.scope_metrics for metric in scope.metrics}
+                assert {'updream.operation.count','updream.operation.duration'} <= names
+                continue
             decoded=decode_otlp(path.rsplit('/',1)[-1],data,claims)
             assert decoded
             with pytest.raises(ValueError,match='scope_mismatch'):

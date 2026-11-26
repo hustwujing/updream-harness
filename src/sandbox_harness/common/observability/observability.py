@@ -27,6 +27,10 @@ from opentelemetry.trace import Link, SpanKind, Status, StatusCode
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from opentelemetry.sdk.trace import TracerProvider, SpanProcessor
 from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import (
+    MetricExporter, MetricExportResult, PeriodicExportingMetricReader,
+)
 from opentelemetry.sdk._logs import LoggerProvider, LogRecordProcessor, ReadableLogRecord
 from opentelemetry._logs import LogRecord, SeverityNumber
 
@@ -145,16 +149,21 @@ def operation(name, *, parent=None, new_trace=False, kind=SpanKind.INTERNAL, **f
             yield span
         except BaseException as exc:
             cancelled = isinstance(exc, asyncio.CancelledError)
+            duration=round((time.monotonic()-start)*1000,3)
             if not cancelled: span.set_status(Status(StatusCode.ERROR))
             span.set_attribute('updream.outcome', 'cancelled' if cancelled else 'failed')
-            span.set_attribute('updream.duration_ms',round((time.monotonic()-start)*1000,3))
+            span.set_attribute('updream.duration_ms',duration)
             event(name+'.cancelled' if cancelled else name+'.failed',
                 level=logging.INFO if cancelled else logging.ERROR, exc=exc,
-                duration_ms=round((time.monotonic()-start)*1000,3))
+                duration_ms=duration)
+            if _TELEMETRY is not None:
+                _TELEMETRY.record_operation(name,duration,'cancelled' if cancelled else 'failed')
             raise
         else:
-            span.set_attribute('updream.duration_ms',round((time.monotonic()-start)*1000,3))
-            event(name+'.completed', duration_ms=round((time.monotonic()-start)*1000,3))
+            duration=round((time.monotonic()-start)*1000,3)
+            span.set_attribute('updream.duration_ms',duration)
+            event(name+'.completed', duration_ms=duration)
+            if _TELEMETRY is not None:_TELEMETRY.record_operation(name,duration,'success')
 
 def observed(name, *, new_trace=False):
     def decorate(fn):
@@ -333,30 +342,70 @@ class ConsoleJsonHandler(logging.Handler):
 def runtime_console_handler(service,stream=None):
     return ConsoleJsonHandler(service,stream) if service in {'runtime','runtime-bootstrap'} else None
 
+
+class ObservedMetricExporter(MetricExporter):
+    """Count exporter failures without letting them affect business work."""
+    def __init__(self,delegate,telemetry):
+        super().__init__(preferred_temporality=delegate._preferred_temporality,
+            preferred_aggregation=delegate._preferred_aggregation)
+        self.delegate=delegate;self.telemetry=telemetry
+    def export(self,metrics_data,timeout_millis=10000,**kwargs):
+        try:result=self.delegate.export(metrics_data,timeout_millis=timeout_millis,**kwargs)
+        except Exception:
+            self.telemetry.increment('export_failures');return MetricExportResult.FAILURE
+        if result is not MetricExportResult.SUCCESS:self.telemetry.increment('export_failures')
+        return result
+    def force_flush(self,timeout_millis=10000):
+        return self.delegate.force_flush(timeout_millis)
+    def shutdown(self,timeout_millis=30000,**kwargs):
+        return self.delegate.shutdown(timeout_millis=timeout_millis,**kwargs)
+
 class Telemetry:
     def __init__(self,service,root,*,queue_size=8192,max_bytes=2*1024**3,days=7,release='unknown',
             segment_bytes=8*1024**2,segment_max_age_seconds=86400,ring_capacity=8192,
-            filename_template='{service}-{instance}.telemetry.jsonl',otlp_timeout_seconds=2):
+            filename_template='{service}-{instance}.telemetry.jsonl',otlp_timeout_seconds=2,
+            metric_readers=(),file_enabled=True):
         if not 1<=queue_size<=65536 or max_bytes<1024 or not 1<=days<=3650:raise ValueError('invalid_telemetry_limits')
         self.resource=Resource.create({'service.namespace':'updream-harness','service.name':service,
             'service.instance.id':uuid.uuid4().hex,'service.version':release,
             'deployment.environment.name':os.getenv('SANDBOX_HARNESS_ENVIRONMENT','local')})
         self.instance=self.resource.attributes['service.instance.id'];self.service=service
-        self.sink=JsonSink(root,service,self.instance,max_bytes=max_bytes,days=days,
+        self.sink=(JsonSink(root,service,self.instance,max_bytes=max_bytes,days=days,
             segment_bytes=segment_bytes,segment_max_age_seconds=segment_max_age_seconds,
-            filename_template=filename_template)
+            filename_template=filename_template) if file_enabled else None)
         self.queue=queue.Queue(queue_size);self.stats={'dropped_records':0,'disk_errors':0,'export_failures':0,'library_warnings':0,'schema_violations':0,'storage_recoveries':0}
         self.guard=threading.Lock();self.ring=deque(maxlen=ring_capacity);self.sequence=0;self.stopping=False;self.last_prune=time.monotonic()
         self.otlp_timeout_seconds=otlp_timeout_seconds
         self.remote=None;self.remote_guard=threading.Lock()
         self.provider=TracerProvider(resource=self.resource,shutdown_on_exit=False)
         self.logs=LoggerProvider(resource=self.resource,shutdown_on_exit=False)
+        self.metric_exporter=None
+        self.meter_provider=MeterProvider(metric_readers=tuple(metric_readers),
+            resource=self.resource,shutdown_on_exit=False)
+        self._configure_instruments()
         processor=Processor(self);self.provider.add_span_processor(processor);self.logs.add_log_record_processor(processor)
         self.logger=self.logs.get_logger('updream-harness');self.handler=StructuredHandler(self)
         self.console_handler=None
         self.worker=threading.Thread(target=self._work,name='telemetry-writer',daemon=True);self.worker.start()
+    def _configure_instruments(self):
+        meter=self.meter_provider.get_meter('updream-harness')
+        self.operation_count=meter.create_counter('updream.operation.count',
+            unit='{operation}',description='Completed application operations')
+        self.operation_duration=meter.create_histogram('updream.operation.duration',
+            unit='ms',description='Application operation duration')
+        self.telemetry_conditions=meter.create_counter('updream.telemetry.condition',
+            unit='{event}',description='Application telemetry health conditions')
     def increment(self,key,count=1):
         with self.guard:self.stats[key]=self.stats.get(key,0)+count
+        try:self.telemetry_conditions.add(count,{'telemetry.condition':key})
+        except Exception:pass
+    def record_operation(self,name,duration_ms,outcome):
+        if not EVENT.fullmatch(name) or outcome not in {'success','failed','cancelled'}:return
+        attributes={'operation.name':name,'operation.outcome':outcome}
+        try:
+            self.operation_count.add(1,attributes)
+            self.operation_duration.record(max(0,float(duration_ms)),attributes)
+        except Exception:pass
     def put(self,kind,value):
         if self.stopping:self.increment('dropped_records');return False
         try:self.queue.put_nowait((kind,value));return True
@@ -380,6 +429,21 @@ class Telemetry:
                 for exporter in self.remote:exporter.shutdown()
             self.remote=(OTLPLogExporter(endpoint=endpoint.rstrip('/')+'/logs',headers=headers or {},timeout=self.otlp_timeout_seconds,session=session(),compression=Compression.NoCompression),
                 OTLPSpanExporter(endpoint=endpoint.rstrip('/')+'/traces',headers=headers or {},timeout=self.otlp_timeout_seconds,session=session(),compression=Compression.NoCompression)) if endpoint else None
+            self.meter_provider.shutdown()
+            self.metric_exporter=None
+            readers=()
+            if endpoint:
+                from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+                delegate=OTLPMetricExporter(endpoint=endpoint.rstrip('/')+'/metrics',headers=headers or {},
+                    timeout=self.otlp_timeout_seconds,session=session(),compression=Compression.NoCompression)
+                self.metric_exporter=ObservedMetricExporter(delegate,self)
+                readers=(PeriodicExportingMetricReader(self.metric_exporter,
+                    export_interval_millis=float(os.getenv('OTEL_METRIC_EXPORT_INTERVAL','60000')),
+                    export_timeout_millis=float(os.getenv('OTEL_METRIC_EXPORT_TIMEOUT',
+                        str(self.otlp_timeout_seconds*1000)))),)
+            self.meter_provider=MeterProvider(metric_readers=readers,resource=self.resource,
+                shutdown_on_exit=False)
+            self._configure_instruments()
     def _row(self,kind,value):
         if kind=='import':return value
         resource={k:v for k,v in dict(value.resource.attributes).items() if k.startswith(('service.','deployment.','telemetry.sdk.'))}
@@ -401,7 +465,7 @@ class Telemetry:
         while not self.stopping or not self.queue.empty():
             try:batch=[self.queue.get(timeout=.2)]
             except queue.Empty:
-                if time.monotonic()-self.last_prune>=60:
+                if self.sink is not None and time.monotonic()-self.last_prune>=60:
                     try:self.sink.write([])
                     except Exception:self.increment("disk_errors")
                     self.last_prune=time.monotonic()
@@ -427,9 +491,10 @@ class Telemetry:
                     rows.append({'schema_version':1,'signal':'log','timestamp':datetime.now(timezone.utc).isoformat(),
                         'event_name':'telemetry.records.dropped','severity_text':'WARNING','resource':dict(self.resource.attributes),
                         'attributes':{'updream.dropped_count':dropped-last_dropped}});last_dropped=dropped
-                try:
-                    if self.sink.write(rows):self.increment('storage_recoveries')
-                except Exception:self.increment('disk_errors')
+                if self.sink is not None:
+                    try:
+                        if self.sink.write(rows):self.increment('storage_recoveries')
+                    except Exception:self.increment('disk_errors')
                 with self.remote_guard:
                     if self.remote:
                         for kind,exporter in zip(('log','span'),self.remote):
@@ -451,12 +516,16 @@ class Telemetry:
         end=time.monotonic()+timeout
         while self.queue.unfinished_tasks and time.monotonic()<end:time.sleep(.01)
         return not self.queue.unfinished_tasks
+    def force_flush_metrics(self,timeout=3):
+        try:return self.meter_provider.force_flush(timeout_millis=timeout*1000)
+        except Exception:
+            self.increment('export_failures');return False
     def close(self):
         if self.stopping:return
         self.flush(5);self.stopping=True;self.worker.join(5)
         logging.getLogger().removeHandler(self.handler)
         if self.console_handler:logging.getLogger().removeHandler(self.console_handler)
-        self.logs.shutdown();self.provider.shutdown()
+        self.logs.shutdown();self.provider.shutdown();self.meter_provider.shutdown()
 
 
 def export_headers():
@@ -485,6 +554,10 @@ def telemetry_configuration(service,root,settings=None):
         'segment_max_age_seconds':get('log_segment_max_age_seconds',86400),
         'days':get('log_retention_days',int(os.getenv('SANDBOX_HARNESS_LOG_RETENTION_DAYS','7'))),
         'otlp_timeout_seconds':get('log_otlp_timeout_seconds',2),
+        'file_enabled':get('log_file_enabled',os.getenv(
+            'SANDBOX_HARNESS_LOG_FILE_ENABLED','true').lower() in {'1','true','yes','on'}),
+        'stdout_enabled':get('log_stdout_enabled',os.getenv(
+            'SANDBOX_HARNESS_LOG_STDOUT_ENABLED','false').lower() in {'1','true','yes','on'}),
         'level':getattr(settings,'log_level',os.getenv('SANDBOX_HARNESS_LOG_LEVEL','INFO')).upper(),
         'schema_strict':get('log_schema_strict',False),
     }
@@ -502,7 +575,7 @@ def configure(service,root,settings=None):
         max_bytes=config['max_bytes'],days=config['days'],release=release,
         segment_bytes=config['segment_bytes'],segment_max_age_seconds=config['segment_max_age_seconds'],
         ring_capacity=config['ring_capacity'],filename_template=config['filename_template'],
-        otlp_timeout_seconds=config['otlp_timeout_seconds'])
+        otlp_timeout_seconds=config['otlp_timeout_seconds'],file_enabled=config['file_enabled'])
     if settings is not None:
         _DIAGNOSTICS=DiagnosticCapture.from_settings(settings,service,_TELEMETRY.instance)
     else:
@@ -519,7 +592,8 @@ def configure(service,root,settings=None):
             ttl_hours=int(os.getenv('SANDBOX_HARNESS_DIAGNOSTIC_TTL_HOURS','24')))
     _PROVIDER=_TELEMETRY.provider
     root_logger=logging.getLogger();handlers=[_TELEMETRY.handler]
-    _TELEMETRY.console_handler=runtime_console_handler(service)
+    _TELEMETRY.console_handler=(ConsoleJsonHandler(service) if config['stdout_enabled']
+        else runtime_console_handler(service))
     if _TELEMETRY.console_handler:handlers.append(_TELEMETRY.console_handler)
     root_logger.handlers=handlers
     root_logger.setLevel(config['level'])
