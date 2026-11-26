@@ -218,7 +218,8 @@ class SandboxInspector:
             if existing:
                 return existing
             sandbox = await self.pool.acquire(thread_id=thread_id,
-                turn_id="inspect-" + thread_id, harness=thread.harness, environment={})
+                turn_id="inspect-" + thread_id, harness=thread.harness, environment={},
+                ownership_owner_id=owner_id)
             try:
                 await self.runtime.prepare(sandbox)
                 await self._restore_new(thread, sandbox)
@@ -430,7 +431,8 @@ class SandboxInspector:
             if control and control["state"] == "user_controlled" and control["expires_at"] > now():
                 return control
             sandbox = await self.pool.acquire(thread_id=thread_id,
-                turn_id="inspect-" + thread_id, harness=thread.harness, environment={})
+                turn_id="inspect-" + thread_id, harness=thread.harness, environment={},
+                ownership_owner_id=owner_id)
             try:
                 token, claims = self.capabilities.issue(thread_id=thread_id,
                     turn_id=thread_id, sandbox_id=sandbox.id, harness=thread.harness,
@@ -487,7 +489,7 @@ class SandboxInspector:
                     candidate = await self.pool.backend.get(handle)
                     candidate.thread_id = thread_id; candidate.turn_id = "inspect-" + thread_id
                     sandbox = await self.pool.adopt(candidate, thread_id=thread_id,
-                        turn_id="inspect-" + thread_id)
+                        turn_id="inspect-" + thread_id, ownership_owner_id=owner_id)
                 except SandboxNotFound:
                     sandbox = None
                 except (RuntimeError,httpx.HTTPError) as exc:

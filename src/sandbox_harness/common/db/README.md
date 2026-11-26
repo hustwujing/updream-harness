@@ -51,6 +51,19 @@ and application entry points still need integration. The old public Store
 lifecycle methods must be replaced by the coordinator result contract during API
 wiring; these libraries are not a completed application deployment.
 
+The API Pool integration supplies the browser owner identity for Primary and
+Inspector acquire/adopt calls. A new external create is preceded by a durable
+intent; handle receipt and binding are recorded before the Sandbox is returned.
+Warm instances acquire Thread ownership before binding. Deterministic pre-accept
+rejection releases the intent and permits retry, while an unknown create keeps
+capacity charged and a replacement process reconciles the original allocation
+identity without resubmission. All Pool deletion paths update the same ledger.
+
+`SiteRepository` initializes only the sites authority. SiteWorker now requires
+the explicit sites connection and has no core database credential. API-side site
+admission and preparation still require durable core-to-sites commands before
+this repository is used by the full application.
+
 These primitives are verified independently on SQLite and disposable PostgreSQL
 databases. The service entry points still use the original Store until their
 business transactions have been converted; these primitives alone are not a

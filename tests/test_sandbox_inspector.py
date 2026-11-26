@@ -212,6 +212,29 @@ async def test_inspector_restore_takeover_terminal_port_and_release(tmp_path, mo
 
 
 @pytest.mark.asyncio
+async def test_inspector_restore_records_durable_sandbox_ownership(tmp_path):
+    from sandbox_harness.common.db.core import CoreRepository
+    store = CoreRepository("sqlite+aiosqlite:///" + str(tmp_path / "core.db"), namespace="inspector-owned")
+    await store.initialize()
+    backend = FakeSandboxBackend(namespace="inspector-owned")
+    pool = SandboxPool(backend, {harness:"test@sha256:"+"1"*64 for harness in Harness},
+        {harness:0 for harness in Harness}, max_sandboxes=2, ownership=store.ownership)
+    inspector = SandboxInspector(inspector_settings(), store, FakeObjects(), pool, FakeRuntime(), FakeBroker())
+    try:
+        owner="a"*64;profile=HarnessCatalog().resolve("codex","gpt-5.6","standard")
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level="standard",title="Owned Inspector"),profile,owner)
+        sandbox=await inspector.restore(thread.id,owner)
+        identity=store.ownership.identity(sandbox.handle.provider,sandbox.handle.allocation_id)
+        record=await store.ownership.get(identity)
+        assert record["state"]=="LIVE" and record["thread_id"]==thread.id
+        await pool.release(sandbox,keep_attached=False)
+        assert (await store.ownership.get(identity))["state"]=="RELEASED"
+    finally:
+        await pool.close();await store.close()
+
+
+@pytest.mark.asyncio
 async def test_inspector_requires_managed_change_decision_and_can_preserve_work(tmp_path,monkeypatch):
     store=Store("sqlite+aiosqlite:///"+str(tmp_path/"managed.db"));await store.initialize()
     backend=FakeSandboxBackend();pool=SandboxPool(backend,{h:"test@sha256:"+"1"*64 for h in Harness},

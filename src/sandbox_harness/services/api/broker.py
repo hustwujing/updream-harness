@@ -848,7 +848,8 @@ class Broker:
                     ready = [value for value in matches if value.health_state == "ready"]
                     if ready:
                         sandbox = await self.pool.adopt(ready[0], thread_id=thread.id,
-                            turn_id=turn.id,expected_profile=self._sandbox_profile_for_turn(turn))
+                            turn_id=turn.id,expected_profile=self._sandbox_profile_for_turn(turn),
+                            ownership_owner_id=thread.owner_id)
                         self.active_sandboxes[turn.id] = sandbox
                         extra_sandboxes = [value for value in matches if value.id != sandbox.id]
                     else:
@@ -859,7 +860,8 @@ class Broker:
                     ready = [value for value in matches if value.health_state == "ready"]
                     if ready:
                         sandbox = await self.pool.adopt(ready[0], thread_id=thread.id,
-                            turn_id=turn.id,expected_profile=self._sandbox_profile_for_turn(turn))
+                            turn_id=turn.id,expected_profile=self._sandbox_profile_for_turn(turn),
+                            ownership_owner_id=thread.owner_id)
                         self.active_sandboxes[turn.id] = sandbox
                         extra_sandboxes = [value for value in matches if value.id != sandbox.id]
                     else:
@@ -888,7 +890,8 @@ class Broker:
                         if duplicate.id != selected.id:
                             await self.pool.retire(duplicate)
                     sandbox = await self.pool.adopt(selected,thread_id=thread.id,turn_id=turn.id,
-                        expected_profile=self._sandbox_profile_for_turn(turn))
+                        expected_profile=self._sandbox_profile_for_turn(turn),
+                        ownership_owner_id=thread.owner_id)
                     self.active_sandboxes[turn.id] = sandbox
                     if status.get("state") == "completed" and turn.runtime_sequence >= int(status.get("last_sequence") or 0):
                         recovered_result = RuntimeResult.model_validate({
@@ -917,6 +920,7 @@ class Broker:
                         harness=turn.harness,
                         environment={},
                         image=turn.runtime_image_digest or self.settings.image_for(turn.harness.value),
+                        ownership_owner_id=thread.owner_id,
                     )
                     token, claims = self.codec.issue(
                         thread_id=thread.id,

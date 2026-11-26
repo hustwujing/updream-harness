@@ -248,3 +248,120 @@ async def test_registration_carries_retained_ownership_forward_but_rejects_old_b
     finally:
         for database in [core, accounts, *remotes.values()]:
             await database.close()
+
+
+async def test_pool_persists_create_handle_and_binding_before_return(tmp_path):
+    from sandbox_harness.common.sandbox.pool import SandboxPool
+    core, ledger, backend, thread, _ = await setup_owned(tmp_path)
+    pool = SandboxPool(backend, {h: "image" for h in Harness}, {h: 0 for h in Harness},
+                       max_sandboxes=1, ownership=ledger)
+    try:
+        sandbox = await pool.acquire(thread_id=thread.id, turn_id="turn", harness=Harness.CODEX,
+            environment={}, ownership_owner_id="owner")
+        row = await ledger.get(ledger.identity(sandbox.handle.provider, sandbox.handle.allocation_id))
+        assert row["state"] == "LIVE" and row["handle"]["sandbox_id"] == sandbox.id
+        assert row["owner_id"] == "owner" and row["thread_id"] == thread.id
+        await pool.release(sandbox, keep_attached=False)
+        assert (await ledger.get(row["id"]))["state"] == "RELEASED"
+        assert pool._user_slots._value == 1
+    finally:
+        await pool.close()
+        await core.close()
+
+
+async def test_pool_warm_adoption_becomes_owned_before_thread_binding(tmp_path):
+    from sandbox_harness.common.sandbox.pool import SandboxPool
+    core, ledger, backend, thread, _ = await setup_owned(tmp_path)
+    targets = {h: (1 if h == Harness.CODEX else 0) for h in Harness}
+    pool = SandboxPool(backend, {h: "image" for h in Harness}, targets,
+                       max_sandboxes=2, ownership=ledger)
+    try:
+        await pool.fill()
+        sandbox = await pool.acquire(thread_id=thread.id, turn_id="turn", harness=Harness.CODEX,
+            environment={}, ownership_owner_id="owner")
+        row = await ledger.get(ledger.identity(sandbox.handle.provider, sandbox.handle.allocation_id))
+        assert row["state"] == "LIVE" and sandbox.thread_id == thread.id
+        await pool.release(sandbox, keep_attached=False)
+    finally:
+        await pool.close()
+        await core.close()
+
+
+async def test_pool_releases_rejected_create_but_retains_unknown_outcome(tmp_path):
+    from sandbox_harness.common.contracts.sandbox_contracts import (
+        SandboxCapacityUnavailable, SandboxCreateOutcomeUnknown)
+    from sandbox_harness.common.sandbox.pool import SandboxPool
+
+    class Rejecting(FakeSandboxBackend):
+        failure = SandboxCapacityUnavailable("full", provider="fake")
+
+        async def create(self, request):
+            if self.failure:
+                raise self.failure
+            return await super().create(request)
+
+    core, ledger, _, thread, _ = await setup_owned(tmp_path)
+    backend = Rejecting(namespace="ownership-test")
+    pool = SandboxPool(backend, {h: "image" for h in Harness}, {h: 0 for h in Harness},
+                       max_sandboxes=1, ownership=ledger)
+    try:
+        with pytest.raises(SandboxCapacityUnavailable):
+            await pool.acquire(thread_id=thread.id, turn_id="rejected", harness=Harness.CODEX,
+                environment={}, ownership_owner_id="owner")
+        assert await ledger.capacity_obligations() == [] and pool._user_slots._value == 1
+        backend.failure = None
+        recovered = await pool.acquire(thread_id=thread.id, turn_id="rejected", harness=Harness.CODEX,
+            environment={}, ownership_owner_id="owner")
+        assert recovered.handle.allocation_id == "rejected"
+        await pool.release(recovered, keep_attached=False)
+        backend.failure = SandboxCreateOutcomeUnknown("lost", provider="fake")
+        with pytest.raises(SandboxCreateOutcomeUnknown):
+            await pool.acquire(thread_id=thread.id, turn_id="unknown", harness=Harness.CODEX,
+                environment={}, ownership_owner_id="owner")
+        obligations = await ledger.capacity_obligations()
+        assert len(obligations) == 1 and obligations[0]["allocation_id"] == "unknown"
+        assert pool._user_slots._value == 0
+    finally:
+        await pool.close()
+        await core.close()
+
+
+async def test_replacement_pool_reconciles_lost_create_reply_without_resubmit(tmp_path):
+    from sandbox_harness.common.contracts.sandbox_contracts import SandboxCreateOutcomeUnknown
+    from sandbox_harness.common.sandbox.pool import SandboxPool
+
+    class LostReply(FakeSandboxBackend):
+        creates = 0
+
+        async def create(self, request):
+            self.creates += 1
+            sandbox = await super().create(request)
+            if self.creates == 1:
+                raise SandboxCreateOutcomeUnknown("lost", provider=self.provider)
+            return sandbox
+
+    core, ledger, _, thread, _ = await setup_owned(tmp_path)
+    backend = LostReply(namespace="ownership-test")
+    old = SandboxPool(backend, {h: "image" for h in Harness}, {h: 0 for h in Harness},
+                      max_sandboxes=1, ownership=ledger)
+    replacement = None
+    try:
+        with pytest.raises(SandboxCreateOutcomeUnknown):
+            await old.acquire(thread_id=thread.id, turn_id="lost-reply", harness=Harness.CODEX,
+                environment={}, ownership_owner_id="owner")
+        obligations = await ledger.capacity_obligations()
+        assert backend.creates == 1 and len(obligations) == 1
+        replacement = SandboxPool(backend, {h: "image" for h in Harness}, {h: 0 for h in Harness},
+                                  max_sandboxes=1, ownership=ledger)
+        await replacement.restore_allocation_capacity(obligations)
+        sandbox = await replacement.acquire(thread_id=thread.id, turn_id="lost-reply",
+            harness=Harness.CODEX, environment={}, ownership_owner_id="owner")
+        assert backend.creates == 1 and sandbox.handle.allocation_id == "lost-reply"
+        record = await ledger.get(ledger.identity(backend.provider, "lost-reply"))
+        assert record["state"] == "LIVE" and record["handle"]["sandbox_id"] == sandbox.id
+        await replacement.release(sandbox, keep_attached=False)
+    finally:
+        await old.close(preserve_sandbox_keys=set(await old.managed_sandbox_keys()))
+        if replacement:
+            await replacement.close()
+        await core.close()

@@ -43,6 +43,19 @@ class SandboxOwnership:
             row = await db.get(SandboxOwnershipRow, identity)
             return self._view(row) if row and row.namespace == self.namespace else None
 
+    async def resume_create(self, owner_id, thread_id, request):
+        """Return the immutable existing intent; never authorizes a second create."""
+        identity = self.identity(request.profile.provider, request.allocation_id)
+        digest = canonical_digest(json.loads(encode_request(request)))
+        async with self.core.connections() as db:
+            row = await db.get(SandboxOwnershipRow, identity)
+            if row is None:
+                return None
+            if (row.namespace != self.namespace or row.owner_id != owner_id
+                    or row.thread_id != thread_id or row.request_digest != digest):
+                raise ValueError("sandbox_ownership_identity_conflict")
+            return self._view(row)
+
     async def begin_create(self, owner_id, thread_id, request):
         identity = self.identity(request.profile.provider, request.allocation_id)
         encoded = encode_request(request)
@@ -53,6 +66,16 @@ class SandboxOwnership:
             if row:
                 if row.owner_id != owner_id or row.thread_id != thread_id or row.request_digest != digest:
                     raise ValueError("sandbox_ownership_identity_conflict")
+                if row.state == "RELEASED" and not row.handle_json:
+                    version = await self.core.lifecycle.admit(db, owner_id, thread_id)
+                    row.state = "CREATING"
+                    row.owner_generation = version.owner_generation
+                    row.thread_generation = version.thread_generation
+                    row.error_code = ""
+                    row.absent_confirmed_at = None
+                    row.capacity_released_at = None
+                    row.updated_at = now()
+                    return identity
                 raise RuntimeError("sandbox_creation_requires_reconciliation")
             version = await self.core.lifecycle.admit(db, owner_id, thread_id)
             thread = await db.scalar(select(ThreadRow).where(ThreadRow.id == thread_id,
@@ -86,6 +109,45 @@ class SandboxOwnership:
                 row.state = "ALLOCATED"
             row.updated_at = now()
 
+    async def record_existing(self, owner_id, thread_id, request, handle: SandboxHandle):
+        """Take durable ownership of a provider object before binding it."""
+        identity = self.identity(handle.provider, handle.allocation_id)
+        encoded = encode_request(request)
+        digest = canonical_digest(json.loads(encoded))
+        async with self.core.transaction() as db:
+            await self.core.handoff._identity_lock(db, "sandbox-ownership", identity)
+            version = await self.core.lifecycle.admit(db, owner_id, thread_id)
+            row = await db.get(SandboxOwnershipRow, identity)
+            if row:
+                if (row.owner_id != owner_id or row.thread_id != thread_id
+                        or row.request_digest != digest or row.handle_json != canonical_json(handle.to_mapping())):
+                    raise ValueError("sandbox_ownership_identity_conflict")
+                return identity
+            thread = await db.scalar(select(ThreadRow).where(ThreadRow.id == thread_id,
+                ThreadRow.owner_id == owner_id).with_for_update())
+            if thread is None:
+                raise KeyError("thread_not_found")
+            db.add(SandboxOwnershipRow(id=identity, namespace=self.namespace, provider=handle.provider,
+                allocation_id=handle.allocation_id, owner_id=owner_id, thread_id=thread_id,
+                profile_key=handle.profile_key, request_json=encoded, request_digest=digest,
+                handle_json=canonical_json(handle.to_mapping()), owner_generation=version.owner_generation,
+                thread_generation=version.thread_generation, state="ALLOCATED",
+                created_at=now(), updated_at=now()))
+        return identity
+
+    async def authorization(self, identity, owner_id, thread_id):
+        async with self.core.transaction() as db:
+            version = await self.core.lifecycle.admit(db, owner_id, thread_id)
+            row = await db.get(SandboxOwnershipRow, identity, with_for_update=True)
+            if (row is None or row.namespace != self.namespace or row.owner_id != owner_id
+                    or row.thread_id != thread_id or not row.handle_json
+                    or row.state not in {"ALLOCATED", "LIVE", "RETAINED"}):
+                raise ValueError("sandbox_ownership_binding_conflict")
+            if (row.owner_generation != version.owner_generation
+                    or row.thread_generation != version.thread_generation):
+                raise RuntimeError("sandbox_ownership_generation_stale")
+            return version
+
     async def bind(self, identity, owner_id, thread_id, *, owner_generation, thread_generation):
         async with self.core.transaction() as db:
             version = await self.core.lifecycle.admit(db, owner_id, thread_id,
@@ -101,6 +163,53 @@ class SandboxOwnership:
             row.state = "LIVE"
             row.updated_at = now()
             return SandboxHandle.from_mapping(json.loads(row.handle_json))
+
+    async def mark_delete_pending(self, handle: SandboxHandle):
+        identity = self.identity(handle.provider, handle.allocation_id)
+        async with self.core.transaction() as db:
+            row = await db.get(SandboxOwnershipRow, identity, with_for_update=True)
+            if row is None:
+                return False
+            if row.handle_json != canonical_json(handle.to_mapping()):
+                raise ValueError("sandbox_ownership_handle_conflict")
+            if row.state != "RELEASED":
+                row.state = "DELETE_PENDING"
+                row.updated_at = now()
+            return True
+
+    async def confirm_direct_release(self, handle: SandboxHandle):
+        identity = self.identity(handle.provider, handle.allocation_id)
+        async with self.core.transaction() as db:
+            row = await db.get(SandboxOwnershipRow, identity, with_for_update=True)
+            if row is None:
+                return False
+            if row.handle_json != canonical_json(handle.to_mapping()):
+                raise ValueError("sandbox_ownership_handle_conflict")
+            if row.state != "RELEASED":
+                timestamp = now()
+                row.state = "RELEASED"
+                row.absent_confirmed_at = row.absent_confirmed_at or timestamp
+                row.capacity_released_at = timestamp
+                row.claim_owner, row.claim_expires_at = "", None
+                row.updated_at = timestamp
+            return True
+
+    async def reject_unstarted_create(self, identity):
+        """Release only a provider request proven rejected before acceptance."""
+        async with self.core.transaction() as db:
+            row = await db.get(SandboxOwnershipRow, identity, with_for_update=True)
+            if row is None:
+                raise ValueError("sandbox_ownership_missing")
+            if row.state == "RELEASED":
+                return
+            if row.state != "CREATING" or row.handle_json:
+                raise RuntimeError("sandbox_create_rejection_not_safe")
+            timestamp = now()
+            row.state = "RELEASED"
+            row.error_code = "sandbox_create_rejected"
+            row.absent_confirmed_at = timestamp
+            row.capacity_released_at = timestamp
+            row.updated_at = timestamp
 
     async def request_cleanup(self, db, proposal):
         if proposal.action not in {"archive", "delete"}:
