@@ -9,9 +9,9 @@ printf 'selected sandbox backend: %s\n' "${SANDBOX_HARNESS_BACKEND:-unset}"
 units=(
   sandbox-harness-parallel-ali-postgresql
   sandbox-harness-parallel-ali-network
-  sandbox-harness-parallel-ali-gateway-opensandbox
-  sandbox-harness-parallel-ali-gateway-aliyun
-  sandbox-harness-parallel-ali-image-decompose
+  sandbox-harness-parallel-ali-sandbox-gateway-opensandbox
+  sandbox-harness-parallel-ali-sandbox-gateway-aliyun
+  sandbox-harness-parallel-ali-image-inference
   sandbox-harness-parallel-ali-job-worker
   sandbox-harness-parallel-ali-allocation-worker
   sandbox-harness-parallel-ali-controlled-worker
@@ -32,11 +32,11 @@ port_state() {
   printf '%-28s %-21s %s\n' "$label" "$host:$port" "$state"
 }
 for value in \
-  'gateway-opensandbox 172.31.0.1 29882' \
+  'sandbox-gateway-opensandbox 172.31.0.1 29882' \
   'proxy-opensandbox 172.31.0.1 29883' \
-  'gateway-aliyun 10.194.49.8 29882' \
+  'sandbox-gateway-aliyun 10.194.49.8 29882' \
   'proxy-aliyun 10.194.49.8 29883' \
-  'image-decompose 127.0.0.1 8912' \
+  'image-inference 127.0.0.1 8912' \
   'api 127.0.0.1 24767' \
   'postgresql 127.0.0.1 28433'; do
   read -r label host port <<<"$value"

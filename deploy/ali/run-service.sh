@@ -34,18 +34,37 @@ export TORCHINDUCTOR_CACHE_DIR="$root/.data/cache/torchinductor"
 export TRITON_CACHE_DIR="$root/.data/cache/triton"
 
 case "$component" in
-  api) command=("$root/.venv/bin/sandbox-harness-parallel-api") ;;
-  gateway-opensandbox)
+  sandbox-gateway-opensandbox|sandbox-gateway-aliyun) service=sandbox-gateway ;;
+  api|job-worker|allocation-worker|controlled-worker|media-worker|site-worker) service="$component" ;;
+  image-inference) service="" ;;
+  *) echo "unknown Ali service: $component" >&2; exit 2 ;;
+esac
+if [[ -n "$service" ]]; then
+  mapfile -t release < <(/data/wujing03/miniforge3/bin/python \
+    "$root/tools/service_release.py" resolve --data-root "$root/.data" --service "$service")
+  [[ ${#release[@]} -eq 4 && -x "${release[0]}" && -d "${release[1]}" && -d "${release[2]}" ]] || {
+    echo "invalid selected service release: $service" >&2; exit 1; }
+  release_python=${release[0]}
+  export PYTHONPATH=${release[1]}
+  export SANDBOX_HARNESS_RESOURCE_ROOT=${release[2]}
+  export SANDBOX_HARNESS_RELEASE_DIGEST=${release[3]}
+  export SANDBOX_HARNESS_JOB_CATALOG_PATH="$SANDBOX_HARNESS_RESOURCE_ROOT/deploy/job-catalog.example.json"
+  export SANDBOX_HARNESS_PROFILE_CATALOG_PATH="$SANDBOX_HARNESS_RESOURCE_ROOT/deploy/profile-catalog.example.json"
+fi
+
+case "$component" in
+  api) command=("$release_python" -m sandbox_harness.services.api.main) ;;
+  sandbox-gateway-opensandbox)
     export SANDBOX_HARNESS_GATEWAY_BIND_HOST="172.31.0.1"
     export SANDBOX_HARNESS_GATEWAY_URL="http://172.31.0.1:${SANDBOX_HARNESS_GATEWAY_BIND_PORT}"
-    command=("$root/.venv/bin/sandbox-harness-parallel-gateway")
+    command=("$release_python" -m sandbox_harness.services.sandbox_gateway.gateway)
     ;;
-  gateway-aliyun)
+  sandbox-gateway-aliyun)
     export SANDBOX_HARNESS_GATEWAY_BIND_HOST="10.194.49.8"
     export SANDBOX_HARNESS_GATEWAY_URL="http://10.194.49.8:${SANDBOX_HARNESS_GATEWAY_BIND_PORT}"
-    command=("$root/.venv/bin/sandbox-harness-parallel-gateway")
+    command=("$release_python" -m sandbox_harness.services.sandbox_gateway.gateway)
     ;;
-  image-decompose)
+  image-inference)
     service_root="$root/.data/services/image-layered"
     [[ -f "$service_root/service/app.py" ]] || { echo "image decompose service is not materialized" >&2; exit 1; }
     "$root/.venv/bin/python" "$root/deploy/ali/isolate-image-service.py"
@@ -53,11 +72,10 @@ case "$component" in
     command=(/data/wujing03/miniforge3/envs/media-foundation/bin/python -m uvicorn
       service.app:app --host 127.0.0.1 --port 8912 --no-access-log)
     ;;
-  job-worker) command=("$root/.venv/bin/sandbox-harness-parallel-job-worker") ;;
-  allocation-worker) command=("$root/.venv/bin/python" -m sandbox_harness.services.allocation_worker.allocation_service) ;;
-  controlled-worker) command=("$root/.venv/bin/sandbox-harness-parallel-controlled-worker") ;;
-  media-worker) command=("$root/.venv/bin/sandbox-harness-parallel-media-worker") ;;
-  site-worker) command=("$root/.venv/bin/sandbox-harness-parallel-site-worker") ;;
-  *) echo "unknown Ali service: $component" >&2; exit 2 ;;
+  job-worker) command=("$release_python" -m sandbox_harness.services.job_worker.job_service) ;;
+  allocation-worker) command=("$release_python" -m sandbox_harness.services.allocation_worker.allocation_service) ;;
+  controlled-worker) command=("$release_python" -m sandbox_harness.services.controlled_worker.controlled_service) ;;
+  media-worker) command=("$release_python" -m sandbox_harness.services.media_worker.media_service) ;;
+  site-worker) command=("$release_python" -m sandbox_harness.services.site_worker.site_service) ;;
 esac
 exec "${command[@]}" >>"$log_root/$component.log" 2>&1

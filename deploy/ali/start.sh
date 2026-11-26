@@ -39,14 +39,13 @@ if ! systemctl is-active --quiet sandbox-harness-parallel-ali-network.service; t
     "$root/deploy/ali/network-rule.sh" install
 fi
 
-systemctl stop sandbox-harness-parallel-ali-gateway.service 2>/dev/null || true
 case "${SANDBOX_HARNESS_BACKEND:-}" in
   opensandbox)
-    if systemctl is-active --quiet sandbox-harness-parallel-ali-gateway-aliyun.service; then
+    if systemctl is-active --quiet sandbox-harness-parallel-ali-sandbox-gateway-aliyun.service; then
       echo "provider switch requires deploy/ali/stop.sh first" >&2; exit 1
     fi
-    start_transient sandbox-harness-parallel-ali-gateway-opensandbox sandbox-harness \
-      "$root/deploy/ali/run-service.sh" gateway-opensandbox
+    start_transient sandbox-harness-parallel-ali-sandbox-gateway-opensandbox sandbox-harness \
+      "$root/deploy/ali/run-service.sh" sandbox-gateway-opensandbox
     wait_port 172.31.0.1 29882
     wait_port 172.31.0.1 29883
     ;;
@@ -54,11 +53,11 @@ case "${SANDBOX_HARNESS_BACKEND:-}" in
     [[ "${SANDBOX_HARNESS_ALIYUN_SANDBOX_GATEWAY_URL:-}" == "http://10.194.49.8:29882" && \
        "${SANDBOX_HARNESS_ALIYUN_SANDBOX_PROXY_URL:-}" == "http://10.194.49.8:29883" ]] || {
       echo "Aliyun sandbox routes are not explicitly configured" >&2; exit 1; }
-    if systemctl is-active --quiet sandbox-harness-parallel-ali-gateway-opensandbox.service; then
+    if systemctl is-active --quiet sandbox-harness-parallel-ali-sandbox-gateway-opensandbox.service; then
       echo "provider switch requires deploy/ali/stop.sh first" >&2; exit 1
     fi
-    start_transient sandbox-harness-parallel-ali-gateway-aliyun sandbox-harness \
-      "$root/deploy/ali/run-service.sh" gateway-aliyun
+    start_transient sandbox-harness-parallel-ali-sandbox-gateway-aliyun sandbox-harness \
+      "$root/deploy/ali/run-service.sh" sandbox-gateway-aliyun
     wait_port 10.194.49.8 29882
     wait_port 10.194.49.8 29883
     ;;
@@ -67,8 +66,8 @@ esac
 if [[ ! -f "$root/.data/services/image-layered/service/app.py" ]]; then
   "$root/deploy/ali/materialize-image-decompose.sh"
 fi
-start_transient sandbox-harness-parallel-ali-image-decompose root \
-  "$root/deploy/ali/run-service.sh" image-decompose
+start_transient sandbox-harness-parallel-ali-image-inference root \
+  "$root/deploy/ali/run-service.sh" image-inference
 wait_port 127.0.0.1 8912
 if [[ "${SANDBOX_HARNESS_JOB_ALLOCATION_DISPATCHER_ENABLED:-false}" == "true" ]]; then
   start_transient sandbox-harness-parallel-ali-allocation-worker sandbox-harness \

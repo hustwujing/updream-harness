@@ -85,7 +85,9 @@
       "identity": "manifest-sha256"
     }
   ],
-  "resources": [],
+  "resources": [
+    "src/controlled_runtime"
+  ],
   "host_credentials_allowed": true,
   "verification": [
     "declared source closure",
