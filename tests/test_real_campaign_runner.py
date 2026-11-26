@@ -104,6 +104,14 @@ def test_campaign_routes_cross_database_cases_to_the_dedicated_runner():
     assert 'case["executor"]=="cross_database"' in campaign
 
 
+def test_evo03_kill_recovers_persisted_retained_sandbox_expiry():
+    source=(ROOT/'tests/run_real_evolution.py').read_text()
+    body=source[source.index('async def evo03'):source.index('async def evo04')]
+    assert 'retained_until' in body
+    assert 'kill_restart(args.platform_worker_unit)' in body
+    assert 'retained_sandbox_released' in body
+
+
 def test_dynamic_resize_case_grades_the_post_intervention_contract():
     catalog=__import__('json').loads((ROOT/'tests/real_cases/cases.json').read_text())
     case=next(row for row in catalog['cases'] if row['id']=='R02')

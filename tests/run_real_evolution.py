@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from datetime import timedelta
 import json
 import os
 from pathlib import Path
+import signal
 import shutil
 import subprocess
 import time
@@ -17,6 +19,7 @@ import run_real_parallel_protocol as protocol
 from sandbox_harness.common.catalog.catalog import HarnessCatalog
 from sandbox_harness.common.configuration.databases import DatabaseSettings
 from sandbox_harness.common.contracts.domain import Harness, ThreadCreate, TurnCreate, TurnState, now
+from sandbox_harness.common.contracts.sandbox_contracts import SandboxScope
 from sandbox_harness.common.db.accounts import AccountsRepository
 from sandbox_harness.common.db.core import CoreRepository
 from sandbox_harness.common.db.domain_database import DomainInbox, DomainOutbox
@@ -25,9 +28,11 @@ from sandbox_harness.common.db.models import (
     OwnerAdmissionRow, ProviderCircuitRow, ThreadRow, TurnOrderRow, TurnRow,
     UsageLedgerRow, canonical_digest,
 )
+from sandbox_harness.common.db.ownership_models import SandboxOwnershipRow
 from sandbox_harness.common.db.site_repository import SiteRepository
 from sandbox_harness.common.observability.observability import BUSINESS_METRICS
 from sandbox_harness.common.security.capability import CapabilityCodec
+from sandbox_harness.common.sandbox.sandbox_factory import build_sandbox_backend
 from sandbox_harness.common.storage.object_gc import ObjectGarbageCollector
 from sandbox_harness.common.storage.objects import ObjectStore
 
@@ -48,6 +53,20 @@ class Repositories:
 
 def restart(unit):
     subprocess.run(['systemctl','restart',unit],check=True,timeout=60)
+
+
+def kill_restart(unit):
+    old=int(subprocess.check_output(['systemctl','show','-p','MainPID','--value',unit],text=True).strip())
+    if old <= 0:raise AssertionError('service_main_pid_missing')
+    os.kill(old,signal.SIGKILL)
+    deadline=time.monotonic()+60
+    while time.monotonic()<deadline:
+        current=int(subprocess.check_output(
+            ['systemctl','show','-p','MainPID','--value',unit],text=True).strip() or 0)
+        active=subprocess.run(['systemctl','is-active','--quiet',unit]).returncode==0
+        if active and current>0 and current!=old:return old,current
+        time.sleep(.25)
+    raise AssertionError('service_sigkill_restart_timeout')
 
 
 async def wait_turn(client,identity,timeout):
@@ -95,12 +114,43 @@ async def evo02(client,args,repositories,settings):
 async def evo03(client,args,repositories,settings):
     thread,turn=await long_turn(client,args,'EVO03');await asyncio.sleep(2)
     before=protocol.require(await client.get(f"api/turns/{turn['id']}")).json()
-    for unit in (args.job_worker_unit,args.platform_worker_unit):restart(unit)
+    for unit in (args.job_worker_unit,args.platform_worker_unit):kill_restart(unit)
     final,_=await wait_turn(client,turn['id'],args.timeout)
     if final['state']!='COMPLETED':raise AssertionError('multi_worker_kill_not_recovered')
+    deadline=time.monotonic()+60;retained=None
+    while time.monotonic()<deadline:
+        async with repositories.core.connections() as db:
+            retained=await db.scalar(select(SandboxOwnershipRow).where(
+                SandboxOwnershipRow.namespace==settings.namespace,
+                SandboxOwnershipRow.thread_id==thread['id'],
+                SandboxOwnershipRow.state=='RETAINED').order_by(
+                    SandboxOwnershipRow.created_at.desc()).limit(1))
+        if retained:break
+        await asyncio.sleep(.25)
+    if retained is None:raise AssertionError('completed_turn_sandbox_not_retained')
+    allocation_id=retained.allocation_id
+    async with repositories.core.connections.begin() as db:
+        await db.execute(update(SandboxOwnershipRow).where(SandboxOwnershipRow.id==retained.id)
+            .values(retained_until=now()+timedelta(seconds=5)))
+    kill_restart(args.platform_worker_unit)
+    deadline=time.monotonic()+90;released=False
+    while time.monotonic()<deadline:
+        async with repositories.core.connections() as db:
+            state=await db.scalar(select(SandboxOwnershipRow.state).where(
+                SandboxOwnershipRow.id==retained.id))
+        if state=='RELEASED':released=True;break
+        await asyncio.sleep(.5)
+    if not released:raise AssertionError('retained_sandbox_not_released_after_worker_kill')
+    backend=build_sandbox_backend(settings)
+    try:
+        owned=await backend.list_owned(SandboxScope(settings.namespace))
+    finally:await backend.aclose()
+    if any(value.handle.allocation_id==allocation_id for value in owned):
+        raise AssertionError('retained_provider_sandbox_still_present')
     return {'classification':'success','thread_id':thread['id'],'workers_restarted':2,
         'duplicate_external_execution':bool(before.get('runtime_execution_id') and
-            before.get('runtime_execution_id')!=final.get('runtime_execution_id'))}
+            before.get('runtime_execution_id')!=final.get('runtime_execution_id')),
+        'retained_sandbox_released':True,'retained_allocation_id':allocation_id}
 
 
 async def evo04(client,args,repositories,settings):
