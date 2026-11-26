@@ -1,4 +1,4 @@
-ARG BOOTSTRAP_IMAGE=sandbox-harness-parallel-bootstrap:build
+ARG BOOTSTRAP_IMAGE=sandbox-harness-parallel-ali-bootstrap:build
 FROM ${BOOTSTRAP_IMAGE}
 USER root
 ARG DEBIAN_MIRROR=http://mirrors.aliyun.com

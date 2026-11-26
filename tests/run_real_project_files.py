@@ -41,7 +41,7 @@ async def wait_health(client: httpx.AsyncClient) -> None:
 
 async def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-url", default="http://127.0.0.1:24766/")
+    parser.add_argument("--base-url", default="http://127.0.0.1:24767/")
     parser.add_argument("--report", default=".data/project-files-report.json")
     args = parser.parse_args()
     async with httpx.AsyncClient(base_url=args.base_url, timeout=None, trust_env=False) as client:
@@ -64,7 +64,7 @@ async def main() -> None:
         if {item["path"] for item in first_files} != {"assets/reference.txt", "artifacts/first.json"}:
             raise AssertionError("First project manifest is incomplete")
 
-        subprocess.run(["sudo", "-n", "systemctl", "restart", "sandbox-harness-parallel-api.service"], check=True)
+        subprocess.run(["sudo", "-n", "systemctl", "restart", "sandbox-harness-parallel-ali-api.service"], check=True)
         await wait_health(client)
         second_prompt = """Do not use /workspace/inbox. Read /workspace/project/assets/reference.txt and /workspace/project/artifacts/first.json. Verify the text and JSON agree, then write /workspace/outputs/second.json with exactly {"asset":"persistent-reference-v1","previous_stage":1,"stage":2} using Python. Parse it to verify and reply briefly."""
         response = await client.post(f"api/threads/{thread['id']}/turns", json={"message":second_prompt,

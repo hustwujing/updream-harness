@@ -91,8 +91,8 @@ def test_real_protocol_service_controls_are_deployment_configurable():
     assert "service_unit(args,'job_worker')" in protocol
     assert "service_unit(args,'api')" in protocol
     assert "service_command(args,'job_worker','start')" in protocol
-    assert "'sandbox-harness-parallel-job-worker.service'" not in protocol
-    assert "'sandbox-harness-parallel-api.service'" not in protocol
+    assert "'sandbox-harness-parallel-ali-job-worker.service'" not in protocol
+    assert "'sandbox-harness-parallel-ali-api.service'" not in protocol
 
 
 def test_campaign_routes_cross_database_cases_to_the_dedicated_runner():

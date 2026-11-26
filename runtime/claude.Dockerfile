@@ -1,6 +1,6 @@
 ARG CLAUDE_CODE_VERSION=2.1.76
 ARG CLAUDE_SOURCE_IMAGE=127.0.0.1:25001/sandbox-harness/claude@sha256:064b95b0ff17c086137274675d9bd8204e6a234efd43b7c31b90b38ea9ef84ce
-ARG PROFILE_IMAGE=sandbox-harness-parallel-profile:build
+ARG PROFILE_IMAGE=sandbox-harness-parallel-ali-profile:build
 FROM ${CLAUDE_SOURCE_IMAGE} AS harness_source
 FROM ${PROFILE_IMAGE}
 USER root

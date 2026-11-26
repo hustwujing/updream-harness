@@ -53,8 +53,8 @@ boundary, rerun that case and the affected previously-passing cases, then resume
 the remaining matrix. Do not add case-name branches or prompt keywords to make a
 real case green. For the Ali campaign, the user-authorized workflow preserves
 unaffected successes and reruns only failed/affected cases plus unrun cases.
-Record that assessment before resuming. Complete all 169 product cases and the
-seven additional resource cases, with each result's actual revision. This is
+Record that assessment before resuming. Complete all 175 catalog cases and any
+separately requested resource cases, with each result's actual revision. This is
 `composite_verified`; run the whole matrix on one revision only when a
 `clean_run` claim or a newly agreed release requirement needs it.
 
@@ -64,10 +64,8 @@ tested/deployed revision and commit the documentation separately; do not rewrite
 existing receipts to the new documentation revision.
 
 PostgreSQL tests use `PARALLEL_TEST_POSTGRES_URL` pointing to a unique throwaway
-database, never the application database. The legacy `tests/gate.py` starts its
-own cluster on port 28433, which conflicts with the deployed Ali cluster; do
-not stop that deployment to run it. Use an isolated test database and the
-PostgreSQL test modules directly, then remove only that test database.
+database, never an application database. Use the focused PostgreSQL modules,
+then remove only the test database they created.
 
 Real protocol cases are concurrent by default. Serialize only cases that mutate
 shared services or global configuration, and list those IDs explicitly in the

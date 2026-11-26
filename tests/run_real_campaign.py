@@ -573,7 +573,7 @@ def write_report_checkpoint(target:Path,*,revision:str,catalog:Path,selected_cou
 
 
 async def main():
-    parser=argparse.ArgumentParser();parser.add_argument("--base-url",default="http://127.0.0.1:24766/")
+    parser=argparse.ArgumentParser();parser.add_argument("--base-url",default="http://127.0.0.1:24767/")
     parser.add_argument("--catalog",type=Path,default=ROOT/"tests/real_cases/cases.json")
     parser.add_argument("--report",default=str(ROOT/".data/evidence/real-campaign/latest.json"))
     parser.add_argument("--resume-report",type=Path);parser.add_argument("--case",action="append",default=[])
@@ -584,11 +584,11 @@ async def main():
     parser.add_argument("--reasoning",default="deep")
     parser.add_argument("--job-worker-unit",default=(
         os.environ.get("SANDBOX_HARNESS_JOB_WORKER_UNIT") or
-        "sandbox-harness-parallel-job-worker.service"))
+        "sandbox-harness-parallel-ali-job-worker.service"))
     parser.add_argument("--job-worker-start-command",default=(
         os.environ.get("SANDBOX_HARNESS_JOB_WORKER_START_COMMAND") or ""))
     parser.add_argument("--api-unit",default=(os.environ.get("SANDBOX_HARNESS_API_UNIT") or
-        "sandbox-harness-parallel-api.service"));args=parser.parse_args()
+        "sandbox-harness-parallel-ali-api.service"));args=parser.parse_args()
     catalog=json.loads(args.catalog.read_text());explicit=set(args.case)|set(args.affected_case)
     configured_root=Path(catalog.get('asset_root') or ROOT/'tests/real_cases/assets')
     args.asset_root=(configured_root if configured_root.is_absolute()

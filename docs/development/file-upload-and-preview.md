@@ -39,8 +39,9 @@ inline previews and document conversion. The source entries are
 
 The API Host needs `/usr/bin/libreoffice` and
 `/etc/libreoffice/registry/impress.xcd`. On Ubuntu install
-`libreoffice-impress-nogui`. `deploy/check-service-access.sh` verifies the
-service user can execute it before restart.
+`libreoffice-impress-nogui`. Verify the selected API service account can execute
+it before selecting a release; `tests/test_document_preview.py` verifies the
+conversion and project-owned cache contract.
 
 ## Completion checks
 

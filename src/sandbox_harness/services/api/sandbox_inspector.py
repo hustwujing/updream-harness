@@ -22,7 +22,7 @@ from sandbox_harness.common.storage.objects import (object_chunks)
 
 
 EXECD_PORT = 44772
-BLOCKED_PREVIEW_PORTS = {22, 8080, 18080, 29880, 29881, EXECD_PORT}
+BLOCKED_PREVIEW_PORTS = {22, 8080, 18080, 29880, 29881, 29882, 29883, EXECD_PORT}
 WEBSOCKET_HOP_HEADERS = {
     "connection", "host", "upgrade", "proxy-connection", "keep-alive",
     "transfer-encoding", "sec-websocket-key", "sec-websocket-version",

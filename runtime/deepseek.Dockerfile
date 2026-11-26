@@ -1,4 +1,4 @@
-ARG PROFILE_IMAGE=sandbox-harness-parallel-profile:build
+ARG PROFILE_IMAGE=sandbox-harness-parallel-ali-profile:build
 FROM ${PROFILE_IMAGE}
 USER root
 ARG PYPI_INDEX=http://mirrors.cloud.aliyuncs.com/pypi/simple/

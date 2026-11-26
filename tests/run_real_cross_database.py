@@ -345,7 +345,7 @@ HANDLERS={"XDB01":case_xdb01,"XDB02":case_xdb02,"XDB03":case_xdb03,
 
 async def main():
     parser=argparse.ArgumentParser()
-    parser.add_argument('--base-url',default='http://127.0.0.1:24766/')
+    parser.add_argument('--base-url',default='http://127.0.0.1:24767/')
     parser.add_argument('--case',required=True,choices=sorted(HANDLERS))
     parser.add_argument('--report',type=Path,default=EVIDENCE_ROOT/'cross-database.json')
     parser.add_argument('--timeout',type=int,default=1800)

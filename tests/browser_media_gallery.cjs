@@ -37,7 +37,7 @@ function image(label,color){return Buffer.from(`<svg xmlns="http://www.w3.org/20
   if(path.includes('/events'))return route.fulfill({status:200,contentType:'text/event-stream',body:''});
   return json({});
  });
- await page.goto(process.env.TEST_BASE_URL||'http://127.0.0.1:24766/');await page.waitForSelector('.new-thread');
+ await page.goto(process.env.TEST_BASE_URL||'http://127.0.0.1:24767/');await page.waitForSelector('.new-thread');
  await page.locator('.thread-list button').filter({hasText:'媒体缩略图画廊'}).click();
  try{await page.waitForSelector('.artifact-gallery',{timeout:5000})}catch(error){throw new Error(`媒体画廊未渲染: ${await page.locator('body').innerText()}\n页面错误: ${errors.join(' | ')}\n${error.message}`)}
  const tiles=page.locator('.artifact-gallery .artifact-media');assert.equal(await tiles.count(),6);assert.equal(await page.locator('.artifact-row').count(),4);await page.getByAltText('矢量图.svg').waitFor();assert.ok(await page.getByAltText('矢量图.svg').evaluate(image=>image.naturalWidth>0));

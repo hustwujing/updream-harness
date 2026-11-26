@@ -19,7 +19,7 @@ const assert=require('node:assert/strict');
   if(path.endsWith('/api/threads/batch-thread/pause'))return json(route,{thread_id:thread.id,state:'RUNNING',generation:0});
   return json(route,[])
  });
- await page.goto(new URL('?thread=batch-thread',process.env.TEST_BASE_URL||'http://127.0.0.1:24766/').toString());
+ await page.goto(new URL('?thread=batch-thread',process.env.TEST_BASE_URL||'http://127.0.0.1:24767/').toString());
  await page.waitForSelector('.media-confirmations');
  assert.match(await page.locator('.topbar').textContent(),/等待确认 2 项媒体生成/);
  assert.match(await page.locator('.artifact-gallery').textContent(),/segment-dolphin-foreground\.png/);

@@ -67,7 +67,7 @@ async def run_model(client: httpx.AsyncClient, harness: str, model: str) -> dict
 
 async def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-url", default="http://127.0.0.1:24766/")
+    parser.add_argument("--base-url", default="http://127.0.0.1:24767/")
     parser.add_argument("--report", default=".data/discovered-model-smoke.json")
     args = parser.parse_args()
     async with httpx.AsyncClient(base_url=args.base_url, timeout=None, trust_env=False) as client:

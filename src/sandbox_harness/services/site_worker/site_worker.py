@@ -22,8 +22,7 @@ class SiteWorker:
         self.lease_seconds = int(getattr(settings, "site_job_lease_seconds", 60))
         self.max_attempts = int(getattr(settings, "site_job_max_attempts", 4))
         self.retry_base = int(getattr(settings, "site_job_retry_base_seconds", 5))
-        data_root = Path(getattr(settings, "data_root",
-            "/data2/wujing03/sandbox-harness-platform-parallel/data"))
+        data_root = Path(settings.data_root)
         self.staging_root = data_root / "tmp" / "site-stages"
 
     async def run(self) -> None:

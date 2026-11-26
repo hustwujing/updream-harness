@@ -173,7 +173,7 @@ def validate_outputs(name: str, outputs: dict[str, Path]) -> None:
 
 async def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-url", default="http://127.0.0.1:24766/")
+    parser.add_argument("--base-url", default="http://127.0.0.1:24767/")
     parser.add_argument("--case", choices=[*CASES, "all"], default="all")
     parser.add_argument("--report", default=".data/first-capability-report.json")
     args = parser.parse_args()

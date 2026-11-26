@@ -14,9 +14,8 @@ Every code change requires:
 4. [Testing and real cases](testing-and-real-cases.md)
 
 For the isolated Ali checkout, first verify the directory and branch described
-in [Getting started](getting-started.md). The
-[90f51d5 release record](../test-evidence/ali-release-90f51d5.md) is the completed
-baseline; subsequent documentation edits do not relabel that release evidence.
+in [Getting started](getting-started.md). The current baseline is the
+[175-case report](../test-evidence/ali-cross-database-175-case-report.md).
 
 ## Task routing
 

@@ -1,4 +1,4 @@
-# sandbox-harness-platform-parallel
+# sandbox-harness-platform-parallel-ali
 
 A thin, stateful sandbox platform that sends every user message to a Codex,
 Claude or DeepSeek Primary Harness. The Primary Harness owns the conversation
@@ -17,24 +17,7 @@ To add another sandbox backend, follow
 
 ## Verified Ali baseline
 
-The 2026-11-25 release baseline is `90f51d5`: all 169 product cases and seven
-real resource-exhaustion cases met their expectations. Coverage is
-`composite_verified`: 152 unaffected successes retain their original revisions,
-17 product cases and all seven resource cases ran on this baseline. Python
-verification passed 1253 tests, with seven PostgreSQL tests passed separately.
-Health, desktop/mobile pages, takeover, checkpoint recovery and terminal replay
-were verified. Seven historical unknown allocations still await authoritative
-provider reconciliation and remain charged; they are not reported as reclaimed.
-See the [release record](docs/test-evidence/ali-release-90f51d5.md) for evidence,
-loaded service versions and cleanup scope. Later documentation commits do not
-change the revision of those test or deployment receipts.
-
-The MediaWorker migration baseline was deployed at `68d0274`: four affected product cases
-and four new real inference recovery/cancellation cases passed. Combined with
-172 retained successes, that baseline matrix reached 180/180 `composite_verified`.
-See the [migration and release report](docs/test-evidence/image-decompose-media-migration.md)
-and [all case results](docs/test-evidence/ali-media-68d0274-cases.md). The public
-repository is [hustwujing/updream-harness](https://github.com/hustwujing/updream-harness),
+The public repository is [hustwujing/updream-harness](https://github.com/hustwujing/updream-harness)
 on branch `sandbox-harness-platform-parallel-ali`.
 
 The current modular Ali candidate is verified at `75654ca`. Its product catalog
@@ -94,11 +77,10 @@ The Ali checkout and branch are both `sandbox-harness-platform-parallel-ali`.
 Its working directory is `/data2/wujing03/sandbox-harness-platform-parallel-ali`,
 API is `127.0.0.1:24767`, PostgreSQL is `127.0.0.1:28433`, and ingress is
 `/sandbox-harness-platform-parallel-ali/`. Use `deploy/ali/` for this deployment.
-The sibling `sandbox-harness-platform-parallel` checkout is a separate deployment
-and is read-only during Ali work. Database identity, Redis prefix, namespace,
-object prefix, ports and service units remain isolated. Shared executables may
-be reused; writable state, caches, logs and temporary files stay in this
-checkout's `.data` or another explicit `/data2/wujing03` path.
+Database identity, Redis prefix, namespace, object prefix, ports and service
+units are isolated. Shared executables may be reused; writable state, caches,
+logs and temporary files stay in this checkout's `.data` or another explicit
+`/data2/wujing03` path.
 
 The Capability Gateway is an infrastructure proxy. It injects model and Provider credentials after validating a Turn-scoped token. It does not understand prompts, plans or media quality.
 
@@ -155,17 +137,13 @@ old generation. Local, node or provider capacity exhaustion fails that recovery
 explicitly; ordinary capacity waits keep their existing behavior. JobWorker
 restores retained Pool slots before admission after restart. Empty inventory or
 TTL expiry never releases uncertain ownership. Runtime submission/acceptance
-continues to prohibit business replay.
-See [allocation recovery evidence](docs/test-evidence/allocation-recovery.md).
-Explicit replacement allocations
+continues to prohibit business replay. Explicit replacement allocations
 retire an incompatible Thread attachment before acquiring a new sandbox.
 JobWorker cleanup continues under full admission load, and bounded recovery
 observations reuse already accepted executions without submitting new work.
 Broker cancellation settles in-flight database operations and avoids repeatedly
-cancelling a task already handling cancellation.
-
-See [Ali execution reliability verification](docs/test-evidence/ali-execution-reliability.md)
-for the regression boundaries and release evidence locations.
+cancelling a task already handling cancellation. Current recovery evidence is
+included in the 175-case report above.
 
 The execution catalog publishes dynamic readiness. Unavailable Operations are
 rejected before confirmation or Job creation, and Provider references, modes
@@ -317,32 +295,8 @@ affected lifecycle, Gateway, Runtime, image, Skill, API or deployment boundary.
 
 See [architecture.md](docs/architecture.md), [client API](docs/api.md), [data model](docs/data-model.md), [product interface](docs/product-interface.md), [gateway.md](docs/gateway.md), [Runtime Skill Bundle](docs/skills.md) and [deployment.md](docs/deployment.md).
 
-The reports below retain earlier capability evidence at their recorded revisions.
-Use the [Ali baseline record](docs/test-evidence/ali-release-90f51d5.md) for the
-latest completed campaign; an older report is not a test of a later code change.
-
-Real deployment evidence for code execution, media processing, autonomous repair, checkpoint recovery, discovered models and browser isolation is recorded in [first-capability-report.md](docs/test-evidence/first-capability-report.md).
-
-Real Chromium, Canvas, Three.js, deterministic animation recording and native multi-input evidence is recorded in [browser-rendering-report.md](docs/test-evidence/browser-rendering-report.md).
-
-The 25-Skill image matrix, real image/video/audio generation and API, Worker,
-Sandbox and reconnect recovery evidence are recorded in
-[media-generation-and-skill-report.md](docs/test-evidence/media-generation-and-skill-report.md).
-
-Tripo 3D generation, multi-output publication, Three.js preview and non-graceful
-Media Worker recovery evidence are recorded in
-[tripo-3d-report.md](docs/test-evidence/tripo-3d-report.md).
-
-Non-graceful API restart, Runtime event replay, Turn lease fencing and cleanup recovery evidence is recorded in [broker-recovery-report.md](docs/test-evidence/broker-recovery-report.md).
-
-Versioned uploads and outputs restored into a different Sandbox, plus desktop/mobile Workspace UI evidence, are recorded in [project-files-report.md](docs/test-evidence/project-files-report.md).
-
-The final 21-case capability, interaction, Workspace, background execution, recovery and browser matrix is recorded in [full-product-report.md](docs/test-evidence/full-product-report.md).
-
-Durable collection recovery, dynamic execution readiness, Provider preflight,
-offline Web Profile closure, truthful K evidence and K12-K14 continuation
-workflows are recorded in
-[k-campaign-hardening-report.md](docs/test-evidence/k-campaign-hardening-report.md).
+Current deployment, cross-database, recovery and case evidence is consolidated
+in the [175-case Ali report](docs/test-evidence/ali-cross-database-175-case-report.md).
 
 ## Runtime Toolchain
 

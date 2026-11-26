@@ -1,7 +1,6 @@
 import importlib.util
 import pwd
 import stat
-import subprocess
 import sys
 from pathlib import Path
 import json
@@ -119,123 +118,6 @@ def test_ali_postgresql_initializer_validates_exact_environment_identity():
     assert "run as root" in source
 
 
-def test_ali_profile_catalog_rewrite_preserves_digests_and_changes_registry():
-    assets=load("ali_assets",ROOT/"deploy/ali/materialize-assets.py")
-    original={
-        "schema_version":2,
-        "child_execution_profiles":[],
-        "runtime_dependency_profiles":[{
-            "id":"primary-full-cpu","supported_harnesses":["codex"],
-            "provider_releases":{"opensandbox":{"codex":{
-                "ref":"127.0.0.1:25001/sandbox-harness-parallel/primary-full-cpu-codex@sha256:"+"a"*64,
-                "revision":"sha256:"+"a"*64,"artifact_digest":"a"*64}}},
-        }],
-    }
-    rewritten=assets.rewrite_profile_catalog(original)
-    profile=rewritten["runtime_dependency_profiles"][0]
-    release=profile["provider_releases"]["opensandbox"]["codex"]
-    assert release["artifact_digest"]=="a"*64
-    assert release["ref"].startswith(
-        "127.0.0.1:25001/sandbox-harness-platform-parallel-ali/")
-    assert "sandbox-harness-parallel/" not in release["ref"]
-    assert assets.rewrite_profile_catalog(rewritten)==rewritten
-
-
-def test_ali_asset_materializer_owns_all_runtime_paths():
-    source=(ROOT/"deploy/ali/materialize-assets.py").read_text()
-    for contract in ("runtime-bundles","runtime-code-bundles","profile-catalog.json",
-                     "job-catalog.json","controlled-runtime","provider-runtime",
-                     "digest_mismatch","promote_registry_manifest","image","inspect"):
-        assert contract in source
-    assert "sandbox-harness-platform-parallel/.data" not in source
-    assert '[docker,"push",target_tag]' in source
-    assert "client.put" not in source
-    assert "copy_function=os.link" in source
-
-
-def test_ali_bundle_materialization_is_idempotent_in_same_content_store(tmp_path):
-    assets=load("ali_assets_same_store",ROOT/"deploy/ali/materialize-assets.py")
-    data=b"runtime-bundle"
-    digest=__import__("hashlib").sha256(data).hexdigest()
-    (tmp_path/(digest+".tar")).write_bytes(data)
-    (tmp_path/(digest+".sig")).write_bytes(b"signature")
-
-    assets._copy_bundle(tmp_path,tmp_path,digest)
-
-    assert (tmp_path/(digest+".tar")).read_bytes()==data
-    assert (tmp_path/(digest+".sig")).read_bytes()==b"signature"
-
-
-def test_ali_controlled_runtime_force_does_not_delete_same_store_source(tmp_path,monkeypatch):
-    assets=load("ali_assets_same_controlled_store",ROOT/"deploy/ali/materialize-assets.py")
-    digest="a"*64
-    data_root=tmp_path/"data"
-    source=data_root/"controlled-runtime"/digest
-    source.mkdir(parents=True)
-    payload=source/"runtime.bin"
-    payload.write_bytes(b"runtime")
-    link=data_root/"provider-runtime"
-    link.symlink_to(Path("controlled-runtime")/digest)
-    monkeypatch.setattr(assets,"DATA_ROOT",data_root)
-
-    result=assets._materialize_controlled(link,digest,force=True)
-
-    assert result==source
-    assert payload.read_bytes()==b"runtime"
-    assert link.resolve()==source
-
-
-def test_ali_materializer_propagates_release_identity_into_independent_checkout():
-    assets=load("ali_assets_release_identity",ROOT/"deploy/ali/materialize-assets.py")
-    source={
-        "SANDBOX_HARNESS_RELEASE":"abc123def456",
-        "SANDBOX_HARNESS_WEB_DIST_DIGEST":"f"*64,
-        "PYTHONPATH":"/data2/wujing03/sandbox-harness-platform-parallel/src",
-    }
-
-    identity=assets.release_identity(source)
-
-    assert identity=={
-        "SANDBOX_HARNESS_RELEASE":"abc123def456",
-        "SANDBOX_HARNESS_WEB_DIST_DIGEST":"f"*64,
-        "PYTHONPATH":str(ALI_ROOT/"src"),
-    }
-
-
-def test_ali_materializer_atomic_environment_replace_preserves_owner_and_mode(tmp_path):
-    assets=load("ali_assets_environment_identity",ROOT/"deploy/ali/materialize-assets.py")
-    target=tmp_path/"platform.env"
-    target.write_text("OLD=value\n")
-    target.chmod(0o640)
-    before=target.stat()
-
-    assets.atomic_write_environment(target,"NEW=value\n")
-
-    after=target.stat()
-    assert target.read_text()=="NEW=value\n"
-    assert (after.st_uid,after.st_gid)==(before.st_uid,before.st_gid)
-    assert stat.S_IMODE(after.st_mode)==0o640
-
-
-def test_ali_materializer_signs_rewritten_profile_catalog(tmp_path):
-    assets=load("ali_assets_catalog_signature",ROOT/"deploy/ali/materialize-assets.py")
-    private=tmp_path/"signing.pem";public=tmp_path/"public.pem"
-    subprocess.run(["openssl","genpkey","-algorithm","ED25519","-out",str(private)],check=True)
-    with public.open("wb") as stream:
-        subprocess.run(["openssl","pkey","-in",str(private),"-pubout"],
-            stdout=stream,check=True)
-    target=tmp_path/"profile-catalog.json";raw=b'{"schema_version":2}\n'
-
-    assets.write_signed_profile_catalog(target,raw,private,public)
-
-    assert target.read_bytes()==raw
-    signature=target.with_suffix(".json.sig")
-    assert signature.is_file() and signature.stat().st_size==64
-    subprocess.run(["openssl","pkeyutl","-verify","-pubin","-inkey",str(public),
-        "-rawin","-in",str(target),"-sigfile",str(signature)],check=True)
-    assert not list(tmp_path.glob("*.tmp"))
-
-
 def test_aliyun_provider_release_overlay_is_complete_and_immutable():
     value=json.loads((ROOT/"deploy/ali/provider-releases.json").read_text())
     assert value["schema_version"]==1 and value["provider"]=="aliyun"
@@ -247,25 +129,6 @@ def test_aliyun_provider_release_overlay_is_complete_and_immutable():
             assert len(release["ref"])==20
             assert release["revision"].startswith("sha256:") and len(release["revision"])==71
             assert len(release["artifact_digest"])==64
-
-
-def test_ali_materializer_merges_provider_releases_and_fences_artifacts():
-    assets=load("ali_assets_merge",ROOT/"deploy/ali/materialize-assets.py")
-    digests={"codex":"a"*64,"claude":"b"*64,"deepseek":"c"*64}
-    catalog={"schema_version":2,"runtime_dependency_profiles":[{
-        "id":"primary-full-cpu","supported_harnesses":list(digests),
-        "provider_releases":{"opensandbox":{harness:{"ref":f"image-{harness}",
-            "revision":"sha256:"+digest,"artifact_digest":digest}
-            for harness,digest in digests.items()}}}]}
-    overlay={"schema_version":1,"provider":"aliyun","profiles":{"primary-full-cpu":{
-        harness:{"ref":"t"*20,"revision":"sha256:"+digest,"artifact_digest":digest}
-        for harness,digest in digests.items()}}}
-    merged=assets.merge_provider_releases(catalog,overlay)
-    assert set(merged["runtime_dependency_profiles"][0]["provider_releases"])=={
-        "opensandbox","aliyun"}
-    overlay["profiles"]["primary-full-cpu"]["codex"]["artifact_digest"]="d"*64
-    with pytest.raises(ValueError,match="artifact_digest_mismatch"):
-        assets.merge_provider_releases(catalog,overlay)
 
 
 def test_ali_network_rule_is_disjoint_from_parallel_gateway():

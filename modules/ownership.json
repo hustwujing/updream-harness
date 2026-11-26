@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_stage": "inventory",
+  "migration_stage": "isolated",
   "modules": {
     "src/controlled_runtime/__init__.py": {
       "owner": "namespace initializer",

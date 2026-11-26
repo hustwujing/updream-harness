@@ -1,5 +1,6 @@
 from pathlib import Path
 import io
+import json
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -55,15 +56,15 @@ def test_media_batch_confirm_api_creates_all_jobs_once(tmp_path):
 def test_media_worker_is_a_separate_service():
     app = (ROOT / "src/sandbox_harness/services/api/app.py").read_text()
     worker = (ROOT / "src/sandbox_harness/services/media_worker/media_worker.py").read_text()
-    unit = (ROOT / "deploy/systemd/sandbox-harness-parallel-media-worker.service").read_text()
+    runner = (ROOT / "deploy/ali/run-service.sh").read_text()
+    module = json.loads((ROOT / "modules/host/media-worker/module.json").read_text())
     project = (ROOT / "pyproject.toml").read_text()
     base = (ROOT / "runtime/base.Dockerfile").read_text()
-    install = (ROOT / "deploy/install-units.sh").read_text()
     assert "MediaWorker(" not in app
     assert "continuation_callback" not in worker
-    assert "ExecStart=/data2/wujing03/sandbox-harness-platform-parallel/.venv/bin/sandbox-harness-parallel-media-worker" in unit
+    assert 'media-worker) command=("$release_python" -m sandbox_harness.services.media_worker.media_service)' in runner
+    assert module["id"]=="media-worker" and module["location"]=="host"
     assert 'sandbox-harness-media-worker = "sandbox_harness.services.media_worker.media_service:run"' in project
-    assert "sandbox-harness-parallel-media-worker.service" in install
     for command in ("sandbox-harness-api", "sandbox-harness-gateway", "sandbox-harness-media-worker",
                     "sandbox-harness-site-worker"):
         assert command not in base

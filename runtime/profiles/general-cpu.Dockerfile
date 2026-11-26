@@ -1,4 +1,4 @@
-ARG COMMON_IMAGE=sandbox-harness-parallel-common:build
+ARG COMMON_IMAGE=sandbox-harness-parallel-ali-common:build
 FROM ${COMMON_IMAGE}
 USER root
 RUN for command in sandbox-job sandbox-artifact sandbox-review sandbox-background sandbox-interact; do \

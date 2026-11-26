@@ -153,7 +153,7 @@ HANDLERS={identity:adapt(identity,boundary,handler)
 
 async def main():
     parser=argparse.ArgumentParser()
-    parser.add_argument('--base-url',default='http://127.0.0.1:24766/')
+    parser.add_argument('--base-url',default='http://127.0.0.1:24767/')
     parser.add_argument('--case',required=True,choices=[f'D{value:02d}' for value in range(1,52)])
     parser.add_argument('--report',type=Path,required=True)
     parser.add_argument('--harness',default='claude');parser.add_argument('--model',default='claude-opus-5-5')
@@ -161,11 +161,11 @@ async def main():
     parser.add_argument('--intervention-delay',type=int,default=10)
     parser.add_argument('--job-worker-unit',default=(
         os.environ.get('SANDBOX_HARNESS_JOB_WORKER_UNIT') or
-        'sandbox-harness-parallel-job-worker.service'))
+        'sandbox-harness-parallel-ali-job-worker.service'))
     parser.add_argument('--job-worker-start-command',default=(
         os.environ.get('SANDBOX_HARNESS_JOB_WORKER_START_COMMAND') or ''))
     parser.add_argument('--api-unit',default=(os.environ.get('SANDBOX_HARNESS_API_UNIT') or
-        'sandbox-harness-parallel-api.service'));args=parser.parse_args();value={}
+        'sandbox-harness-parallel-ali-api.service'));args=parser.parse_args();value={}
     configured_root=Path(json.loads((ROOT/'tests/real_cases/cases.json').read_text()).get(
         'asset_root') or ROOT/'tests/real_cases/assets')
     args.asset_root=(configured_root if configured_root.is_absolute()

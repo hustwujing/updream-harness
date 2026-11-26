@@ -1,4 +1,4 @@
-ARG COMMON_IMAGE=sandbox-harness-parallel-common:build
+ARG COMMON_IMAGE=sandbox-harness-parallel-ali-common:build
 FROM ${COMMON_IMAGE}
 USER root
 ARG NPM_REGISTRY=https://registry.npmmirror.com

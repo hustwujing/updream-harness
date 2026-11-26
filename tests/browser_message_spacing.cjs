@@ -17,6 +17,6 @@ const assert=require('node:assert/strict');
  assert.ok(Math.abs(userGap-agentGap)<1&&Math.abs(userAgentGap-agentGap)<1,JSON.stringify({userGap,userAgentGap,agentGap}));
  assert.ok(turnGap>=agentGap+20,JSON.stringify({agentGap,turnGap}));
  assert.equal(await page.locator('.agent-avatar').count(),2);
- await page.screenshot({path:'/data2/wujing03/sandbox-harness-platform-parallel/.data/message-spacing.png'});
+ await page.screenshot({path:'/data2/wujing03/sandbox-harness-platform-parallel-ali/.data/message-spacing.png'});
  console.log(JSON.stringify({passed:true,user_gap:userGap,user_agent_gap:userAgentGap,agent_gap:agentGap,turn_gap:turnGap}));
  }finally{await browser.close()}})().catch(error=>{console.error(error);process.exit(1)});

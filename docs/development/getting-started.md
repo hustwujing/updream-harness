@@ -15,9 +15,9 @@ Read this before the first code change or when setting up a new checkout.
   `/data2/wujing03/sandbox-harness-platform-parallel-ali`; its state must never
   use the original checkout's `.data` tree. Other explicit writable paths for
   this work must also stay under `/data2/wujing03`.
-- Reuse shared binaries and existing infrastructure services. The Ali deployment
-  has its own PostgreSQL cluster on port 28433; never share its database or
-  application runtime directory with the sibling deployment on port 28432.
+- Reuse shared binaries and existing infrastructure services. The deployment
+  owns its PostgreSQL cluster on port 28433 and never shares an application
+  database or runtime directory.
 
 ## Initial setup
 

@@ -26,9 +26,9 @@ async def start(client,title,prompt):
 
 async def main():
  report={"cases":[]}
- async with httpx.AsyncClient(base_url="http://127.0.0.1:24766/",timeout=None,trust_env=False) as client:
+ async with httpx.AsyncClient(base_url="http://127.0.0.1:24767/",timeout=None,trust_env=False) as client:
   thread,turn=await start(client,"LIVE-R03-"+uuid.uuid4().hex[:8],"Create /workspace/outputs/gateway-restart.json as {\"attempted\":true} using Python, verify it, and reply briefly.")
-  await asyncio.sleep(.2);subprocess.run(["sudo","-n","systemctl","restart","sandbox-harness-parallel-gateway.service"],check=True)
+  await asyncio.sleep(.2);subprocess.run(["sudo","-n","systemctl","restart","sandbox-harness-parallel-ali-sandbox-gateway-aliyun.service"],check=True)
   final=await wait(client,turn["id"])
   if final["state"] not in {"COMPLETED","FAILED"}:raise AssertionError(json.dumps(final))
   health=(await client.get("api/health")).json()

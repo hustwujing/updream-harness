@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from sandbox_runtime import site_cli
 
@@ -13,12 +14,12 @@ class Response:
 
 
 def test_site_worker_is_independent_and_runtime_cli_is_installed():
-    unit = (ROOT / "deploy/systemd/sandbox-harness-parallel-site-worker.service").read_text()
-    install = (ROOT / "deploy/install-units.sh").read_text()
+    runner = (ROOT / "deploy/ali/run-service.sh").read_text()
+    module = json.loads((ROOT / "modules/host/site-worker/module.json").read_text())
     project = (ROOT / "pyproject.toml").read_text()
     runtime = (ROOT / "src/sandbox_runtime/instructions.py").read_text()
-    assert "sandbox-harness-parallel-site-worker" in unit and "site-worker.log" in unit
-    assert "sandbox-harness-parallel-site-worker.service" in install
+    assert 'site-worker) command=("$release_python" -m sandbox_harness.services.site_worker.site_service)' in runner
+    assert module["id"]=="site-worker" and module["location"]=="host"
     assert 'sandbox-harness-site-worker = "sandbox_harness.services.site_worker.site_service:run"' in project
     assert 'sandbox-site = "sandbox_runtime.site_cli:main"' in project
     assert "sandbox-site prepare" in runtime and "temporary localhost" in runtime

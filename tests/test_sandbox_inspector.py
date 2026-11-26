@@ -304,7 +304,7 @@ def test_sandbox_preview_target_keeps_server_proxy_prefix_and_query():
 def test_nginx_preserves_websocket_upgrade_headers():
     from pathlib import Path
     root=Path(__file__).resolve().parents[1]
-    for name in ("nginx.conf","nginx-frpc.conf"):
+    for name in ("nginx-ali.conf","nginx-frpc-ali-shared-location.conf"):
         value=(root/"deploy"/name).read_text()
         assert "proxy_set_header Upgrade $http_upgrade;" in value
         assert "proxy_set_header Connection $http_connection;" in value

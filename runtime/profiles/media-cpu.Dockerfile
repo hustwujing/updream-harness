@@ -1,4 +1,4 @@
-ARG COMMON_IMAGE=sandbox-harness-parallel-common:build
+ARG COMMON_IMAGE=sandbox-harness-parallel-ali-common:build
 FROM ${COMMON_IMAGE}
 USER root
 ARG PYPI_INDEX=http://mirrors.cloud.aliyuncs.com/pypi/simple/

@@ -11,7 +11,7 @@ import uuid
 import httpx
 
 
-BASE = "http://127.0.0.1:24766/"
+BASE = "http://127.0.0.1:24767/"
 ROOT = Path(__file__).parents[1]
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "WAITING_USER"}
 MODELS = {"codex":"gpt-6-sol", "claude":"claude-sonnet-5-5", "deepseek":"deepseek-v4-pro"}

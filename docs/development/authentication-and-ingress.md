@@ -50,7 +50,7 @@ sets `frpc` and forwards `$proxy_protocol_addr`; the normal port sets `direct`.
 Never enable `proxy_protocol` on the shared direct listener. Never trust a
 caller-supplied `X-Forwarded-For` or ingress header without nginx overwrite.
 The public `8090` deployment shares one PROXY v2 listener by URL prefix. Its
-versioned Parallel location is `deploy/nginx-frpc-shared-location.conf`; it
+versioned location is `deploy/nginx-frpc-ali-shared-location.conf`; it
 must be included inside that server rather than exposed as a second ordinary
 HTTP listener.
 

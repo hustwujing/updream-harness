@@ -54,6 +54,7 @@ def test_presentation_preview_isolates_shared_extension_cache(tmp_path, monkeypa
     assert any(value.startswith("-env:UNO_SHARED_PACKAGES_CACHE=file:") for value in captured["argv"])
 
 
-def test_api_private_tmp_allows_libreoffice_ipc_pipe():
-    unit = (ROOT / "deploy/systemd/sandbox-harness-parallel-api.service").read_text()
-    assert "TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,mode=1777" in unit
+def test_api_preview_temporary_files_stay_under_project_data():
+    runner = (ROOT / "deploy/ali/run-service.sh").read_text()
+    assert 'export TMPDIR="$root/.data/tmp"' in runner
+    assert 'XDG_CACHE_HOME="$root/.data/cache"' in runner

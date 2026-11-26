@@ -19,6 +19,6 @@ const assert=require('node:assert/strict');
  assert.equal(await page.locator('.activity-group.history > .activity-row:visible').count(),8);
  assert.ok(await page.getByText('较早的 8 个步骤',{exact:true}).isVisible());
  assert.equal(await page.getByText('失败或中断',{exact:true}).count(),0);
- await page.screenshot({path:'/data2/wujing03/sandbox-harness-platform-parallel/.data/activity-groups.png'});
+ await page.screenshot({path:'/data2/wujing03/sandbox-harness-platform-parallel-ali/.data/activity-groups.png'});
  console.log(JSON.stringify({passed:true,running_visible:5,history_visible:8,no_separate_failure_group:true,counts_visible:true}));
  }finally{await browser.close()}})().catch(error=>{console.error(error);process.exit(1)});

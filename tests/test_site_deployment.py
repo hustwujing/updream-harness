@@ -56,7 +56,7 @@ async def context(tmp_path, title="Hello", owner="a" * 64):
 @pytest.mark.asyncio
 async def test_site_job_is_durable_versioned_and_recoverable(tmp_path):
     store, objects, owner, thread, _, draft, _ = await context(tmp_path)
-    settings = SimpleNamespace(site_worker_concurrency=2)
+    settings = SimpleNamespace(site_worker_concurrency=2,data_root=tmp_path)
     first_worker = SiteWorker(settings, store, objects)
     try:
         job = await store.confirm_site_draft(draft.id, owner)
@@ -168,7 +168,8 @@ def test_public_site_serves_isolated_html_ranges_and_stops_after_unpublish(tmp_p
                 sha256=html_digest,size=len(html),mime="text/html",object_ref=html_ref)
             await store.add_artifact(turn.id,path="artifact-site/app.js",sha256=script_digest,
                 size=len(script),mime="text/javascript",object_ref=script_ref)
-            worker = SiteWorker(SimpleNamespace(site_worker_concurrency=1), store.sites, objects)
+            worker = SiteWorker(SimpleNamespace(site_worker_concurrency=1,data_root=tmp_path),
+                store.sites, objects)
             await store.confirm_site_draft(draft.id, owner)
             claimed = await store.sites.claim_site_jobs(worker.owner, 1)
             await worker.process(claimed[0])

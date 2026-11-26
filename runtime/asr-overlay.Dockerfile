@@ -1,5 +1,5 @@
 ARG ASR_SOURCE_IMAGE=sandbox-harness-runtime-base:0027ec835f16
-ARG PROFILE_IMAGE=sandbox-harness-parallel-primary-full-cpu:build
+ARG PROFILE_IMAGE=sandbox-harness-parallel-ali-primary-full-cpu:build
 ARG PROFILE_ID=primary-full-cpu
 FROM ${ASR_SOURCE_IMAGE} AS asr_source
 FROM ${PROFILE_IMAGE}

@@ -56,7 +56,7 @@ Runtime uses the standard OTLP/HTTP exporters to send logs and traces to the exi
 
 Before credential revocation and sandbox deletion, the Broker also fetches the Runtime's bounded in-memory diagnostics window. It validates records again, labels their origin, and preserves source event IDs. Queries deduplicate live export and fallback copies. Collection failure and an older window boundary are explicit events; a missing tail is never fabricated. The Runtime ring retains 8192 records, so a prolonged export outage can exceed the fallback window.
 
-Authoritative local telemetry files live at `<data_root>/logs`, deployed under `/data2/wujing03/sandbox-harness-platform/.data/logs`. API/Gateway share a cross-process retention lock: default 7 days and 2 GiB total, oldest segments removed first. Files rotate at 8 MiB or daily. Retention uses segment modification time; idle writers also prune every 60 seconds. A segment can include up to one day of events, so event-age retention has that rotation granularity. Files are private to the service account. Per-sandbox temporary files are bounded to 16 MiB under `/run/harness/observability`; Docker storage is on `/data2`. The Runtime's temporary directory is not a durable archive.
+Authoritative local telemetry files live at `<data_root>/logs`, deployed under `/data2/wujing03/sandbox-harness-platform-parallel-ali/.data/logs`. API/Gateway share a cross-process retention lock: default 7 days and 2 GiB total, oldest segments removed first. Files rotate at 8 MiB or daily. Retention uses segment modification time; idle writers also prune every 60 seconds. A segment can include up to one day of events, so event-age retention has that rotation granularity. Files are private to the service account. Per-sandbox temporary files are bounded to 16 MiB under `/run/harness/observability`; all durable storage remains on `/data2`. The Runtime's temporary directory is not a durable archive.
 
 | Setting | Default / behavior |
 | --- | --- |
@@ -65,7 +65,7 @@ Authoritative local telemetry files live at `<data_root>/logs`, deployed under `
 | `SANDBOX_HARNESS_LOG_MAX_BYTES` | Host aggregate 2 GiB; Runtime temporary storage 16 MiB. |
 | `SANDBOX_HARNESS_LOG_RETENTION_DAYS` | 7, configurable 1–3650. |
 | `SANDBOX_HARNESS_ENVIRONMENT` | `local`, included as resource metadata. |
-| `SANDBOX_HARNESS_RELEASE` | Build revision in Runtime; deploy/record-release.py pins the host revision. Root-run development processes can discover Git when unset. |
+| `SANDBOX_HARNESS_RELEASE` | Immutable selected service or Runtime release digest. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional external OTLP/HTTP base URL. SDK sends `/v1/logs` and `/v1/traces`. Without it, host files and the Runtime-to-Gateway pipeline remain active. |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Optional external exporter headers, never logged. Direct connection; ambient HTTP proxy credentials are not used. |
 
@@ -73,7 +73,13 @@ Runtime export endpoint/credential is replaced on configure using the sandbox's 
 
 ## Deploying a logging change
 
-After tests and committing tracked changes, run `bash deploy/check-service-access.sh` and `python3 deploy/record-release.py` before restarting API/Gateway. The latter atomically pins the release and `PYTHONPATH` code root in the existing env file, preserves its permissions, builds and hashes that checkout's exact `web/dist`, and records `.data/release.json`. Use `--code-root /path/to/clean-checkout` for a frozen release while another window edits the primary workspace; with no flag, it explicitly returns execution to the current repository. A custom `--record-file` allows testing deployment metadata without changing the live manifest. It refuses dirty tracked code and untracked files under deployable `src`, `runtime`, `deploy`, or `web` paths; ignored `.data` state remains allowed. The service account does not need access to `.git`; deployment verification must reject an `unknown` version. Runtime image revisions remain independently pinned in their image environment and digest. API creation recomputes the exact static directory it will mount and refuses a configured `SANDBOX_HARNESS_WEB_DIST_DIGEST` mismatch before accepting traffic; health exposes the verified digest.
+After tests, build and select the affected immutable service descriptor with
+`tools/service_release.py`; image-inference uses
+`tools/image_inference_release.py`. Restart through `deploy/ali/start.sh` and
+verify the loaded digest. Runtime image revisions remain independently pinned
+by the signed profile catalog. API creation recomputes the exact static
+directory it mounts and refuses a configured `SANDBOX_HARNESS_WEB_DIST_DIGEST`
+mismatch before accepting traffic; health exposes the verified digest.
 
 API readiness requires PostgreSQL, the selected execution backend and every
 required API-owned supervisor. Warm-pool target shortfall is optional only while

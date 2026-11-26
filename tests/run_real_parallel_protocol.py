@@ -45,7 +45,7 @@ def media_repository(settings):
 def service_unit(args,role:str)->str:
     configured=(getattr(args,f'{role}_unit','') or
         os.environ.get(f"SANDBOX_HARNESS_{role.upper()}_UNIT",''))
-    return configured or f"sandbox-harness-parallel-{role.replace('_','-')}.service"
+    return configured or f"sandbox-harness-parallel-ali-{role.replace('_','-')}.service"
 
 
 def service_command(args,role:str,action:str)->list[str]:
@@ -1645,7 +1645,7 @@ HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case
 
 
 async def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--base-url',default='http://127.0.0.1:24766/')
+    parser=argparse.ArgumentParser();parser.add_argument('--base-url',default='http://127.0.0.1:24767/')
     parser.add_argument('--case',required=True,choices=[
         *(f'P{value:02d}' for value in range(1,28)),*(f'K{value:02d}' for value in range(1,15))])
     parser.add_argument('--report',type=Path,required=True);parser.add_argument('--harness',default='codex')

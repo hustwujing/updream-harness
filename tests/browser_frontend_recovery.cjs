@@ -37,7 +37,7 @@ const assert=require('node:assert/strict');
   if(path.includes('/events'))return route.fulfill({status:200,contentType:'text/event-stream',body:': keepalive\n\n'});
   return json(route,[]);
  });
- await page.goto(process.env.TEST_BASE_URL||'http://127.0.0.1:24766/');await page.waitForSelector('.new-thread');await page.locator('.thread-entry').filter({hasText:'恢复测试会话'}).locator('.thread-select').click();await page.waitForFunction(()=>document.body.innerText.includes('这段已有内容必须保留'));assert.equal(await page.locator('.media-confirmation').count(),1);assert.equal(await page.locator('.site-confirmations').count(),1);assert.equal(await page.locator('.site-progress').count(),1);
+ await page.goto(process.env.TEST_BASE_URL||'http://127.0.0.1:24767/');await page.waitForSelector('.new-thread');await page.locator('.thread-entry').filter({hasText:'恢复测试会话'}).locator('.thread-select').click();await page.waitForFunction(()=>document.body.innerText.includes('这段已有内容必须保留'));assert.equal(await page.locator('.media-confirmation').count(),1);assert.equal(await page.locator('.site-confirmations').count(),1);assert.equal(await page.locator('.site-progress').count(),1);
 
  optionalFail=true;await page.waitForFunction(()=>document.body.innerText.includes('部分数据暂时无法刷新'),null,{timeout:5000});assert.match(await page.locator('.workspace-stale').textContent(),/媒体确认.*站点任务/);assert.equal(await page.locator('.media-confirmation').count(),1);assert.equal(await page.locator('.site-confirmations').count(),1);assert.equal(await page.locator('.site-progress').count(),1);assert.equal(await page.locator('.composer textarea').isDisabled(),false);optionalFail=false;await page.locator('.workspace-stale button').click();await page.locator('.workspace-stale').waitFor({state:'detached'});
 

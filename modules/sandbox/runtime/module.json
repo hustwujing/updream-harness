@@ -54,5 +54,5 @@
     "schema": "unchanged",
     "baseline": "8b79ea5"
   },
-  "migration_stage": "inventory"
+  "migration_stage": "isolated"
 }

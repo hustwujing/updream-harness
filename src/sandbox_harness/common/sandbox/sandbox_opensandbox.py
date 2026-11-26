@@ -31,7 +31,7 @@ class OpenSandboxBackend:
                 provider=self.provider)
 
     def __init__(self,base_url:str,api_key:str,timeout_seconds:int,namespace:str,
-                 gateway_url:str="http://172.31.0.1:29880",proxy_port:int=29881,
+                 gateway_url:str="http://172.31.0.1:29882",proxy_port:int=29883,
                  *,transport:httpx.AsyncBaseTransport|None=None):
         headers={"OPEN-SANDBOX-API-KEY":api_key} if api_key else {}
         self.client=httpx.AsyncClient(base_url=base_url.rstrip("/"),headers=headers,

@@ -31,7 +31,7 @@ print(json.dumps({'type':'result','result':'done'}),flush=True)
 '''
 
 async def main():
-    for key,value in dotenv_values(os.environ.get('SANDBOX_HARNESS_ENV_FILE','/data2/wujing03/sandbox-harness-platform-parallel/.data/config/platform.env')).items():
+    for key,value in dotenv_values(os.environ.get('SANDBOX_HARNESS_ENV_FILE','/data2/wujing03/sandbox-harness-platform-parallel-ali/.data/config/platform.env')).items():
         if value is not None: os.environ[key]=value
     settings=Settings();identity=uuid.uuid4().hex
     namespace='sandbox-harness-boundary-'+identity
