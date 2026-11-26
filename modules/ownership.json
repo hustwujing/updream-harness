@@ -302,6 +302,10 @@
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/views.py"
     },
+    "src/sandbox_harness/common/db/usage.py": {
+      "owner": "common/db",
+      "target": "src/sandbox_harness/common/db/usage.py"
+    },
     "src/sandbox_harness/common/events/__init__.py": {
       "owner": "namespace initializer",
       "target": "src/sandbox_harness/common/events/__init__.py"

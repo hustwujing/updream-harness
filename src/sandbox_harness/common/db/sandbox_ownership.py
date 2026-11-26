@@ -192,6 +192,11 @@ class SandboxOwnership:
                 row.capacity_released_at = timestamp
                 row.claim_owner, row.claim_expires_at = "", None
                 row.updated_at = timestamp
+                await self.core._record_usage_locked(db,idempotency_key="sandbox:"+row.id,
+                    owner_id=row.owner_id,thread_id=row.thread_id,turn_id="",job_id="",
+                    kind="sandbox_seconds",amount=max(0,int((timestamp-
+                        utc_datetime(row.created_at)).total_seconds())),unit="second",
+                    source="sandbox")
             return True
 
     async def reject_unstarted_create(self, identity):
@@ -277,8 +282,14 @@ class SandboxOwnership:
             row = await self._claimed(db, identity, owner, generation)
             if row.state != "ABSENT" or row.absent_confirmed_at is None:
                 raise RuntimeError("sandbox_absence_not_proven")
-            row.state, row.capacity_released_at, row.updated_at = "RELEASED", now(), now()
+            timestamp=now()
+            row.state, row.capacity_released_at, row.updated_at = "RELEASED", timestamp, timestamp
             row.claim_owner, row.claim_expires_at = "", None
+            await self.core._record_usage_locked(db,idempotency_key="sandbox:"+row.id,
+                owner_id=row.owner_id,thread_id=row.thread_id,turn_id="",job_id="",
+                kind="sandbox_seconds",amount=max(0,int((timestamp-
+                    utc_datetime(row.created_at)).total_seconds())),unit="second",
+                source="sandbox")
 
     async def renew_cleanup(self, identity, owner, generation, lease_seconds=30):
         async with self.core.transaction() as db:

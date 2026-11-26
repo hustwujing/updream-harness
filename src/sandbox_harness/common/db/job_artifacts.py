@@ -96,6 +96,9 @@ class JobArtifactsTransactions:
                     state="committed", created_at=timestamp,
                 )
                 db.add(row)
+                await self._record_usage_locked(db,idempotency_key="artifact:"+artifact_id,
+                    owner_id=job.owner_id,thread_id=job.thread_id,turn_id=job.origin_turn_id,
+                    job_id=job.id,kind="object_bytes",amount=size,unit="byte",source="artifact")
                 await db.flush()
                 return self.job_artifact_view(row)
 
@@ -377,4 +380,3 @@ class JobArtifactsTransactions:
                             "filename": row.filename, "sha256": row.sha256,
                             "size": row.size, "mime": row.mime} for row in rows]},
                     "items": [self.job_artifact_view(row).model_dump(mode="json") for row in rows]}
-

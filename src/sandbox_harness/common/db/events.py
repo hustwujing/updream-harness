@@ -166,6 +166,16 @@ class EventsTransactions:
             row.payload_json = json.dumps({**json.loads(row.payload_json), **payload, "phase": phase}, ensure_ascii=False)
             row.status = status; row.updated_at = now()
             turn_id = row.turn_id
+            if status in {"completed","failed"} and payload.get("model_request_id"):
+                turn=await db.get(TurnRow,row.turn_id)
+                thread=await db.get(ThreadRow,turn.thread_id) if turn else None
+                amount=sum(int(payload.get(key) or 0) for key in ("input_tokens","output_tokens"))
+                if thread and amount>=0:
+                    await self._record_usage_locked(db,
+                        idempotency_key="model:"+str(payload["model_request_id"]),
+                        owner_id=thread.owner_id,thread_id=thread.id,turn_id=row.turn_id,
+                        job_id=str(payload.get("job_id") or ""),kind="model_tokens",
+                        amount=amount,unit="token",source="gateway")
         await self.append_event(turn_id, EventKind.STEP_PROGRESS if status == "in_progress" else EventKind.STEP_FINISHED,
             {"model_request_id": payload["model_request_id"], "phase": phase}, item_id=item_id)
 
@@ -346,4 +356,3 @@ class EventsTransactions:
             .returning(TurnRow.id))).scalar_one_or_none()
         if owned is None:
             raise RuntimeError("stale_turn_lease")
-

@@ -92,6 +92,7 @@ class ApiRepositories:
 
     async def advance_lifecycle_operations(self, limit=100):
         await self.accounts.handoff.relay({"core": self.core.handoff}, limit=limit)
+        await self.media.handoff.relay({"core":self.core.handoff},limit=limit)
         await self.core.handoff.relay(self.lifecycle_targets, limit=limit)
         results = []
         for operation_id in await self.core.pending_lifecycle_operations(limit):

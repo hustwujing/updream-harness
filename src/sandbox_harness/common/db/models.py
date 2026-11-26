@@ -4,7 +4,7 @@ import json
 import hashlib
 from datetime import (datetime, timezone)
 from pathlib import (PurePosixPath)
-from sqlalchemy import (Boolean, DateTime, Integer, String, Text, UniqueConstraint)
+from sqlalchemy import (BigInteger, Boolean, DateTime, Integer, String, Text, UniqueConstraint)
 from sqlalchemy.orm import (DeclarativeBase, Mapped, mapped_column)
 
 
@@ -857,6 +857,20 @@ class ChildContinuationRow(Base):
     resume_execution_id: Mapped[str] = mapped_column(String(200), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class UsageLedgerRow(Base):
+    __tablename__ = "usage_ledger"
+    id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    thread_id: Mapped[str] = mapped_column(String(32), default="", server_default="", index=True)
+    turn_id: Mapped[str] = mapped_column(String(32), default="", server_default="", index=True)
+    job_id: Mapped[str] = mapped_column(String(32), default="", server_default="", index=True)
+    kind: Mapped[str] = mapped_column(String(40), index=True)
+    amount: Mapped[int] = mapped_column(BigInteger)
+    unit: Mapped[str] = mapped_column(String(24))
+    source: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class BudgetAccountRow(Base):

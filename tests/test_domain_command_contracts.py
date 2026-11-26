@@ -23,6 +23,7 @@ def test_production_command_manifest_is_complete_and_stable():
     assert set(manifest) == {
         "lifecycle.prepare", "lifecycle.commit", "lifecycle.abort",
         "lifecycle.request", "lifecycle.result",
+        "usage.record",
         "media.source.authorize", "media.source.cancel",
         "media.turn.draft", "media.turn.seal", "media.turn.finished",
         "media.promotion.ack", "site.turn.draft",

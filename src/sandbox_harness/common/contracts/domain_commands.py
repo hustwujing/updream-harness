@@ -53,6 +53,18 @@ class RecordedResult(_StrictModel):
     recorded: Literal[True]
 
 
+class UsageRecord(_StrictModel):
+    idempotency_key: str = Field(pattern=r"^[A-Za-z0-9_.:-]{1,160}$")
+    owner_id: str = Field(min_length=1,max_length=64)
+    thread_id: str = Field(max_length=32)
+    turn_id: str = Field(max_length=32)
+    job_id: str = Field(max_length=32)
+    kind: str = Field(pattern=r"^[a-z][a-z0-9_]{0,39}$")
+    amount: int = Field(ge=0)
+    unit: str = Field(pattern=r"^[a-z][a-z0-9_]{0,23}$")
+    source: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,39}$")
+
+
 class MediaSourceAuthorize(_StrictModel):
     dispatch_id: str = Field(min_length=1, max_length=64)
     media_job_id: str = Field(min_length=1, max_length=32)
@@ -239,6 +251,7 @@ DOMAIN_COMMAND_CONTRACTS = {
         _contract("lifecycle.abort", "core", ("accounts", "media", "sites"), LifecycleCommand, LifecycleDecisionResult),
         _contract("lifecycle.request", "accounts", ("core",), LifecycleCommand, LifecycleRequestResult),
         _contract("lifecycle.result", "core", ("accounts",), LifecycleResultCommand, RecordedResult),
+        _contract("usage.record", "media", ("core",), UsageRecord, RecordedResult),
         _contract("media.source.authorize", "core", ("media",), MediaSourceAuthorize, MediaSourceAuthorizeResult),
         _contract("media.source.cancel", "core", ("media",), MediaSourceCancel, CancelResult),
         _contract("media.turn.draft", "core", ("media",), MediaTurnDraft, DraftResult),

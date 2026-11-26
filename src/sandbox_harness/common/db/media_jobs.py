@@ -9,7 +9,7 @@ from sandbox_harness.common.contracts.domain import (ItemType, TERMINAL, identif
 from sandbox_harness.common.contracts.media_errors import (media_error_guidance)
 from sandbox_harness.common.contracts.media_provider import (MediaCancellationRequested)
 from sandbox_harness.common.contracts.job_contracts import (JobState, JobRequest, TERMINAL_JOB_STATES)
-from .models import (ArtifactRow, ItemRow, JobAttemptRow, JobLeaseRow, JobRow, MediaBatchRow, MediaDraftRow, MediaExecutionRow, MediaJobOutputRow, MediaJobRow, MediaOutboxRow, ProjectFileRow, ThreadRow, TurnRow, canonical_json, utc_datetime)
+from .models import (ArtifactRow, ItemRow, JobAttemptRow, JobLeaseRow, JobRow, MediaBatchRow, MediaDraftRow, MediaExecutionRow, MediaJobOutputRow, MediaJobRow, MediaOutboxRow, ProjectFileRow, ThreadRow, TurnRow, canonical_digest, canonical_json, utc_datetime)
 
 
 class MediaJobsTransactions:
@@ -518,6 +518,18 @@ class MediaJobsTransactions:
                     staged_outputs_json="[]",created_at=now(),updated_at=now());db.add(row)
             else:row.provider_result_json=encoded;row.updated_at=now()
             job.phase="response_received";job.updated_at=now()
+            records=[("provider-operation:"+job.id,"provider_operations",1,"operation")]
+            credits=value.get("credits_consumed")
+            if isinstance(credits,(int,float)) and not isinstance(credits,bool) and credits>=0:
+                records.append(("provider-credits:"+job.id,"provider_credits",
+                    round(float(credits)*1_000_000),"microcredit"))
+            for key,kind,amount,unit in records:
+                payload={"idempotency_key":key,"owner_id":job.owner_id,
+                    "thread_id":job.thread_id,"turn_id":job.turn_id or "","job_id":job.id,
+                    "kind":kind,"amount":amount,"unit":unit,"source":job.provider}
+                await self.handoff.enqueue(db,command_id=canonical_digest(["usage",key]),
+                    target="core",kind="usage.record",aggregate_id=job.id,
+                    owner_id=job.owner_id,generation=job.generation,payload=payload)
             return value
 
 

@@ -34,6 +34,7 @@ DOMAIN_TABLES = {
         "sandbox_allocations", "sandbox_audit_events", "sandbox_controls", "sandbox_port_grants",
         "thread_controls", "threads", "turn_inputs", "turn_order", "turn_project_files",
         "turns", "uploads",
+        "usage_ledger",
         "sandbox_ownership",
         "remote_obligations",
     }),

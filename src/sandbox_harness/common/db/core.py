@@ -32,9 +32,10 @@ from .turns import TurnsTransactions
 from .files import FilesTransactions
 from .interactions import InteractionsTransactions
 from .leaders import PlatformLeaderTransactions
+from .usage import UsageTransactions
 
 
-class CoreRepository(CoreThreadLifecycle, DomainDatabase, BaseConnections, CapabilitiesTransactions, ViewsTransactions, PauseTransactions, BudgetsTransactions, JobActivityTransactions, JobGroupsTransactions, JobAttemptsTransactions, AllocationsTransactions, CleanupTransactions, JobTerminalTransactions, JobArtifactsTransactions, EventsTransactions, ThreadsTransactions, SandboxTransactions, TurnsTransactions, FilesTransactions, InteractionsTransactions, PlatformLeaderTransactions):
+class CoreRepository(CoreThreadLifecycle, DomainDatabase, BaseConnections, CapabilitiesTransactions, ViewsTransactions, PauseTransactions, BudgetsTransactions, JobActivityTransactions, JobGroupsTransactions, JobAttemptsTransactions, AllocationsTransactions, CleanupTransactions, JobTerminalTransactions, JobArtifactsTransactions, EventsTransactions, ThreadsTransactions, SandboxTransactions, TurnsTransactions, FilesTransactions, InteractionsTransactions, PlatformLeaderTransactions, UsageTransactions):
     def __init__(self, database_url: str, redis_url: str = "", redis_prefix: str = "sandbox-harness:", *,
                  namespace: str, handoff_max_attempts: int = 8,
                  handoff_max_age_seconds: int = 900):
@@ -48,6 +49,15 @@ class CoreRepository(CoreThreadLifecycle, DomainDatabase, BaseConnections, Capab
             handoff_max_age_seconds=handoff_max_age_seconds)
         self.coordinator = LifecycleCoordinator(self.lifecycle)
         self.handoff = self.lifecycle.handoff
+        self.handoff.handlers["usage.record"] = self._receive_usage
+
+    async def _receive_usage(self,db,envelope):
+        value=envelope.payload
+        if (envelope.source!="media" or envelope.owner_id!=value["owner_id"]
+                or envelope.aggregate_id!=value["job_id"]):
+            raise ValueError("usage_envelope_invalid")
+        await self._record_usage_locked(db,**value)
+        return {"recorded":True}
 
     async def initialize(self):
         await DomainDatabase.initialize(self)
