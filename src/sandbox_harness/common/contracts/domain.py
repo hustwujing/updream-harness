@@ -306,6 +306,8 @@ class TurnView(BaseModel):
     cancel_requested: bool = False
     pending_final_state: str = ""
     project_files_frozen: bool = False
+    execution_stage: Literal["queued","sandbox_wait","harness","provider","collection",
+        "recovery","blocked","completed","cancelled"] = "queued"
     created_at: datetime
     updated_at: datetime
 

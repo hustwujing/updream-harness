@@ -992,7 +992,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def list_turns(thread_id: str, request: Request):
         if not await store.get_thread(thread_id, request.state.owner_id):
             raise HTTPException(404, "Thread not found")
-        return await store.list_turns(thread_id, request.state.owner_id)
+        return await store.project_turn_stages(thread_id, request.state.owner_id)
 
     @app.get("/api/threads/{thread_id}/items")
     async def list_items(thread_id: str, request: Request, after: int = 0, limit: int = 200):
@@ -1083,7 +1083,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         value = await store.get_turn_for_owner(turn_id, request.state.owner_id)
         if not value:
             raise HTTPException(404, "Turn not found")
-        return {**value.model_dump(mode="json"), "artifacts": [item.model_dump(mode="json") for item in await store.artifacts(turn_id)]}
+        projected=next((item for item in await store.project_turn_stages(
+            value.thread_id,request.state.owner_id) if item.id==turn_id),value)
+        return {**projected.model_dump(mode="json"), "artifacts": [item.model_dump(mode="json") for item in await store.artifacts(turn_id)]}
 
     @app.get("/api/turns/{turn_id}/project-files")
     async def turn_project_files(turn_id: str, request: Request):

@@ -85,6 +85,38 @@ class ApiRepositories:
     async def relay_pending(self, limit=100):
         return await self.commands.relay_pending(limit)
 
+    @staticmethod
+    def execution_stage(turn,jobs,media,sites):
+        if turn.state.value in {"FAILED","PAUSED"}:return "blocked"
+        if turn.state.value=="CANCELLED":return "cancelled"
+        if turn.state.value=="COMPLETED":return "completed"
+        if turn.recovery_generation>1:return "recovery"
+        if turn.state.value=="QUEUED":return "queued"
+        if turn.state.value in {"RESTORING","STARTING"}:return "sandbox_wait"
+        if turn.state.value in {"CHECKPOINTING","CLEANING"}:return "collection"
+        media_rows=[value for value in media if value.turn_id==turn.id]
+        site_rows=[value for value in sites if value.turn_id==turn.id]
+        job_rows=[value for value in jobs if value.origin_turn_id==turn.id]
+        if any(value.phase.startswith(("download","object_store","provider_output"))
+                or value.phase in {"response_received","object_staged"} for value in media_rows):
+            return "collection"
+        if any(value.phase in {"uploading","activating","verifying_files"} for value in site_rows):
+            return "collection"
+        if any(value.status in {"submitted","running","unknown"} for value in media_rows):
+            return "provider"
+        if any(value.state.value in {"WAITING_EXTERNAL","CANCELLING"}
+                or value.kind.value=="provider" and value.state.value=="RUNNING"
+                for value in job_rows):return "provider"
+        return "harness"
+
+    async def project_turn_stages(self,thread_id,owner_id):
+        turns=await self.core.list_turns(thread_id,owner_id)
+        jobs=await self.core.list_jobs_for_thread(thread_id)
+        media=await self.media.list_media_jobs(thread_id,owner_id)
+        sites=await self.sites.list_site_jobs(thread_id,owner_id)
+        return [turn.model_copy(update={"execution_stage":self.execution_stage(
+            turn,jobs,media,sites)}) for turn in turns]
+
     @property
     def lifecycle_targets(self):
         return {"accounts": self.accounts.handoff, "media": self.media.handoff,

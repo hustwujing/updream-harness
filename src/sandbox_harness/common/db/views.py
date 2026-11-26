@@ -137,12 +137,18 @@ class ViewsTransactions:
     def turn_view(row: TurnRow) -> TurnView:
         failure=public_turn_failure(code=row.error_code or "",detail=row.error_detail or "",
             turn_id=row.id)
+        stage={"QUEUED":"queued","RESTORING":"sandbox_wait","STARTING":"sandbox_wait",
+            "CHECKPOINTING":"collection","CLEANING":"collection","FAILED":"blocked",
+            "PAUSED":"blocked","CANCELLED":"cancelled","COMPLETED":"completed"}.get(row.state)
+        if not stage:stage="recovery" if row.recovery_generation>1 else "harness"
         return TurnView.model_validate({
             **{key: (row.public_message if key == "message" else row.message
                 if key == "runtime_message" else getattr(row, key))
                 for key in TurnView.model_fields if key not in {
-                    "attachments","error_code","error_message","error_action","troubleshooting_id"}},
+                    "attachments","error_code","error_message","error_action","troubleshooting_id",
+                    "execution_stage"}},
             **failure,
+            "execution_stage":stage,
             "attachments": json.loads(row.attachments_json),
         })
 
