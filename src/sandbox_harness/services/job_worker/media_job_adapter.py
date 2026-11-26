@@ -15,7 +15,7 @@ from sandbox_harness.common.catalog.provider_preflight import (CAPABILITY_SCOPES
 class MediaProviderJobAdapter(BaseJobAdapter):
     def __init__(self,settings,store,objects,catalog,media=None):
         self.settings=settings;self.store=store;self.objects=objects;self.catalog=catalog
-        self.media=media or store
+        self.media=media or store;self.split_media=media is not None
         self.artifacts=ArtifactGateway(store,objects,settings.data_root/'tmp'/'provider-job-artifacts',
             maximum_bytes=settings.max_artifact_bytes)
         self.preflight=ProviderPreflight(store,objects,catalog)
@@ -83,6 +83,9 @@ class MediaProviderJobAdapter(BaseJobAdapter):
         return AdapterStatus(False,JobState.CANCELLING,{'media_job_id':value.id})
 
     async def outputs(self,context:JobExecutionContext,external_execution_id:str)->list[dict]:
+        if self.split_media:
+            return await self.media.media_job_outputs_for_source(
+                external_execution_id,context.job.id,context.job.owner_id)
         output=await self.media.media_job_output_for_thread(external_execution_id,context.job.thread_id)
         return [{"role":"primary",**output}] if output else []
 

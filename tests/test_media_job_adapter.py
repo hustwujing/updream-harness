@@ -70,6 +70,27 @@ async def test_media_provider_adapter_reuses_media_job_handle_and_binds_generic_
     finally:await store.close()
 
 
+async def test_split_media_authority_collects_source_scoped_outputs(tmp_path):
+    store,thread,job,attempt,request=await setup(tmp_path);objects=ObjectStore(tmp_path/'objects')
+    class MediaAuthority:
+        calls=[]
+        async def media_job_outputs_for_source(self,media_job_id,source_job_id,owner_id):
+            self.calls.append((media_job_id,source_job_id,owner_id))
+            return [{'role':'primary','filename':'result.png','object_ref':'sha256:'+'b'*64,
+                'sha256':'b'*64,'size':12,'mime':'image/png'}]
+        async def media_job_output_for_thread(self,*args):
+            raise AssertionError('browser media output scope must not collect source Jobs')
+    media=MediaAuthority()
+    adapter=MediaProviderJobAdapter(Settings(backend='fake',data_root=tmp_path),
+        store,objects,Catalog(),media)
+    context=JobExecutionContext(job=job,request=request,generation=attempt.generation)
+    try:
+        outputs=await adapter.outputs(context,'media-job')
+        assert outputs[0]['filename']=='result.png'
+        assert media.calls==[('media-job',job.id,'owner')]
+    finally:await store.close()
+
+
 async def test_media_provider_adapter_maps_unknown_and_cancellation_without_resubmit(tmp_path):
     store,thread,job,attempt,request=await setup(tmp_path);objects=ObjectStore(tmp_path/'objects')
     adapter=MediaProviderJobAdapter(Settings(backend='fake',data_root=tmp_path),store,objects,Catalog())
