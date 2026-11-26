@@ -14,7 +14,7 @@ from sandbox_harness.common.db.site_repository import (SiteRepository)
 async def serve() -> None:
     settings = load_settings(); validate_service_settings(settings)
     database_url = DatabaseSettings().for_service("site-worker")["sites"]
-    store = SiteRepository(database_url)
+    store = SiteRepository(database_url, **settings.handoff_options)
     worker = SiteWorker(settings, store, object_store(settings))
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

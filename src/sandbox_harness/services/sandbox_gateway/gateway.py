@@ -305,8 +305,9 @@ def gateway_repositories(settings):
             "sites":"sqlite+aiosqlite:///"+str(settings.data_root/"gateway-sites.db")}
     return GatewayRepositories(
         CoreRepository(databases["core"],settings.redis_url,settings.redis_prefix,
-            namespace=settings.namespace),
-        MediaRepository(databases["media"]),SiteRepository(databases["sites"]))
+            namespace=settings.namespace,**settings.handoff_options),
+        MediaRepository(databases["media"],**settings.handoff_options),
+        SiteRepository(databases["sites"],**settings.handoff_options))
 
 
 def create_gateway(settings: Settings | None = None) -> FastAPI:

@@ -13,9 +13,12 @@ from .sites import SitesTransactions
 
 
 class SiteRepository(DomainDatabase, SitesTransactions):
-    def __init__(self, database_url: str):
+    def __init__(self, database_url: str, *, handoff_max_attempts: int = 8,
+                 handoff_max_age_seconds: int = 900):
         super().__init__("sites", database_url)
-        self.lifecycle = LifecycleParticipant(self, self._check_lifecycle, self._apply_lifecycle)
+        self.lifecycle = LifecycleParticipant(self, self._check_lifecycle, self._apply_lifecycle,
+            handoff_max_attempts=handoff_max_attempts,
+            handoff_max_age_seconds=handoff_max_age_seconds)
         self.handoff = self.lifecycle.handoff
         self.handoff.handlers["site.turn.draft"] = self._receive_turn_draft
 

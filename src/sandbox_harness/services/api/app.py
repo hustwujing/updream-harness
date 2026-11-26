@@ -182,9 +182,10 @@ def components(settings: Settings):
             "sites": "sqlite+aiosqlite:///" + str(settings.data_root / "api-sites.db"),
         }
     core = CoreRepository(databases["core"], settings.redis_url, settings.redis_prefix,
-        namespace=settings.namespace)
-    store = ApiRepositories(AccountsRepository(databases["accounts"]), core,
-        MediaRepository(databases["media"]), SiteRepository(databases["sites"]))
+        namespace=settings.namespace, **settings.handoff_options)
+    store = ApiRepositories(AccountsRepository(databases["accounts"], **settings.handoff_options), core,
+        MediaRepository(databases["media"], **settings.handoff_options),
+        SiteRepository(databases["sites"], **settings.handoff_options))
     objects = object_store(settings)
     backend=sandbox_factory.build_sandbox_registry(settings)
     releases=sandbox_factory.primary_provider_releases(settings,backend.provider)

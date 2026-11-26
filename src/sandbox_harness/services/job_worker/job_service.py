@@ -70,8 +70,8 @@ def sandbox_pool(settings: Settings) -> SandboxPool:
 async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) -> None:
     databases=DatabaseSettings().for_service("job-worker")
     store=CoreRepository(databases["core"],settings.redis_url,settings.redis_prefix,
-        namespace=settings.namespace)
-    media=MediaRepository(databases["media"])
+        namespace=settings.namespace,**settings.handoff_options)
+    media=MediaRepository(databases["media"],**settings.handoff_options)
     pool=sandbox_pool(settings);objects=object_store(settings)
     runtime=RuntimeClient(timeout_seconds=settings.sandbox_timeout_seconds,
         reattach_attempts=settings.runtime_stream_reattach_attempts,

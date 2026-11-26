@@ -13,6 +13,7 @@ from datetime import timedelta
 from typing import Awaitable, Callable
 
 from sqlalchemy import func, select, or_
+from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -21,10 +22,10 @@ from sandbox_harness.common.contracts.domain_commands import (
 )
 from sandbox_harness.common.contracts.domain import now
 from sandbox_harness.common.observability.observability import (
-    add_link, canonical_traceparent, carrier, operation,
+    add_link, canonical_traceparent, carrier, event, operation,
 )
 from .domain_database import DOMAIN_TABLES, DomainDatabase, DomainInbox, DomainOutbox, DomainStream
-from .models import canonical_digest, canonical_json
+from .models import canonical_digest, canonical_json, utc_datetime
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,7 @@ class RelayFailure:
     stream_id: str
     target: str
     error_code: str
+    terminal: bool
 
 
 @dataclass(frozen=True)
@@ -99,10 +101,17 @@ class RelayResult:
 
 
 class DomainHandoff:
-    def __init__(self, database: DomainDatabase, handlers: dict[str, Handler], *, contracts=None):
+    def __init__(self, database: DomainDatabase, handlers: dict[str, Handler], *, contracts=None,
+                 max_delivery_attempts: int = 8, max_delivery_age_seconds: int = 900):
+        if not 1 <= max_delivery_attempts <= 100:
+            raise ValueError("handoff_delivery_attempts_invalid")
+        if not 1 <= max_delivery_age_seconds <= 86400:
+            raise ValueError("handoff_delivery_age_invalid")
         self.database = database
         self.handlers = dict(handlers)
         self.contracts = dict(contracts or DOMAIN_COMMAND_CONTRACTS)
+        self.max_delivery_attempts = max_delivery_attempts
+        self.max_delivery_age_seconds = max_delivery_age_seconds
 
     async def _identity_lock(self, session, source, identity):
         if session.bind.dialect.name == "postgresql":
@@ -204,13 +213,41 @@ class DomainHandoff:
                 raise ValueError("handoff_receipt_mismatch")
             row.receipt_json, row.state = encoded, "acknowledged"
 
-    async def _defer(self, identity, code):
+    @staticmethod
+    def _dependency_failure(exc: Exception) -> bool:
+        return isinstance(exc, (ConnectionError, TimeoutError, InterfaceError, OperationalError))
+
+    async def _record_failure(self, identity: str, *, dependency: bool) -> tuple[str, bool, int]:
         async with self.database.transaction() as session:
             row = await session.scalar(select(DomainOutbox).where(DomainOutbox.id == identity).with_for_update())
-            if row is not None and row.state == "pending":
-                row.attempts += 1
-                row.error_code = code
+            if row is None or row.state not in {"pending", "waiting_dependency"}:
+                return "handoff_program_failure", True, 0
+            row.attempts += 1
+            age = max(0, (now() - utc_datetime(row.created_at)).total_seconds())
+            terminal = (not dependency or row.attempts >= self.max_delivery_attempts
+                        or age >= self.max_delivery_age_seconds)
+            if terminal:
+                row.state = "failed"
+                row.error_code = ("handoff_delivery_exhausted" if dependency
+                                  else "handoff_program_failure")
+                row.next_attempt_at = None
+            else:
+                row.state = "waiting_dependency"
+                row.error_code = "handoff_dependency_unavailable"
                 row.next_attempt_at = now() + timedelta(seconds=min(60, 2 ** min(row.attempts, 6)))
+            return row.error_code, terminal, row.attempts
+
+    async def wake_dependency(self, target: str) -> int:
+        if target not in DOMAIN_TABLES or target == self.database.domain:
+            raise ValueError("handoff_target_mismatch")
+        async with self.database.transaction() as session:
+            rows = list((await session.scalars(select(DomainOutbox).where(
+                DomainOutbox.target == target, DomainOutbox.state == "waiting_dependency")
+                .with_for_update())).all())
+            for row in rows:
+                row.state = "pending"
+                row.next_attempt_at = None
+            return len(rows)
 
     async def relay(self, destinations: dict[str, DomainHandoff], limit: int = 100) -> RelayResult:
         if not 1 <= limit <= 1000:
@@ -218,9 +255,10 @@ class DomainHandoff:
         async with self.database.connections() as session:
             earlier = aliased(DomainOutbox)
             preceding = select(earlier.id).where(earlier.stream_id == DomainOutbox.stream_id,
-                earlier.state == "pending", earlier.sequence < DomainOutbox.sequence).exists()
+                earlier.state != "acknowledged", earlier.sequence < DomainOutbox.sequence).exists()
             rows = list((await session.scalars(select(DomainOutbox).where(
-                DomainOutbox.state == "pending", DomainOutbox.target.in_(destinations), ~preceding,
+                DomainOutbox.state.in_(["pending", "waiting_dependency"]),
+                DomainOutbox.target.in_(destinations), ~preceding,
                 or_(DomainOutbox.next_attempt_at.is_(None), DomainOutbox.next_attempt_at <= now()))
                 .order_by(DomainOutbox.created_at, DomainOutbox.stream_id, DomainOutbox.sequence)
                 .limit(limit))).all())
@@ -231,10 +269,13 @@ class DomainHandoff:
                 receipt = await destinations[row.target].receive(Envelope(**json.loads(row.envelope_json)))
                 await self.acknowledge(row.id, receipt)
                 delivered += 1
-            except Exception:
-                # Store no raw exception or payload. A source DB outage propagates
-                # from _defer; an unavailable destination blocks only its stream.
-                code = "handoff_delivery_failed"
-                await self._defer(row.id, code)
-                failures.append(RelayFailure(row.stream_id, row.target, code))
+            except Exception as exc:
+                # Store only a stable classification. Source persistence failure
+                # propagates; a destination dependency blocks only its stream.
+                code, terminal, attempt = await self._record_failure(
+                    row.id, dependency=self._dependency_failure(exc))
+                event("domain.handoff.delivery_failed", level=40 if terminal else 30,
+                    peer_service=row.target, error_code=code, retry_count=attempt,
+                    state="failed" if terminal else "waiting_dependency")
+                failures.append(RelayFailure(row.stream_id, row.target, code, terminal))
         return RelayResult(delivered, tuple(failures))

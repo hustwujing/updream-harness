@@ -75,7 +75,7 @@ async def serve(settings:Settings,*,stop_event:asyncio.Event|None=None)->None:
     runtime=validate_runtime(settings)
     database_url=DatabaseSettings().for_service("controlled-worker")["core"]
     store=CoreRepository(database_url,settings.redis_url,settings.redis_prefix,
-        namespace=settings.namespace)
+        namespace=settings.namespace,**settings.handoff_options)
     objects=object_store(settings);scheduler=Scheduler(store)
     gpu_provider=ControlledGPUProvider(runtime,settings.data_root)
     adapter=ControlledMediaOperationAdapter(scheduler=scheduler,store=store,objects=objects,

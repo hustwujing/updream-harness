@@ -102,3 +102,16 @@ def test_runtime_stderr_log_budget_allows_disable_and_negative_maximum():
     assert Settings(_env_file=None,runtime_stderr_log_max_bytes=-1).runtime_stderr_log_max_bytes==-1
     with pytest.raises(ValidationError):
         Settings(_env_file=None,runtime_stderr_log_max_bytes=1024*1024+1)
+
+
+def test_handoff_retry_budget_is_configurable_and_bounded():
+    settings = Settings(_env_file=None, handoff_delivery_max_attempts=3,
+        handoff_delivery_max_age_seconds=45)
+    assert settings.handoff_options == {
+        "handoff_max_attempts": 3,
+        "handoff_max_age_seconds": 45,
+    }
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, handoff_delivery_max_attempts=0)
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, handoff_delivery_max_age_seconds=0)

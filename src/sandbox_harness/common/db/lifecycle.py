@@ -64,7 +64,8 @@ Ready = Callable[[AsyncSession, LifecycleProposal], Awaitable[bool]]
 class LifecycleParticipant:
     def __init__(self, database: DomainDatabase, check: Check | None = None, effect: Effect | None = None,
                  abort_effect: Effect | None = None, *, prepare_commit: Effect | None = None,
-                 commit_ready: Ready | None = None):
+                 commit_ready: Ready | None = None, handoff_max_attempts: int = 8,
+                 handoff_max_age_seconds: int = 900):
         self.database, self.check, self.effect = database, check, effect
         self.abort_effect = abort_effect
         self.prepare_commit, self.commit_ready = prepare_commit, commit_ready
@@ -72,7 +73,8 @@ class LifecycleParticipant:
             "lifecycle.prepare": self._receive_prepare,
             "lifecycle.commit": self._receive_commit,
             "lifecycle.abort": self._receive_abort,
-        })
+        }, max_delivery_attempts=handoff_max_attempts,
+            max_delivery_age_seconds=handoff_max_age_seconds)
 
     async def _scope(self, session, owner_id, thread_id):
         if session.info.get("domain") != self.database.domain or session.bind is not self.database.engine:

@@ -34,13 +34,17 @@ from .interactions import InteractionsTransactions
 
 
 class CoreRepository(CoreThreadLifecycle, DomainDatabase, BaseConnections, CapabilitiesTransactions, ViewsTransactions, PauseTransactions, BudgetsTransactions, JobActivityTransactions, JobGroupsTransactions, JobAttemptsTransactions, AllocationsTransactions, CleanupTransactions, JobTerminalTransactions, JobArtifactsTransactions, EventsTransactions, ThreadsTransactions, SandboxTransactions, TurnsTransactions, FilesTransactions, InteractionsTransactions):
-    def __init__(self, database_url: str, redis_url: str = "", redis_prefix: str = "sandbox-harness:", *, namespace: str):
+    def __init__(self, database_url: str, redis_url: str = "", redis_prefix: str = "sandbox-harness:", *,
+                 namespace: str, handoff_max_attempts: int = 8,
+                 handoff_max_age_seconds: int = 900):
         DomainDatabase.__init__(self, "core", database_url)
         self.events = RedisEventBus(redis_url, redis_prefix) if redis_url else None
         self._initialize_locks()
         self.ownership = SandboxOwnership(self, namespace)
         self.lifecycle = LifecycleParticipant(self, self._check_lifecycle, self._apply_lifecycle,
-            prepare_commit=self.ownership.request_cleanup, commit_ready=self.ownership.cleanup_ready)
+            prepare_commit=self.ownership.request_cleanup, commit_ready=self.ownership.cleanup_ready,
+            handoff_max_attempts=handoff_max_attempts,
+            handoff_max_age_seconds=handoff_max_age_seconds)
         self.coordinator = LifecycleCoordinator(self.lifecycle)
         self.handoff = self.lifecycle.handoff
 

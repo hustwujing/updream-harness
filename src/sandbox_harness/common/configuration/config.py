@@ -183,6 +183,8 @@ class Settings(BaseSettings):
     site_job_retry_base_seconds: int = Field(default=5, ge=1, le=300)
     supervisor_retry_initial_seconds: float = Field(default=.5, ge=.01, le=30)
     supervisor_retry_max_seconds: float = Field(default=30, ge=.02, le=300)
+    handoff_delivery_max_attempts: int = Field(default=8, ge=1, le=100)
+    handoff_delivery_max_age_seconds: int = Field(default=900, ge=1, le=86400)
     site_draft_ttl_seconds: int = Field(default=24 * 3600, ge=600, le=7 * 86400)
     site_public_base_path: str = Field(default="/sandbox-harness-platform-parallel-ali/sites",
         pattern=r"^/[A-Za-z0-9/_-]+$")
@@ -211,6 +213,13 @@ class Settings(BaseSettings):
             "claude": self.runtime_image_claude,
             "deepseek": self.runtime_image_deepseek,
         }[harness]
+
+    @property
+    def handoff_options(self) -> dict[str, int]:
+        return {
+            "handoff_max_attempts": self.handoff_delivery_max_attempts,
+            "handoff_max_age_seconds": self.handoff_delivery_max_age_seconds,
+        }
 
 
 def load_settings() -> Settings:

@@ -16,7 +16,7 @@ async def serve() -> None:
     settings = load_settings()
     validate_service_settings(settings)
     database_url = DatabaseSettings().for_service("media-worker")["media"]
-    store = MediaRepository(database_url)
+    store = MediaRepository(database_url, **settings.handoff_options)
     worker = MediaWorker(settings, store, object_store(settings), MediaCatalog(settings.media_catalog_json,
         ark_assets_configured=bool(settings.ark_access_key and settings.ark_secret_key
             and settings.ark_asset_group_id and settings.ark_project_name),

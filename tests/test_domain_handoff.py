@@ -230,3 +230,91 @@ async def test_failed_stream_does_not_block_other_work(tmp_path):
     finally:
         await core.close()
         await sites.close()
+
+
+async def test_deterministic_handler_failure_is_terminal_on_first_attempt(tmp_path):
+    core, sites, sender, receiver = await setup_pair(tmp_path)
+    calls = 0
+
+    async def invalid(session, envelope):
+        nonlocal calls
+        calls += 1
+        raise ValueError("deterministic_bug_detail_must_not_be_stored")
+
+    receiver.handlers["create_site"] = invalid
+    try:
+        envelope = await enqueue(core, sender)
+        result = await sender.relay({"sites": receiver})
+        assert result.delivered == 0
+        assert [(value.error_code, value.terminal) for value in result.failures] == [
+            ("handoff_program_failure", True)]
+        assert (await sender.relay({"sites": receiver})).delivered == 0
+        assert calls == 1
+        async with core.connections() as session:
+            row = await session.get(DomainOutbox, envelope.command_id)
+            assert (row.state, row.attempts, row.error_code, row.next_attempt_at) == (
+                "failed", 1, "handoff_program_failure", None)
+            assert "deterministic_bug_detail" not in row.envelope_json
+    finally:
+        await core.close()
+        await sites.close()
+
+
+async def test_transient_dependency_wait_can_be_woken_and_delivered(tmp_path):
+    core, sites, sender, receiver = await setup_pair(tmp_path)
+    original = receiver.handlers["create_site"]
+    calls = 0
+
+    async def unavailable(session, envelope):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ConnectionError("private dependency address")
+        return await original(session, envelope)
+
+    receiver.handlers["create_site"] = unavailable
+    try:
+        envelope = await enqueue(core, sender)
+        result = await sender.relay({"sites": receiver})
+        assert [(value.error_code, value.terminal) for value in result.failures] == [
+            ("handoff_dependency_unavailable", False)]
+        async with core.connections() as session:
+            row = await session.get(DomainOutbox, envelope.command_id)
+            assert row.state == "waiting_dependency" and row.next_attempt_at is not None
+        assert await sender.wake_dependency("sites") == 1
+        assert (await sender.relay({"sites": receiver})).delivered == 1
+        assert calls == 2
+    finally:
+        await core.close()
+        await sites.close()
+
+
+async def test_transient_dependency_retry_budget_is_bounded(tmp_path):
+    core, sites, sender, receiver = await setup_pair(tmp_path)
+    sender.max_delivery_attempts = 2
+    calls = 0
+
+    async def unavailable(session, envelope):
+        nonlocal calls
+        calls += 1
+        raise TimeoutError("private dependency detail")
+
+    receiver.handlers["create_site"] = unavailable
+    try:
+        envelope = await enqueue(core, sender)
+        first = await sender.relay({"sites": receiver})
+        assert first.failures[0].terminal is False
+        await sender.wake_dependency("sites")
+        second = await sender.relay({"sites": receiver})
+        assert [(value.error_code, value.terminal) for value in second.failures] == [
+            ("handoff_delivery_exhausted", True)]
+        await sender.wake_dependency("sites")
+        assert (await sender.relay({"sites": receiver})).delivered == 0
+        assert calls == 2
+        async with core.connections() as session:
+            row = await session.get(DomainOutbox, envelope.command_id)
+            assert (row.state, row.attempts, row.error_code) == (
+                "failed", 2, "handoff_delivery_exhausted")
+    finally:
+        await core.close()
+        await sites.close()

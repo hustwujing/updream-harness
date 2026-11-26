@@ -17,7 +17,8 @@ from sandbox_harness.common.db.core import (CoreRepository)
 
 async def serve(settings):
     database_url=DatabaseSettings().for_service("allocation-worker")["core"]
-    store=CoreRepository(database_url,namespace=settings.namespace);await store.initialize()
+    store=CoreRepository(database_url,namespace=settings.namespace,
+        **settings.handoff_options);await store.initialize()
     backend=build_sandbox_backend(settings)
     service=AllocationService(store,backend,lease_seconds=settings.allocation_lease_seconds)
     stop=asyncio.Event();loop=asyncio.get_running_loop()

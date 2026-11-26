@@ -189,10 +189,12 @@ class AccountMethods:
 
 
 class AccountsRepository(DomainDatabase, AccountMethods):
-    def __init__(self, database_url: str):
+    def __init__(self, database_url: str, *, handoff_max_attempts: int = 8,
+                 handoff_max_age_seconds: int = 900):
         super().__init__("accounts", database_url)
         self.lifecycle = LifecycleParticipant(self, self._registration_check, self._registration_commit,
-                                              self._registration_abort)
+            self._registration_abort, handoff_max_attempts=handoff_max_attempts,
+            handoff_max_age_seconds=handoff_max_age_seconds)
         self.handoff = self.lifecycle.handoff
         self.handoff.handlers["lifecycle.result"] = self._registration_finished
 

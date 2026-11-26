@@ -93,7 +93,7 @@ class CancelResult(_StrictModel):
 class MediaTurnScope(_StrictModel):
     owner_id: str = Field(min_length=1, max_length=64)
     thread_id: str = Field(min_length=1, max_length=32)
-    turn_id: str = Field(min_length=1, max_length=32)
+    turn_id: str = Field(max_length=32)
     owner_generation: int = Field(ge=0)
     thread_generation: int = Field(ge=0)
 
@@ -110,7 +110,11 @@ class MediaTurnDraft(MediaTurnScope):
     expires_at: str = Field(min_length=1, max_length=64)
 
 
-class MediaTurnFinished(MediaTurnScope):
+class MediaTurnRequiredScope(MediaTurnScope):
+    turn_id: str = Field(min_length=1, max_length=32)
+
+
+class MediaTurnFinished(MediaTurnRequiredScope):
     origin_finished: Literal[True]
 
 
@@ -238,7 +242,7 @@ DOMAIN_COMMAND_CONTRACTS = {
         _contract("media.source.authorize", "core", ("media",), MediaSourceAuthorize, MediaSourceAuthorizeResult),
         _contract("media.source.cancel", "core", ("media",), MediaSourceCancel, CancelResult),
         _contract("media.turn.draft", "core", ("media",), MediaTurnDraft, DraftResult),
-        _contract("media.turn.seal", "core", ("media",), MediaTurnScope, MediaBatchResult),
+        _contract("media.turn.seal", "core", ("media",), MediaTurnRequiredScope, MediaBatchResult),
         _contract("media.turn.finished", "core", ("media",), MediaTurnFinished, MediaBatchResult),
         _contract("media.promotion.ack", "core", ("media",), MediaPromotionAck, PromotionResult),
         _contract("site.turn.draft", "core", ("sites",), SiteTurnDraft, DraftResult),
