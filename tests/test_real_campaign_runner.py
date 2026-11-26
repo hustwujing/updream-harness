@@ -25,13 +25,17 @@ def test_campaign_runner_has_bounded_parallel_stop_and_resume_protocol():
 
 def test_real_case_catalog_includes_every_inherited_d_case_with_provenance():
     catalog=__import__('json').loads((ROOT/'tests/real_cases/cases.json').read_text())
-    groups={prefix:[] for prefix in 'SCRDPK'}
+    groups={prefix:[] for prefix in ('S','C','R','D','P','K','XDB')}
     for case in catalog['cases']:
-        groups[case['id'][0]].append(case)
+        prefix='XDB' if case['id'].startswith('XDB') else case['id'][0]
+        groups[prefix].append(case)
     assert {key:len(value) for key,value in groups.items()}=={
-        'S':31,'C':30,'R':17,'D':51,'P':26,'K':14}
-    assert len(catalog['cases'])==169 and catalog['runnable_case_count']==169
+        'S':31,'C':30,'R':17,'D':51,'P':26,'K':14,'XDB':6}
+    assert len(catalog['cases'])==175 and catalog['runnable_case_count']==175
     assert not catalog['superseded_cases']
+    assert [case['id'] for case in groups['XDB']]==[
+        f'XDB{index:02d}' for index in range(1,7)]
+    assert all(case['executor']=='cross_database' for case in groups['XDB'])
     assert [case['id'] for case in groups['D']]==[f'D{index:02d}' for index in range(1,52)]
     assert all(case['executor']=='inherited_protocol' for case in groups['D'])
     assert all(case['provenance']==f"sandbox-harness-platform-plus:{case['id']}"
@@ -89,6 +93,13 @@ def test_real_protocol_service_controls_are_deployment_configurable():
     assert "service_command(args,'job_worker','start')" in protocol
     assert "'sandbox-harness-parallel-job-worker.service'" not in protocol
     assert "'sandbox-harness-parallel-api.service'" not in protocol
+
+
+def test_campaign_routes_cross_database_cases_to_the_dedicated_runner():
+    campaign=(ROOT/'tests/run_real_campaign.py').read_text()
+    assert 'async def cross_database_case(' in campaign
+    assert 'run_real_cross_database.py' in campaign
+    assert 'case["executor"]=="cross_database"' in campaign
 
 
 def test_dynamic_resize_case_grades_the_post_intervention_contract():
