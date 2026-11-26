@@ -197,6 +197,13 @@ existing real-case/fault runners updated for canonical entry points and units.
   Any external blocked case remains failed/unrun; no unsupported passing claim.
 - [ ] Record all 184 results, per-module versions, cleanup and rollout receipts;
   preserve referenced old releases/unknown allocations, scan secrets and push.
+- [ ] After the new deployment is verified, remove transitional all-table Store
+  implementations, superseded entry points, compatibility aliases and duplicate
+  code/tests. Keep one canonical active implementation per module and refresh all
+  current documentation. Archive a clearly versioned stable rollback snapshot
+  outside the active source/runtime directories, then remove unreferenced build,
+  cache, test and image data. Preserve unresolved ownership until reconciliation;
+  the original sibling checkout remains read-only and is outside this cleanup.
 
 Task 2 evidence: five red boundary tests, 157 focused passes and 40 additional
 allocation/recovery passes. Independent review confirmed 19 extracted definitions
