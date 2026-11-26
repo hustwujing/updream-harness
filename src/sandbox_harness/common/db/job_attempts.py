@@ -35,13 +35,13 @@ class JobAttemptsTransactions:
                 .outerjoin(JobLeaseRow, JobLeaseRow.job_id == JobRow.id)
                 .outerjoin(ThreadControlRow, ThreadControlRow.thread_id == JobRow.thread_id)
                 .where(or_(JobRow.state == JobState.PAUSING.value,
+                    JobRow.state == JobState.CANCELLING.value,
                     and_(JobRow.kind == JobKind.PROVIDER.value,
                         JobRow.state == JobState.WAITING_EXTERNAL.value), and_(
                     or_(ThreadControlRow.thread_id.is_(None),
                         ThreadControlRow.state == ThreadControlState.RUNNING.value),
                     JobRow.state.in_([JobState.CREATED.value, JobState.QUEUED.value,
-                        JobState.RUNNING.value, JobState.WAITING_EXTERNAL.value,
-                        JobState.CANCELLING.value]))),
+                        JobState.RUNNING.value, JobState.WAITING_EXTERNAL.value]))),
                     or_(JobLeaseRow.job_id.is_(None), JobLeaseRow.expires_at < timestamp)))
             if adapters is not None:
                 query = query.where(JobRow.adapter.in_(adapters))
@@ -274,7 +274,7 @@ class JobAttemptsTransactions:
                     raise RuntimeError("job_terminal")
                 control = await db.get(ThreadControlRow, job.thread_id)
                 if (control and control.state != ThreadControlState.RUNNING.value
-                        and job.state != JobState.PAUSING.value
+                        and job.state not in {JobState.PAUSING.value,JobState.CANCELLING.value}
                         and not (job.kind == JobKind.PROVIDER.value
                             and job.state == JobState.WAITING_EXTERNAL.value)):
                     raise RuntimeError("thread_paused")

@@ -37,6 +37,28 @@ async def test_cancel_before_acceptance_is_terminal_without_adapter_submit(tmp_p
     finally:await store.close()
 
 
+async def test_cancel_bypasses_paused_thread_admission(tmp_path):
+    from sandbox_harness.common.contracts.domain import now
+    from test_support.legacy_store import ThreadControlRow
+    store,_,thread,origin=await setup(tmp_path)
+    try:
+        request=JobRequest(local_job_id='cancel-paused',kind=JobKind.OPERATION,adapter='fake',
+            descriptor_id='fake',descriptor_version='1',descriptor_digest='a'*64,
+            idempotency_key='cancel-paused',parameters={})
+        group,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id=thread.id,
+            origin_turn_id=origin.id,idempotency_key='cancel-paused-group',jobs=[request]))
+        await store.request_job_group_cancel(group.id,'owner')
+        timestamp=now()
+        async with store.connections.begin() as db:
+            db.add(ThreadControlRow(thread_id=thread.id,owner_id='owner',state='PAUSED',
+                generation=1,operation_id='pause',degraded=False,detail_json='{}',
+                requested_at=timestamp,completed_at=timestamp,created_at=timestamp,updated_at=timestamp))
+        worker=JobWorker(store,{'fake':NeverSubmittedAdapter()},node_id='node',worker_id='replacement')
+        assert await worker.run_once()==1
+        assert (await store.get_job(jobs[0].id)).state==JobState.CANCELLED
+    finally:await store.close()
+
+
 async def test_thread_stop_all_suppresses_ready_and_attaches_facts_to_next_user_turn(tmp_path):
     store,profile,thread,origin=await setup(tmp_path)
     try:
