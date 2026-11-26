@@ -193,7 +193,8 @@ def build_service_release(root: Path, service: str, output_root: Path,
         "source_digest":source["artifact_digest"],"environment_digest":environment["digest"],
         "source_root":source_relative,
         "environment_manifest":str(environment_manifest.resolve()),
-        "entry_points":module["entry_points"],"native":native,"external_inputs":external}
+        "entry_points":module["entry_points"],"native":native,"external_inputs":external,
+        "compatibility":module["compatibility"]}
     digest = hashlib.sha256(_encode(payload)).hexdigest()
     payload["digest"] = digest
     parent = output_root / service
@@ -239,6 +240,11 @@ def verify_service_release(manifest: Path, *, output_root: Path):
             or manifest.parent.name != value.get("digest")
             or manifest.parent.parent.name != value.get("service")):
         raise ValueError("service_release_manifest_invalid")
+    compatibility=value.get("compatibility")
+    if (not isinstance(compatibility,dict)
+            or set(compatibility)!={"wire_protocol","schema","baseline"}
+            or any(not isinstance(item,str) or not item for item in compatibility.values())):
+        raise ValueError("service_release_compatibility_invalid")
     source = _safe(manifest.parent, manifest.parent / value["source_root"])
     source_manifest = source / "manifest.json"
     if module_builder.verify_artifact(source_manifest)["artifact_digest"] != value["source_digest"]:
@@ -260,6 +266,14 @@ def select_service_release(data_root: Path, manifest: Path):
                   "manifest":str(Path(manifest).resolve()),
                   "activated_at":datetime.now(timezone.utc).isoformat()}
     target = current / (value["service"] + ".json")
+    rollback=data_root/"service-rollback"/(value["service"]+".json")
+    if target.exists():
+        previous=json.loads(target.read_text())
+        verify_service_release(Path(previous["manifest"]),output_root=releases)
+        rollback.parent.mkdir(parents=True,exist_ok=True);rollback.parent.chmod(0o755)
+        rollback_stage=rollback.with_suffix(".json.tmp")
+        rollback_stage.write_bytes(_encode(previous));rollback_stage.chmod(0o444)
+        os.replace(rollback_stage,rollback)
     staging = target.with_suffix(".json.tmp")
     staging.write_bytes(_encode(descriptor));staging.chmod(0o444);os.replace(staging, target)
     return target

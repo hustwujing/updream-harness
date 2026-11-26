@@ -68,6 +68,8 @@ def test_service_release_selects_verified_source_and_environment_atomically(tmp_
     assert not list(env.parent.rglob("sandbox_harness_platform_parallel-*.dist-info"))
     before=descriptor.read_bytes()
     assert tool.select_service_release(data,manifest).read_bytes()!=before
+    rollback=data/"service-rollback/api.json"
+    assert rollback.is_file() and json.loads(rollback.read_text())["digest"]==selected["digest"]
     assert json.loads(descriptor.read_text())["manifest"]==str(manifest.resolve())
 
 
