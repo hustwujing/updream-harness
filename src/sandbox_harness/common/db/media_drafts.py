@@ -6,6 +6,7 @@ from sqlalchemy import (func, select, update)
 from sqlalchemy.ext.asyncio import (AsyncSession)
 from sandbox_harness.common.contracts.domain import (TurnState, TERMINAL, identifier, now, MediaDraftView, MediaJobView, MediaJobOutputView)
 from sandbox_harness.common.contracts.job_errors import (job_error_payload)
+from sandbox_harness.common.contracts.errors import error_reference
 from .models import (ArtifactRow, MediaBatchRow, MediaDraftRow, MediaJobOutputRow, MediaJobRow, ThreadRow, TurnRow, utc_datetime)
 
 
@@ -40,6 +41,8 @@ class MediaDraftsTransactions:
             progress=row.progress, error_code=row.error_code or "", error_detail=row.error_detail or "",
             error_message=error.get('error_message',''),
             error_guidance=error.get('error_guidance',''),failed_phase=error.get('failed_phase',''),
+            troubleshooting_id=(error_reference("media-worker",row.id,row.error_code)
+                if row.error_code else ""),
             retryable=bool(error.get('retryable',False)),retry_class=error.get('retry_class',''),
             side_effect_state=error.get('side_effect_state',''),
             cancelable=row.execution_mode == "async" and row.cancellation_mode == "supported",
@@ -215,4 +218,3 @@ class MediaDraftsTransactions:
                     await db.execute(update(MediaBatchRow).where(MediaBatchRow.turn_id == row.turn_id,
                         MediaBatchRow.status == "sealed").values(lease_expires_at=None, updated_at=now()))
         return self._media_draft_view(row)
-

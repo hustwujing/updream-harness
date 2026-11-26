@@ -288,7 +288,10 @@ class TurnView(BaseModel):
     sandbox_id: str = ""
     sandbox_handle_json: str = Field(default="", exclude=True)
     error_code: str = ""
-    error_detail: str = ""
+    error_detail: str = Field(default="", exclude=True)
+    error_message: str = ""
+    error_action: str = ""
+    troubleshooting_id: str = ""
     lease_owner: str = ""
     lease_expires_at: datetime | None = None
     recovery_generation: int = 0
@@ -613,9 +616,10 @@ class MediaJobView(BaseModel):
     phase: str = ""
     progress: int | None = None
     error_code: str = ""
-    error_detail: str = ""
+    error_detail: str = Field(default="", exclude=True)
     error_message: str = ""
     error_guidance: str = ""
+    troubleshooting_id: str = ""
     failed_phase: str = ""
     retryable: bool = False
     retry_class: str = ""
@@ -657,7 +661,10 @@ class SiteDeployJobView(BaseModel):
     phase: str = ""
     progress: int | None = None
     error_code: str = ""
-    error_detail: str = ""
+    error_detail: str = Field(default="", exclude=True)
+    error_message: str = ""
+    error_action: str = ""
+    troubleshooting_id: str = ""
     attempt_count: int = 0
     retryable: bool = False
     public_url: str = ""

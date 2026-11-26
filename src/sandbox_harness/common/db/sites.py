@@ -6,6 +6,7 @@ from datetime import (datetime, timedelta)
 from pathlib import (PurePosixPath)
 from sqlalchemy import (or_, func, select, text, update)
 from sandbox_harness.common.contracts.domain import (identifier, now, SiteDeployJobView, SiteDraftView, SiteProjectView, SiteVersionView)
+from sandbox_harness.common.contracts.public_errors import public_job_result
 from .models import (ArtifactRow, SiteDeployJobRow, SiteDraftFileRow, SiteDraftRow, SiteFileRow, SiteProjectRow, SiteVersionRow, ThreadRow, TurnRow, canonical_digest, utc_datetime)
 
 
@@ -23,10 +24,15 @@ class SitesTransactions:
 
     @staticmethod
     def _site_job_view(row: SiteDeployJobRow, public_url: str = "") -> SiteDeployJobView:
+        error=public_job_result({"error_code":row.error_code,"error_detail":row.error_detail},
+            identity=row.id,origin="site-worker") if row.error_code else {}
         return SiteDeployJobView(id=row.id, thread_id=row.thread_id, turn_id=row.turn_id,
             project_id=row.project_id, draft_id=row.draft_id, name=row.name, slug=row.slug,
             status=row.status, phase=row.phase or "", progress=row.progress,
             error_code=row.error_code or "", error_detail=row.error_detail or "",
+            error_message=error.get("error_message",""),
+            error_action=error.get("error_guidance",""),
+            troubleshooting_id=error.get("troubleshooting_id",""),
             attempt_count=row.attempt_count, retryable=row.status=="retry_exhausted",
             public_url=public_url,
             created_at=utc_datetime(row.created_at),
@@ -441,4 +447,3 @@ class SitesTransactions:
         return {"project_id":project.id, "version_id":project.current_version_id,
             "path":file.path, "sha256":file.sha256, "size":file.size,
             "mime":file.mime, "object_ref":file.object_ref}
-

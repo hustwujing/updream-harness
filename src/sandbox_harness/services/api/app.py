@@ -35,7 +35,9 @@ from sandbox_harness.common.jobs.job_coordinator import (JobCoordinator, JobGrou
 from sandbox_harness.services.api.job_continuation import (ContinuationDispatcher)
 from sandbox_harness.services.api.execution_graph import (ExecutionGraphProjector)
 from sandbox_harness.common.catalog.execution_readiness import (ExecutionReadiness)
-from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate)
+from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobView)
+from sandbox_harness.common.contracts.public_errors import public_job_result
+from sandbox_harness.common.contracts.errors import error_reference
 from sandbox_harness.common.configuration.config import (Settings, load_settings, validate_service_settings)
 from sandbox_harness.common.configuration.databases import (DatabaseSettings)
 from sandbox_harness.common.observability.observability import (
@@ -63,6 +65,30 @@ from sandbox_harness.common.db.media_repository import (MediaRepository)
 from sandbox_harness.common.db.site_repository import (SiteRepository)
 
 logger = logging.getLogger(__name__)
+
+
+def public_job_view(value: JobView) -> dict:
+    result=value.model_dump(mode="json")
+    result["result"]=public_job_result(value.result,identity=value.id,origin="job-worker")
+    return result
+
+
+def public_job_response(value):
+    if isinstance(value,JobView):return public_job_view(value)
+    if isinstance(value,dict):
+        return {key:([public_job_response(item) for item in item_value]
+            if key=="jobs" and isinstance(item_value,list) else public_job_response(item_value)
+            if isinstance(item_value,JobView) else item_value) for key,item_value in value.items()}
+    return value
+
+
+def public_cleanup(value: dict | None, job_id: str) -> dict | None:
+    if value is None:return None
+    result={key:item for key,item in value.items() if key!="last_error"}
+    if value.get("last_error"):
+        result["error_code"]="cleanup_failed"
+        result["troubleshooting_id"]=error_reference("job-worker",job_id,"cleanup_failed")
+    return result
 
 
 def web_distribution_digest(root: Path) -> str:
@@ -642,7 +668,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/job-group-drafts/{draft_id}/confirm")
     async def confirm_job_group_draft(draft_id: str, request: Request):
         try:
-            return await job_coordinator.confirm_group(draft_id, request.state.owner_id)
+            return public_job_response(await job_coordinator.confirm_group(
+                draft_id, request.state.owner_id))
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from exc
         except (ValueError, RuntimeError) as exc:
@@ -662,12 +689,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         group = await store.get_job_group_for_owner(group_id, request.state.owner_id)
         if not group:
             raise HTTPException(404, "JobGroup not found")
-        return {"group": group, "jobs": await store.list_jobs_for_group(group.id, request.state.owner_id)}
+        return {"group": group, "jobs":[public_job_view(value) for value in
+            await store.list_jobs_for_group(group.id, request.state.owner_id)]}
 
     @app.post("/api/job-groups/{group_id}/cancel")
     async def cancel_job_group(group_id: str, request: Request):
         try:
-            return {"jobs": await job_coordinator.cancel_group(group_id, request.state.owner_id)}
+            return {"jobs":[public_job_view(value) for value in
+                await job_coordinator.cancel_group(group_id, request.state.owner_id)]}
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from exc
 
@@ -676,12 +705,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         value = await store.get_job_for_owner(job_id, request.state.owner_id)
         if not value:
             raise HTTPException(404, "Job not found")
-        return {**value.model_dump(mode="json"),"cleanup":await store.get_job_cleanup(job_id)}
+        return {**public_job_view(value),
+            "cleanup":public_cleanup(await store.get_job_cleanup(job_id),job_id)}
 
     @app.post("/api/jobs/{job_id}/cancel")
     async def cancel_job(job_id: str, request: Request):
         try:
-            return await job_coordinator.cancel_job(job_id, request.state.owner_id)
+            return public_job_view(await job_coordinator.cancel_job(job_id, request.state.owner_id))
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from exc
 

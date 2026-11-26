@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from sandbox_harness.common.contracts.domain import (ThreadView, ThreadControlState, ThreadControlView, PauseParticipantState, PauseParticipantView, TurnInputView, TurnView, now)
 from sandbox_harness.common.contracts.job_contracts import (JobAttemptReceipt, JobGroupDraftState, JobGroupDraftView, JobGroupState, JobGroupView, JobKind, JobOutboxView, JobState, JobView, BudgetAccountView, BudgetLedgerView, BudgetReservationView)
+from sandbox_harness.common.contracts.public_errors import public_turn_failure
 from .models import (BudgetAccountRow, BudgetLedgerRow, BudgetReservationRow, JobAttemptRow, JobGroupDraftRow, JobGroupRow, JobOutboxRow, JobRow, PauseParticipantRow, ThreadControlRow, ThreadRow, TurnInputRow, TurnRow, utc_datetime)
 
 
@@ -134,10 +135,14 @@ class ViewsTransactions:
 
     @staticmethod
     def turn_view(row: TurnRow) -> TurnView:
+        failure=public_turn_failure(code=row.error_code or "",detail=row.error_detail or "",
+            turn_id=row.id)
         return TurnView.model_validate({
             **{key: (row.public_message if key == "message" else row.message
                 if key == "runtime_message" else getattr(row, key))
-                for key in TurnView.model_fields if key != "attachments"},
+                for key in TurnView.model_fields if key not in {
+                    "attachments","error_code","error_message","error_action","troubleshooting_id"}},
+            **failure,
             "attachments": json.loads(row.attachments_json),
         })
 
@@ -148,4 +153,3 @@ class ViewsTransactions:
             **{key: getattr(row, key) for key in TurnInputView.model_fields if key != "attachments"},
             "attachments": json.loads(row.attachments_json),
         })
-

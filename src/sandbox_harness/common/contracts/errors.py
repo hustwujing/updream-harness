@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import hashlib
 import json
 import re
 from uuid import uuid4
@@ -14,6 +15,7 @@ ERROR_PHASES = frozenset({
 })
 SIDE_EFFECT_STATES = frozenset({"none", "possible", "accepted", "completed", "unknown"})
 _SAFE_CODE = re.compile(r"[a-z][a-z0-9_]{0,79}")
+_REFERENCE_CODE = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,79}")
 _SAFE_ORIGIN = re.compile(r"[a-z][a-z0-9-]{0,63}")
 _SAFE_CLASS = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,119}")
 _SAFE_MARKER = re.compile(r"[a-z][a-z0-9_.:-]{0,159}")
@@ -113,6 +115,13 @@ def public_error(value: ErrorEnvelope) -> PublicError:
         "execution_failed", "本次执行未能完成。", "请保留查询编号并稍后重试；若问题持续，请联系管理员。"))
     return PublicError(code=code, message=message, action=action,
         troubleshooting_id=value.internal_ref)
+
+
+def error_reference(origin: str, identity: str, code: str) -> str:
+    """Stable troubleshooting identity for one persisted failure."""
+    if not _SAFE_ORIGIN.fullmatch(origin) or not identity or not _REFERENCE_CODE.fullmatch(code):
+        raise ValueError("error_reference_invalid")
+    return hashlib.sha256((origin + "\0" + identity + "\0" + code).encode()).hexdigest()[:32]
 
 
 def public_failure(code: str, detail: str) -> tuple[str, str]:
