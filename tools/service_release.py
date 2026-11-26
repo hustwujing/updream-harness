@@ -230,7 +230,8 @@ def build_service_release(root: Path, service: str, output_root: Path,
             shutil.rmtree(staging)
 
 
-def verify_service_release(manifest: Path, *, output_root: Path):
+def verify_service_release(manifest: Path, *, output_root: Path,
+                           require_compatibility: bool = True):
     output_root = output_root.resolve()
     manifest = _safe(output_root, manifest)
     value = json.loads(manifest.read_text())
@@ -241,9 +242,9 @@ def verify_service_release(manifest: Path, *, output_root: Path):
             or manifest.parent.parent.name != value.get("service")):
         raise ValueError("service_release_manifest_invalid")
     compatibility=value.get("compatibility")
-    if (not isinstance(compatibility,dict)
+    if (require_compatibility and (not isinstance(compatibility,dict)
             or set(compatibility)!={"wire_protocol","schema","baseline"}
-            or any(not isinstance(item,str) or not item for item in compatibility.values())):
+            or any(not isinstance(item,str) or not item for item in compatibility.values()))):
         raise ValueError("service_release_compatibility_invalid")
     source = _safe(manifest.parent, manifest.parent / value["source_root"])
     source_manifest = source / "manifest.json"
@@ -269,7 +270,8 @@ def select_service_release(data_root: Path, manifest: Path):
     rollback=data_root/"service-rollback"/(value["service"]+".json")
     if target.exists():
         previous=json.loads(target.read_text())
-        verify_service_release(Path(previous["manifest"]),output_root=releases)
+        verify_service_release(Path(previous["manifest"]),output_root=releases,
+            require_compatibility=False)
         rollback.parent.mkdir(parents=True,exist_ok=True);rollback.parent.chmod(0o755)
         rollback_stage=rollback.with_suffix(".json.tmp")
         rollback_stage.write_bytes(_encode(previous));rollback_stage.chmod(0o444)
