@@ -96,7 +96,7 @@ class JobWorker:
                         self.worker_id,self.node_id,self.lease_seconds,limit=recovery_capacity,
                         adapters=set(self.adapters),accepted_only=True)
                     recoveries.update(asyncio.create_task(self._process_isolated(attempt,
-                        continuous=False,recovery_only=True),name='job-recovery-'+attempt.job_id) for attempt in recovered)
+                        continuous=True,recovery_only=True),name='job-recovery-'+attempt.job_id) for attempt in recovered)
                 capacity=max(0,self.concurrency-len(tasks));attempts=[]
                 if capacity:
                     attempts=await self.store.claim_available_jobs(

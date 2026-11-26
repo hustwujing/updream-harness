@@ -82,6 +82,33 @@ async def test_full_worker_recovers_accepted_execution_without_resubmission(tmp_
         worker.stop_event.set();await asyncio.wait_for(task,3);await store.close()
 
 
+async def test_recovery_lane_holds_one_generation_while_polling_accepted_job(tmp_path):
+    import asyncio
+    store,_,job=await setup(tmp_path,request('accepted-polling'))
+    old=await store.claim_job(job.id,'old','node',30)
+    await store.record_job_acceptance(job.id,'old',old.generation,
+        external_execution_id='accepted-external',receipt={})
+    await store.defer_accepted_job(job.id,'old',old.generation)
+    adapter=FakeAdapter([],statuses=[AdapterStatus(False),AdapterStatus(False),
+        AdapterStatus(True,JobState.SUCCEEDED,{'ok':True})])
+    worker=JobWorker(store,{'fake':adapter},node_id='node',worker_id='replacement',
+        concurrency=1,recovery_concurrency=1,poll_seconds=.01)
+    task=asyncio.create_task(worker.run())
+    try:
+        for _ in range(300):
+            current=await store.get_job(job.id)
+            if current.state==JobState.SUCCEEDED:break
+            await asyncio.sleep(.01)
+        assert current.state==JobState.SUCCEEDED
+        assert current.generation==2 and adapter.status_calls==3
+        async with store.connections() as db:
+            attempts=list((await db.execute(select(JobAttemptRow).where(
+                JobAttemptRow.job_id==job.id))).scalars())
+        assert [row.generation for row in attempts]==[1,2]
+    finally:
+        worker.stop_event.set();await asyncio.wait_for(task,3);await store.close()
+
+
 async def test_recovery_after_resume_keeps_newly_accepted_execution(tmp_path):
     from datetime import timedelta
     from sandbox_harness.common.contracts.domain import (now)
