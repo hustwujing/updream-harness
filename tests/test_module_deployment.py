@@ -59,6 +59,11 @@ def test_service_release_selects_verified_source_and_environment_atomically(tmp_
     assert selected["digest"]==json.loads(manifest.read_text())["digest"]
     assert selected["python"]==str(env.parent/"bin/python")
     assert selected["pythonpath"].endswith("/src")
+    assert descriptor.stat().st_mode&0o777==0o444
+    assert manifest.stat().st_mode&0o777==0o444
+    assert env.stat().st_mode&0o777==0o444
+    assert all(path.stat().st_mode&0o777==0o555 for path in manifest.parent.rglob("*")
+               if path.is_dir())
     assert not list(env.parent.rglob("_editable_impl_sandbox_harness_platform_parallel*.pth"))
     assert not list(env.parent.rglob("sandbox_harness_platform_parallel-*.dist-info"))
     before=descriptor.read_bytes()

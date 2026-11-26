@@ -39,3 +39,4 @@ def test_provisioner_revokes_public_connect_and_uses_non_privileged_roles():
     assert "REVOKE ALL ON DATABASE" in source
     assert "NOSUPERUSER NOCREATEDB NOCREATEROLE" in source
     assert "os.replace" in source and "0o600" in source
+    assert 'pwd.getpwnam("sandbox-harness")' in source and "os.chown" in source

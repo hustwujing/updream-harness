@@ -7,6 +7,7 @@ if [[ "$root" != /data2/wujing03/sandbox-harness-platform-parallel-ali ]]; then
   exit 1
 fi
 component=${1:-}
+trap 'status=$?; echo "service launcher failed component=$component line=$LINENO status=$status" >&2' ERR
 env_file="$root/.data/config/platform.env"
 log_root="$root/.data/service-logs"
 [[ -f "$env_file" ]] || { echo "missing $env_file" >&2; exit 1; }
@@ -41,15 +42,14 @@ case "$component" in
 esac
 if [[ -n "$service" ]]; then
   mapfile -t release < <(/data/wujing03/miniforge3/bin/python \
-    "$root/tools/service_release.py" resolve --data-root "$root/.data" --service "$service")
+    "$root/.data/release-tools/service_release.py" resolve --data-root "$root/.data" --service "$service")
   [[ ${#release[@]} -eq 4 && -x "${release[0]}" && -d "${release[1]}" && -d "${release[2]}" ]] || {
     echo "invalid selected service release: $service" >&2; exit 1; }
   release_python=${release[0]}
   export PYTHONPATH=${release[1]}
   export SANDBOX_HARNESS_RESOURCE_ROOT=${release[2]}
   export SANDBOX_HARNESS_RELEASE_DIGEST=${release[3]}
-  export SANDBOX_HARNESS_JOB_CATALOG_PATH="$SANDBOX_HARNESS_RESOURCE_ROOT/deploy/job-catalog.example.json"
-  export SANDBOX_HARNESS_PROFILE_CATALOG_PATH="$SANDBOX_HARNESS_RESOURCE_ROOT/deploy/profile-catalog.example.json"
+  export SANDBOX_HARNESS_RELEASE=${release[3]}
 fi
 
 case "$component" in

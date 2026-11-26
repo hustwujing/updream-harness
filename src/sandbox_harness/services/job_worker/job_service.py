@@ -175,3 +175,7 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
 def run() -> None:
     settings=load_settings();configure("job-worker",settings.data_root/"logs")
     asyncio.run(serve(settings))
+
+
+if __name__ == "__main__":
+    run()

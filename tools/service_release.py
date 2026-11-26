@@ -96,12 +96,19 @@ def _manifest_identity(value):
     return hashlib.sha256(_encode(payload)).hexdigest()
 
 
+def _publish_release_tree(root):
+    for path in sorted((value for value in root.rglob("*") if value.is_dir()),reverse=True):
+        path.chmod(0o555)
+    root.chmod(0o555)
+
+
 def freeze_environment(source: Path, output_root: Path) -> Path:
     source = source.resolve()
     if not (source / "bin/python").exists() or not (source / "pyvenv.cfg").is_file():
         raise ValueError("dependency_environment_invalid")
     output_root = output_root.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
+    output_root.chmod(0o755)
     rows = _tree_rows(source)
     payload = {"schema_version":1,"kind":"python-environment","files":rows}
     digest = hashlib.sha256(_encode(payload)).hexdigest()
@@ -110,6 +117,7 @@ def freeze_environment(source: Path, output_root: Path) -> Path:
     manifest = target / "manifest.json"
     if target.exists():
         verify_environment(manifest)
+        target.chmod(0o555);manifest.chmod(0o444)
         return manifest
     staging = Path(tempfile.mkdtemp(prefix=".environment-", dir=output_root))
     try:
@@ -124,6 +132,7 @@ def freeze_environment(source: Path, output_root: Path) -> Path:
         for path in list(staging.rglob("sandbox_harness_platform_parallel-*.dist-info")):
             shutil.rmtree(path)
         (staging / "manifest.json").write_bytes(_encode(payload))
+        (staging / "manifest.json").chmod(0o444);staging.chmod(0o555)
         staging.rename(target)
         verify_environment(manifest)
         return manifest
@@ -189,15 +198,20 @@ def build_service_release(root: Path, service: str, output_root: Path,
     payload["digest"] = digest
     parent = output_root / service
     parent.mkdir(parents=True, exist_ok=True)
+    output_root.mkdir(parents=True,exist_ok=True);output_root.chmod(0o755);parent.chmod(0o755)
     target, manifest = parent / digest, parent / digest / "manifest.json"
     if target.exists():
         verify_service_release(manifest, output_root=output_root)
+        source_root=target/json.loads(manifest.read_text())["source_root"]
+        (source_root/"resources").mkdir(exist_ok=True)
+        _publish_release_tree(target);manifest.chmod(0o444)
         return manifest
     staging = Path(tempfile.mkdtemp(prefix=".release-", dir=parent))
     try:
         source_target = staging / source_relative
         source_target.parent.mkdir(parents=True)
         shutil.copytree(source_manifest.parent, source_target)
+        (source_target/"resources").mkdir(exist_ok=True)
         payload.update({"source_root":str(source_target.relative_to(staging)),
                         "environment_manifest":str(environment_manifest.resolve())})
         payload["digest"] = hashlib.sha256(_encode(
@@ -206,6 +220,7 @@ def build_service_release(root: Path, service: str, output_root: Path,
             digest = payload["digest"]
             target, manifest = parent / digest, parent / digest / "manifest.json"
         (staging / "manifest.json").write_bytes(_encode(payload))
+        (staging / "manifest.json").chmod(0o444);_publish_release_tree(staging)
         staging.rename(target)
         verify_service_release(manifest, output_root=output_root)
         return manifest
@@ -240,12 +255,13 @@ def select_service_release(data_root: Path, manifest: Path):
     value = verify_service_release(manifest, output_root=releases)
     current = data_root / "service-current"
     current.mkdir(parents=True, exist_ok=True)
+    current.chmod(0o755)
     descriptor = {"schema_version":1,"service":value["service"],"digest":value["digest"],
                   "manifest":str(Path(manifest).resolve()),
                   "activated_at":datetime.now(timezone.utc).isoformat()}
     target = current / (value["service"] + ".json")
     staging = target.with_suffix(".json.tmp")
-    staging.write_bytes(_encode(descriptor)); os.replace(staging, target)
+    staging.write_bytes(_encode(descriptor));staging.chmod(0o444);os.replace(staging, target)
     return target
 
 

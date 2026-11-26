@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
+import pwd
 import re
 import secrets
 from urllib.parse import quote, unquote, urlsplit
@@ -79,6 +80,8 @@ async def provision(env_file=ENV):
     urls={domain:_domain_url(admin,domain,passwords[domain]) for domain in DOMAINS}
     staging=env_file.with_suffix(".env.domain.tmp")
     staging.write_text(_updated_environment(source,urls));staging.chmod(0o600)
+    account=pwd.getpwnam("sandbox-harness")
+    os.chown(staging,account.pw_uid,account.pw_gid)
     os.replace(staging,env_file)
     for domain in DOMAINS:
         test=await asyncpg.connect(**_connection(urls[domain]))

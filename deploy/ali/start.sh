@@ -11,6 +11,12 @@ set -a
 source "$env_file"
 set +a
 
+release_tools="$root/.data/release-tools"
+install -d -o root -g root -m 0755 "$release_tools"
+for tool in service_release build_module module_manifest module_boundaries; do
+  install -o root -g root -m 0444 "$root/tools/$tool.py" "$release_tools/$tool.py"
+done
+
 wait_port() {
   local host=$1 port=$2
   for _ in $(seq 1 60); do
@@ -24,6 +30,10 @@ start_transient() {
   local unit=$1 user=$2
   shift 2
   if systemctl is-active --quiet "$unit.service"; then return 0; fi
+  if [[ $(systemctl show -p LoadState --value "$unit.service" 2>/dev/null || true) != not-found ]]; then
+    systemctl restart "$unit.service"
+    return 0
+  fi
   systemd-run --unit="$unit" --collect --uid="$user" \
     --property=WorkingDirectory="$root" --property=Restart=on-failure \
     --property=RestartSec=3 --property=KillMode=control-group "$@"

@@ -286,6 +286,7 @@ def test_ali_transient_service_graph_is_complete_and_root_partition_free():
                     "media-worker","site-worker","api"):
         assert f"sandbox-harness-parallel-ali-{service}" in combined
     assert "systemd-run" in start and "--collect" in start
+    assert 'systemctl restart "$unit.service"' in start
     gateway_positions=(start.index("ali-sandbox-gateway-opensandbox"),start.index("ali-sandbox-gateway-aliyun"))
     assert start.index("ali-postgresql")<start.index("ali-network")<min(gateway_positions)
     assert max(gateway_positions)<start.index("ali-job-worker")<start.index("ali-api")
@@ -316,6 +317,7 @@ def test_ali_service_runner_uses_only_ali_environment_and_logs():
     assert "/data/wujing03/media-foundation-core" not in source
     assert 'export PYTHONPATH="$service_root:${PYTHONPATH:-}"' in source
     assert "unexpected_project_root" in source
+    assert '.data/release-tools/service_release.py' in source
     assert 'sandbox-gateway-opensandbox)' in source and 'SANDBOX_HARNESS_GATEWAY_BIND_HOST="172.31.0.1"' in source
     assert 'sandbox-gateway-aliyun)' in source and 'SANDBOX_HARNESS_GATEWAY_BIND_HOST="10.194.49.8"' in source
     assert 'opensandbox) provider_gateway_host="172.31.0.1"' in source
@@ -323,7 +325,10 @@ def test_ali_service_runner_uses_only_ali_environment_and_logs():
     assert 'SANDBOX_HARNESS_GATEWAY_URL="http://${provider_gateway_host}:${SANDBOX_HARNESS_GATEWAY_BIND_PORT}"' in source
     assert "tools/service_release.py" in source and "service-current" not in source
     assert "SANDBOX_HARNESS_RELEASE_DIGEST" in source
+    assert 'SANDBOX_HARNESS_RELEASE=${release[3]}' in source
     assert 'export PYTHONPATH=${release[1]}' in source
+    assert 'SANDBOX_HARNESS_JOB_CATALOG_PATH="$SANDBOX_HARNESS_RESOURCE_ROOT' not in source
+    assert 'SANDBOX_HARNESS_PROFILE_CATALOG_PATH="$SANDBOX_HARNESS_RESOURCE_ROOT' not in source
     assert '"$root/.venv/bin/sandbox-harness' not in source
     assert "0.0.0.0" not in source
 
