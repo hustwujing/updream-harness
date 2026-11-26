@@ -60,7 +60,8 @@ class CheckpointRestoreError(RuntimeError):
 
 
 class Broker:
-    def __init__(self, settings: Settings, store, objects: ObjectStore, pool: SandboxPool, runtime: RuntimeClient, catalog: HarnessCatalog):
+    def __init__(self, settings: Settings, store, objects: ObjectStore, pool: SandboxPool,
+                 runtime: RuntimeClient, catalog: HarnessCatalog, *, execution_enabled: bool = True):
         self.settings = settings
         self.store = store
         self.objects = objects
@@ -68,6 +69,7 @@ class Broker:
         self.runtime = runtime
         self.codec = CapabilityCodec(settings.gateway_signing_key)
         self.catalog = catalog
+        self.execution_enabled = execution_enabled
         self.tasks: dict[str, asyncio.Task] = {}
         self.reconciliation_tasks: dict[str, asyncio.Task] = {}
         self.locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
@@ -129,7 +131,7 @@ class Broker:
                     self.input_locks.pop(turn_id, None)
 
     def _schedule(self, turn_id: str) -> None:
-        if self.closing:return
+        if self.closing or not self.execution_enabled:return
         task = self.tasks.get(turn_id)
         if task and not task.done():
             return
@@ -138,6 +140,7 @@ class Broker:
     def status(self) -> dict:
         return {
             "instance_id": self.instance_id,
+            "execution_enabled": self.execution_enabled,
             "active_turns": len([task for task in self.tasks.values() if not task.done()]),
             "active_reconciliations": len([task for task in self.reconciliation_tasks.values()
                 if not task.done()]),
@@ -147,9 +150,12 @@ class Broker:
         }
 
     async def start(self) -> None:
+        if not self.execution_enabled:
+            raise RuntimeError("request_only_broker_cannot_start")
         validate=getattr(self.pool.backend,"validate_active_providers",None)
         if validate:validate(await self.store.active_sandbox_providers())
         await self.reconcile()
+        await self.deliver_pending_interaction_responses()
         try:
             await self.cleanup_startup_orphans()
         except Exception:
@@ -225,6 +231,7 @@ class Broker:
             await asyncio.sleep(self.settings.recovery_scan_seconds)
             try:
                 await self.reconcile()
+                await self.deliver_pending_interaction_responses()
             except Exception:
                 logger.exception("Expired Turn reconciliation failed")
 
@@ -414,42 +421,65 @@ class Broker:
         response = {"action": value.action, "answers": value.answers}
         interaction, claimed = await self.store.claim_interaction_response(
             interaction_id, owner_id, value.idempotency_key, response,
-            claim_owner=self.instance_id,
+            claim_owner=self.instance_id if self.execution_enabled else "",
+            lease_seconds=30 if self.execution_enabled else 0,
         )
         if not claimed:
             return interaction
+        if interaction.kind == "approval" and value.action not in {"approve", "reject"}:
+            await self.store.finish_interaction_response(
+                interaction_id, delivered=False,
+                claim_owner=self.instance_id if self.execution_enabled else "")
+            raise ValueError("Approval requires approve or reject")
+        if interaction.kind == "question" and (value.action != "answer" or not value.answers):
+            await self.store.finish_interaction_response(
+                interaction_id, delivered=False,
+                claim_owner=self.instance_id if self.execution_enabled else "")
+            raise ValueError("Question requires at least one answer")
+        if not self.execution_enabled:
+            return interaction
+        return await self._deliver_interaction_response(interaction,response,raise_errors=True)
+
+    async def _deliver_interaction_response(self,interaction,response,*,raise_errors:bool):
         turn = await self.store.get_turn(interaction.turn_id)
         sandbox = self.active_sandboxes.get(interaction.turn_id)
         if (not turn or not sandbox or turn.runtime_execution_id != interaction.runtime_execution_id):
             await self.store.finish_interaction_response(
-                interaction_id, delivered=False, claim_owner=self.instance_id)
-            raise RuntimeError("interaction_runtime_unavailable")
-        if interaction.kind == "approval" and value.action not in {"approve", "reject"}:
-            await self.store.finish_interaction_response(
-                interaction_id, delivered=False, claim_owner=self.instance_id)
-            raise ValueError("Approval requires approve or reject")
-        if interaction.kind == "question" and (value.action != "answer" or not value.answers):
-            await self.store.finish_interaction_response(
-                interaction_id, delivered=False, claim_owner=self.instance_id)
-            raise ValueError("Question requires at least one answer")
+                interaction.id, delivered=None, claim_owner=self.instance_id)
+            if raise_errors:raise RuntimeError("interaction_runtime_unavailable")
+            return interaction
         try:
             delivered = await self.runtime.respond_interaction(
                 sandbox, interaction.runtime_interaction_id, response,
             )
         except Exception as exc:
             await self.store.finish_interaction_response(
-                interaction_id, delivered=False, claim_owner=self.instance_id)
-            raise RuntimeError("interaction_delivery_failed") from exc
+                interaction.id, delivered=False, claim_owner=self.instance_id)
+            if raise_errors:raise RuntimeError("interaction_delivery_failed") from exc
+            return interaction
         current = await self.store.finish_interaction_response(
-            interaction_id, delivered=delivered, claim_owner=self.instance_id)
+            interaction.id, delivered=delivered, claim_owner=self.instance_id)
         if delivered is None:
-            raise RuntimeError("interaction_delivery_unknown")
+            if raise_errors:raise RuntimeError("interaction_delivery_unknown")
+            return current
         if not delivered:
-            raise RuntimeError("interaction_transport_unsupported")
-        await self.store.finish_interaction_item(interaction.turn_id, interaction.id, response)
+            if raise_errors:raise RuntimeError("interaction_transport_unsupported")
+            return current
+        await self.store.finish_interaction_item(interaction.turn_id,interaction.id,response)
         if await self.store.resume_interaction_turn(interaction.turn_id, interaction.runtime_execution_id):
             await self.store.append_event(interaction.turn_id, EventKind.STATE, {"state": TurnState.RUNNING.value})
         return current
+
+    async def deliver_pending_interaction_responses(self,limit:int=20)->int:
+        if not self.execution_enabled:return 0
+        values=await self.store.claim_pending_interaction_responses(
+            self.instance_id,limit=limit,lease_seconds=30)
+        delivered=0
+        for interaction in values:
+            current=await self._deliver_interaction_response(
+                interaction,interaction.response,raise_errors=False)
+            if current.status=="responded":delivered+=1
+        return delivered
 
     async def background_jobs(self, turn_id: str, owner_id: str) -> list[dict]:
         turn = await self.store.get_turn_for_owner(turn_id, owner_id)

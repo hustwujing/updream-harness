@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json
 from datetime import (timedelta)
-from sqlalchemy import (select, update)
+from sqlalchemy import (or_, select, update)
 from sandbox_harness.common.observability.observability import (observed)
 from sandbox_harness.common.contracts.domain import (Interaction, ItemType, TurnState, identifier, now)
 from .models import (InteractionRow, ItemRow, ThreadRow, TurnRow, utc_datetime)
@@ -105,8 +105,32 @@ class InteractionsTransactions:
                 if delivered is False:
                     row.response_key = ""; row.response_json = "{}"
                 row.response_owner = ""; row.response_expires_at = None
+                if delivered is None:
+                    row.response_expires_at = now() + timedelta(seconds=5)
                 row.updated_at = now()
         return self.interaction_view(row)
+
+
+    async def claim_pending_interaction_responses(self, owner: str, *, limit: int = 20,
+                                                   lease_seconds: int = 30) -> list[Interaction]:
+        if not owner or not 1 <= limit <= 100 or not 1 <= lease_seconds <= 300:
+            raise ValueError("interaction_claim_invalid")
+        timestamp=now()
+        async with self.connections.begin() as db:
+            rows=list((await db.scalars(select(InteractionRow).join(TurnRow,
+                TurnRow.id==InteractionRow.turn_id).where(
+                    InteractionRow.status=="responding",
+                    or_(InteractionRow.response_expires_at.is_(None),
+                        InteractionRow.response_expires_at<=timestamp),
+                    TurnRow.runtime_execution_id==InteractionRow.runtime_execution_id,
+                    TurnRow.state.in_([TurnState.RUNNING.value,TurnState.AWAITING_USER.value]))
+                .order_by(InteractionRow.updated_at,InteractionRow.id).limit(limit)
+                .with_for_update(skip_locked=True))).all())
+            for row in rows:
+                row.response_owner=owner
+                row.response_expires_at=timestamp+timedelta(seconds=lease_seconds)
+                row.updated_at=timestamp
+            return [self.interaction_view(row) for row in rows]
 
 
     async def resume_interaction_turn(self, turn_id: str, execution_id: str) -> bool:
@@ -129,4 +153,3 @@ class InteractionsTransactions:
                 payload = json.loads(row.payload_json); payload["response"] = response
                 row.payload_json = json.dumps(payload, ensure_ascii=False)
                 row.status = "completed"; row.updated_at = now()
-

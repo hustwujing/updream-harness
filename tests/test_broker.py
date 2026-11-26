@@ -1302,3 +1302,26 @@ async def test_orphan_reaper_keeps_late_visible_durable_allocation_without_handl
     store=SimpleNamespace(active_sandbox_keys=empty,active_sandbox_allocations=allocations)
     await Broker.cleanup_startup_orphans(SimpleNamespace(pool=pool,store=store,active_sandboxes={}))
     assert deleted==[]
+
+
+async def test_request_only_broker_persists_turn_without_starting_execution(tmp_path):
+    settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(
+        tmp_path/'request-only.db'),backend='fake',gateway_signing_key='k'*32,
+        gateway_url='http://127.0.0.1:9')
+    store=Store(settings.database_url);await store.initialize();objects=ObjectStore(tmp_path/'objects')
+    backend=FakeSandboxBackend();pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness})
+    catalog=HarnessCatalog();broker=Broker(settings,store,objects,pool,Runtime(),catalog,
+        execution_enabled=False);owner='a'*64
+    try:
+        profile=catalog.resolve('codex','gpt-5.6','standard')
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level='standard',title='Request only'),profile,owner)
+        turn=await broker.submit(thread.id,TurnCreate(message='persist only',
+            idempotency_key='request-only-turn'))
+        await asyncio.sleep(.02)
+        current=await store.get_turn(turn.id)
+        assert current.state==TurnState.QUEUED
+        assert broker.tasks=={}
+        assert broker.status()['execution_enabled'] is False
+    finally:
+        await broker.close();await pool.close();await store.close()

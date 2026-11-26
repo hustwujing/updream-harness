@@ -712,6 +712,46 @@ async def test_interaction_response_claim_expires_and_preserves_idempotency(tmp_
         await store.close()
 
 
+async def test_queued_interaction_response_is_claimed_by_platform_worker(tmp_path):
+    from sandbox_harness.common.contracts.domain import Harness, ThreadCreate, TurnCreate
+    from sandbox_harness.common.catalog.catalog import HarnessCatalog
+    from sandbox_harness.common.db.core import CoreRepository
+
+    store=CoreRepository("sqlite+aiosqlite:///"+str(tmp_path/"interaction-queue.db"),
+        namespace="interaction-queue")
+    await store.initialize();owner="a"*64
+    try:
+        profile=HarnessCatalog().resolve("codex","gpt-5.6","standard")
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level="standard",title="queued response"),profile,owner)
+        turn,_,_=await store.create_turn(thread.id,TurnCreate(message="ask",
+            idempotency_key="queued-response-turn"),profile,owner)
+        claimed=await store.claim_turn(turn.id,"worker",30)
+        await store.set_turn_state(turn.id,TurnState.RUNNING,lease_owner="worker",
+            recovery_generation=claimed.recovery_generation)
+        await store.start_runtime_execution(turn.id,"execution","worker",
+            claimed.recovery_generation)
+        await store.set_turn_state(turn.id,TurnState.AWAITING_USER,lease_owner="worker",
+            recovery_generation=claimed.recovery_generation)
+        interaction,_=await store.upsert_interaction(thread.id,turn.id,"execution","native-question",
+            "question",{"prompt":"format"})
+        queued,accepted=await store.claim_interaction_response(interaction.id,owner,
+            "queued-response-key",{"action":"answer","answers":{"format":"mp4"}},
+            claim_owner="",lease_seconds=0)
+        assert accepted and queued.status=="responding"
+        pending=await store.claim_pending_interaction_responses("platform-worker",limit=10,
+            lease_seconds=30)
+        assert [value.id for value in pending]==[interaction.id]
+        assert pending[0].response=={"action":"answer","answers":{"format":"mp4"}}
+        current=await store.finish_interaction_response(interaction.id,delivered=None,
+            claim_owner="platform-worker")
+        assert current.status=="responding" and current.response_key=="queued-response-key"
+        assert await store.claim_pending_interaction_responses("other",limit=10,
+            lease_seconds=30)==[]
+    finally:
+        await store.close()
+
+
 async def test_unapplied_inputs_are_failed_with_their_transcript_items(tmp_path):
     store = Store("sqlite+aiosqlite:///" + str(tmp_path / "unapplied-input.db")); await store.initialize()
     try:
