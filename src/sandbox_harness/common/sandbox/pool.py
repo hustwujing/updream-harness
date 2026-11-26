@@ -530,11 +530,18 @@ class SandboxPool:
                 expiry = self._expiry.pop(thread_id, None)
                 sandbox = self._attached.pop(thread_id, None)
                 self._idle_since.pop(thread_id, None)
+                retiring = {self.sandbox_key(value): (value, user_slot)
+                    for value, user_slot in self._retiring.values() if value.thread_id == thread_id}
+                if sandbox:
+                    retiring[self.sandbox_key(sandbox)] = (sandbox, True)
             if expiry:
                 expiry.cancel()
-            if sandbox:
-                await self._delete_tracked(sandbox)
-                return
+            for value, user_slot in retiring.values():
+                await self._delete_tracked(value, user_slot=user_slot)
+            async with self._lock:
+                if (any(value.thread_id == thread_id for value, _ in self._retiring.values())
+                        or any(owner == thread_id for owner, _ in self._pending_allocations.values())):
+                    raise RuntimeError("sandbox_cleanup_pending")
 
     async def _expire(self, thread_id: str, sandbox: Sandbox, seconds: int) -> None:
         try:

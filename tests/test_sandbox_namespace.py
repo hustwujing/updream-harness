@@ -25,6 +25,64 @@ class SlowCreateBackend(FakeSandboxBackend):
         return await super().create(*args, **kwargs)
 
 
+async def test_repeated_thread_discard_does_not_forget_failed_deletion():
+    class FailingDelete(FakeSandboxBackend):
+        failing = True
+
+        async def delete(self, sandbox):
+            if self.failing:
+                raise RuntimeError("injected_delete_failure")
+            await super().delete(sandbox)
+
+    backend = FailingDelete()
+    pool = SandboxPool(backend, {harness: "image" for harness in Harness},
+                       {harness: 0 for harness in Harness}, max_sandboxes=2)
+    try:
+        sandbox = await pool.acquire(thread_id="discard", turn_id="turn", harness=Harness.CODEX, environment={})
+        other = await pool.acquire(thread_id="other", turn_id="other-turn", harness=Harness.CODEX, environment={})
+        for _ in range(2):
+            with pytest.raises(RuntimeError, match="injected_delete_failure"):
+                await pool.discard_thread("discard")
+            assert sandbox.id in backend.items and pool._user_slots._value == 0
+        backend.failing = False
+        await pool.discard_thread("discard")
+        assert sandbox.id not in backend.items and other.id in backend.items
+        assert pool._user_slots._value == 1
+    finally:
+        backend.failing = False
+        await pool.close()
+
+
+async def test_thread_discard_cannot_report_success_while_another_delete_is_pending():
+    started, release = asyncio.Event(), asyncio.Event()
+
+    class HeldDelete(FakeSandboxBackend):
+        async def delete(self, sandbox):
+            started.set()
+            await release.wait()
+            await super().delete(sandbox)
+
+    backend = HeldDelete()
+    pool = SandboxPool(backend, {harness: "image" for harness in Harness},
+                       {harness: 0 for harness in Harness}, max_sandboxes=1)
+    task = None
+    try:
+        sandbox = await pool.acquire(thread_id="discard", turn_id="turn", harness=Harness.CODEX, environment={})
+        task = asyncio.create_task(pool.retire(sandbox))
+        await started.wait()
+        with pytest.raises(RuntimeError, match="sandbox_cleanup_pending"):
+            await pool.discard_thread("discard")
+        release.set()
+        await task
+        await pool.discard_thread("discard")
+        assert sandbox.id not in backend.items and pool._user_slots._value == 1
+    finally:
+        release.set()
+        if task:
+            await task
+        await pool.close()
+
+
 async def test_fake_backend_reuses_one_sandbox_per_allocation():
     backend=FakeSandboxBackend(namespace="test")
     profile=backend.legacy_profile(Harness.CODEX,"image-a")
