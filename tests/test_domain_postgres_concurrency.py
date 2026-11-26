@@ -201,7 +201,7 @@ async def test_media_permit_dispatch_and_worker_claim_have_one_winner():
     identity = uuid4().hex
     payload = {"dispatch_id":identity,"media_job_id":identity[:32],"source_job_id":uuid4().hex,
         "source_generation":2,"request_digest":"a"*64,"owner_id":"owner","thread_id":uuid4().hex,
-        "kind":"image","model":"image/model","provider":"provider","adapter":"image_api",
+        "kind":"image","model":"image/model","generation_mode":"","provider":"provider","adapter":"image_api",
         "execution_mode":"async","cancellation_mode":"supported","parameters":{},"references":[],
         "output_contracts":[{"role":"primary","mime_patterns":["image/*"],"max_item_bytes":1024}]}
     repositories = [MediaRepository(URLS["media"]) for _ in range(8)]
