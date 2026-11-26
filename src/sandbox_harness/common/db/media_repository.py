@@ -141,7 +141,8 @@ class MediaRepository(DomainDatabase, MediaReferencesTransactions,
 
     async def _accept_source_job(self, db, value: dict):
         required = {"dispatch_id", "media_job_id", "source_job_id", "source_generation",
-            "request_digest", "owner_id", "thread_id", "kind", "model", "provider", "adapter",
+            "request_digest", "owner_id", "thread_id", "kind", "model", "generation_mode",
+            "provider", "adapter",
             "execution_mode", "cancellation_mode", "parameters", "references", "output_contracts"}
         if set(value) != required:
             raise ValueError("media_source_command_invalid")
@@ -163,7 +164,8 @@ class MediaRepository(DomainDatabase, MediaReferencesTransactions,
         references = canonical_json(value["references"])
         draft_id = identifier()
         db.add(MediaDraftRow(id=draft_id, owner_id=value["owner_id"], thread_id=value["thread_id"],
-            turn_id="", kind=value["kind"], model=value["model"], generation_mode="",
+            turn_id="", kind=value["kind"], model=value["model"],
+            generation_mode=value["generation_mode"],
             parameters_json=parameters, references_json=references,
             idempotency_key="source-" + value["source_job_id"], status="confirmed",
             expires_at=timestamp, job_id=value["media_job_id"], output_role="candidate",
@@ -171,7 +173,7 @@ class MediaRepository(DomainDatabase, MediaReferencesTransactions,
         row = MediaJobRow(id=value["media_job_id"], owner_id=value["owner_id"],
             thread_id=value["thread_id"], turn_id="", draft_id=draft_id,
             source_job_id=value["source_job_id"], kind=value["kind"], model=value["model"],
-            generation_mode="", provider=value["provider"], adapter=value["adapter"],
+            generation_mode=value["generation_mode"], provider=value["provider"], adapter=value["adapter"],
             execution_mode=value["execution_mode"], cancellation_mode=value["cancellation_mode"],
             status="created", phase="prepared", parameters_json=parameters,
             references_json=references, provider_job_id="",

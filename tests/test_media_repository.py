@@ -10,6 +10,7 @@ def source_payload():
         "dispatch_id": "dispatch-1", "media_job_id": "media-job", "source_job_id": "source-job",
         "source_generation": 3, "request_digest": "a" * 64, "owner_id": "owner",
         "thread_id": "thread", "kind": "image", "model": "image/model", "provider": "provider",
+        "generation_mode": "text_to_image",
         "adapter": "image_api", "execution_mode": "async", "cancellation_mode": "supported",
         "parameters": {"prompt": "opaque"}, "references": [],
         "output_contracts": [{"role": "primary", "mime_patterns": ["image/*"],
@@ -26,6 +27,7 @@ async def test_media_source_permit_fences_submission_and_recovery(tmp_path):
         assert (await repository.accept_source_job(source_payload())).id == first.id
         claimed = (await repository.claim_media_jobs("worker"))[0]
         assert claimed["source_job_id"] == "source-job" and claimed["output_contracts"]
+        assert claimed["generation_mode"] == "text_to_image"
         assert not await repository.media_cancel_requested(claimed["id"], "worker", claimed["generation"],
                                                             begin_submission=True)
         with pytest.raises(RuntimeError, match="media_submission_outcome_unknown"):
@@ -118,13 +120,14 @@ async def test_core_media_authority_replays_one_dispatch_and_orders_cancel(tmp_p
         await core.mark_job_submission_started(jobs[0].id, "worker", attempt.generation)
         job = await core.get_job(jobs[0].id)
         context = JobExecutionContext(job=job, request=request, generation=attempt.generation)
-        validated = SimpleNamespace(kind="image", model="image/model", parameters={"prompt":"opaque"},
+        validated = SimpleNamespace(kind="image", model="image/model", generation_mode="text_to_image",
+            parameters={"prompt":"opaque"},
             references=[], spec=SimpleNamespace(provider="provider", adapter="image_api",
                 execution="async", cancellation="supported"))
         authority = MediaAuthorityClient(core, media)
         first = await authority.submit(context, validated)
         second = await authority.submit(context, validated)
-        assert first.id == second.id
+        assert first.id == second.id and first.generation_mode == "text_to_image"
         async with media.connections() as session:
             assert await session.scalar(select(func.count()).select_from(MediaJobRow)) == 1
         await core.request_job_cancel(job.id, "owner")

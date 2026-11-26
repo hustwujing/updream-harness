@@ -34,6 +34,7 @@ class MediaAuthorityClient:
             "source_job_id":context.job.id,"source_generation":context.generation,
             "request_digest":context.job.request_digest,"owner_id":context.job.owner_id,
             "thread_id":context.job.thread_id,"kind":validated.kind,"model":validated.model,
+            "generation_mode":validated.generation_mode,
             "provider":validated.spec.provider,"adapter":validated.spec.adapter,
             "execution_mode":validated.spec.execution,"cancellation_mode":validated.spec.cancellation,
             "parameters":validated.parameters,"references":validated.references,

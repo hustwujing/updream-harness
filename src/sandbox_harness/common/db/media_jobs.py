@@ -56,15 +56,16 @@ class MediaJobsTransactions:
                         "sha256":artifact.sha256,"size":artifact.size,"mime":artifact.mime})
                 timestamp=now();identity=identifier();draft_id=identifier()
                 key="job-"+source.id
+                generation_mode=str(request.parameters.get("generation_mode") or "")
                 encoded=canonical_json(parameters);frozen=canonical_json(references)
                 db.add(MediaDraftRow(id=draft_id,owner_id=source.owner_id,
                     thread_id=source.thread_id,turn_id="",kind=provider_spec.kind,
-                    model=provider_spec.model,generation_mode="",parameters_json=encoded,
+                    model=provider_spec.model,generation_mode=generation_mode,parameters_json=encoded,
                     references_json="[]",idempotency_key=key,status="confirmed",job_id=identity,
                     output_role="candidate",expires_at=timestamp,created_at=timestamp,updated_at=timestamp))
                 row=MediaJobRow(id=identity,owner_id=source.owner_id,thread_id=source.thread_id,
                     turn_id="",draft_id=draft_id,source_job_id=source.id,kind=provider_spec.kind,
-                    model=provider_spec.model,generation_mode="",provider=provider_spec.provider,
+                    model=provider_spec.model,generation_mode=generation_mode,provider=provider_spec.provider,
                     adapter=provider_spec.adapter,execution_mode=provider_spec.execution,
                     cancellation_mode=provider_spec.cancellation,
                     status=("cancel_requested" if source.cancel_requested else
@@ -736,4 +737,3 @@ class MediaJobsTransactions:
             if not row: return
             row.status = "delivered" if delivered else "pending"; row.last_error = error[:2000]
             row.lease_owner = ""; row.lease_expires_at = None; row.updated_at = now()
-
