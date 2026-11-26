@@ -35,8 +35,9 @@ class CapabilityCodec:
 
     @classmethod
     def from_settings(cls,settings):
-        return cls(settings.gateway_signing_key,kid=settings.gateway_signing_key_id,
-            previous_keys=settings.gateway_previous_signing_keys)
+        return cls(settings.gateway_signing_key,
+            kid=getattr(settings,'gateway_signing_key_id','current'),
+            previous_keys=getattr(settings,'gateway_previous_signing_keys',{}))
 
     def issue(
         self,
