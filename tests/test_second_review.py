@@ -29,7 +29,8 @@ async def test_turn_queue_sequence_orders_tied_timestamps_repair_and_cancellatio
     from sqlalchemy import select,update
     from sandbox_harness.common.db.store import (ThreadRow, TurnOrderRow)
     fixed=datetime(2026,1,1,tzinfo=timezone.utc)
-    monkeypatch.setattr('sandbox_harness.common.db.store.now',lambda:fixed)
+    monkeypatch.setattr('sandbox_harness.common.db.turns.now',lambda:fixed)
+    monkeypatch.setattr('sandbox_harness.common.db.threads.now',lambda:fixed)
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'turn-order.db'));await store.initialize()
     try:
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
