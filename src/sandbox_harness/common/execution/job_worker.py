@@ -11,7 +11,7 @@ import httpx
 from sandbox_harness.common.execution.job_adapters import (AdapterStatus, ExternalJobFailure, JobAdapter, JobExecutionContext, PreAcceptCancelled, PreAcceptFailure, SubmissionOutcomeUnknown, AllocationRecoveryRequired)
 from sandbox_harness.common.contracts.job_contracts import (JobKind, JobState, TERMINAL_JOB_STATES)
 from sandbox_harness.common.contracts.job_errors import (ArtifactCollectionCardinalityError, ArtifactValidationError, normalize_job_error)
-from sandbox_harness.common.observability.observability import (business_metric, event, sanitize)
+from sandbox_harness.common.observability.observability import (add_link, business_metric, event, operation, sanitize)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxEndpointUnavailable, SandboxProviderUnavailable, SandboxRateLimited)
 
 
@@ -125,26 +125,29 @@ class JobWorker:
         if failure:raise failure
 
     async def _process_isolated(self,attempt,*,continuous=True,recovery_only=False)->None:
-        try:await self.process(attempt,continuous=continuous,recovery_only=recovery_only)
-        except Exception as exc:
-            event('job.worker.process_failed',level=40,job_id=attempt.job_id,
-                generation=attempt.generation,exc=exc)
-            job=await self.store.get_job(attempt.job_id)
-            if not job or job.state in TERMINAL_JOB_STATES:return
-            state=getattr(exc,'terminal_state',
-                JobState.UNKNOWN if job.kind==JobKind.PROVIDER else JobState.FAILED)
-            try:
-                result=getattr(exc,'result',None) or {'error_code':'worker_internal_error',
-                    'exception_type':type(exc).__name__,'error_detail':str(exc)[:2000]}
-                if state in {JobState.FAILED,JobState.BLOCKED,JobState.UNKNOWN}:
-                    result=normalize_job_error(result,side_effect_state=(
-                        'unknown' if state==JobState.UNKNOWN else None))
-                await self.store.transition_job(job.id,state,expected_generation=attempt.generation,
-                    result=result)
-            except RuntimeError as stale:
-                if str(stale)!='stale_job_generation':raise
-                return
-            await self.run_cleanup_once(limit=1)
+        with operation('job.worker.claim',new_trace=True,job_id=attempt.job_id,
+                generation=attempt.generation):
+            add_link(attempt.traceparent)
+            try:await self.process(attempt,continuous=continuous,recovery_only=recovery_only)
+            except Exception as exc:
+                event('job.worker.process_failed',level=40,job_id=attempt.job_id,
+                    generation=attempt.generation,exc=exc)
+                job=await self.store.get_job(attempt.job_id)
+                if not job or job.state in TERMINAL_JOB_STATES:return
+                state=getattr(exc,'terminal_state',
+                    JobState.UNKNOWN if job.kind==JobKind.PROVIDER else JobState.FAILED)
+                try:
+                    result=getattr(exc,'result',None) or {'error_code':'worker_internal_error',
+                        'exception_type':type(exc).__name__,'error_detail':str(exc)[:2000]}
+                    if state in {JobState.FAILED,JobState.BLOCKED,JobState.UNKNOWN}:
+                        result=normalize_job_error(result,side_effect_state=(
+                            'unknown' if state==JobState.UNKNOWN else None))
+                    await self.store.transition_job(job.id,state,expected_generation=attempt.generation,
+                        result=result)
+                except RuntimeError as stale:
+                    if str(stale)!='stale_job_generation':raise
+                    return
+                await self.run_cleanup_once(limit=1)
 
     async def process(self, attempt, *, continuous: bool = False, recovery_only: bool = False) -> None:
         lost=asyncio.Event();owner=asyncio.current_task()
@@ -566,6 +569,9 @@ class JobWorker:
         rows=await self.store.claim_job_cleanups(self.worker_id,self.lease_seconds,
             limit=limit,adapters=set(self.adapters))
         for row in rows:
+            claim_trace=operation('job.cleanup.claim',new_trace=True,job_id=row['job_id'],
+                generation=row['generation'])
+            claim_trace.__enter__();add_link(row.get('traceparent',''))
             owner=asyncio.current_task();lost=asyncio.Event()
             async def heartbeat():
                 while True:
@@ -616,4 +622,5 @@ class JobWorker:
                     succeeded=False,error=type(exc).__name__+": "+str(exc))
             finally:
                 heartbeat_task.cancel();await asyncio.gather(heartbeat_task,return_exceptions=True)
+                claim_trace.__exit__(None,None,None)
         return len(rows)

@@ -6,8 +6,9 @@ from datetime import (datetime, timedelta)
 from sqlalchemy import (and_, or_, delete, func, select, update)
 from sandbox_harness.common.contracts.domain import (ThreadControlState, PauseParticipantState, identifier, now)
 from sandbox_harness.common.contracts.job_errors import (normalize_job_error)
+from sandbox_harness.common.observability.observability import canonical_traceparent
 from sandbox_harness.common.contracts.job_contracts import (JobAttemptReceipt, JobGroupState, JobKind, JobState, JobView, JobRequest, TERMINAL_JOB_STATES)
-from .models import (BudgetAccountRow, BudgetLedgerRow, BudgetReservationRow, JobAttemptRow, JobGroupRow, JobLeaseRow, JobRow, PauseParticipantRow, ThreadControlRow, canonical_json, utc_datetime)
+from .models import (BudgetAccountRow, BudgetLedgerRow, BudgetReservationRow, JobAttemptRow, JobGroupRow, JobLeaseRow, JobRow, PauseParticipantRow, ThreadControlRow, TurnRow, canonical_json, utc_datetime)
 
 
 class JobAttemptsTransactions:
@@ -293,7 +294,10 @@ class JobAttemptsTransactions:
                     )
                     db.add(lease)
                 await db.flush()
-                return self.job_attempt_view(attempt)
+                origin=await db.get(TurnRow,job.origin_turn_id)
+                traceparent=(canonical_traceparent(origin.last_traceparent)
+                    or canonical_traceparent(origin.submit_traceparent)) if origin else ""
+                return self.job_attempt_view(attempt).model_copy(update={"traceparent":traceparent})
 
 
     async def release_job_lease(self, job_id: str, worker_id: str, generation: int) -> bool:
@@ -441,4 +445,3 @@ class JobAttemptsTransactions:
                 job.updated_at = now()
                 await db.flush()
                 return self.job_attempt_view(attempt)
-

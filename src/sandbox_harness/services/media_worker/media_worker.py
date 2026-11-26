@@ -28,7 +28,7 @@ from sandbox_harness.services.media_worker.image_decompose_provider import (Imag
 from sandbox_harness.services.media_worker.media_errors import (classify_provider_error)
 from sandbox_harness.services.media_worker.media_reference_publisher import (MediaReferencePreparationError, MediaReferencePublisher)
 from sandbox_harness.services.media_worker.minimax_voice import (MiniMaxVoiceCloneError, MiniMaxVoiceClonePending, MiniMaxVoiceClones)
-from sandbox_harness.common.observability.observability import (business_metric, event)
+from sandbox_harness.common.observability.observability import (add_link, business_metric, event, operation)
 from sandbox_harness.common.observability.http import (observed_async_client)
 from sandbox_harness.common.storage.objects import (ObjectStore, S3ObjectStore)
 from sandbox_harness.common.security.network import (normalize_host, public_address)
@@ -145,7 +145,11 @@ class MediaWorker:
                 if not renewed:
                     lost.set();owner.cancel();return
         task=asyncio.create_task(heartbeat(),name="media-heartbeat-"+job["id"])
-        try:await self._process_claimed(job)
+        try:
+            with operation('media.worker.claim',new_trace=True,job_id=job['id'],
+                    generation=job['generation']):
+                add_link(job.get('traceparent',''))
+                await self._process_claimed(job)
         except asyncio.CancelledError:
             if not lost.is_set():raise
             event("media.worker.lease_lost",level=30,job_id=job["id"],generation=job["generation"])

@@ -276,6 +276,7 @@ class MediaDraftRow(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     job_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
     output_role: Mapped[str] = mapped_column(String(20), default="candidate", server_default="candidate")
+    traceparent: Mapped[str] = mapped_column(String(128), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -389,6 +390,7 @@ class MediaJobRow(Base):
     output_size: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     credits_consumed: Mapped[str] = mapped_column(String(40), default="", server_default="")
     output_role: Mapped[str] = mapped_column(String(20), default="candidate", server_default="candidate")
+    traceparent: Mapped[str] = mapped_column(String(128), default="", server_default="")
     lease_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -470,6 +472,7 @@ class SiteDraftRow(Base):
     status: Mapped[str] = mapped_column(String(32), index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     job_id: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    traceparent: Mapped[str] = mapped_column(String(128), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -508,6 +511,7 @@ class SiteDeployJobRow(Base):
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     lease_owner: Mapped[str] = mapped_column(String(64), default="", server_default="")
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    traceparent: Mapped[str] = mapped_column(String(128), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -762,6 +766,7 @@ class SandboxAllocationRow(Base):
     reconcile_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),nullable=True)
     issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),nullable=True)
     recovery_policy_json: Mapped[str] = mapped_column(Text,default='{}',server_default='{}')
+    traceparent: Mapped[str] = mapped_column(String(128),default='',server_default='')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

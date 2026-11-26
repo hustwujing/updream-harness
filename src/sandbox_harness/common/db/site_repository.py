@@ -87,7 +87,7 @@ class SiteRepository(DomainDatabase, SitesTransactions):
             file_count=value["file_count"],total_size=value["total_size"],
             idempotency_key=value["idempotency_key"],request_digest=request_digest,
             status="awaiting_confirmation",expires_at=datetime.fromisoformat(value["expires_at"]),
-            job_id="",created_at=timestamp,updated_at=timestamp)
+            job_id="",traceparent=envelope.traceparent,created_at=timestamp,updated_at=timestamp)
         db.add(draft)
         for item in value["files"]:
             db.add(SiteDraftFileRow(id=identifier(),draft_id=draft.id,path=item["path"],

@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 import uuid
 
-from sandbox_harness.common.observability.observability import (event)
+from sandbox_harness.common.observability.observability import (add_link, event, operation)
 from sandbox_harness.common.storage.directories import (ensure_private_directory)
 from sandbox_harness.common.sites.site_bundle import (MAX_SITE_ARCHIVE_BYTES, stage_site_archive)
 
@@ -71,7 +71,10 @@ class SiteWorker:
                     lost.set();owner.cancel();return
         heartbeat_task=asyncio.create_task(heartbeat(),name="site-heartbeat-"+job["id"])
         try:
-            await self._process_claimed(job)
+            with operation('site.worker.claim',new_trace=True,job_id=job['id'],
+                    generation=job['generation']):
+                add_link(job.get('traceparent',''))
+                await self._process_claimed(job)
         except asyncio.CancelledError:
             if not lost.is_set():raise
             event("site.worker.lease_lost",level=30,job_id=job["id"],generation=generation)

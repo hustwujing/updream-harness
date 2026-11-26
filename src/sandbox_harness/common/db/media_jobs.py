@@ -62,7 +62,8 @@ class MediaJobsTransactions:
                     thread_id=source.thread_id,turn_id="",kind=provider_spec.kind,
                     model=provider_spec.model,generation_mode=generation_mode,parameters_json=encoded,
                     references_json="[]",idempotency_key=key,status="confirmed",job_id=identity,
-                    output_role="candidate",expires_at=timestamp,created_at=timestamp,updated_at=timestamp))
+                    output_role="candidate",expires_at=timestamp,traceparent="",
+                    created_at=timestamp,updated_at=timestamp))
                 row=MediaJobRow(id=identity,owner_id=source.owner_id,thread_id=source.thread_id,
                     turn_id="",draft_id=draft_id,source_job_id=source.id,kind=provider_spec.kind,
                     model=provider_spec.model,generation_mode=generation_mode,provider=provider_spec.provider,
@@ -73,7 +74,8 @@ class MediaJobsTransactions:
                     phase="provider_polling" if provider_job_id else "prepared",
                     parameters_json=encoded,references_json=frozen,provider_job_id=provider_job_id,
                     provider_started_at=timestamp if provider_job_id else None,
-                    idempotency_key=key,output_role="candidate",created_at=timestamp,updated_at=timestamp)
+                    idempotency_key=key,output_role="candidate",traceparent="",
+                    created_at=timestamp,updated_at=timestamp)
                 db.add(row);await db.flush()
                 return self._media_job_view(row)
 
@@ -115,7 +117,7 @@ class MediaJobsTransactions:
                 status="created", phase="prepared", parameters_json=draft.parameters_json,
                 references_json=draft.references_json,
                 idempotency_key=draft.idempotency_key, output_role=draft.output_role,
-                created_at=now(), updated_at=now())
+                traceparent=draft.traceparent,created_at=now(), updated_at=now())
             db.add(job); draft.status = "confirmed"; draft.job_id = job.id; draft.updated_at = now()
             if draft.turn_id:
                 await db.execute(update(MediaBatchRow).where(MediaBatchRow.turn_id == draft.turn_id,
@@ -153,7 +155,8 @@ class MediaJobsTransactions:
                         execution_mode=spec.execution,cancellation_mode=spec.cancellation,
                         status="created",phase="prepared",parameters_json=draft.parameters_json,
                         references_json=draft.references_json,idempotency_key=draft.idempotency_key,
-                        output_role=draft.output_role,created_at=timestamp,updated_at=timestamp)
+                        output_role=draft.output_role,traceparent=draft.traceparent,
+                        created_at=timestamp,updated_at=timestamp)
                     db.add(job);draft.status="confirmed";draft.job_id=job.id;draft.updated_at=timestamp
                 jobs.append(job)
             batch.lease_expires_at=None;batch.updated_at=timestamp

@@ -142,7 +142,7 @@ class MediaRepository(DomainDatabase, MediaReferencesTransactions,
         async with self.transaction() as db:
             return await self._accept_source_job(db, value)
 
-    async def _accept_source_job(self, db, value: dict):
+    async def _accept_source_job(self, db, value: dict, *, traceparent: str = ""):
         required = {"dispatch_id", "media_job_id", "source_job_id", "source_generation",
             "request_digest", "owner_id", "thread_id", "kind", "model", "generation_mode",
             "provider", "adapter",
@@ -172,6 +172,7 @@ class MediaRepository(DomainDatabase, MediaReferencesTransactions,
             parameters_json=parameters, references_json=references,
             idempotency_key="source-" + value["source_job_id"], status="confirmed",
             expires_at=timestamp, job_id=value["media_job_id"], output_role="candidate",
+            traceparent=traceparent,
             created_at=timestamp, updated_at=timestamp))
         row = MediaJobRow(id=value["media_job_id"], owner_id=value["owner_id"],
             thread_id=value["thread_id"], turn_id="", draft_id=draft_id,
@@ -181,6 +182,7 @@ class MediaRepository(DomainDatabase, MediaReferencesTransactions,
             status="created", phase="prepared", parameters_json=parameters,
             references_json=references, provider_job_id="",
             idempotency_key="source-" + value["source_job_id"], output_role="candidate",
+            traceparent=traceparent,
             created_at=timestamp, updated_at=timestamp)
         db.add(row)
         db.add(MediaSourcePermitRow(dispatch_id=value["dispatch_id"], media_job_id=row.id,
@@ -215,7 +217,7 @@ class MediaRepository(DomainDatabase, MediaReferencesTransactions,
                 or envelope.owner_id != value.get("owner_id")
                 or envelope.generation != value.get("source_generation")):
             raise ValueError("media_source_envelope_invalid")
-        view = await self._accept_source_job(db, value)
+        view = await self._accept_source_job(db, value, traceparent=envelope.traceparent)
         return {"media_job_id":view.id,"provider":view.provider,"adapter":view.adapter,
                 "execution_mode":view.execution_mode}
 
@@ -261,7 +263,8 @@ class MediaRepository(DomainDatabase, MediaReferencesTransactions,
             references_json=canonical_json(value["references"]),
             idempotency_key=value["idempotency_key"],status="awaiting_confirmation",
             expires_at=datetime.fromisoformat(value["expires_at"]),job_id="",
-            output_role=value["output_role"],created_at=timestamp,updated_at=timestamp))
+            output_role=value["output_role"],traceparent=envelope.traceparent,
+            created_at=timestamp,updated_at=timestamp))
         return {"draft_id":value["draft_id"]}
 
     async def _seal_turn_batch(self, db, turn_id):
@@ -433,6 +436,7 @@ class MediaRepository(DomainDatabase, MediaReferencesTransactions,
                     "references":json.loads(row.references_json or "[]"),"provider_job_id":row.provider_job_id,
                     "thread_id":row.thread_id,"owner_id":row.owner_id,"turn_id":row.turn_id,
                     "output_role":row.output_role,"created_at":utc_datetime(row.created_at),
+                    "traceparent":row.traceparent,
                     "generation":row.generation,"source_job_id":row.source_job_id,
                     "output_contracts":json.loads(permit.output_contracts_json) if permit else [],
                     "provider_result":json.loads(execution.provider_result_json) if execution else {},

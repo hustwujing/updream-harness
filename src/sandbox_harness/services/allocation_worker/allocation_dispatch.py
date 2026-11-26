@@ -13,7 +13,7 @@ from sqlalchemy import select, or_, func
 from sandbox_harness.common.contracts.domain import (Harness, now)
 from sandbox_harness.common.execution.job_adapters import (PreAcceptCancelled, AllocationRecoveryRequired)
 from sandbox_harness.common.contracts.job_contracts import (JobState, TERMINAL_JOB_STATES)
-from sandbox_harness.common.observability.observability import (business_metric, event)
+from sandbox_harness.common.observability.observability import (add_link, business_metric, event, operation)
 from sandbox_harness.common.contracts.sandbox_contracts import (Sandbox, SandboxCreateRequest, SandboxHandle, SandboxProfile, SandboxScope, SandboxCapacityUnavailable, SandboxRateLimited, SandboxAuthenticationFailed, SandboxProfileUnavailable, SandboxCreateOutcomeUnknown, SandboxProviderError)
 from sandbox_harness.common.db.models import (JobRow, JobLeaseRow, JobAttemptRow, JobCleanupRow,
                                               SandboxAllocationRow, utc_datetime)
@@ -71,7 +71,10 @@ class AllocationService:
             generation=value['job_generation'],provider=self.backend.provider,state_before='PENDING',
             state_after='SENDING')
         try:
-            sandbox=await self.backend.create(request)
+            with operation('sandbox.allocation.claim',new_trace=True,
+                    allocation_id=identity,generation=value['job_generation']):
+                add_link(value.get('traceparent',''))
+                sandbox=await self.backend.create(request)
             if (sandbox.handle.provider!=request.profile.provider
                     or sandbox.handle.allocation_id!=request.allocation_id
                     or sandbox.compatibility_key!=request.profile.compatibility_key):
@@ -178,8 +181,12 @@ class AllocationService:
             generation=value['job_generation'],provider=self.backend.provider,
             retry_count=value['reconcile_attempts'],state_before='UNKNOWN')
         try:
-            async with asyncio.timeout(self.lease_seconds*.8):
-                sandbox=await self.backend.reconcile_create(SandboxScope(self.backend.namespace),request.allocation_id)
+            with operation('sandbox.allocation.reconcile_claim',new_trace=True,
+                    allocation_id=value['id'],generation=value['job_generation']):
+                add_link(value.get('traceparent',''))
+                async with asyncio.timeout(self.lease_seconds*.8):
+                    sandbox=await self.backend.reconcile_create(
+                        SandboxScope(self.backend.namespace),request.allocation_id)
             if sandbox:
                 if (sandbox.handle.provider==request.profile.provider
                         and sandbox.handle.allocation_id==request.allocation_id

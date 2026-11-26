@@ -5,7 +5,8 @@ from datetime import (timedelta)
 from sqlalchemy import (and_, or_, select, update)
 from sandbox_harness.common.contracts.domain import (identifier, now)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxHandle)
-from .models import (JobAttemptRow, JobCleanupRow, JobRow, canonical_json, utc_datetime)
+from sandbox_harness.common.observability.observability import canonical_traceparent
+from .models import (JobAttemptRow, JobCleanupRow, JobRow, TurnRow, canonical_json, utc_datetime)
 
 
 class CleanupTransactions:
@@ -55,12 +56,17 @@ class CleanupTransactions:
             expires=now()+timedelta(seconds=lease_seconds)
             result=[]
             for row in rows:
+                job=await db.get(JobRow,row.job_id)
+                origin=await db.get(TurnRow,job.origin_turn_id) if job else None
+                traceparent=(canonical_traceparent(origin.last_traceparent)
+                    or canonical_traceparent(origin.submit_traceparent)) if origin else ""
                 row.state="running";row.claim_owner=owner;row.claim_expires_at=expires
                 row.attempt_count+=1;row.updated_at=now()
                 result.append({"cleanup_id":row.id,"job_id":row.job_id,"adapter":row.adapter,
                     "generation":row.generation,"external_execution_id":row.external_execution_id,
                     "acceptance_receipt":json.loads(row.acceptance_receipt_json),
-                    "attempt_count":row.attempt_count,"phase":row.phase})
+                    "attempt_count":row.attempt_count,"phase":row.phase,
+                    "traceparent":traceparent})
             return result
 
 
@@ -130,4 +136,3 @@ class CleanupTransactions:
             "last_error":row.last_error,"generation":row.generation,
             "completed_count":sum(value.state=="completed" for value in rows),
             "updated_at":utc_datetime(row.updated_at)} if row else None)
-

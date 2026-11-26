@@ -14,7 +14,7 @@ from sqlalchemy import select, or_, func
 from sandbox_harness.common.contracts.domain import (Harness, now)
 from sandbox_harness.common.execution.job_adapters import (PreAcceptCancelled, AllocationRecoveryRequired)
 from sandbox_harness.common.contracts.job_contracts import (JobState, TERMINAL_JOB_STATES)
-from sandbox_harness.common.observability.observability import (event)
+from sandbox_harness.common.observability.observability import (canonical_traceparent, carrier, event)
 from sandbox_harness.common.contracts.sandbox_contracts import (Sandbox, SandboxCreateRequest, SandboxHandle, SandboxProfile, SandboxScope, SandboxCapacityUnavailable, SandboxRateLimited, SandboxAuthenticationFailed, SandboxProfileUnavailable, SandboxCreateOutcomeUnknown, SandboxProviderError)
 from sandbox_harness.common.db.models import (JobRow, JobLeaseRow, JobAttemptRow, JobCleanupRow,
                                               SandboxAllocationRow, utc_datetime)
@@ -40,6 +40,7 @@ def snapshot(row):
     return {'id':row.id,'state':row.state,'job_id':row.job_id,'job_generation':row.job_generation,
         'request_json':row.request_json,'handle':json.loads(row.handle_json),'error_code':row.error_code,
         'reconcile_token':row.reconcile_token,'reconcile_attempts':row.reconcile_attempts,
+        'traceparent':row.traceparent,
         'issued_at':utc_datetime(row.issued_at) if row.issued_at else None,
         'recovery_policy':json.loads(row.recovery_policy_json)}
 
@@ -92,11 +93,13 @@ class AllocationClient:
                     row.reconcile_after=None;row.reconcile_attempts=0
                     row.reconcile_token='';row.reconcile_expires_at=None
                     row.issued_at=None
+                    row.traceparent=canonical_traceparent(carrier().get('traceparent',''))
             else:
                 db.add(SandboxAllocationRow(id=identity,namespace=self.backend.namespace,
                     provider=request.profile.provider,allocation_id=request.allocation_id,
                     job_id=job.id,job_generation=context.generation,request_json=encoded,
                     request_digest=digest,state='PENDING',created_at=now(),updated_at=now(),
+                    traceparent=canonical_traceparent(carrier().get('traceparent','')),
                     recovery_policy_json=json.dumps(self.recovery_policy,sort_keys=True)))
         return identity
 
@@ -178,4 +181,3 @@ class AllocationClient:
             if row.state!='READY' or json.loads(row.handle_json)!=receipt.get('sandbox_handle'):
                 raise RuntimeError('sandbox_allocation_handle_conflict')
             row.state='RELEASED';row.updated_at=now()
-

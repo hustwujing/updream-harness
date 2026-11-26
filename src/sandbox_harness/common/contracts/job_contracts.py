@@ -241,6 +241,7 @@ class JobAttemptReceipt(BaseModel):
     outcome: str = ""
     error_code: str = ""
     error_detail: str = ""
+    traceparent: str = ""
 
 
 class JobGroupDraftView(BaseModel):

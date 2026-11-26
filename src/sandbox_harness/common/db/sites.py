@@ -198,7 +198,8 @@ class SitesTransactions:
             job = SiteDeployJobRow(id=identifier(), owner_id=owner_id,
                 thread_id=draft.thread_id, turn_id=draft.turn_id, project_id=draft.project_id,
                 draft_id=draft.id, name=draft.name, slug=draft.slug, status="created",
-                phase="queued", progress=0, created_at=timestamp, updated_at=timestamp)
+                phase="queued", progress=0,traceparent=draft.traceparent,
+                created_at=timestamp, updated_at=timestamp)
             db.add(job); draft.status = "confirmed"; draft.job_id = job.id; draft.updated_at = timestamp
         return self._site_job_view(job, project.public_url if project else "")
 
@@ -228,6 +229,7 @@ class SitesTransactions:
                 result.append({"id":row.id, "project_id":row.project_id,
                     "draft_id":row.draft_id, "thread_id":row.thread_id, "owner_id":row.owner_id,
                     "generation":row.generation,"attempt_count":row.attempt_count,
+                    "traceparent":row.traceparent,
                     "archive_object_ref":draft.archive_object_ref,
                     "archive_size":draft.archive_size, "bundle_sha256":draft.bundle_sha256,
                     "file_count":draft.file_count, "total_size":draft.total_size,
