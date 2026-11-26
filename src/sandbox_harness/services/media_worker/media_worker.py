@@ -21,7 +21,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 import av
 
-from sandbox_harness.common.catalog.media_catalog import (MediaCatalog)
+from sandbox_harness.common.catalog.media_catalog import (MediaCatalog, SEEDREAM_LITE_SIZE_TIERS)
 from sandbox_harness.common.artifacts.artifact_gateway import (MimeRegistry)
 from sandbox_harness.common.contracts.media_provider import (DownloadedMedia, ProviderResult, MediaCancellationRequested)
 from sandbox_harness.services.media_worker.image_decompose_provider import (ImageDecomposeProvider)
@@ -44,7 +44,7 @@ class MediaWorker:
         self.settings = settings
         self.store = store
         self.objects = objects
-        self.catalog = catalog
+        self.catalog = catalog or MediaCatalog()
         self.external_providers=(external_providers if external_providers is not None else
             {"image_layered_http":ImageDecomposeProvider(settings,objects)})
         self.owner = "media-worker-" + uuid.uuid4().hex
@@ -434,15 +434,17 @@ class MediaWorker:
             return f"{direction}延长视频1。" + prompt
         return prompt
 
-    @staticmethod
-    def _seedream_size(value: str) -> str:
-        if value in {"2K", "3K", "4K"}:
+    def _seedream_size(self,model:str,value: str) -> str:
+        spec=self.catalog.resolve("image",model)
+        if value in spec.image_size_tiers:
             return value
         match=re.fullmatch(r"(\d+)x(\d+)",value)
-        if not match:
-            return value
+        if not match or value in SEEDREAM_LITE_SIZE_TIERS:
+            raise ValueError("Image size is not supported by the deployed model")
         longest=max(int(match.group(1)),int(match.group(2)))
-        return "2K" if longest<=2560 else "3K" if longest<=3584 else "4K"
+        if longest>spec.image_max_dimension:
+            raise ValueError("Image size exceeds the deployed model maximum dimension")
+        return "2K" if longest<=2560 else "3K"
 
     async def _ark_image(self, job: dict[str, Any]) -> ProviderResult:
         base = self.settings.upstream_image.rstrip("/")
@@ -451,7 +453,7 @@ class MediaWorker:
         model = {"seedream-5.0": os.environ.get("SANDBOX_HARNESS_ARK_IMAGE_MODEL_SEEDREAM_5_0",
             "doubao-seedream-5-0-pro-260628")}.get(job["model"], job["model"])
         payload = {"model": model, "prompt": p.get("prompt", ""), "response_format": "url",
-                   "size": self._seedream_size(p.get("size", "2048x2048")), "watermark": False}
+                   "size": self._seedream_size(job["model"],p.get("size", "2048x2048")), "watermark": False}
         references = self._ordered_references(job)
         if references:
             urls = [await self._reference_url(item) for item in references]

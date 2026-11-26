@@ -270,7 +270,7 @@ async def test_image_provider_failure_preserves_safe_http_and_business_code(monk
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(('requested','provider_size'),(
-    ('2560x1920','2K'),('3072x2048','3K'),('4096x4096','4K'),('3K','3K')))
+    ('2560x1920','2K'),('3072x2048','3K'),('3K','3K')))
 async def test_seedream_direct_model_uses_supported_size_tiers(monkeypatch,requested,provider_size):
     value=worker();client=Client([Response({'data':[{'url':'https://result.test/image.png'}]})])
     async def client_factory():return client
@@ -282,6 +282,18 @@ async def test_seedream_direct_model_uses_supported_size_tiers(monkeypatch,reque
     assert result.status=='success'
     assert payload['model']=='doubao-seedream-5-0-pro-260628'
     assert payload['size']==provider_size
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('requested',('4K','3840x2160'))
+async def test_seedream_rejects_size_outside_deployed_model_contract(monkeypatch,requested):
+    value=worker();client=Client([Response({'data':[{'url':'https://result.test/image.png'}]})])
+    async def client_factory():return client
+    monkeypatch.setattr(value,'_client',client_factory)
+    with pytest.raises(ValueError,match='deployed model'):
+        await value._ark_image({'id':'job','generation':1,'model':'seedream-5.0',
+            'parameters':{'prompt':'test','size':requested}})
+    assert client.posts==[]
 
 
 @pytest.mark.asyncio

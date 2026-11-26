@@ -96,10 +96,14 @@ class MediaModelSpec:
     enabled: bool = True
     supported_generation_modes: tuple[str, ...] = ()
     guidance: dict[str, Any] = field(default_factory=dict)
+    image_size_tiers: tuple[str, ...] = ()
+    image_max_dimension: int = 0
 
     def public(self) -> dict[str, Any]:
         value = asdict(self)
         value.pop("credential_env", None)
+        value.pop("image_size_tiers", None)
+        value.pop("image_max_dimension", None)
         value["reference_schema"] = {
             "image": {"roles": ["reference_image"],
                 "usages": ["subject", "style", "composition"],
@@ -121,11 +125,13 @@ class MediaModelSpec:
         }[self.kind]
         value["parameter_schema"] = {
             "image": {"required": ["prompt"], "optional": {
-                "size": [*SEEDREAM_LITE_SIZE_TIERS, "explicit WIDTHxHEIGHT"]},
+                "size": [*(self.image_size_tiers or SEEDREAM_LITE_SIZE_TIERS),
+                    "explicit WIDTHxHEIGHT"]},
                 "generation_modes": {"text_to_image": {"references": 0},
                     "reference_image": {"roles": ["reference_image"], "max_references": 14}},
                 "limits": {"min_total_pixels": MIN_SEEDREAM_LITE_PIXELS,
                     "max_total_pixels": MAX_SEEDREAM_LITE_PIXELS,
+                    "max_dimension": self.image_max_dimension or 4096,
                     "aspect_ratio": "1/16..16"}},
             "video": {"required": ["prompt"], "optional": {"duration": "integer 4..15 or -1",
                 "resolution": ["480p", "720p", "1080p", "4k"],
@@ -207,7 +213,8 @@ class MediaModelSpec:
 
 
 DEFAULT_MEDIA_CATALOG = (
-    MediaModelSpec("image", "seedream-5.0", "ark", "ark_image", "/v1/providers/image", "sync", "unsupported", "none", "SANDBOX_HARNESS_UPSTREAM_IMAGE_KEY"),
+    MediaModelSpec("image", "seedream-5.0", "ark", "ark_image", "/v1/providers/image", "sync", "unsupported", "none", "SANDBOX_HARNESS_UPSTREAM_IMAGE_KEY",
+        image_size_tiers=("2K", "3K"), image_max_dimension=3584),
     MediaModelSpec("video", "sed2", "ark", "ark_video_v2", "/v1/providers/video", "async", "unsupported", "provider", "SANDBOX_HARNESS_UPSTREAM_VIDEO_KEY",
         supported_generation_modes=("text_to_video", "first_frame", "first_last_frame",
             "multimodal_reference", "edit_video", "extend_video"),
@@ -263,7 +270,10 @@ class MediaCatalog:
                 raise ValueError("Media catalog entries must be objects")
             inherited = next((asdict(default) for default in DEFAULT_MEDIA_CATALOG
                 if default.kind == item.get("kind") and default.model == item.get("model")), {})
-            spec = MediaModelSpec(**{**inherited, **item})
+            values={**inherited, **item}
+            if "image_size_tiers" in values:
+                values["image_size_tiers"]=tuple(values["image_size_tiers"])
+            spec = MediaModelSpec(**values)
             if spec.kind not in {"image", "video", "audio", "model3d"}:
                 raise ValueError("Invalid media kind")
             if spec.execution not in {"sync", "async"}:
@@ -282,6 +292,15 @@ class MediaCatalog:
                 raise ValueError("Invalid supported video generation mode")
             if not isinstance(spec.guidance, dict):
                 raise ValueError("Media model guidance must be an object")
+            if spec.kind == "image":
+                if (not spec.image_size_tiers or any(value not in SEEDREAM_LITE_SIZE_TIERS
+                        for value in spec.image_size_tiers)
+                        or len(set(spec.image_size_tiers)) != len(spec.image_size_tiers)):
+                    raise ValueError("Image model size tiers are invalid")
+                if not 2048 <= spec.image_max_dimension <= 4096:
+                    raise ValueError("Image model maximum dimension is invalid")
+            elif spec.image_size_tiers or spec.image_max_dimension:
+                raise ValueError("Only image models may declare image size constraints")
             if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", spec.credential_env):
                 raise ValueError("Invalid media credential environment")
             result.append(spec)
@@ -406,6 +425,8 @@ class MediaCatalog:
                             references: list[dict[str, Any]] | None = None) -> None:
         spec = self.resolve(kind, model)
         self.validate_parameter_shape(kind, parameters)
+        if kind == "image":
+            self._validate_image_model_parameters(spec,parameters)
         generation_mode = generation_mode or {"image": "text_to_image", "video": "text_to_video",
             "audio": "text_to_audio", "model3d": "text_to_model"}[kind]
         references = references or []
@@ -448,6 +469,17 @@ class MediaCatalog:
                     raise ValueError("Voice cloning reference must be MP3, M4A or WAV, 10..300 seconds, at most 20 MB")
         else:
             self._validate_model3d_mode(generation_mode, parameters, references)
+
+    @staticmethod
+    def _validate_image_model_parameters(spec: MediaModelSpec,parameters:dict[str,Any])->None:
+        size=parameters.get("size","2048x2048")
+        if size in spec.image_size_tiers:return
+        match=re.fullmatch(r"([1-9][0-9]{1,3})x([1-9][0-9]{1,3})",size) if isinstance(size,str) else None
+        if not match:
+            raise ValueError("Image size is not supported by the deployed model")
+        width,height=(int(value) for value in match.groups())
+        if max(width,height)>spec.image_max_dimension:
+            raise ValueError("Image size exceeds the deployed model maximum dimension")
 
     @staticmethod
     def validate_audio_parameter_names(mode: str, parameters: dict[str, Any]) -> None:
