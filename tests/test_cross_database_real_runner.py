@@ -21,6 +21,8 @@ def test_cross_database_runner_implements_all_six_real_cases():
 
 def test_recovery_case_kills_only_after_media_acceptance_and_checks_identity():
     source=(ROOT/'tests/run_real_cross_database.py').read_text()
+    assert "'model3d.generate',kind='model3d'" in source
+    assert "mode='text_to_model'" in source
     assert 'accepted_at is not None' in source
     assert 'provider_job_id' in source
     assert 'kill_service_main(' in source
@@ -36,4 +38,3 @@ def test_cross_database_runner_has_bounded_waits_and_safe_evidence():
     assert 'classification' in source and 'program_failure' in source
     assert 'raw exception' not in source.lower()
     assert '.data' in source
-

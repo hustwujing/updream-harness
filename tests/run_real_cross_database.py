@@ -170,8 +170,10 @@ async def kill_service_main(unit:str,start_command:str):
 
 
 async def case_xdb02(client,args,repositories,settings):
-    thread,_,job=await submit_source_job(client,args,'XDB02',protocol.provider_job(2,
-        prompt='A simple blue circle centered on a light gray background'))
+    spec=protocol.semantic_provider_job('xdb02-model','model3d.generate',kind='model3d',
+        model='v3.1-20260211',mode='text_to_model',parameters={
+            'prompt':'simple low-poly blue cup','face_limit':1000,'texture':False})
+    thread,_,job=await submit_source_job(client,args,'XDB02',spec)
     async def accepted():
         value=await source_snapshot(repositories,job['id'])
         accepted_attempts=[row for row in value.attempts if row.accepted_at is not None]
