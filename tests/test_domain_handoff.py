@@ -1,13 +1,23 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
+import json
+import logging
 
 import pytest
 from sqlalchemy import func, select
 
 from sandbox_harness.common.db.domain_database import DomainDatabase, DomainInbox, DomainOutbox
 from sandbox_harness.common.db.models import SiteProjectRow
+from sandbox_harness.common.db.models import canonical_digest
 from sandbox_harness.common.contracts.domain import now
+import sandbox_harness.common.observability.observability as obs
+
+
+def telemetry_rows(value):
+    assert value.flush(5)
+    return [json.loads(line) for path in value.sink.root.glob("*.telemetry.jsonl")
+        for line in path.read_text().splitlines()]
 
 
 async def setup_pair(tmp_path):
@@ -54,6 +64,43 @@ async def test_lost_reply_and_process_restart_deduplicate_committed_effect(tmp_p
     finally:
         await core.close()
         await sites.close()
+
+
+async def test_persisted_envelope_links_receive_after_restart(tmp_path,monkeypatch):
+    from sandbox_harness.common.db.handoff import DomainHandoff, Envelope
+    core, sites, sender, receiver = await setup_pair(tmp_path)
+    telemetry=obs.Telemetry("handoff-test",tmp_path/"logs")
+    monkeypatch.setattr(obs,"_PROVIDER",telemetry.provider)
+    monkeypatch.setattr(obs,"_TELEMETRY",telemetry)
+    root=logging.getLogger();old_level=root.level;root.setLevel(logging.INFO);root.addHandler(telemetry.handler)
+    try:
+        with obs.operation("test.handoff.producer",new_trace=True):
+            expected=obs.carrier()["traceparent"]
+            envelope=await enqueue(core,sender)
+        async with core.connections() as session:
+            stored=await session.get(DomainOutbox,envelope.command_id)
+            restored=Envelope(**json.loads(stored.envelope_json))
+        assert restored.traceparent==expected
+        assert restored.digest==stored.digest==envelope.digest
+        legacy=asdict(restored);legacy.pop("traceparent")
+        assert replace(restored,traceparent="").digest==canonical_digest(legacy)
+
+        # A retry may run in another trace but must retain the first durable context.
+        with obs.operation("test.handoff.retry",new_trace=True):
+            assert await enqueue(core,sender)==envelope
+
+        receiver=DomainHandoff(sites,receiver.handlers)
+        await receiver.receive(restored)
+        receive=next(row for row in telemetry_rows(telemetry)
+            if row["signal"]=="span" and row["event_name"]=="domain.handoff.receive")
+        assert receive["trace_id"]!=expected.split("-")[1]
+        assert receive["links"]==[{
+            "trace_id":expected.split("-")[1],"span_id":expected.split("-")[2]}]
+        with pytest.raises(ValueError,match="handoff_traceparent_invalid"):
+            replace(restored,traceparent="invalid").validate()
+    finally:
+        root.removeHandler(telemetry.handler);root.setLevel(old_level);telemetry.close()
+        await core.close();await sites.close()
 
 
 async def test_source_rollback_does_not_leak_command(tmp_path):

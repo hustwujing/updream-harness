@@ -93,6 +93,12 @@ def link_to(header):
     value = trace.get_current_span(remote_context({'traceparent': header or ''})).get_span_context()
     return Link(value) if value.is_valid else None
 
+def canonical_traceparent(header):
+    link=link_to(header)
+    if not link:return ''
+    context=link.context
+    return f'00-{context.trace_id:032x}-{context.span_id:016x}-{int(context.trace_flags):02x}'
+
 def add_link(header):
     link = link_to(header)
     span=trace.get_current_span()

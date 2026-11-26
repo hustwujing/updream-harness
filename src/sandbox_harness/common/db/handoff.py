@@ -17,6 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from sandbox_harness.common.contracts.domain import now
+from sandbox_harness.common.observability.observability import (
+    add_link, canonical_traceparent, carrier, operation,
+)
 from .domain_database import DOMAIN_TABLES, DomainDatabase, DomainInbox, DomainOutbox, DomainStream
 from .models import canonical_digest, canonical_json
 
@@ -32,6 +35,7 @@ class Envelope:
     generation: int
     sequence: int
     payload_json: str
+    traceparent: str = ""
     version: int = 1
 
     @property
@@ -44,7 +48,11 @@ class Envelope:
 
     @property
     def digest(self) -> str:
-        return canonical_digest(asdict(self))
+        value=asdict(self)
+        # Existing version-1 envelopes did not serialize an empty traceparent.
+        # Preserve their digest while binding every newly captured context.
+        if not value["traceparent"]:value.pop("traceparent")
+        return canonical_digest(value)
 
     def validate(self):
         if (self.source not in DOMAIN_TABLES or self.target not in DOMAIN_TABLES
@@ -60,6 +68,10 @@ class Envelope:
             raise ValueError("handoff_payload_invalid")
         if canonical_json(self.payload) != self.payload_json:
             raise ValueError("handoff_payload_invalid")
+        if self.traceparent and (not isinstance(self.traceparent,str)
+                or len(self.traceparent) != 55
+                or canonical_traceparent(self.traceparent) != self.traceparent):
+            raise ValueError("handoff_traceparent_invalid")
 
 
 Handler = Callable[[AsyncSession, Envelope], Awaitable[dict]]
@@ -105,14 +117,17 @@ class DomainHandoff:
                       owner_id, generation, payload) -> Envelope:
         if session.info.get("domain") != self.database.domain or session.bind is not self.database.engine:
             raise ValueError("handoff_source_session_mismatch")
-        proposed = Envelope(command_id, self.database.domain, target, kind, aggregate_id,
-                            owner_id, generation, 1, canonical_json(payload))
+        proposed = Envelope(command_id=command_id,source=self.database.domain,target=target,
+            kind=kind,aggregate_id=aggregate_id,owner_id=owner_id,generation=generation,
+            sequence=1,payload_json=canonical_json(payload),
+            traceparent=canonical_traceparent(carrier().get("traceparent","")))
         proposed.validate()
         await self._identity_lock(session, self.database.domain, command_id)
         existing = await session.get(DomainOutbox, command_id)
         if existing:
             original = Envelope(**json.loads(existing.envelope_json))
-            if {**asdict(proposed), "sequence": original.sequence} != asdict(original):
+            if {**asdict(proposed), "sequence": original.sequence,
+                    "traceparent": original.traceparent} != asdict(original):
                 raise ValueError("handoff_identity_conflict")
             return original
         stream = await self._stream(session, "out", proposed.stream_id)
@@ -128,30 +143,33 @@ class DomainHandoff:
         envelope.validate()
         if envelope.target != self.database.domain:
             raise ValueError("handoff_target_mismatch")
-        identity = canonical_digest([envelope.source, envelope.command_id])
-        async with self.database.transaction() as session:
-            await self._identity_lock(session, envelope.source, envelope.command_id)
-            previous = await session.get(DomainInbox, identity)
-            if previous:
-                if previous.digest != envelope.digest:
-                    raise ValueError("handoff_identity_conflict")
-                return json.loads(previous.receipt_json)
-            stream = await self._stream(session, "in", envelope.stream_id)
-            if envelope.sequence != stream.sequence + 1:
-                raise ValueError("handoff_sequence_gap")
-            handler = self.handlers.get(envelope.kind)
-            if handler is None:
-                raise ValueError("handoff_kind_unsupported")
-            result = await handler(session, envelope)
-            if not isinstance(result, dict):
-                raise ValueError("handoff_result_invalid")
-            receipt = {"version": 1, "command_id": envelope.command_id, "digest": envelope.digest,
-                       "source": envelope.source, "target": envelope.target,
-                       "sequence": envelope.sequence, "result": result}
-            session.add(DomainInbox(id=identity, stream_id=envelope.stream_id, sequence=envelope.sequence,
-                digest=envelope.digest, receipt_json=canonical_json(receipt), created_at=now()))
-            stream.sequence = envelope.sequence
-        return receipt
+        with operation("domain.handoff.receive",new_trace=True,
+                source_service=envelope.source,peer_service=envelope.target):
+            add_link(envelope.traceparent)
+            identity = canonical_digest([envelope.source, envelope.command_id])
+            async with self.database.transaction() as session:
+                await self._identity_lock(session, envelope.source, envelope.command_id)
+                previous = await session.get(DomainInbox, identity)
+                if previous:
+                    if previous.digest != envelope.digest:
+                        raise ValueError("handoff_identity_conflict")
+                    return json.loads(previous.receipt_json)
+                stream = await self._stream(session, "in", envelope.stream_id)
+                if envelope.sequence != stream.sequence + 1:
+                    raise ValueError("handoff_sequence_gap")
+                handler = self.handlers.get(envelope.kind)
+                if handler is None:
+                    raise ValueError("handoff_kind_unsupported")
+                result = await handler(session, envelope)
+                if not isinstance(result, dict):
+                    raise ValueError("handoff_result_invalid")
+                receipt = {"version": 1, "command_id": envelope.command_id, "digest": envelope.digest,
+                           "source": envelope.source, "target": envelope.target,
+                           "sequence": envelope.sequence, "result": result}
+                session.add(DomainInbox(id=identity, stream_id=envelope.stream_id, sequence=envelope.sequence,
+                    digest=envelope.digest, receipt_json=canonical_json(receipt), created_at=now()))
+                stream.sequence = envelope.sequence
+            return receipt
 
     async def acknowledge(self, command_id: str, receipt: dict):
         async with self.database.transaction() as session:
