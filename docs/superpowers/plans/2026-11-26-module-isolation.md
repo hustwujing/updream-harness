@@ -60,14 +60,14 @@ illustrative `module.toml`); no new TOML writer dependency is required.
 Manifests declare id, kind/location, entry point, sources, common closure, resources,
 Python/native requirements, external inputs and verification commands.
 
-- [ ] Capture service/process/version/resource state and freeze the deployed source
+- [x] Capture service/process/version/resource state and freeze the deployed source
   and web assets under `.data/releases`; repoint only owned services to that
   baseline before changing paths. Verify health and source file paths.
-- [ ] Add red tests: exactly 14 IDs, supported kinds, safe explicit source roots,
+- [x] Add red tests: exactly 14 IDs, supported kinds, safe explicit source roots,
   executable entry points, native/external inputs, no unknown source ownership.
-- [ ] Implement manifest loader and all source ownership declarations from the
+- [x] Implement manifest loader and all source ownership declarations from the
   complete inventory; retain an explicit staging map while source moves land.
-- [ ] Run `tests/test_module_manifests.py`; commit the independently useful inventory.
+- [x] Run `tests/test_module_manifests.py`; commit the independently useful inventory.
 
 ## Task 2: Remove accidental cross-owner dependencies
 

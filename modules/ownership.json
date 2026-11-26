@@ -1,0 +1,406 @@
+{
+  "schema_version": 1,
+  "migration_stage": "inventory",
+  "modules": {
+    "src/sandbox_bootstrap/__init__.py": {
+      "owner": "sandbox-bootstrap",
+      "target": "src/sandbox_bootstrap/__init__.py"
+    },
+    "src/sandbox_bootstrap/main.py": {
+      "owner": "sandbox-bootstrap",
+      "target": "src/sandbox_bootstrap/main.py"
+    },
+    "src/sandbox_bootstrap/observability.py": {
+      "owner": "sandbox-bootstrap",
+      "target": "src/sandbox_bootstrap/observability.py"
+    },
+    "src/sandbox_bootstrap/supervisor.py": {
+      "owner": "sandbox-bootstrap",
+      "target": "src/sandbox_bootstrap/supervisor.py"
+    },
+    "src/sandbox_harness/__init__.py": {
+      "owner": "namespace initializer",
+      "target": "src/sandbox_harness/__init__.py"
+    },
+    "src/sandbox_harness/activity_projection.py": {
+      "owner": "common/events",
+      "target": "src/sandbox_harness/common/events/activity_projection.py"
+    },
+    "src/sandbox_harness/allocation_dispatch.py": {
+      "owner": "AllocationWorker",
+      "target": "src/sandbox_harness/services/allocation_worker/allocation_dispatch.py"
+    },
+    "src/sandbox_harness/allocation_service.py": {
+      "owner": "AllocationWorker",
+      "target": "src/sandbox_harness/services/allocation_worker/allocation_service.py"
+    },
+    "src/sandbox_harness/app.py": {
+      "owner": "API",
+      "target": "src/sandbox_harness/services/api/app.py"
+    },
+    "src/sandbox_harness/ark_assets.py": {
+      "owner": "MediaWorker",
+      "target": "src/sandbox_harness/services/media_worker/ark_assets.py"
+    },
+    "src/sandbox_harness/artifact_gateway.py": {
+      "owner": "common/artifacts",
+      "target": "src/sandbox_harness/common/artifacts/artifact_gateway.py"
+    },
+    "src/sandbox_harness/auth.py": {
+      "owner": "API",
+      "target": "src/sandbox_harness/services/api/auth.py"
+    },
+    "src/sandbox_harness/auth_cli.py": {
+      "owner": "tools",
+      "target": "src/sandbox_harness/tools/auth_cli.py"
+    },
+    "src/sandbox_harness/broker.py": {
+      "owner": "API",
+      "target": "src/sandbox_harness/services/api/broker.py"
+    },
+    "src/sandbox_harness/capability.py": {
+      "owner": "common/security",
+      "target": "src/sandbox_harness/common/security/capability.py"
+    },
+    "src/sandbox_harness/catalog.py": {
+      "owner": "common/catalog",
+      "target": "src/sandbox_harness/common/catalog/catalog.py"
+    },
+    "src/sandbox_harness/config.py": {
+      "owner": "common/configuration",
+      "target": "src/sandbox_harness/common/configuration/config.py"
+    },
+    "src/sandbox_harness/controlled_media_adapter.py": {
+      "owner": "ControlledWorker",
+      "target": "src/sandbox_harness/services/controlled_worker/controlled_media_adapter.py"
+    },
+    "src/sandbox_harness/controlled_media_runner.py": {
+      "owner": "ControlledWorker",
+      "target": "src/sandbox_harness/services/controlled_worker/controlled_media_runner.py"
+    },
+    "src/sandbox_harness/controlled_service.py": {
+      "owner": "ControlledWorker",
+      "target": "src/sandbox_harness/services/controlled_worker/controlled_service.py"
+    },
+    "src/sandbox_harness/document_preview.py": {
+      "owner": "API",
+      "target": "src/sandbox_harness/services/api/document_preview.py"
+    },
+    "src/sandbox_harness/domain.py": {
+      "owner": "common/contracts",
+      "target": "src/sandbox_harness/common/contracts/domain.py"
+    },
+    "src/sandbox_harness/errors.py": {
+      "owner": "common/contracts",
+      "target": "src/sandbox_harness/common/contracts/errors.py"
+    },
+    "src/sandbox_harness/events.py": {
+      "owner": "common/events",
+      "target": "src/sandbox_harness/common/events/events.py"
+    },
+    "src/sandbox_harness/execution_graph.py": {
+      "owner": "API",
+      "target": "src/sandbox_harness/services/api/execution_graph.py"
+    },
+    "src/sandbox_harness/execution_readiness.py": {
+      "owner": "common/catalog",
+      "target": "src/sandbox_harness/common/catalog/execution_readiness.py"
+    },
+    "src/sandbox_harness/gateway.py": {
+      "owner": "sandbox-gateway",
+      "target": "src/sandbox_harness/services/sandbox_gateway/gateway.py"
+    },
+    "src/sandbox_harness/grants.py": {
+      "owner": "common/security",
+      "target": "src/sandbox_harness/common/security/grants.py"
+    },
+    "src/sandbox_harness/harness_job.py": {
+      "owner": "JobWorker",
+      "target": "src/sandbox_harness/services/job_worker/harness_job.py"
+    },
+    "src/sandbox_harness/image_decompose_adapter.py": {
+      "owner": "JobWorker",
+      "target": "src/sandbox_harness/services/job_worker/image_decompose_adapter.py"
+    },
+    "src/sandbox_harness/image_decompose_provider.py": {
+      "owner": "MediaWorker",
+      "target": "src/sandbox_harness/services/media_worker/image_decompose_provider.py"
+    },
+    "src/sandbox_harness/job_adapters.py": {
+      "owner": "common/execution",
+      "target": "src/sandbox_harness/common/execution/job_adapters.py"
+    },
+    "src/sandbox_harness/job_allocation.py": {
+      "owner": "common/sandbox",
+      "target": "src/sandbox_harness/common/sandbox/job_allocation.py"
+    },
+    "src/sandbox_harness/job_catalog.py": {
+      "owner": "common/catalog",
+      "target": "src/sandbox_harness/common/catalog/job_catalog.py"
+    },
+    "src/sandbox_harness/job_continuation.py": {
+      "owner": "API",
+      "target": "src/sandbox_harness/services/api/job_continuation.py"
+    },
+    "src/sandbox_harness/job_contracts.py": {
+      "owner": "common/contracts",
+      "target": "src/sandbox_harness/common/contracts/job_contracts.py"
+    },
+    "src/sandbox_harness/job_coordinator.py": {
+      "owner": "common/jobs",
+      "target": "src/sandbox_harness/common/jobs/job_coordinator.py"
+    },
+    "src/sandbox_harness/job_errors.py": {
+      "owner": "common/contracts",
+      "target": "src/sandbox_harness/common/contracts/job_errors.py"
+    },
+    "src/sandbox_harness/job_service.py": {
+      "owner": "JobWorker",
+      "target": "src/sandbox_harness/services/job_worker/job_service.py"
+    },
+    "src/sandbox_harness/job_worker.py": {
+      "owner": "common/execution",
+      "target": "src/sandbox_harness/common/execution/job_worker.py"
+    },
+    "src/sandbox_harness/log_query.py": {
+      "owner": "tools",
+      "target": "src/sandbox_harness/tools/log_query.py"
+    },
+    "src/sandbox_harness/main.py": {
+      "owner": "API",
+      "target": "src/sandbox_harness/services/api/main.py"
+    },
+    "src/sandbox_harness/media_catalog.py": {
+      "owner": "common/catalog",
+      "target": "src/sandbox_harness/common/catalog/media_catalog.py"
+    },
+    "src/sandbox_harness/media_errors.py": {
+      "owner": "MediaWorker",
+      "target": "src/sandbox_harness/services/media_worker/media_errors.py"
+    },
+    "src/sandbox_harness/media_job_adapter.py": {
+      "owner": "JobWorker",
+      "target": "src/sandbox_harness/services/job_worker/media_job_adapter.py"
+    },
+    "src/sandbox_harness/media_provider.py": {
+      "owner": "common/contracts",
+      "target": "src/sandbox_harness/common/contracts/media_provider.py"
+    },
+    "src/sandbox_harness/media_reference_publisher.py": {
+      "owner": "MediaWorker",
+      "target": "src/sandbox_harness/services/media_worker/media_reference_publisher.py"
+    },
+    "src/sandbox_harness/media_references.py": {
+      "owner": "common/catalog",
+      "target": "src/sandbox_harness/common/catalog/media_references.py"
+    },
+    "src/sandbox_harness/media_render_adapter.py": {
+      "owner": "JobWorker",
+      "target": "src/sandbox_harness/services/job_worker/media_render_adapter.py"
+    },
+    "src/sandbox_harness/media_service.py": {
+      "owner": "MediaWorker",
+      "target": "src/sandbox_harness/services/media_worker/media_service.py"
+    },
+    "src/sandbox_harness/media_worker.py": {
+      "owner": "MediaWorker",
+      "target": "src/sandbox_harness/services/media_worker/media_worker.py"
+    },
+    "src/sandbox_harness/minimax_voice.py": {
+      "owner": "MediaWorker",
+      "target": "src/sandbox_harness/services/media_worker/minimax_voice.py"
+    },
+    "src/sandbox_harness/model_activity.py": {
+      "owner": "common/models",
+      "target": "src/sandbox_harness/common/models/model_activity.py"
+    },
+    "src/sandbox_harness/model_discovery.py": {
+      "owner": "API",
+      "target": "src/sandbox_harness/services/api/model_discovery.py"
+    },
+    "src/sandbox_harness/model_health.py": {
+      "owner": "common/models",
+      "target": "src/sandbox_harness/common/models/model_health.py"
+    },
+    "src/sandbox_harness/model_routes.py": {
+      "owner": "common/models",
+      "target": "src/sandbox_harness/common/models/model_routes.py"
+    },
+    "src/sandbox_harness/node_agent.py": {
+      "owner": "common/scheduling",
+      "target": "src/sandbox_harness/common/scheduling/node_agent.py"
+    },
+    "src/sandbox_harness/objects.py": {
+      "owner": "common/storage",
+      "target": "src/sandbox_harness/common/storage/objects.py"
+    },
+    "src/sandbox_harness/observability.py": {
+      "owner": "common/observability",
+      "target": "src/sandbox_harness/common/observability/observability.py"
+    },
+    "src/sandbox_harness/pool.py": {
+      "owner": "common/sandbox",
+      "target": "src/sandbox_harness/common/sandbox/pool.py"
+    },
+    "src/sandbox_harness/profiles.py": {
+      "owner": "common/catalog",
+      "target": "src/sandbox_harness/common/catalog/profiles.py"
+    },
+    "src/sandbox_harness/provider_preflight.py": {
+      "owner": "common/catalog",
+      "target": "src/sandbox_harness/common/catalog/provider_preflight.py"
+    },
+    "src/sandbox_harness/public_proxy.py": {
+      "owner": "sandbox-gateway",
+      "target": "src/sandbox_harness/services/sandbox_gateway/public_proxy.py"
+    },
+    "src/sandbox_harness/reviewer.py": {
+      "owner": "JobWorker",
+      "target": "src/sandbox_harness/services/job_worker/reviewer.py"
+    },
+    "src/sandbox_harness/runtime.py": {
+      "owner": "common/sandbox",
+      "target": "src/sandbox_harness/common/sandbox/runtime.py"
+    },
+    "src/sandbox_harness/sam3_job.py": {
+      "owner": "Controlled Runtime",
+      "target": "src/controlled_runtime/sam3_job.py"
+    },
+    "src/sandbox_harness/sandbox.py": {
+      "owner": "common/sandbox",
+      "target": "src/sandbox_harness/common/sandbox/sandbox.py"
+    },
+    "src/sandbox_harness/sandbox_aliyun.py": {
+      "owner": "common/sandbox",
+      "target": "src/sandbox_harness/common/sandbox/sandbox_aliyun.py"
+    },
+    "src/sandbox_harness/sandbox_contracts.py": {
+      "owner": "common/contracts",
+      "target": "src/sandbox_harness/common/contracts/sandbox_contracts.py"
+    },
+    "src/sandbox_harness/sandbox_factory.py": {
+      "owner": "common/sandbox",
+      "target": "src/sandbox_harness/common/sandbox/sandbox_factory.py"
+    },
+    "src/sandbox_harness/sandbox_inspector.py": {
+      "owner": "API",
+      "target": "src/sandbox_harness/services/api/sandbox_inspector.py"
+    },
+    "src/sandbox_harness/sandbox_opensandbox.py": {
+      "owner": "common/sandbox",
+      "target": "src/sandbox_harness/common/sandbox/sandbox_opensandbox.py"
+    },
+    "src/sandbox_harness/scheduler.py": {
+      "owner": "common/scheduling",
+      "target": "src/sandbox_harness/common/scheduling/scheduler.py"
+    },
+    "src/sandbox_harness/sessions.py": {
+      "owner": "API",
+      "target": "src/sandbox_harness/services/api/sessions.py"
+    },
+    "src/sandbox_harness/site_bundle.py": {
+      "owner": "common/sites",
+      "target": "src/sandbox_harness/common/sites/site_bundle.py"
+    },
+    "src/sandbox_harness/site_service.py": {
+      "owner": "SiteWorker",
+      "target": "src/sandbox_harness/services/site_worker/site_service.py"
+    },
+    "src/sandbox_harness/site_worker.py": {
+      "owner": "SiteWorker",
+      "target": "src/sandbox_harness/services/site_worker/site_worker.py"
+    },
+    "src/sandbox_harness/store.py": {
+      "owner": "common/db",
+      "target": "src/sandbox_harness/common/db/store.py"
+    },
+    "src/sandbox_harness/telemetry_ingest.py": {
+      "owner": "common/observability",
+      "target": "src/sandbox_harness/common/observability/telemetry_ingest.py"
+    },
+    "src/sandbox_harness/transcribe_job.py": {
+      "owner": "Controlled Runtime",
+      "target": "src/controlled_runtime/transcribe_job.py"
+    },
+    "src/sandbox_runtime/__init__.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/__init__.py"
+    },
+    "src/sandbox_runtime/adapters.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/adapters.py"
+    },
+    "src/sandbox_runtime/app.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/app.py"
+    },
+    "src/sandbox_runtime/artifact_cli.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/artifact_cli.py"
+    },
+    "src/sandbox_runtime/background_cli.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/background_cli.py"
+    },
+    "src/sandbox_runtime/background_supervisor.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/background_supervisor.py"
+    },
+    "src/sandbox_runtime/codex_runner.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/codex_runner.py"
+    },
+    "src/sandbox_runtime/deepseek_runner.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/deepseek_runner.py"
+    },
+    "src/sandbox_runtime/instructions.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/instructions.py"
+    },
+    "src/sandbox_runtime/interaction_cli.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/interaction_cli.py"
+    },
+    "src/sandbox_runtime/job_cli.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/job_cli.py"
+    },
+    "src/sandbox_runtime/main.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/main.py"
+    },
+    "src/sandbox_runtime/media_cli.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/media_cli.py"
+    },
+    "src/sandbox_runtime/project_uploads.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/project_uploads.py"
+    },
+    "src/sandbox_runtime/pty_service.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/pty_service.py"
+    },
+    "src/sandbox_runtime/review_cli.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/review_cli.py"
+    },
+    "src/sandbox_runtime/runtime_bundle.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/runtime_bundle.py"
+    },
+    "src/sandbox_runtime/site_cli.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/site_cli.py"
+    },
+    "src/sandbox_runtime/skills.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/skills.py"
+    },
+    "src/sandbox_runtime/state.py": {
+      "owner": "sandbox-runtime",
+      "target": "src/sandbox_runtime/state.py"
+    }
+  }
+}

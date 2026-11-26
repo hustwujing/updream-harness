@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "id": "sandbox-runtime",
+  "kind": "runtime",
+  "location": "sandbox",
+  "sources": [
+    "src/sandbox_runtime/__init__.py",
+    "src/sandbox_runtime/adapters.py",
+    "src/sandbox_runtime/app.py",
+    "src/sandbox_runtime/artifact_cli.py",
+    "src/sandbox_runtime/background_cli.py",
+    "src/sandbox_runtime/background_supervisor.py",
+    "src/sandbox_runtime/codex_runner.py",
+    "src/sandbox_runtime/deepseek_runner.py",
+    "src/sandbox_runtime/instructions.py",
+    "src/sandbox_runtime/interaction_cli.py",
+    "src/sandbox_runtime/job_cli.py",
+    "src/sandbox_runtime/main.py",
+    "src/sandbox_runtime/media_cli.py",
+    "src/sandbox_runtime/review_cli.py",
+    "src/sandbox_runtime/runtime_bundle.py",
+    "src/sandbox_runtime/site_cli.py",
+    "src/sandbox_runtime/skills.py",
+    "src/sandbox_runtime/state.py",
+    "src/sandbox_runtime/pty_service.py",
+    "src/sandbox_runtime/project_uploads.py",
+    "runtime/build_runtime_code_bundle.py"
+  ],
+  "source_roots": [],
+  "entry_points": {
+    "sandbox-runtime": "sandbox_runtime.main:run"
+  },
+  "common_modules": [
+    "common/contracts",
+    "common/observability",
+    "common/catalog",
+    "common/sites"
+  ],
+  "python_dependencies": [],
+  "native_requirements": [],
+  "external_inputs": [],
+  "resources": [
+    "runtime/requirements-runtime.txt",
+    "runtime/bundle_public_key.pem"
+  ],
+  "host_credentials_allowed": false,
+  "verification": [
+    "declared source closure",
+    "independent artifact import/start",
+    "module-specific real boundary"
+  ],
+  "compatibility": {
+    "wire_protocol": "unchanged",
+    "schema": "unchanged",
+    "baseline": "8b79ea5"
+  },
+  "migration_stage": "inventory"
+}

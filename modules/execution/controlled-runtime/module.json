@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "id": "controlled-runtime",
+  "kind": "controlled",
+  "location": "controlled",
+  "sources": [
+    "src/sandbox_harness/sam3_job.py",
+    "src/sandbox_harness/transcribe_job.py",
+    "scripts/build_controlled_runtime_manifest.py"
+  ],
+  "source_roots": [],
+  "entry_points": {},
+  "common_modules": [],
+  "python_dependencies": [],
+  "native_requirements": [],
+  "external_inputs": [
+    {
+      "id": "models-and-interpreters",
+      "source": "SANDBOX_HARNESS_CONTROLLED_RUNTIME_ROOT",
+      "identity": "manifest-sha256"
+    }
+  ],
+  "resources": [],
+  "host_credentials_allowed": false,
+  "verification": [
+    "declared source closure",
+    "independent artifact import/start",
+    "module-specific real boundary"
+  ],
+  "compatibility": {
+    "wire_protocol": "unchanged",
+    "schema": "unchanged",
+    "baseline": "8b79ea5"
+  },
+  "migration_stage": "inventory"
+}

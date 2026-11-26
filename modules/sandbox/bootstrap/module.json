@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "sandbox-bootstrap",
+  "kind": "bootstrap",
+  "location": "sandbox",
+  "sources": [
+    "src/sandbox_bootstrap/__init__.py",
+    "src/sandbox_bootstrap/main.py",
+    "src/sandbox_bootstrap/supervisor.py",
+    "src/sandbox_bootstrap/observability.py",
+    "runtime/bootstrap.Dockerfile",
+    "runtime/bootstrap_entrypoint.sh",
+    "runtime/runtime_cli_dispatch.sh",
+    "runtime/bundle_public_key.pem"
+  ],
+  "source_roots": [],
+  "entry_points": {
+    "sandbox-bootstrap": "sandbox_bootstrap.main:run"
+  },
+  "common_modules": [],
+  "python_dependencies": [],
+  "native_requirements": [],
+  "external_inputs": [],
+  "resources": [
+    "runtime/requirements-runtime.txt"
+  ],
+  "host_credentials_allowed": false,
+  "verification": [
+    "declared source closure",
+    "independent artifact import/start",
+    "module-specific real boundary"
+  ],
+  "compatibility": {
+    "wire_protocol": "unchanged",
+    "schema": "unchanged",
+    "baseline": "8b79ea5"
+  },
+  "migration_stage": "inventory"
+}

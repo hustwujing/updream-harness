@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "id": "site-worker",
+  "kind": "service",
+  "location": "host",
+  "sources": [
+    "src/sandbox_harness/site_service.py",
+    "src/sandbox_harness/site_worker.py"
+  ],
+  "source_roots": [],
+  "entry_points": {
+    "site-worker": "sandbox_harness.site_service:run"
+  },
+  "common_modules": [
+    "common/artifacts",
+    "common/catalog",
+    "common/configuration",
+    "common/contracts",
+    "common/db",
+    "common/events",
+    "common/execution",
+    "common/jobs",
+    "common/models",
+    "common/observability",
+    "common/sandbox",
+    "common/scheduling",
+    "common/security",
+    "common/sites",
+    "common/storage"
+  ],
+  "python_dependencies": [
+    "argon2-cffi==25.1.0",
+    "opentelemetry-sdk==1.45.2",
+    "opentelemetry-exporter-otlp-proto-http==1.45.2",
+    "aiosqlite>=0.20,<1",
+    "asyncpg>=0.30,<1",
+    "av>=14,<17",
+    "boto3>=1.35,<2",
+    "cryptography>=50,<51",
+    "defusedxml>=0.7,<1",
+    "e2b==2.31.0",
+    "fastapi>=0.115,<1",
+    "httpx>=0.28,<1",
+    "jsonschema>=4.23,<5",
+    "pydantic>=2.10,<3",
+    "pydantic-settings>=2.7,<3",
+    "pillow>=11,<13",
+    "psutil>=6,<8",
+    "redis>=5,<7",
+    "sqlalchemy[asyncio]>=2.0,<3",
+    "uvicorn[standard]>=0.34,<1"
+  ],
+  "native_requirements": [],
+  "external_inputs": [],
+  "resources": [],
+  "host_credentials_allowed": true,
+  "verification": [
+    "declared source closure",
+    "independent artifact import/start",
+    "module-specific real boundary"
+  ],
+  "compatibility": {
+    "wire_protocol": "unchanged",
+    "schema": "unchanged",
+    "baseline": "8b79ea5"
+  },
+  "migration_stage": "inventory"
+}
