@@ -20,11 +20,23 @@ export async function api(path,options={}){
   return response.status===204?null:response.json();
 }
 
+const wait=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
+function operationError(code){const error=new Error(errorLabels[code]||'操作未能完成，请重试。');error.code=code||'operation_refused';return error}
+async function waitOperation(path){
+ for(let attempt=0;attempt<240;attempt++){
+  const value=await api(path);
+  if(value.state==='completed')return value;
+  if(value.state==='refused')throw operationError(value.error_code);
+  await wait(500);
+ }
+ throw operationError('operation_timeout');
+}
+
 export const listThreads=(archived=false)=>api(`threads?archived=${archived}`);
 export const markThreadRead=(id,turnId)=>api(`threads/${id}/read`,{method:'POST',body:JSON.stringify({turn_id:turnId})});
 export const ensureSession=()=>api('session');
 export const loginAccount=value=>api('auth/login',{method:'POST',body:JSON.stringify(value)});
-export const registerAccount=value=>api('auth/register',{method:'POST',body:JSON.stringify(value)});
+export const registerAccount=async value=>{const result=await api('auth/register',{method:'POST',body:JSON.stringify(value)});if(result?.state!=='pending')return result;await waitOperation(`auth/registrations/${result.operation_id}`);return ensureSession()};
 export const logoutAccount=()=>api('auth/logout',{method:'POST'});
 export const changeAccountUsername=value=>api('auth/change-username',{method:'POST',body:JSON.stringify(value)});
 export const changeAccountPassword=value=>api('auth/change-password',{method:'POST',body:JSON.stringify(value)});
@@ -57,8 +69,8 @@ export const listSiteProjects=threadId=>api(`threads/${threadId}/sites`);
 export const activateSiteVersion=(projectId,versionId)=>api(`sites/${projectId}/versions/${versionId}/activate`,{method:'POST'});
 export const unpublishSite=projectId=>api(`sites/${projectId}/unpublish`,{method:'POST'});
 export const createThread=value=>api('threads',{method:'POST',body:JSON.stringify(value)});
-export const setThreadArchived=(id,archived)=>api(`threads/${id}/${archived?'archive':'unarchive'}`,{method:'POST'});
-export const deleteThread=id=>api(`threads/${id}`,{method:'DELETE'});
+export const setThreadArchived=async(id,archived)=>{const result=await api(`threads/${id}/${archived?'archive':'unarchive'}`,{method:'POST'});if(result?.state!=='pending')return result;await waitOperation(`lifecycle/${result.operation_id}`);return api(`threads/${id}`)};
+export const deleteThread=async id=>{const result=await api(`threads/${id}`,{method:'DELETE'});if(result?.state==='pending')await waitOperation(`lifecycle/${result.operation_id}`);return null};
 export const listTurns=id=>api(`threads/${id}/turns`);
 export async function listItems(id,after=0){const items=[];let cursor=after;while(true){const page=await api(`threads/${id}/items?after=${cursor}&limit=500`);items.push(...page);if(page.length<500)return items;const next=page.at(-1).sequence;if(next<=cursor)throw new Error('会话记录分页未能继续');cursor=next;}}
 export const listProjectFiles=id=>api(`threads/${id}/project-files`);

@@ -1,6 +1,6 @@
 import {afterEach,describe,expect,it,vi} from 'vitest';
 
-import {api,apiUrl,terminalSocketUrl} from './api';
+import {api,apiUrl,deleteThread,registerAccount,setThreadArchived,terminalSocketUrl} from './api';
 import {activityTiming,formatDuration,timestamp} from './activity-time';
 
 
@@ -39,6 +39,33 @@ describe('API boundary',()=>{
   globalThis.fetch=vi.fn(async()=>{throw new TypeError('Failed to fetch internal host')});
   await expect(api('threads')).rejects.toMatchObject({code:'service_connection_failed',
    message:'服务连接暂时中断，正在重试。'});
+ });
+ it('waits for durable lifecycle completion before reporting success',async()=>{
+  globalThis.document={baseURI:'https://example.test/app/'};
+  const replies=[
+   new Response(JSON.stringify({operation_id:'register-op',state:'pending'}),{status:202}),
+   new Response(JSON.stringify({operation_id:'register-op',state:'completed'}),{status:200}),
+   new Response(JSON.stringify({authenticated:true,user:{id:'user'}}),{status:200}),
+   new Response(JSON.stringify({operation_id:'archive-op',state:'pending'}),{status:202}),
+   new Response(JSON.stringify({operation_id:'archive-op',state:'completed'}),{status:200}),
+   new Response(JSON.stringify({id:'thread',archived_at:'2026-11-26T00:00:00Z'}),{status:200}),
+   new Response(JSON.stringify({operation_id:'delete-op',state:'pending'}),{status:202}),
+   new Response(JSON.stringify({operation_id:'delete-op',state:'completed'}),{status:200}),
+  ];
+  globalThis.fetch=vi.fn(async()=>replies.shift());
+  await expect(registerAccount({username:'user',password:'password'})).resolves.toMatchObject({authenticated:true});
+  await expect(setThreadArchived('thread',true)).resolves.toMatchObject({id:'thread',archived_at:'2026-11-26T00:00:00Z'});
+  await expect(deleteThread('thread')).resolves.toBeNull();
+  expect(globalThis.fetch.mock.calls.map(([url])=>String(url))).toEqual([
+   'https://example.test/app/api/auth/register',
+   'https://example.test/app/api/auth/registrations/register-op',
+   'https://example.test/app/api/session',
+   'https://example.test/app/api/threads/thread/archive',
+   'https://example.test/app/api/lifecycle/archive-op',
+   'https://example.test/app/api/threads/thread',
+   'https://example.test/app/api/threads/thread',
+   'https://example.test/app/api/lifecycle/delete-op',
+  ]);
  });
 });
 
