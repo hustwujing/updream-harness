@@ -168,8 +168,9 @@ class ModelActivity:
             if self.span:
                 with trace.use_span(self.span,end_on_exit=False):
                     obs.event('model.first_output',turn_id=self.claims.turn_id,model=self.claims.model,model_request_id=self.request_id,first_output_ms=self.first_output_ms)
+                    harness=getattr(self.claims,'harness','unknown')
                     obs.business_metric('updream.turn.first_output.duration',self.first_output_ms,
-                        harness=self.claims.harness.value)
+                        harness=getattr(harness,'value',harness) or 'unknown')
             await self.update('streaming', 'in_progress')
 
     async def update(self, phase, status, **extra):

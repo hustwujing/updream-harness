@@ -15,7 +15,7 @@ ERROR_PHASES = frozenset({
 })
 SIDE_EFFECT_STATES = frozenset({"none", "possible", "accepted", "completed", "unknown"})
 _SAFE_CODE = re.compile(r"[a-z][a-z0-9_]{0,79}")
-_REFERENCE_CODE = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,79}")
+_REFERENCE_CODE = re.compile(r"[A-Za-z][A-Za-z0-9_.:-]{0,79}")
 _SAFE_ORIGIN = re.compile(r"[a-z][a-z0-9-]{0,63}")
 _SAFE_CLASS = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,119}")
 _SAFE_MARKER = re.compile(r"[a-z][a-z0-9_.:-]{0,159}")
