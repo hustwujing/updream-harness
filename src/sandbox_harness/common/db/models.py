@@ -757,6 +757,12 @@ class ProviderCircuitRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class OwnerAdmissionRow(Base):
+    __tablename__ = "owner_admission"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class SandboxAllocationRow(Base):
     __tablename__ = 'sandbox_allocations'
     id: Mapped[str] = mapped_column(String(64),primary_key=True)

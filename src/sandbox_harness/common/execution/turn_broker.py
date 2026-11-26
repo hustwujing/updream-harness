@@ -26,6 +26,7 @@ from sandbox_harness.common.sandbox.runtime import (RuntimeClient, RuntimeStream
 from sandbox_harness.common.sandbox.sandbox import (SandboxNotFound)
 from sandbox_harness.common.sandbox.sandbox_factory import (SandboxProfileResolver)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxHandle)
+from sandbox_harness.common.db.models import utc_datetime
 from sandbox_harness.common.sites.site_bundle import (build_site_archive_from_paths, normalize_site_slug)
 
 
@@ -659,7 +660,8 @@ class Broker:
     async def _claim_turn_safely(self,turn_id:str):
         async def claim_and_record():
             claimed=await self.store.claim_turn(
-                turn_id,self.instance_id,self.settings.turn_lease_seconds)
+                turn_id,self.instance_id,self.settings.turn_lease_seconds,
+                owner_limit=self.settings.turn_owner_concurrency)
             if claimed:self.leases[turn_id]=claimed.recovery_generation
             return claimed
         try:return await self._database_call(claim_and_record())
@@ -951,7 +953,8 @@ class Broker:
                 else:
                     if turn.state==TurnState.QUEUED:
                         business_metric('updream.turn.queue.duration',
-                            max(0,(now()-turn.created_at).total_seconds()*1000),outcome='started')
+                            max(0,(now()-utc_datetime(turn.created_at)).total_seconds()*1000),
+                            outcome='started')
                     await self._state(turn.id, TurnState.RESTORING)
                     sandbox = await self.pool.acquire(
                         thread_id=thread.id,

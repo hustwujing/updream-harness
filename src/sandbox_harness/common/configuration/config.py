@@ -153,6 +153,8 @@ class Settings(BaseSettings):
     job_node_memory_mb_limit: int = Field(default=32768,ge=128)
     job_node_heartbeat_seconds: float = Field(default=10,ge=1,le=60)
     job_worker_concurrency: int = Field(default=8,ge=1,le=128)
+    job_owner_concurrency: int = Field(default=4,ge=1,le=128)
+    turn_owner_concurrency: int = Field(default=2,ge=1,le=128)
     job_recovery_concurrency: int = Field(default=1,ge=1,le=128)
     job_lease_seconds: int = Field(default=60,ge=15,le=600)
     controlled_runtime_root: Path = Path(

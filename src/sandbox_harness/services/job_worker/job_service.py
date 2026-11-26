@@ -126,6 +126,7 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
         "image.decompose":decompose_adapter},node_id=settings.job_node_id,
         concurrency=settings.job_worker_concurrency,lease_seconds=settings.job_lease_seconds,
         recovery_concurrency=settings.job_recovery_concurrency,
+        owner_concurrency=settings.job_owner_concurrency,
         review_dispatcher=dispatch_policy_review)
     profiles=resolved_node_profiles(resolver,pool.backend)
     cpu_total=max(1,min(os.cpu_count() or 1,settings.job_node_cpu_limit))

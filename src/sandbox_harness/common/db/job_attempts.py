@@ -8,14 +8,26 @@ from sandbox_harness.common.contracts.domain import (ThreadControlState, PausePa
 from sandbox_harness.common.contracts.job_errors import (normalize_job_error)
 from sandbox_harness.common.observability.observability import canonical_traceparent
 from sandbox_harness.common.contracts.job_contracts import (JobAttemptReceipt, JobGroupState, JobKind, JobState, JobView, JobRequest, TERMINAL_JOB_STATES)
-from .models import (BudgetAccountRow, BudgetLedgerRow, BudgetReservationRow, JobAttemptRow, JobGroupRow, JobLeaseRow, JobRow, PauseParticipantRow, ThreadControlRow, TurnRow, canonical_json, utc_datetime)
+from .models import (BudgetAccountRow, BudgetLedgerRow, BudgetReservationRow, JobAttemptRow, JobGroupRow, JobLeaseRow, JobRow, OwnerAdmissionRow, PauseParticipantRow, ThreadControlRow, TurnRow, canonical_json, utc_datetime)
 
 
 class JobAttemptsTransactions:
+    @staticmethod
+    def _fair_job_identities(rows):
+        queues={}
+        for identity,owner_id,_ in rows:queues.setdefault(owner_id,[]).append(identity)
+        result=[]
+        while queues:
+            for owner_id in list(queues):
+                result.append(queues[owner_id].pop(0))
+                if not queues[owner_id]:queues.pop(owner_id)
+        return result
+
     async def claim_available_jobs(self, worker_id: str, node_id: str, lease_seconds: int,
                                    *, limit: int = 1,
                                    adapters: set[str] | None = None,
-                                   accepted_only: bool = False) -> list[JobAttemptReceipt]:
+                                   accepted_only: bool = False,
+                                   owner_limit: int = 0) -> list[JobAttemptReceipt]:
         if adapters is not None and not adapters:return []
         timestamp = now()
         async with self.connections() as db:
@@ -44,17 +56,20 @@ class JobAttemptsTransactions:
                     ~superseded).correlate(JobRow).exists()
                 query=query.where(accepted,JobRow.state.in_([JobState.RUNNING.value,
                     JobState.WAITING_EXTERNAL.value,JobState.PAUSING.value,JobState.CANCELLING.value]))
-            identities = (await db.execute(query.order_by(
+            rows = (await db.execute(query.with_only_columns(
+                JobRow.id,JobRow.owner_id,JobRow.created_at).order_by(
                 JobRow.updated_at if accepted_only else JobRow.created_at,
-                JobRow.id).limit(limit * 3))).scalars().all()
+                JobRow.id).limit(limit*max(10,owner_limit*4 or 10)))).all()
+            identities=self._fair_job_identities(rows)
         result = []
         for identity in identities:
             if len(result) >= limit:
                 break
             try:
-                result.append(await self.claim_job(identity, worker_id, node_id, lease_seconds))
+                result.append(await self.claim_job(identity,worker_id,node_id,lease_seconds,
+                    owner_limit=0 if accepted_only else owner_limit))
             except RuntimeError as exc:
-                if str(exc) not in {"job_already_leased", "job_terminal"}:
+                if str(exc) not in {"job_already_leased", "job_terminal","owner_concurrency_wait"}:
                     raise
         return result
 
@@ -227,7 +242,8 @@ class JobAttemptsTransactions:
 
 
     async def claim_job(self, job_id: str, worker_id: str, node_id: str,
-                        lease_seconds: int, *, retry_kind: str = "initial") -> JobAttemptReceipt:
+                        lease_seconds: int, *, retry_kind: str = "initial",
+                        owner_limit: int = 0) -> JobAttemptReceipt:
         async with self.connections() as lookup:
             group_id = (await lookup.execute(select(JobRow.group_id).where(
                 JobRow.id == job_id))).scalar_one_or_none()
@@ -240,6 +256,20 @@ class JobAttemptsTransactions:
                     JobRow.id == job_id).with_for_update())).scalar_one_or_none()
                 if not job:
                     raise KeyError("job_not_found")
+                if owner_limit:
+                    if db.bind.dialect.name=="postgresql":
+                        from sqlalchemy.dialects.postgresql import insert
+                    else:
+                        from sqlalchemy.dialects.sqlite import insert
+                    await db.execute(insert(OwnerAdmissionRow).values(id=job.owner_id,
+                        updated_at=now()).on_conflict_do_nothing())
+                    admission=await db.get(OwnerAdmissionRow,job.owner_id,with_for_update=True)
+                    active=await db.scalar(select(func.count()).select_from(JobLeaseRow).join(
+                        JobRow,JobRow.id==JobLeaseRow.job_id).where(
+                            JobRow.owner_id==job.owner_id,JobLeaseRow.job_id!=job.id,
+                            JobLeaseRow.expires_at>now()))
+                    if active>=owner_limit:raise RuntimeError("owner_concurrency_wait")
+                    admission.updated_at=now()
                 if JobState(job.state) in TERMINAL_JOB_STATES:
                     raise RuntimeError("job_terminal")
                 control = await db.get(ThreadControlRow, job.thread_id)

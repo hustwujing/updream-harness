@@ -22,12 +22,14 @@ class JobDeadlineExceeded(TimeoutError):
 class JobWorker:
     def __init__(self, store, adapters: dict[str, JobAdapter], *, node_id: str,
                  concurrency: int = 4, lease_seconds: int = 60, worker_id: str = "",
-                 poll_seconds: float = 1.0, review_dispatcher=None, recovery_concurrency: int = 1):
+                 poll_seconds: float = 1.0, review_dispatcher=None, recovery_concurrency: int = 1,
+                 owner_concurrency: int = 4):
         self.store = store
         self.adapters = dict(adapters)
         self.node_id = node_id
         self.concurrency = concurrency
         self.recovery_concurrency=max(1,recovery_concurrency)
+        self.owner_concurrency=max(1,owner_concurrency)
         self.lease_seconds = lease_seconds
         self.worker_id = worker_id or "job-worker-" + uuid.uuid4().hex
         self.poll_seconds = poll_seconds
@@ -102,7 +104,7 @@ class JobWorker:
                 if capacity:
                     attempts=await self.store.claim_available_jobs(
                         self.worker_id,self.node_id,self.lease_seconds,limit=capacity,
-                        adapters=set(self.adapters))
+                        adapters=set(self.adapters),owner_limit=self.owner_concurrency)
                     tasks.update(asyncio.create_task(self._process_isolated(attempt),
                         name='job-'+attempt.job_id) for attempt in attempts)
                 if not attempts:

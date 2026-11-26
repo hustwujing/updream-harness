@@ -41,7 +41,7 @@ async def test_domain_facade_uses_one_connection_registry(tmp_path):
         async with store.engine.connect() as connection:
             actual = await connection.run_sync(lambda value: set(inspect(value).get_table_names()))
         assert actual == set(Base.metadata.tables)
-        assert len(actual) == 58
+        assert len(actual) == 59
         assert store.connections.kw["bind"] is store.engine
     finally:
         await store.close()

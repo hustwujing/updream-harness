@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 import hashlib
 from datetime import (timedelta)
-from sqlalchemy import (case, or_, select, update)
+from sqlalchemy import (case, func, or_, select, update)
 from sandbox_harness.common.observability.observability import (observed)
 from sandbox_harness.common.contracts.domain import (Event, EventKind, ItemType, ThreadControlState, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, TERMINAL, identifier, now)
 from sandbox_harness.common.catalog.catalog import (ResolvedProfile)
 from sandbox_harness.common.contracts.job_contracts import (TERMINAL_JOB_STATES)
-from .models import (ArtifactRow, EventRow, InteractionRow, ItemRow, JobRow, MediaBatchRow, ProjectFileRow, ThreadControlRow, ThreadRow, TurnInputRow, TurnOrderRow, TurnRow, canonical_json, utc_datetime)
+from .models import (ArtifactRow, EventRow, InteractionRow, ItemRow, JobRow, MediaBatchRow, OwnerAdmissionRow, ProjectFileRow, ThreadControlRow, ThreadRow, TurnInputRow, TurnOrderRow, TurnRow, canonical_json, utc_datetime)
 
 
 class TurnsTransactions:
@@ -196,19 +196,35 @@ class TurnsTransactions:
         return set(rows)
 
 
-    async def claim_turn(self, turn_id: str, owner: str, lease_seconds: int) -> TurnView | None:
+    async def claim_turn(self, turn_id: str, owner: str, lease_seconds: int,
+                         owner_limit: int = 0) -> TurnView | None:
         timestamp = now()
         terminal = [state.value for state in TERMINAL]
-        async with self.connections.begin() as db:
-            row = (await db.execute(update(TurnRow).where(
-                TurnRow.id == turn_id, TurnRow.state.not_in(terminal),
-                TurnRow.id.in_(select(ThreadRow.active_turn_id).where(ThreadRow.id == TurnRow.thread_id)),
-                or_(TurnRow.lease_owner == owner, TurnRow.lease_owner == "",
-                    TurnRow.lease_expires_at.is_(None), TurnRow.lease_expires_at <= timestamp)
-            ).values(lease_owner=owner, lease_expires_at=timestamp + timedelta(seconds=lease_seconds),
-                recovery_generation=case((TurnRow.lease_owner == owner, TurnRow.recovery_generation),
-                    else_=TurnRow.recovery_generation + 1), updated_at=timestamp)
-                .returning(TurnRow))).scalar_one_or_none()
+        async with self.transaction() as db:
+            row=await db.get(TurnRow,turn_id,with_for_update=True)
+            if not row or row.state in terminal:return None
+            thread=await db.get(ThreadRow,row.thread_id,with_for_update=True)
+            if not thread or thread.active_turn_id!=row.id:return None
+            if (row.lease_owner not in {"",owner} and row.lease_expires_at
+                    and utc_datetime(row.lease_expires_at)>timestamp):return None
+            if owner_limit and row.lease_owner!=owner:
+                if db.bind.dialect.name=="postgresql":
+                    from sqlalchemy.dialects.postgresql import insert
+                else:
+                    from sqlalchemy.dialects.sqlite import insert
+                await db.execute(insert(OwnerAdmissionRow).values(id=thread.owner_id,
+                    updated_at=timestamp).on_conflict_do_nothing())
+                admission=await db.get(OwnerAdmissionRow,thread.owner_id,with_for_update=True)
+                active=await db.scalar(select(func.count()).select_from(TurnRow).join(
+                    ThreadRow,ThreadRow.id==TurnRow.thread_id).where(
+                        ThreadRow.owner_id==thread.owner_id,TurnRow.id!=row.id,
+                        TurnRow.lease_owner!="",TurnRow.lease_expires_at>timestamp))
+                if active>=owner_limit:return None
+                admission.updated_at=timestamp
+            if row.lease_owner!=owner:row.recovery_generation+=1
+            row.lease_owner=owner
+            row.lease_expires_at=timestamp+timedelta(seconds=lease_seconds)
+            row.updated_at=timestamp
         return self.turn_view(row) if row else None
 
 
