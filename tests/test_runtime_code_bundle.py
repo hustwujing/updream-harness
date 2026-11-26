@@ -177,6 +177,8 @@ def test_code_bundle_is_signed_content_addressed_and_contains_cli_modules(tmp_pa
     root = Path(value["root"])
     assert digest == hashlib.sha256(data).hexdigest()
     assert (root / "site-packages/sandbox_runtime/app.py").is_file()
+    assert (root / "site-packages/sandbox_harness/common/observability/schema.py").is_file()
+    assert (root / "site-packages/sandbox_harness/common/observability/diagnostics.py").is_file()
     assert (root / "site-packages/editppt/cli.py").is_file()
     assert (root / "bin/sandbox-media").stat().st_mode & 0o111
     assert (root / "bin/sandbox-job").stat().st_mode & 0o111

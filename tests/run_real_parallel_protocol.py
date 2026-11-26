@@ -12,6 +12,7 @@ import mimetypes
 import os
 from pathlib import Path,PurePosixPath
 import shlex
+import shutil
 import subprocess
 import tarfile
 import time
@@ -28,7 +29,7 @@ from sandbox_harness.common.db.media_repository import MediaRepository
 ROOT=Path(__file__).resolve().parents[1]
 TERMINAL_JOBS={'SUCCEEDED','FAILED','CANCELLED','BLOCKED','UNKNOWN'}
 PROTOCOL_LOCK=ROOT/'.data/tmp/real-protocol.lock'
-SERIAL_CASES={'P13','P19','P21','P27'}
+SERIAL_CASES={'P13','P19','P21','P27','AS01'}
 
 
 def core_repository(settings):
@@ -1524,6 +1525,35 @@ async def case_p25(client,args):
         'one_group_confirmation':True,'immutable_handoff':True,'delivery_names':names}
 
 
+async def case_as01(client,args):
+    settings=load_platform_settings()
+    staging=[settings.data_root/'tmp'/'child-job-artifacts',
+        settings.data_root/'tmp'/'controlled-job-artifacts']
+    for path in staging:shutil.rmtree(path,ignore_errors=True)
+    result=await case_p24(client,args)
+    if not all(path.is_dir() for path in staging):
+        raise AssertionError('artifact staging directories were not recreated')
+    from sqlalchemy import select
+    from test_support.legacy_store import (JobAttemptRow)
+    identities=[result['parent_job_id'],result['nested_operation_job_id']]
+    store=core_repository(settings)
+    try:
+        async with store.connections() as db:
+            attempts=list((await db.execute(select(JobAttemptRow).where(
+                JobAttemptRow.job_id.in_(identities)).order_by(
+                    JobAttemptRow.job_id,JobAttemptRow.generation))).scalars().all())
+        grouped={identity:[row for row in attempts if row.job_id==identity] for identity in identities}
+        for identity,rows in grouped.items():
+            if not rows or any(row.outcome=='COLLECTION_RETRY' for row in rows):
+                raise AssertionError('artifact collection retried after staging recovery:'+identity)
+            external={row.external_execution_id for row in rows if row.external_execution_id}
+            if len(external)!=1:
+                raise AssertionError('external execution identity changed:'+identity)
+    finally:await store.close()
+    return {**result,'staging_fault_injected':True,'staging_recreated':True,
+        'collection_retry_count':0,'duplicate_external_execution':False}
+
+
 async def case_p26(client,args):
     thread,turn=await origin(client,args,'P26')
     video_source=await register_case_asset(thread['id'],turn['id'],
@@ -1638,6 +1668,7 @@ HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case
     'P16':case_p16,'P17':case_p17,'P18':case_p18,'P19':case_p19,'P20':case_p20,
     'P21':case_p21,'P22':case_p22,'P23':case_p23,'P24':case_p24,
     'P25':case_p25,'P26':case_p26,'P27':case_p27,
+    'AS01':case_as01,
     'K07':case_k07,'K08':case_k08,'K09':case_k09,'K10':case_k10,'K11':case_k11,
     'K12':case_k12,'K13':case_k13,'K14':case_k14,
     **{identity:(lambda client,args,identity=identity:case_skill_coverage(client,args,identity))
@@ -1647,7 +1678,7 @@ HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case
 async def main():
     parser=argparse.ArgumentParser();parser.add_argument('--base-url',default='http://127.0.0.1:24767/')
     parser.add_argument('--case',required=True,choices=[
-        *(f'P{value:02d}' for value in range(1,28)),*(f'K{value:02d}' for value in range(1,15))])
+        *(f'P{value:02d}' for value in range(1,28)),*(f'K{value:02d}' for value in range(1,15)),'AS01'])
     parser.add_argument('--report',type=Path,required=True);parser.add_argument('--harness',default='codex')
     parser.add_argument('--model',default='gpt-5.6-sol');parser.add_argument('--reasoning',default='deep')
     parser.add_argument('--timeout',type=float,default=1200)

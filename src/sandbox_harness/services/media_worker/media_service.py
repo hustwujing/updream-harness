@@ -36,7 +36,7 @@ async def serve() -> None:
 
 def run() -> None:
     settings = load_settings()
-    configure("media-worker", settings.data_root / "logs")
+    configure("media-worker", settings.data_root / "logs", settings)
     asyncio.run(serve())
 
 

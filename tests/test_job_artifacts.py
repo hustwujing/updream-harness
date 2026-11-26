@@ -1,4 +1,5 @@
 import hashlib
+import shutil
 import zipfile
 
 import pytest
@@ -99,6 +100,18 @@ async def setup(tmp_path,output):
     attempt=await store.claim_job(jobs[0].id,'worker','node',30)
     gateway=ArtifactGateway(store,ObjectStore(tmp_path/'objects'),tmp_path/'stage',maximum_bytes=1024*1024)
     return store,gateway,jobs[0],attempt
+
+
+async def test_artifact_gateway_recreates_staging_directory_removed_while_service_is_running(tmp_path):
+    output={'artifact_role':'data','output_disposition':'workspace','min_items':1,'max_items':1,
+        'mime_patterns':['text/*']}
+    store,gateway,job,attempt=await setup(tmp_path,output)
+    shutil.rmtree(gateway.staging_root)
+    try:
+        emitted=await gateway.emit(ArtifactEmission(job.id,attempt.generation,'data','main',0,
+            'result.txt',OutputDisposition.WORKSPACE,'text/plain'),chunks(b'recovered'))
+        assert emitted.size==len(b'recovered') and gateway.staging_root.is_dir()
+    finally:await store.close()
 
 
 async def test_role_and_disposition_are_distinct_and_collection_publishes_atomically(tmp_path):

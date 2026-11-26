@@ -19,6 +19,7 @@ import threading
 import time
 import traceback
 import uuid
+from string import Formatter
 
 from opentelemetry import trace
 from opentelemetry.context import Context
@@ -29,23 +30,22 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk._logs import LoggerProvider, LogRecordProcessor, ReadableLogRecord
 from opentelemetry._logs import LogRecord, SeverityNumber
 
+from sandbox_harness.common.observability.schema import (
+    BUSINESS_FIELDS, STANDARD_FIELDS, missing_required_fields, reportable_unknown_fields,
+    sanitize_fields, unknown_fields,
+)
+from sandbox_harness.common.observability.diagnostics import DiagnosticCapture, resolve_diagnostic_root
+
 _CONTEXT = ContextVar('updream_log_context', default={})
 _PROPAGATOR = TraceContextTextMapPropagator()
 _PROVIDER = TracerProvider(shutdown_on_exit=False)
 _TELEMETRY = None
-# Payloads and arbitrary extras never cross this allowlist. Business IDs have a namespace.
-BUSINESS = {'thread_id','turn_id','input_id','execution_id','sandbox_id','broker_id','request_id',
-    'tool_id','tool_name','model_request_id','upstream_request_id','interaction_id','job_id','artifact_id','item_id',
-    'reasoning_effort','generation','runtime_sequence','attempt','partial','reused','keep_attached','harness','model',
-    'state','previous_state','outcome','reason','error_code','failure_origin','count','bytes',
-    'input_tokens','output_tokens','usage_source','duration_ms','first_output_ms','header_ms','queue_ms','namespace','dropped_count','gap_count',
-    'export_failures','disk_errors','last_export_http_status','last_sequence','retained_from','source_service','source_instance','origin','source_event_id',
-    'source_trace_id','source_span_id','object_digest','image_digest','exit_code','request_bytes','response_bytes','ingress',
-    'bundle_version','skill_count'}
-STANDARD = {'http.request.method','http.route','http.response.status_code','http.request.resend_count',
-    'error.type','exception.type','exception.stacktrace','code.function.name','code.file.path','code.line.number'}
+_DIAGNOSTICS = None
+_SCHEMA_STRICT = False
+# Compatibility exports remain the source for decorators and authenticated ingest.
+BUSINESS = BUSINESS_FIELDS
+STANDARD = STANDARD_FIELDS
 EVENT = re.compile(r'^[a-z][a-z0-9_.-]{0,119}$')
-SECRET = re.compile(r'(?i)(?:bearer\s+\S+|sk-[a-z0-9_-]{8,}|(?:password|secret|token|api[_-]?key)\s*[=:]\s*\S+)')
 
 DESCRIPTIONS = {
     'turn.accepted':'Turn accepted; duplicate submissions reuse the existing Turn',
@@ -65,23 +65,8 @@ DESCRIPTIONS = {
 
 def describe(name):return DESCRIPTIONS.get(name,name.replace('.',' '))
 
-def sanitize(fields):
-    result = {}
-    for key, value in fields.items():
-        original = key.removeprefix('updream.')
-        if original in BUSINESS:
-            key = 'updream.' + original
-        elif key not in STANDARD:
-            continue
-        if value is None: continue
-        if hasattr(value, 'value'): value = value.value
-        if not isinstance(value, (str, int, float, bool)): continue
-        if isinstance(value, str):
-            value = SECRET.sub('[REDACTED]', value)
-            if original.endswith('_id') and not re.fullmatch(r'[A-Za-z0-9_.:@/-]{1,256}',value):value='invalid-id'
-            value = value.replace('\r',' ').replace('\n',' ')[:2048 if key=='exception.stacktrace' else 256]
-        result[key] = value
-    return result
+def sanitize(fields, *, strict=False):
+    return sanitize_fields(fields,strict=strict)
 
 @contextmanager
 def bind(**fields):
@@ -126,6 +111,19 @@ def safe_exception(exc):
 
 def event(name, *, level=logging.INFO, exc=None, **fields):
     if not EVENT.fullmatch(name): name = 'telemetry.invalid_event_name'
+    unknown=unknown_fields(fields)
+    missing=missing_required_fields(name,{**_CONTEXT.get(),**fields})
+    if unknown or missing:
+        if _SCHEMA_STRICT or os.getenv('SANDBOX_HARNESS_LOG_SCHEMA_STRICT','').lower() in {'1','true','yes','on'}:
+            if unknown:sanitize(fields,strict=True)
+            raise ValueError('missing_telemetry_fields:'+name+':'+','.join(missing))
+        if _TELEMETRY is not None:_TELEMETRY.increment('schema_violations')
+        violation=sanitize({'schema_event_name':name,'violation_kind':
+            'unknown_and_missing' if unknown and missing else 'unknown' if unknown else 'missing',
+            'unknown_fields':reportable_unknown_fields(unknown),'unknown_field_count':len(unknown),
+            'missing_fields':','.join(missing),'missing_field_count':len(missing)})
+        logging.getLogger('updream.events').log(logging.WARNING,'telemetry.schema_violation',
+            extra={'event_name':'telemetry.schema_violation','event_attributes':violation},stacklevel=2)
     attrs = {**_CONTEXT.get(), **sanitize(fields)}
     if exc is not None:
         attrs.update(safe_exception(exc));attrs.setdefault("updream.failure_origin",failure_origin(type(exc).__name__))
@@ -229,20 +227,48 @@ def observed_sync(name):
         return wrapped
     return decorate
 
+def resolve_log_storage(default_root, *, data_root=None, configured_dir=None,
+        filename_template='{service}-{instance}.telemetry.jsonl'):
+    base=Path(data_root or Path(default_root).parent).resolve()
+    configured=Path(configured_dir) if configured_dir else Path(default_root)
+    root=(configured if configured.is_absolute() else base/configured).resolve()
+    try:root.relative_to(base)
+    except ValueError as exc:raise ValueError('log_directory_outside_data_root') from exc
+    template=filename_template or '{service}-{instance}.telemetry.jsonl'
+    fields=[]
+    try:
+        for _,field,_,_ in Formatter().parse(template):
+            if field:fields.append(field)
+        rendered=template.format(service='service',instance='instance')
+    except (KeyError,ValueError,IndexError) as exc:
+        raise ValueError('invalid_log_filename_template') from exc
+    if (set(fields)-{'service','instance'} or '/' in template or '\\' in template
+            or '..' in template or not re.fullmatch(r'[A-Za-z0-9_.{}-]{1,180}',template)
+            or not re.fullmatch(r'[A-Za-z0-9_.-]{1,220}\.jsonl',rendered)):
+        raise ValueError('invalid_log_filename_template')
+    return root,template
+
+
 class JsonSink:
     """One namespace-wide cap, protected across API/Gateway processes with flock."""
-    def __init__(self, root, service, instance, *, max_bytes=2*1024**3, days=7, segment_bytes=8*1024**2):
+    def __init__(self, root, service, instance, *, max_bytes=2*1024**3, days=7,
+            segment_bytes=8*1024**2,segment_max_age_seconds=86400,
+            filename_template='{service}-{instance}.telemetry.jsonl'):
         self.root=Path(root);self.root.mkdir(parents=True,exist_ok=True,mode=0o700)
-        self.path=self.root/f'{service}-{instance}.telemetry.jsonl'
+        self.path=self.root/filename_template.format(service=service,instance=instance)
         self.max_bytes=max_bytes;self.days=days;self.segment_bytes=min(segment_bytes,max_bytes)
+        self.segment_max_age_seconds=segment_max_age_seconds
         self.started=time.time()
     def write(self, rows):
         import fcntl
+        missing=not self.root.exists()
+        self.root.mkdir(parents=True,exist_ok=True,mode=0o700)
+        if self.root.is_symlink() or not self.root.is_dir():raise ValueError('invalid_telemetry_directory')
         data=''.join(json.dumps(row,ensure_ascii=False,separators=(',',':'))+'\n' for row in rows).encode()
         if len(data)>self.max_bytes: raise ValueError('telemetry_batch_exceeds_disk_budget')
         with (self.root/'.retention.lock').open('a') as lock:
             fcntl.flock(lock,fcntl.LOCK_EX)
-            if self.path.exists() and (self.path.stat().st_size+len(data)>self.segment_bytes or time.time()-self.started>86400):
+            if self.path.exists() and (self.path.stat().st_size+len(data)>self.segment_bytes or time.time()-self.started>self.segment_max_age_seconds):
                 self.path.rename(self.root/f'{self.path.stem}-{time.time_ns()}.telemetry.jsonl');self.started=time.time()
             files=sorted(self.root.glob('*.telemetry.jsonl'),key=lambda p:p.stat().st_mtime)
             total=sum(p.stat().st_size for p in files)
@@ -252,6 +278,7 @@ class JsonSink:
                     total-=info.st_size;path.unlink(missing_ok=True)
             fd=os.open(self.path,os.O_WRONLY|os.O_APPEND|os.O_CREAT|os.O_NOFOLLOW,0o600)
             with os.fdopen(fd,'ab') as stream: stream.write(data)
+        return missing
 
 class Processor(SpanProcessor,LogRecordProcessor):
     def __init__(self, telemetry): self.telemetry=telemetry
@@ -307,15 +334,20 @@ def runtime_console_handler(service,stream=None):
     return ConsoleJsonHandler(service,stream) if service in {'runtime','runtime-bootstrap'} else None
 
 class Telemetry:
-    def __init__(self,service,root,*,queue_size=8192,max_bytes=2*1024**3,days=7,release='unknown'):
+    def __init__(self,service,root,*,queue_size=8192,max_bytes=2*1024**3,days=7,release='unknown',
+            segment_bytes=8*1024**2,segment_max_age_seconds=86400,ring_capacity=8192,
+            filename_template='{service}-{instance}.telemetry.jsonl',otlp_timeout_seconds=2):
         if not 1<=queue_size<=65536 or max_bytes<1024 or not 1<=days<=3650:raise ValueError('invalid_telemetry_limits')
         self.resource=Resource.create({'service.namespace':'updream-harness','service.name':service,
             'service.instance.id':uuid.uuid4().hex,'service.version':release,
             'deployment.environment.name':os.getenv('SANDBOX_HARNESS_ENVIRONMENT','local')})
         self.instance=self.resource.attributes['service.instance.id'];self.service=service
-        self.sink=JsonSink(root,service,self.instance,max_bytes=max_bytes,days=days)
-        self.queue=queue.Queue(queue_size);self.stats={'dropped_records':0,'disk_errors':0,'export_failures':0,'library_warnings':0}
-        self.guard=threading.Lock();self.ring=deque(maxlen=8192);self.sequence=0;self.stopping=False;self.last_prune=time.monotonic()
+        self.sink=JsonSink(root,service,self.instance,max_bytes=max_bytes,days=days,
+            segment_bytes=segment_bytes,segment_max_age_seconds=segment_max_age_seconds,
+            filename_template=filename_template)
+        self.queue=queue.Queue(queue_size);self.stats={'dropped_records':0,'disk_errors':0,'export_failures':0,'library_warnings':0,'schema_violations':0,'storage_recoveries':0}
+        self.guard=threading.Lock();self.ring=deque(maxlen=ring_capacity);self.sequence=0;self.stopping=False;self.last_prune=time.monotonic()
+        self.otlp_timeout_seconds=otlp_timeout_seconds
         self.remote=None;self.remote_guard=threading.Lock()
         self.provider=TracerProvider(resource=self.resource,shutdown_on_exit=False)
         self.logs=LoggerProvider(resource=self.resource,shutdown_on_exit=False)
@@ -346,8 +378,8 @@ class Telemetry:
         with self.remote_guard:
             if self.remote:
                 for exporter in self.remote:exporter.shutdown()
-            self.remote=(OTLPLogExporter(endpoint=endpoint.rstrip('/')+'/logs',headers=headers or {},timeout=2,session=session(),compression=Compression.NoCompression),
-                OTLPSpanExporter(endpoint=endpoint.rstrip('/')+'/traces',headers=headers or {},timeout=2,session=session(),compression=Compression.NoCompression)) if endpoint else None
+            self.remote=(OTLPLogExporter(endpoint=endpoint.rstrip('/')+'/logs',headers=headers or {},timeout=self.otlp_timeout_seconds,session=session(),compression=Compression.NoCompression),
+                OTLPSpanExporter(endpoint=endpoint.rstrip('/')+'/traces',headers=headers or {},timeout=self.otlp_timeout_seconds,session=session(),compression=Compression.NoCompression)) if endpoint else None
     def _row(self,kind,value):
         if kind=='import':return value
         resource={k:v for k,v in dict(value.resource.attributes).items() if k.startswith(('service.','deployment.','telemetry.sdk.'))}
@@ -395,7 +427,8 @@ class Telemetry:
                     rows.append({'schema_version':1,'signal':'log','timestamp':datetime.now(timezone.utc).isoformat(),
                         'event_name':'telemetry.records.dropped','severity_text':'WARNING','resource':dict(self.resource.attributes),
                         'attributes':{'updream.dropped_count':dropped-last_dropped}});last_dropped=dropped
-                try:self.sink.write(rows)
+                try:
+                    if self.sink.write(rows):self.increment('storage_recoveries')
                 except Exception:self.increment('disk_errors')
                 with self.remote_guard:
                     if self.remote:
@@ -430,23 +463,62 @@ def export_headers():
     from opentelemetry.util.re import parse_env_headers
     return parse_env_headers(os.getenv("OTEL_EXPORTER_OTLP_HEADERS",""),liberal=True)
 
-def configure(service,root):
-    global _PROVIDER,_TELEMETRY
+def telemetry_configuration(service,root,settings=None):
+    data_root=Path(getattr(settings,'data_root',Path(root).parent))
+    configured_dir=getattr(settings,'log_dir',os.getenv('SANDBOX_HARNESS_LOG_DIR',''))
+    filename_template=getattr(settings,'log_file_template',os.getenv(
+        'SANDBOX_HARNESS_LOG_FILE_TEMPLATE','{service}-{instance}.telemetry.jsonl'))
+    log_root,filename_template=resolve_log_storage(root,data_root=data_root,
+        configured_dir=configured_dir,filename_template=filename_template)
+    get=lambda name,default:getattr(settings,name,default)
+    return {
+        'root':log_root,'filename_template':filename_template,
+        'queue_size':get('log_queue_size',int(os.getenv('SANDBOX_HARNESS_LOG_QUEUE_SIZE','8192'))),
+        'ring_capacity':get('log_ring_capacity',8192),
+        'max_bytes':(get('runtime_log_max_bytes',16*1024**2) if service=='runtime' else
+            get('log_max_bytes',int(os.getenv('SANDBOX_HARNESS_LOG_MAX_BYTES',str(2*1024**3))))),
+        'segment_bytes':get('log_segment_bytes',8*1024**2),
+        'segment_max_age_seconds':get('log_segment_max_age_seconds',86400),
+        'days':get('log_retention_days',int(os.getenv('SANDBOX_HARNESS_LOG_RETENTION_DAYS','7'))),
+        'otlp_timeout_seconds':get('log_otlp_timeout_seconds',2),
+        'level':getattr(settings,'log_level',os.getenv('SANDBOX_HARNESS_LOG_LEVEL','INFO')).upper(),
+        'schema_strict':get('log_schema_strict',False),
+    }
+
+def configure(service,root,settings=None):
+    global _PROVIDER,_TELEMETRY,_DIAGNOSTICS,_SCHEMA_STRICT
     if _TELEMETRY:return _TELEMETRY
     release=os.getenv('SANDBOX_HARNESS_RELEASE','unknown')
     if release=='unknown':
         import subprocess
         try:release=subprocess.check_output(['git','rev-parse','--short=12','HEAD'],stderr=subprocess.DEVNULL,timeout=2,text=True).strip()
         except Exception:pass
-    _TELEMETRY=Telemetry(service,root,queue_size=int(os.getenv('SANDBOX_HARNESS_LOG_QUEUE_SIZE','8192')),
-        max_bytes=int(os.getenv('SANDBOX_HARNESS_LOG_MAX_BYTES',str(16*1024**2 if service=='runtime' else 2*1024**3))),
-        days=int(os.getenv('SANDBOX_HARNESS_LOG_RETENTION_DAYS','7')),release=release)
+    config=telemetry_configuration(service,root,settings);_SCHEMA_STRICT=config['schema_strict']
+    _TELEMETRY=Telemetry(service,config['root'],queue_size=config['queue_size'],
+        max_bytes=config['max_bytes'],days=config['days'],release=release,
+        segment_bytes=config['segment_bytes'],segment_max_age_seconds=config['segment_max_age_seconds'],
+        ring_capacity=config['ring_capacity'],filename_template=config['filename_template'],
+        otlp_timeout_seconds=config['otlp_timeout_seconds'])
+    if settings is not None:
+        _DIAGNOSTICS=DiagnosticCapture.from_settings(settings,service,_TELEMETRY.instance)
+    else:
+        mode=os.getenv('SANDBOX_HARNESS_DIAGNOSTIC_CAPTURE','off')
+        diagnostic_root=resolve_diagnostic_root(Path(root).parent,
+            os.getenv('SANDBOX_HARNESS_DIAGNOSTIC_DIR','diagnostics'))
+        _DIAGNOSTICS=DiagnosticCapture(diagnostic_root,service,_TELEMETRY.instance,mode=mode,
+            log_level=config['level'],session=os.getenv('SANDBOX_HARNESS_DIAGNOSTIC_CAPTURE_SESSION',''),
+            trace_id=os.getenv('SANDBOX_HARNESS_DIAGNOSTIC_TRACE_ID',''),
+            filename_template=os.getenv('SANDBOX_HARNESS_DIAGNOSTIC_FILE_TEMPLATE',
+                '{service}-{instance}-{session}.diagnostic.jsonl'),
+            max_body_bytes=int(os.getenv('SANDBOX_HARNESS_DIAGNOSTIC_MAX_BODY_BYTES',str(256*1024))),
+            max_bytes=int(os.getenv('SANDBOX_HARNESS_DIAGNOSTIC_MAX_BYTES',str(256*1024**2))),
+            ttl_hours=int(os.getenv('SANDBOX_HARNESS_DIAGNOSTIC_TTL_HOURS','24')))
     _PROVIDER=_TELEMETRY.provider
     root_logger=logging.getLogger();handlers=[_TELEMETRY.handler]
     _TELEMETRY.console_handler=runtime_console_handler(service)
     if _TELEMETRY.console_handler:handlers.append(_TELEMETRY.console_handler)
     root_logger.handlers=handlers
-    root_logger.setLevel(os.getenv('SANDBOX_HARNESS_LOG_LEVEL','INFO').upper())
+    root_logger.setLevel(config['level'])
     for name in ('uvicorn','uvicorn.error','uvicorn.access'):
         log=logging.getLogger(name);log.handlers=[];log.propagate=True
     endpoint=os.getenv('OTEL_EXPORTER_OTLP_ENDPOINT','')
@@ -459,16 +531,22 @@ def configure(service,root):
     sys.excepthook=exception_hook
     logging.captureWarnings(True)
     atexit.register(_TELEMETRY.close);event('service.started')
+    if _DIAGNOSTICS.mode!='off':event('diagnostic.capture.configured',level=logging.WARNING,
+        capture_mode=_DIAGNOSTICS.mode,capture_session=_DIAGNOSTICS.session)
     return _TELEMETRY
 
 def telemetry():return _TELEMETRY
+def diagnostics():
+    return _DIAGNOSTICS if _DIAGNOSTICS is not None and _DIAGNOSTICS.mode!='off' else None
 
 class RequestLoggingMiddleware:
     def __init__(self,app,service):self.app=app;self.service=service
     async def __call__(self,scope,receive,send):
         if scope['type']!='http' or scope.get('path','').startswith('/v1/telemetry/') or scope.get('path')=='/v1/diagnostics':return await self.app(scope,receive,send)
         headers={k.decode().lower():v.decode() for k,v in scope.get('headers',[]) if k.lower() in {b'traceparent',b'tracestate',b'x-updream-ingress'}}
-        request_id=uuid.uuid4().hex;status=0;response_bytes=0;started=time.monotonic()
+        request_id=uuid.uuid4().hex;status=0;response_bytes=0;started=time.monotonic();response_headers=[]
+        diagnostic=diagnostics();request_body=diagnostic.accumulator() if diagnostic else None
+        response_body=diagnostic.accumulator() if diagnostic else None
         quiet=scope['method']=='GET' and not scope['path'].endswith('/events')
         ctx=scope.setdefault('state',{}).setdefault('log_context',{})
         if headers.get('x-updream-ingress') in {'direct','frpc'}:ctx['ingress']=headers['x-updream-ingress']
@@ -476,14 +554,20 @@ class RequestLoggingMiddleware:
         with bind(request_id=request_id,**ctx),_PROVIDER.get_tracer('updream-harness').start_as_current_span(
             'HTTP '+scope['method'],context=remote_context(headers),kind=SpanKind.SERVER,
             record_exception=False,set_status_on_exception=False) as span:
+            async def logged_receive():
+                message=await receive()
+                if request_body is not None and message.get('type')=='http.request':request_body.update(message.get('body',b''))
+                return message
             async def logged_send(message):
-                nonlocal status,response_bytes
-                if message["type"]=="http.response.body":response_bytes+=len(message.get("body",b""))
+                nonlocal status,response_bytes,response_headers
+                if message["type"]=="http.response.body":
+                    body=message.get("body",b"");response_bytes+=len(body)
+                    if response_body is not None:response_body.update(body)
                 if message['type']=='http.response.start':
-                    status=message['status'];message={**message,'headers':[(key,value) for key,value in message.get('headers',[]) if key.lower() not in {b'x-request-id',b'x-trace-id'}]+[
+                    status=message['status'];response_headers=list(message.get('headers',[]));message={**message,'headers':[(key,value) for key,value in response_headers if key.lower() not in {b'x-request-id',b'x-trace-id'}]+[
                         (b'x-request-id',request_id.encode()),(b'x-trace-id',f'{span.get_span_context().trace_id:032x}'.encode())]}
                 await send(message)
-            try:await self.app(scope,receive,logged_send)
+            try:await self.app(scope,logged_receive,logged_send)
             except BaseException as exc:
                 cancelled=isinstance(exc,asyncio.CancelledError)
                 if not cancelled:span.set_status(Status(StatusCode.ERROR))
@@ -496,3 +580,18 @@ class RequestLoggingMiddleware:
                 span.update_name(scope['method']+' '+route);span.set_attributes(sanitize(attrs))
                 if status>=500:span.set_status(Status(StatusCode.ERROR))
                 event('http.request.completed',level=logging.ERROR if status>=500 else logging.WARNING if status>=400 else logging.DEBUG if quiet else logging.INFO,**attrs)
+                if diagnostic is not None and request_body is not None and response_body is not None:
+                    try:
+                        raw_headers=scope.get('headers',[]);host=next((value.decode('latin1') for key,value in raw_headers if key.lower()==b'host'),'unknown')
+                        captured=await asyncio.to_thread(diagnostic.record_http,direction='ingress',
+                            method=scope['method'],url=f"{scope.get('scheme','http')}://{host}{route}",
+                            request_headers=raw_headers,request_body=request_body,response_headers=response_headers,
+                            response_body=response_body,status_code=status,request_id=request_id,
+                            duration_ms=(time.monotonic()-started)*1000)
+                        if captured:event('diagnostic.http.captured',level=logging.DEBUG,
+                            capture_mode=diagnostic.mode,capture_session=diagnostic.session,
+                            request_bytes=request_body.size,response_bytes=response_body.size,
+                            duration_ms=round((time.monotonic()-started)*1000,3))
+                    except Exception as capture_error:
+                        event('diagnostic.capture.failed',level=logging.WARNING,exc=capture_error,
+                            capture_mode=diagnostic.mode,capture_session=diagnostic.session)

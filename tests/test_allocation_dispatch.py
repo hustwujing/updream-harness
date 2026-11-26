@@ -67,8 +67,11 @@ async def test_stale_waiter_cannot_enqueue_after_replacement(tmp_path):
     finally:await store.close()
 
 
-async def test_definitive_capacity_rejection_is_durable_and_retryable(tmp_path):
+async def test_definitive_capacity_rejection_is_durable_and_retryable(tmp_path,monkeypatch):
+    import sandbox_harness.services.allocation_worker.allocation_dispatch as allocation_module
     from sandbox_harness.services.allocation_worker.allocation_dispatch import (AllocationClient, AllocationService)
+    lifecycle=[]
+    monkeypatch.setattr(allocation_module,'event',lambda name,**fields:lifecycle.append((name,fields)))
     class Provider(FakeSandboxBackend):
         calls=0
         async def create(self,request):
@@ -89,6 +92,13 @@ async def test_definitive_capacity_rejection_is_durable_and_retryable(tmp_path):
                 with pytest.raises(SandboxRateLimited):await waiter
             else:assert (await waiter).handle.allocation_id==request.allocation_id
         assert backend.calls==2
+        assert [name for name,_ in lifecycle].count('sandbox.allocation.create.started')==2
+        rejected_event=next(fields for name,fields in lifecycle
+            if name=='sandbox.allocation.create.rejected')
+        completed_event=next(fields for name,fields in lifecycle
+            if name=='sandbox.allocation.create.completed')
+        assert rejected_event['state_after']=='REJECTED'
+        assert completed_event['state_after']=='READY' and completed_event['sandbox_id']
     finally:await store.close()
 
 

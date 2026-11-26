@@ -9,6 +9,8 @@ from urllib.parse import urlencode, urlsplit
 
 import httpx
 
+from sandbox_harness.common.observability.http import (observed_async_client)
+
 
 class ArkAssetError(RuntimeError):
     def __init__(self, code: str):
@@ -69,7 +71,7 @@ class ArkAssets:
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
         query, headers = self._headers(action, body, datetime.datetime.now(datetime.timezone.utc))
         try:
-            async with httpx.AsyncClient(timeout=30, trust_env=False, transport=self.transport) as client:
+            async with observed_async_client('ark-assets',timeout=30, trust_env=False, transport=self.transport) as client:
                 response = await client.post(self.endpoint + "/?" + query, content=body, headers=headers)
         except httpx.HTTPError as exc:
             raise ArkAssetError("ark_asset_transport_error") from exc

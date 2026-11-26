@@ -27,6 +27,7 @@ from redis.asyncio import Redis
 import uvicorn
 
 from sandbox_harness.common.observability.observability import (configure, RequestLoggingMiddleware, event, enrich, add_link, telemetry, operation, carrier)
+from sandbox_harness.common.observability.http import (observed_async_client)
 from sandbox_harness.common.security.capability import (CapabilityCodec)
 from sandbox_harness.common.security.grants import (GrantAuthority)
 from sandbox_harness.common.artifacts.artifact_gateway import (ArtifactEmission, ArtifactGateway)
@@ -40,6 +41,7 @@ from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.catalog.execution_readiness import (ExecutionReadiness)
 from sandbox_harness.common.jobs.review import (ReviewSubmission, ReviewerCoordinator)
 from sandbox_harness.common.configuration.config import (Settings, load_settings, validate_service_settings)
+from sandbox_harness.common.storage.directories import (ensure_private_directory)
 from sandbox_harness.common.configuration.databases import (DatabaseSettings)
 from sandbox_harness.common.contracts.domain import (Harness, MediaDraftCreate, now)
 from sandbox_harness.common.models.model_routes import (ModelRoutes)
@@ -348,7 +350,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         except Exception as exc:
             app.state.redis_available=False;app.state.redis_last_error=type(exc).__name__
             event("gateway.redis.degraded_start",level=logging.WARNING,
-                exception_type=type(exc).__name__)
+                exc=exc)
         await activity_store.initialize()
 
         async def authorize_public(token: str):
@@ -457,7 +459,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             count=fallback_rate_count(telemetry_fallback,claims.nonce,window,
                 settings.gateway_telemetry_fallback_capacity)
             event("telemetry.rate_limit_fallback",level=logging.WARNING,
-                exception_type=type(exc).__name__)
+                exc=exc)
         if count>600:raise HTTPException(429,"Telemetry rate exceeded")
         body=bytearray()
         async for part in request.stream():
@@ -818,7 +820,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         except (KeyError, ValueError, OSError):
             raise HTTPException(404, "Media output not found")
         except Exception as exc:
-            event("media.output.read_failed", level=40, job_id=job_id, exception_type=type(exc).__name__)
+            event("media.output.read_failed", level=40, job_id=job_id, exc=exc)
             raise HTTPException(502, "Media output is temporarily unavailable")
         if len(data) != output["size"]:
             raise HTTPException(409, "Media output size mismatch")
@@ -854,7 +856,8 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             try:declared_size=int(declared)
             except ValueError:raise HTTPException(400,"invalid_content_length")
             if declared_size>MAX_SITE_ARCHIVE_BYTES:raise HTTPException(413,"site_archive_too_large")
-        staging_root=settings.data_root/"tmp"/"site-stages";staging_root.mkdir(parents=True,exist_ok=True)
+        staging_root=settings.data_root/"tmp"/"site-stages"
+        ensure_private_directory(staging_root,boundary=settings.data_root/"tmp")
         package=None;archive_path=None
         try:
             with NamedTemporaryFile(dir=staging_root,
@@ -926,7 +929,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         client_key = prefix + "\0" + base_url
         client = clients.get(client_key)
         if client is None:
-            client = httpx.AsyncClient(base_url=base_url.rstrip("/"),
+            client = observed_async_client('model-provider',base_url=base_url.rstrip("/"),
                 timeout=httpx.Timeout(None, connect=20), trust_env=False)
             clients[client_key] = client
         suffix = upstream_suffix(route, prefix)
@@ -1103,7 +1106,7 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
 
 def run() -> None:
     settings = load_settings()
-    configure("gateway", settings.data_root / "logs")
+    configure("gateway", settings.data_root / "logs", settings)
     uvicorn.run(create_gateway(settings), host=settings.gateway_bind_host, port=settings.gateway_bind_port, log_config=None, access_log=False)
 
 

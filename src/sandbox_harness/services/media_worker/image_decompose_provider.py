@@ -14,6 +14,8 @@ import httpx
 
 from sandbox_harness.common.artifacts.artifact_gateway import (MimeRegistry)
 from sandbox_harness.common.contracts.media_provider import (DownloadedMedia, ProviderResult)
+from sandbox_harness.common.observability.http import (observed_async_client)
+from sandbox_harness.common.storage.directories import (ensure_private_directory)
 
 
 class ImageDecomposeProvider:
@@ -31,7 +33,7 @@ class ImageDecomposeProvider:
     def _client(self):
         headers={}
         if self.cookie_path.is_file():headers['Cookie']=self.cookie_path.read_text().strip()
-        return httpx.AsyncClient(base_url=self.base_url,headers=headers,timeout=120,
+        return observed_async_client('image-inference',base_url=self.base_url,headers=headers,timeout=120,
             trust_env=False,follow_redirects=False,transport=self.transport)
 
     @staticmethod
@@ -48,7 +50,7 @@ class ImageDecomposeProvider:
             return ProviderResult('failed',error_code='provider_input_invalid')
         # Establish and durably retain the session BEFORE a create can be sent.
         # This lock coordinates first use across replacement/concurrent workers.
-        self.root.mkdir(parents=True,exist_ok=True)
+        ensure_private_directory(self.root,boundary=self.root.parent)
         with (self.root/'session.lock').open('a') as lock:
             try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError:
@@ -146,7 +148,7 @@ class ImageDecomposeProvider:
 
     async def download(self,job,output,*,staging_root,prefix,maximum_bytes):
         identity=self._id(job['provider_job_id']);artifact_id=self._id(output['artifact_id'])
-        staging_root.mkdir(parents=True,exist_ok=True)
+        ensure_private_directory(staging_root,boundary=staging_root.parent)
         with NamedTemporaryFile(dir=staging_root,prefix=prefix,delete=False) as stream:
             path=Path(stream.name);digest=hashlib.sha256();size=0
             try:

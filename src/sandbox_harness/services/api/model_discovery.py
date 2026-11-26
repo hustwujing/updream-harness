@@ -12,11 +12,13 @@ from typing import Any
 import httpx
 
 from sandbox_harness.common.observability.observability import (event)
+from sandbox_harness.common.observability.http import (observed_async_client)
 from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.configuration.config import (Settings)
 from sandbox_harness.common.contracts.domain import (Harness)
 from sandbox_harness.common.models.model_routes import (ModelRoutes)
 from sandbox_harness.common.models.model_health import (classify_response, reduce_health)
+from sandbox_harness.common.storage.directories import (ensure_private_directory)
 
 
 logger = logging.getLogger(__name__)
@@ -141,7 +143,7 @@ class ModelDiscovery:
             self.last_refresh_at,self.last_attempt_at,self.last_discovered,self.last_available,
             copy.deepcopy(self.inventory_status))
         attempted_at=datetime.now(timezone.utc).isoformat()
-        async with httpx.AsyncClient(
+        async with observed_async_client('model-provider',
             timeout=self.settings.model_catalog_timeout_seconds,
             trust_env=False,
             transport=self.transport,
@@ -291,7 +293,7 @@ class ModelDiscovery:
                 "available":self.last_available,
                 "inventory":{harness.value:state for harness,state in self.inventory_status.items()}},
         }
-        self.snapshot.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_directory(self.snapshot.parent,boundary=self.snapshot.parent.parent)
         temporary = self.snapshot.with_suffix(".tmp")
         temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
         temporary.replace(self.snapshot)

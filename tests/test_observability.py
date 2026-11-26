@@ -1,9 +1,12 @@
 import asyncio
+import ast
+import hashlib
 import io
 import json
 import logging
 import os
 from pathlib import Path
+import shutil
 import threading
 import time
 from types import SimpleNamespace
@@ -14,6 +17,7 @@ from fastapi import FastAPI,Request
 from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import ExportLogsServiceRequest
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
 import sandbox_harness.common.observability.observability as obs
+from sandbox_harness.common.observability.diagnostics import DiagnosticCapture
 from sandbox_harness.tools.log_query import (query)
 from sandbox_harness.common.observability.telemetry_ingest import (decode_otlp)
 
@@ -63,6 +67,213 @@ def telemetry(tmp_path,monkeypatch):
 def rows(value):
     assert value.flush(5)
     return [json.loads(line) for path in value.sink.root.glob('*.telemetry.jsonl') for line in path.read_text().splitlines()]
+
+
+def test_event_field_contract_rejects_unknown_fields_in_strict_mode():
+    with pytest.raises(ValueError,match='unknown_telemetry_fields:private_payload'):
+        obs.sanitize({'turn_id':'turn-1','private_payload':'do-not-log'},strict=True)
+
+
+def test_event_field_contract_reports_unknown_fields_without_payload(telemetry):
+    obs.event('test.schema',turn_id='turn-1',private_payload='do-not-log')
+
+    records=rows(telemetry)
+    violation=next(row for row in records if row['event_name']=='telemetry.schema_violation')
+    assert violation['attributes']['updream.schema_event_name']=='test.schema'
+    assert violation['attributes']['updream.unknown_fields']=='private_payload'
+    assert violation['attributes']['updream.unknown_field_count']==1
+    assert telemetry.status()['schema_violations']==1
+    assert 'do-not-log' not in json.dumps(records)
+
+
+def test_critical_event_contract_reports_missing_required_fields(telemetry):
+    obs.event('job.submission.started',job_id='job-1')
+    violation=next(row for row in rows(telemetry) if row['event_name']=='telemetry.schema_violation')
+    assert violation['attributes']['updream.violation_kind']=='missing'
+    assert set(violation['attributes']['updream.missing_fields'].split(','))=={
+        'generation','state_after','worker_id'}
+
+
+def test_static_observability_calls_use_canonical_declared_fields():
+    from sandbox_harness.common.observability.schema import ALIASES,canonical_name
+    failures=[]
+    for path in (Path(__file__).parents[1]/'src'/'sandbox_harness').rglob('*.py'):
+        tree=ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node,ast.Call):continue
+            function=node.func.id if isinstance(node.func,ast.Name) else (
+                node.func.attr if isinstance(node.func,ast.Attribute) else '')
+            if function not in {'event','operation','bind','enrich'}:continue
+            for keyword in node.keywords:
+                if keyword.arg is None or keyword.arg in {'level','exc','parent','new_trace','kind'}:continue
+                if canonical_name(keyword.arg) is None or keyword.arg in ALIASES:
+                    failures.append(f'{path.relative_to(Path(__file__).parents[1])}:{node.lineno}:{keyword.arg}')
+    assert failures==[]
+
+
+def test_log_path_and_filename_are_configurable_but_confined(tmp_path):
+    data_root=tmp_path/'state';default=data_root/'logs'
+    root,template=obs.resolve_log_storage(default,data_root=data_root,
+        configured_dir='custom/logs',filename_template='{service}.{instance}.jsonl')
+    sink=obs.JsonSink(root,'api','instance-1',filename_template=template)
+    assert sink.path==data_root/'custom/logs'/'api.instance-1.jsonl'
+    with pytest.raises(ValueError,match='log_directory_outside_data_root'):
+        obs.resolve_log_storage(default,data_root=data_root,configured_dir='../outside')
+    for value in ('../escape.jsonl','nested/{service}.jsonl','{unknown}.jsonl'):
+        with pytest.raises(ValueError,match='invalid_log_filename_template'):
+            obs.resolve_log_storage(default,data_root=data_root,filename_template=value)
+
+
+def test_settings_centralize_operational_log_configuration(tmp_path):
+    from sandbox_harness.common.configuration.config import Settings
+    settings=Settings(data_root=tmp_path,log_level='DEBUG',log_dir=Path('service-logs'),
+        log_file_template='{service}.{instance}.jsonl',log_queue_size=321,
+        log_ring_capacity=654,log_max_bytes=8_000_000,runtime_log_max_bytes=4_000_000,
+        log_segment_bytes=2_000_000,log_segment_max_age_seconds=600,
+        log_retention_days=3,log_otlp_timeout_seconds=7,log_schema_strict=True,
+        diagnostic_capture='payload',diagnostic_dir=Path('captures'),
+        diagnostic_file_template='{service}.{session}.diagnostic.jsonl',
+        diagnostic_capture_session='trace-debug',diagnostic_trace_id='a'*32,
+        diagnostic_max_body_bytes=1234,diagnostic_max_bytes=5678,diagnostic_ttl_hours=6)
+
+    host=obs.telemetry_configuration('api',tmp_path/'logs',settings)
+    runtime=obs.telemetry_configuration('runtime',tmp_path/'logs',settings)
+
+    assert host['root']==tmp_path/'service-logs'
+    assert host['filename_template']=='{service}.{instance}.jsonl'
+    assert host['level']=='DEBUG' and host['queue_size']==321 and host['ring_capacity']==654
+    assert host['max_bytes']==8_000_000 and runtime['max_bytes']==4_000_000
+    assert host['segment_bytes']==2_000_000 and host['segment_max_age_seconds']==600
+    assert host['days']==3 and host['otlp_timeout_seconds']==7 and host['schema_strict'] is True
+    diagnostic=DiagnosticCapture.from_settings(settings,'api','instance')
+    assert diagnostic.root==tmp_path/'captures' and diagnostic.mode=='payload'
+    assert diagnostic.path.name=='api.trace-debug.diagnostic.jsonl'
+    assert diagnostic.trace_id=='a'*32 and diagnostic.max_body_bytes==1234
+    assert diagnostic.max_bytes==5678 and diagnostic.ttl_seconds==6*3600
+
+
+def test_diagnostic_capture_is_disabled_by_default_and_payload_requires_debug(tmp_path):
+    disabled=DiagnosticCapture(tmp_path/'disabled','api','instance',mode='off')
+    assert disabled.record_http(direction='ingress',method='POST',url='https://example.test/private?token=x',
+        request_headers={},request_body=b'private',response_headers={},response_body=b'',status_code=200) is False
+    assert not list((tmp_path/'disabled').glob('*'))
+    with pytest.raises(ValueError,match='diagnostic_payload_requires_debug'):
+        DiagnosticCapture(tmp_path/'invalid','api','instance',mode='payload',log_level='INFO')
+
+
+def test_diagnostic_payload_redacts_json_headers_and_urls_and_hashes_binary(tmp_path):
+    capture=DiagnosticCapture(tmp_path/'diagnostics','gateway','instance',mode='payload',log_level='DEBUG',
+        session='session-1',max_body_bytes=1024,max_bytes=1024*1024,ttl_hours=24)
+    secret='sk-SUPER_PRIVATE_CREDENTIAL_12345'
+    assert capture.record_http(direction='egress',method='POST',
+        url='https://user:password@example.test/v1/generate?token='+secret,
+        request_headers={'content-type':'application/json','authorization':'Bearer '+secret,'x-api-key':secret},
+        request_body=json.dumps({'prompt':'private prompt','password':secret,'count':2}).encode(),
+        response_headers={'content-type':'application/octet-stream','set-cookie':'secret='+secret},
+        response_body=b'\x00\x01binary-data',status_code=201)
+
+    path=next((tmp_path/'diagnostics').glob('*.diagnostic.jsonl'))
+    row=json.loads(path.read_text())
+    serialized=json.dumps(row)
+    assert secret not in serialized and 'user:password@' not in serialized
+    assert row['url']=='https://example.test/v1/generate'
+    assert row['request']['body']['json']=={'prompt':'private prompt','password':'[REDACTED]','count':2}
+    assert row['request']['headers']=={'content-type':'application/json'}
+    assert row['response']['headers']=={'content-type':'application/octet-stream'}
+    assert row['response']['body']['sha256']==hashlib.sha256(b'\x00\x01binary-data').hexdigest()
+    assert 'text' not in row['response']['body'] and 'json' not in row['response']['body']
+
+
+def test_diagnostic_capture_truncates_bodies_prunes_ttl_and_enforces_total_budget(tmp_path):
+    root=tmp_path/'diagnostics';root.mkdir()
+    expired=root/'expired.diagnostic.jsonl';expired.write_text('{}\n');os.utime(expired,(1,1))
+    capture=DiagnosticCapture(root,'api','instance',mode='payload',log_level='DEBUG',
+        session='bounded',max_body_bytes=4,max_bytes=1400,ttl_hours=1)
+    outcomes=[]
+    for _ in range(10):
+        outcomes.append(capture.record_http(direction='ingress',method='POST',url='http://test/upload',
+            request_headers={'content-type':'text/plain'},request_body=b'abcdefgh',
+            response_headers={'content-type':'text/plain'},response_body=b'ok',status_code=200))
+    assert not expired.exists() and any(outcomes) and not all(outcomes)
+    assert capture.path.stat().st_size<=1400
+    row=json.loads(capture.path.read_text().splitlines()[0])
+    assert row['request']['body']['captured_bytes']==4
+    assert row['request']['body']['truncated'] is True and row['request']['body']['text']=='abcd'
+
+
+async def test_request_middleware_captures_chunked_bodies_without_changing_delivery(tmp_path,telemetry,monkeypatch):
+    capture=DiagnosticCapture(tmp_path/'diagnostics','api','instance',mode='payload',log_level='DEBUG',
+        session='session-2',max_body_bytes=1024,max_bytes=1024*1024,ttl_hours=24)
+    monkeypatch.setattr(obs,'_DIAGNOSTICS',capture)
+    app=FastAPI();app.add_middleware(obs.RequestLoggingMiddleware,service='api')
+    @app.post('/echo/{item_id}')
+    async def echo(item_id:str,request:Request):
+        from fastapi.responses import Response
+        return Response(await request.body(),media_type='text/plain')
+    chunks=[b'first-',b'second']
+    async def body():
+        for chunk in chunks:yield chunk
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app),base_url='http://test') as client:
+        response=await client.post('/echo/private?token=secret',content=body(),headers={'content-type':'text/plain'})
+    assert response.content==b''.join(chunks)
+    row=json.loads(next((tmp_path/'diagnostics').glob('*.diagnostic.jsonl')).read_text())
+    assert row['url']=='http://test/echo/{item_id}'
+    assert row['request']['body']['text']=='first-second'
+    assert row['response']['body']['text']=='first-second'
+
+
+async def test_httpx_hooks_propagate_trace_and_capture_consumed_stream(tmp_path,telemetry,monkeypatch):
+    from fastapi.responses import StreamingResponse
+    from sandbox_harness.common.observability.http import httpx_event_hooks
+    capture=DiagnosticCapture(tmp_path/'diagnostics','api','instance',mode='payload',log_level='DEBUG',
+        session='session-3',max_body_bytes=4096,max_bytes=1024*1024,ttl_hours=24)
+    monkeypatch.setattr(obs,'_DIAGNOSTICS',capture)
+    app=FastAPI();received={}
+    @app.post('/generate')
+    async def generate(request:Request):
+        received['traceparent']=request.headers.get('traceparent','')
+        received['body']=await request.body()
+        async def chunks():
+            yield b'part-';yield b'two'
+        return StreamingResponse(chunks(),media_type='text/plain')
+    with obs.operation('test.outbound',turn_id='turn-egress'):
+        expected_trace=obs.carrier()['traceparent'].split('-')[1]
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app),base_url='https://provider.test',
+                event_hooks=httpx_event_hooks('test-provider',route='/generate')) as client:
+            response=await client.post('/generate?token=private',json={'prompt':'hello'})
+            assert await response.aread()==b'part-two'
+    assert received['body']==b'{"prompt":"hello"}' and expected_trace in received['traceparent']
+    records=rows(telemetry)
+    started=next(row for row in records if row['event_name']=='http.client.request.started')
+    completed=next(row for row in records if row['event_name']=='http.client.request.completed')
+    assert started['trace_id']==completed['trace_id']==expected_trace
+    assert completed['attributes']['updream.peer_service']=='test-provider'
+    assert completed['attributes']['http.route']=='/generate'
+    assert completed['attributes']['updream.request_bytes']==len(received['body'])
+    assert completed['attributes']['updream.response_bytes']==len(b'part-two')
+    diagnostic=json.loads(next((tmp_path/'diagnostics').glob('*.diagnostic.jsonl')).read_text())
+    assert diagnostic['direction']=='egress' and diagnostic['url']=='https://provider.test/generate'
+    assert diagnostic['request']['body']['json']=={'prompt':'hello'}
+    assert diagnostic['response']['body']['text']=='part-two'
+
+
+async def test_httpx_hooks_close_span_when_transport_fails_before_response(telemetry):
+    from sandbox_harness.common.observability.http import observed_async_client
+    async def unavailable(request):
+        raise httpx.ConnectError('private upstream detail',request=request)
+    with obs.operation('test.transport-parent',turn_id='turn-transport'):
+        trace_id=obs.carrier()['traceparent'].split('-')[1]
+        async with observed_async_client('unavailable-provider',telemetry_route='/generate',
+                transport=httpx.MockTransport(unavailable),base_url='https://provider.test') as client:
+            with pytest.raises(httpx.ConnectError):await client.post('/generate',content=b'request')
+    records=rows(telemetry)
+    failed=next(row for row in records if row['event_name']=='http.client.request.failed')
+    span=next(row for row in records if row['signal']=='span' and row['event_name']=='HTTP POST')
+    assert failed['trace_id']==span['trace_id']==trace_id
+    assert failed['attributes']['exception.type']=='ConnectError'
+    assert failed['attributes']['updream.request_bytes']==len(b'request')
+    assert span['status']=='ERROR'
+    assert 'private upstream detail' not in json.dumps(records)
 
 
 async def test_concurrent_contexts_are_isolated_and_recovery_uses_link(telemetry):
@@ -144,6 +355,13 @@ def test_retention_is_bounded_and_does_not_remove_other_files(tmp_path):
     for i in range(20):sink.write([{'event_name':'test.record','body':'x'*300,'index':i}])
     assert sum(p.stat().st_size for p in tmp_path.glob('*.telemetry.jsonl'))<=2048
     assert not old.exists() and other.read_text()=='keep'
+
+
+def test_json_sink_recovers_when_log_directory_is_removed_after_start(tmp_path):
+    root=tmp_path/'logs';sink=obs.JsonSink(root,'api','instance')
+    sink.write([{'event_name':'before'}]);shutil.rmtree(root)
+    assert sink.write([{'event_name':'after'}]) is True
+    assert json.loads(sink.path.read_text())['event_name']=='after'
 
 
 def test_otlp_exports_both_signals_and_ingest_checks_business_scope(telemetry,monkeypatch):
@@ -259,6 +477,18 @@ def test_request_timeline_expands_to_turn_and_skips_corrupt_lines(tmp_path,monke
     monkeypatch.setattr('sys.argv',['logs','--log-dir',str(tmp_path),'--request','request-a','--json'])
     main();result=json.loads(capsys.readouterr().out)
     assert len(result['records'])==2 and result['malformed_lines']==2
+
+
+def test_log_query_supports_worker_and_external_execution_identifiers(tmp_path):
+    records=[{'signal':'log','timestamp':'2026-11-10T00:00:00+00:00',
+        'event_name':'job.submission.accepted','event_id':'job-event','resource':{},
+        'attributes':{'updream.job_id':'job-1','updream.execution_id':'execution-1',
+            'updream.allocation_id':'allocation-1','updream.provider_job_id':'provider-1'}}]
+    (tmp_path/'worker.telemetry.jsonl').write_text(json.dumps(records[0])+'\n')
+    for key,value in [('job_id','job-1'),('execution_id','execution-1'),
+            ('allocation_id','allocation-1'),('provider_job_id','provider-1')]:
+        selected,malformed=query(tmp_path,{key:value})
+        assert malformed==0 and [row['event_name'] for row in selected]==['job.submission.accepted']
 
 
 async def test_shutdown_does_not_start_queued_successor(tmp_path,monkeypatch):

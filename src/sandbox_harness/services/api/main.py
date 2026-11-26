@@ -6,7 +6,7 @@ from sandbox_harness.common.observability.observability import (configure)
 
 def run() -> None:
     settings = load_settings()
-    configure("api", settings.data_root / "logs")
+    configure("api", settings.data_root / "logs", settings)
     uvicorn.run("sandbox_harness.services.api.app:create_app", factory=True, host=settings.api_bind_host, port=settings.api_bind_port, log_config=None, access_log=False)
 
 

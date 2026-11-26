@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import zipfile
@@ -14,6 +15,8 @@ from defusedxml import ElementTree
 
 from sandbox_harness.common.contracts.job_contracts import (OutputDisposition)
 from sandbox_harness.common.contracts.job_errors import (ArtifactValidationError)
+from sandbox_harness.common.observability.observability import (event)
+from sandbox_harness.common.storage.directories import (ensure_private_directory)
 
 
 MIME_ALIASES = {
@@ -173,7 +176,7 @@ class ArtifactGateway:
         self.objects = objects
         self.staging_root = staging_root
         self.maximum_bytes = maximum_bytes
-        self.staging_root.mkdir(parents=True, exist_ok=True)
+        ensure_private_directory(self.staging_root,boundary=self.staging_root.parent)
 
     async def emit(self, value: ArtifactEmission, chunks: AsyncIterable[bytes]):
         return await self._emit(value,chunks)
@@ -186,6 +189,10 @@ class ArtifactGateway:
     async def _emit(self,value:ArtifactEmission,chunks:AsyncIterable[bytes],*,
                     mime_patterns:tuple[str,...]|None=None):
         value.validate()
+        missing=ensure_private_directory(self.staging_root,boundary=self.staging_root.parent)
+        if missing:
+            event('artifact.staging.recreated',level=logging.WARNING,job_id=value.job_id,
+                reason='directory_missing')
         with NamedTemporaryFile(dir=self.staging_root, prefix=".job-artifact-", delete=False) as stream:
             path = Path(stream.name);digest = hashlib.sha256();size = 0
             try:

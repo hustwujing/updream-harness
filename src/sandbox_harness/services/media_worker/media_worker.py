@@ -29,9 +29,11 @@ from sandbox_harness.services.media_worker.media_errors import (classify_provide
 from sandbox_harness.services.media_worker.media_reference_publisher import (MediaReferencePreparationError, MediaReferencePublisher)
 from sandbox_harness.services.media_worker.minimax_voice import (MiniMaxVoiceCloneError, MiniMaxVoiceClonePending, MiniMaxVoiceClones)
 from sandbox_harness.common.observability.observability import (event)
+from sandbox_harness.common.observability.http import (observed_async_client)
 from sandbox_harness.common.storage.objects import (ObjectStore, S3ObjectStore)
 from sandbox_harness.common.security.network import (normalize_host, public_address)
 from sandbox_harness.common.process.identity import (_process_start)
+from sandbox_harness.common.storage.directories import (ensure_private_directory)
 
 
 class MediaWorker:
@@ -58,7 +60,7 @@ class MediaWorker:
         self.process_start=_process_start(os.getpid()) or "unknown"
 
     def _prepare_staging(self)->None:
-        self.staging_root.mkdir(parents=True,exist_ok=True)
+        ensure_private_directory(self.staging_root,boundary=self.staging_root.parent)
         for path in self.staging_root.glob(".provider-output-*-*-*"):
             parts=path.name.split("-",4)
             try:pid=int(parts[2]);started=parts[3]
@@ -81,7 +83,7 @@ class MediaWorker:
                 for task in finished:
                     if not task.cancelled() and task.exception():
                         event("media.worker.task_failed", level=40,
-                            exception_type=type(task.exception()).__name__)
+                            exc=task.exception())
                 tripo_available = min(self.tripo_concurrency - len(tripo_active),
                     max(0, self.concurrency - len(active)))
                 if tripo_available > 0:
@@ -139,7 +141,7 @@ class MediaWorker:
                 except Exception as exc:
                     renewed=False
                     event("media.worker.heartbeat_failed",level=40,job_id=job["id"],
-                        generation=job["generation"],exception_type=type(exc).__name__)
+                        generation=job["generation"],exc=exc)
                 if not renewed:
                     lost.set();owner.cancel();return
         task=asyncio.create_task(heartbeat(),name="media-heartbeat-"+job["id"])
@@ -272,7 +274,7 @@ class MediaWorker:
                     phase="provider_output_retry", error_code="provider_output_unavailable",
                     error_detail=f"{stage}:{type(exc).__name__}", retry_after_seconds=15)
                 event("media.output.retry_scheduled", level=30, job_id=job["id"], provider=job["provider"],
-                    model=job["model"], failure_stage=stage, exception_type=type(exc).__name__)
+                    model=job["model"], failure_stage=stage, exc=exc)
             elif (stage == "provider_poll" and job.get("adapter") == "minimax_t2a"
                     and job.get("provider_job_id")):
                 started = job.get("provider_started_at")
@@ -293,13 +295,13 @@ class MediaWorker:
                         error_detail=f"provider_poll:{type(exc).__name__}", retry_after_seconds=15)
                 event("media.audio.poll_transport_failure", level=30, job_id=job["id"],
                     provider=job["provider"], model=job["model"], elapsed_seconds=round(elapsed),
-                    exception_type=type(exc).__name__)
+                    exc=exc)
             else:
                 await self.store.update_media_job(job["id"], self.owner, job["generation"], status="unknown",
                     phase="recovery_required", error_code="worker_error",
                     error_detail=f"{stage}:{type(exc).__name__}")
                 event("media.job.unknown", level=40, job_id=job["id"], provider=job["provider"],
-                    model=job["model"], failure_stage=stage, exception_type=type(exc).__name__)
+                    model=job["model"], failure_stage=stage, exc=exc)
         except ValueError as exc:
             await self.store.update_media_job(job["id"], self.owner, job["generation"], status="failed", phase="terminal",
                 error_code="provider_result_invalid", error_detail=f"{stage}:{str(exc)[:160]}")
@@ -311,12 +313,12 @@ class MediaWorker:
                     phase="provider_output_retry",error_code="provider_output_unavailable",
                     error_detail=f"{stage}:{type(exc).__name__}",retry_after_seconds=15)
                 event("media.output.retry_scheduled",level=40,job_id=job["id"],provider=job["provider"],
-                    model=job["model"],failure_stage=stage,exception_type=type(exc).__name__)
+                    model=job["model"],failure_stage=stage,exc=exc)
             else:
                 await self.store.update_media_job(job["id"], self.owner, job["generation"], status="unknown", phase="recovery_required",
                     error_code="worker_error", error_detail=f"{stage}:{type(exc).__name__}")
                 event("media.job.unknown", level=40, job_id=job["id"], provider=job["provider"], model=job["model"],
-                    failure_stage=stage, exception_type=type(exc).__name__)
+                    failure_stage=stage, exc=exc)
 
     async def _cancel_external(self,job:dict)->None:
         provider=self.external_providers.get(job["adapter"])
@@ -373,13 +375,13 @@ class MediaWorker:
         return ProviderResult("failed", error="media_adapter_not_configured")
 
     async def _client(self):
-        return httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10), follow_redirects=False, trust_env=False)
+        return observed_async_client('media-provider',timeout=httpx.Timeout(60, connect=10), follow_redirects=False, trust_env=False)
 
     async def _image_client(self):
         if "_client" in self.__dict__:
             return await self._client()
         timeout=getattr(self.settings,"image_task_timeout_seconds",300)
-        return httpx.AsyncClient(timeout=httpx.Timeout(timeout,connect=10),
+        return observed_async_client('media-provider',timeout=httpx.Timeout(timeout,connect=10),
             follow_redirects=False,trust_env=False)
 
     async def _reference_url(self, reference: dict[str, Any]) -> str:

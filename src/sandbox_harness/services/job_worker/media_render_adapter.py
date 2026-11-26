@@ -15,6 +15,7 @@ from sandbox_harness.common.execution.job_adapters import (AdapterStatus, Adapte
 from sandbox_harness.common.contracts.job_contracts import (JobState)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxHandle, SandboxNotFound, SandboxCapacityUnavailable, SandboxRateLimited, SandboxCreateOutcomeUnknown, SandboxProviderUnavailable)
 from sandbox_harness.common.catalog.profiles import (ProviderRelease)
+from sandbox_harness.common.observability.http import (observed_async_client)
 
 
 class MediaRenderOperationAdapter(SandboxAllocationOwner,BaseJobAdapter):
@@ -237,7 +238,7 @@ class MediaRenderOperationAdapter(SandboxAllocationOwner,BaseJobAdapter):
         nonce=str(receipt.get('capability_nonce',''))
         async with self.scheduler.hold(reservation_id,node_id,generation):
             if nonce:
-                async with httpx.AsyncClient(timeout=10,trust_env=False) as client:
+                async with observed_async_client('sandbox-gateway',timeout=10,trust_env=False) as client:
                     response=await client.post(self.settings.gateway_url.rstrip('/')+'/internal/revoke/'+nonce,
                         headers={'X-Sandbox-Harness-Control':self.settings.gateway_control_key,
                             'X-Updream-Thread-Id':context.job.thread_id,

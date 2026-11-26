@@ -13,6 +13,7 @@ import tarfile
 ROOT = Path(__file__).resolve().parents[1]
 SHARED_MODULES = ("common/contracts/domain.py", "common/contracts/job_contracts.py",
     "common/catalog/media_catalog.py", "common/observability/observability.py",
+    "common/observability/diagnostics.py", "common/observability/schema.py",
     "common/sites/site_bundle.py")
 
 

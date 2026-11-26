@@ -8,6 +8,7 @@ import shutil
 from typing import Any,Awaitable,Callable
 
 from sandbox_harness.common.artifacts.artifact_gateway import (ArtifactEmission, ArtifactGateway)
+from sandbox_harness.common.storage.directories import (ensure_private_directory)
 from sandbox_harness.common.storage.files import (staged_file_chunks)
 from sandbox_harness.common.execution.job_adapters import (AdapterStatus, AdapterSubmission, BaseJobAdapter, JobExecutionContext, PreAcceptFailure, SubmissionRecovery)
 from sandbox_harness.common.contracts.job_contracts import (JobState)
@@ -24,7 +25,8 @@ class ControlledMediaOperationAdapter(BaseJobAdapter):
         self.scheduler=scheduler;self.store=store;self.objects=objects;self.settings=settings
         self.runner=runner or self._default_runner
         self.gpu_health=gpu_health
-        self.root=(settings.data_root/'controlled-operations').resolve();self.root.mkdir(parents=True,exist_ok=True)
+        self.root=(settings.data_root/'controlled-operations').resolve()
+        ensure_private_directory(self.root,boundary=settings.data_root)
         self.artifacts=ArtifactGateway(store,objects,settings.data_root/'tmp'/'controlled-job-artifacts',
             maximum_bytes=settings.max_artifact_bytes)
 
@@ -99,7 +101,7 @@ class ControlledMediaOperationAdapter(BaseJobAdapter):
             async with self.scheduler.hold(reservation.id,reservation.node_id,reservation.node_generation):
                 if existing is None:
                     if work.exists():shutil.rmtree(work)
-                    work.mkdir(parents=True,mode=0o700);source=await self._source(context,work)
+                    ensure_private_directory(work,boundary=self.root);source=await self._source(context,work)
                     try:
                         value=await self.runner(context.request.adapter,work,source,
                             dict(context.request.parameters),reservation.gpu_ids,

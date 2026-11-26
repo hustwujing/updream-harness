@@ -8,6 +8,7 @@ import httpx
 from sandbox_harness.services.media_worker.ark_assets import (ArkAssetError, ArkAssets)
 from sandbox_harness.common.storage.objects import (object_chunks)
 from sandbox_harness.common.observability.observability import (event)
+from sandbox_harness.common.observability.http import (observed_async_client)
 
 
 class MediaReferencePreparationError(RuntimeError):
@@ -46,7 +47,7 @@ class MediaReferencePublisher:
                 raise MediaReferencePreparationError("media_reference_source_integrity_failed")
             for attempt in range(3):
                 try:
-                    async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
+                    async with observed_async_client('media-reference-source',timeout=120, trust_env=False) as client:
                         response = await client.put(prepared["put_url"],
                             content=object_chunks(self.objects,record["object_ref"],maximum=record["size"]),
                             headers={**prepared["headers"],"Content-Length":str(record["size"])})
@@ -145,6 +146,6 @@ class MediaReferencePublisher:
             if require_ark:
                 item["asset_uri"] = "asset://" + record["ark_asset_id"]
             output.append(item)
-            event("media.reference.ready", job_id=job["id"], sha256=reference["sha256"][:12],
+            event("media.reference.ready", job_id=job["id"], object_digest=reference["sha256"][:12],
                 kind=reference["kind"], ark=require_ark)
         return output

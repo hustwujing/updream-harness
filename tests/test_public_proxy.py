@@ -53,13 +53,14 @@ async def test_public_proxy_connect_and_unexpected_failures_keep_distinct_severi
     assert b'502' in await exchange(unreachable)
     name,fields=next(row for row in events if row[0]=='public_proxy.unreachable')
     assert fields['level']==logging.WARNING and fields['failure_stage']=='connect'
-    assert fields['exception_type']=='ConnectionRefusedError' and fields['address_family']=='ipv4'
+    assert fields['error_code']=='ConnectionRefusedError' and fields['address_family']=='ipv4'
     assert 'private.example' not in repr(events) and '8.8.8.8' not in repr(events)
     events.clear()
     async def unexpected(address,port,timeout):raise RuntimeError('private.example')
     assert b'502' in await exchange(unexpected)
     name,fields=next(row for row in events if row[0]=='public_proxy.failed')
     assert fields['level']==logging.ERROR and fields['failure_stage']=='connect'
+    assert fields['error_code']=='RuntimeError'
     assert 'private.example' not in repr(events) and '8.8.8.8' not in repr(events)
     events.clear()
     class FailedRelayReader:
@@ -72,7 +73,7 @@ async def test_public_proxy_connect_and_unexpected_failures_keep_distinct_severi
     assert b'200 Connection Established' in await exchange(relay_failure)
     name,fields=next(row for row in events if row[0]=='public_proxy.failed')
     assert fields['level']==logging.ERROR and fields['failure_stage']=='relay'
-    assert fields['exception_type']=='OSError'
+    assert fields['error_code']=='OSError'
     assert 'private.example' not in repr(events) and '8.8.8.8' not in repr(events)
 
 

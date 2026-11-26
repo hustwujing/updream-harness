@@ -297,12 +297,12 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
             await reject(writer,status,code)
     except PublicProxyConnectError as exc:
         event("public_proxy.unreachable",level=logging.WARNING,failure_stage="connect",
-            exception_type=exc.exception_type,address_family=exc.address_family,**log_context)
+            error_code=exc.exception_type,address_family=exc.address_family,**log_context)
         if not writer.is_closing():
             await reject(writer,502,"destination_unreachable")
     except Exception as exc:
         event("public_proxy.failed",level=logging.ERROR,failure_stage=failure_stage,
-            exception_type=type(exc).__name__,**log_context)
+            error_code=type(exc).__name__,**log_context)
         if not writer.is_closing():
             await reject(writer,502,"destination_unreachable")
     finally:

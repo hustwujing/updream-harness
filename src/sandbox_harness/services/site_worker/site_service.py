@@ -31,7 +31,7 @@ async def serve() -> None:
 
 def run() -> None:
     settings = load_settings()
-    configure("site-worker", settings.data_root / "logs")
+    configure("site-worker", settings.data_root / "logs", settings)
     asyncio.run(serve())
 
 

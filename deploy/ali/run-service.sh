@@ -9,12 +9,18 @@ fi
 component=${1:-}
 trap 'status=$?; echo "service launcher failed component=$component line=$LINENO status=$status" >&2' ERR
 env_file="$root/.data/config/platform.env"
-log_root="$root/.data/service-logs"
 [[ -f "$env_file" ]] || { echo "missing $env_file" >&2; exit 1; }
-mkdir -p "$log_root" "$root/.data/tmp"
 set -a
 source "$env_file"
 set +a
+log_root=$(readlink -m "${SANDBOX_HARNESS_SERVICE_LOG_DIR:-$root/.data/service-logs}")
+case "$log_root" in "$root/.data"|"$root/.data/"*) ;; *) echo "service_log_directory_outside_data_root" >&2; exit 1 ;; esac
+log_template=${SANDBOX_HARNESS_SERVICE_LOG_FILE_TEMPLATE:-\{component\}.log}
+[[ "$log_template" =~ ^[A-Za-z0-9_.{}-]+$ && "$log_template" != *".."* && "$log_template" != */* ]] || {
+  echo "invalid_service_log_filename_template" >&2; exit 1; }
+log_file=${log_template//\{component\}/$component}
+[[ "$log_file" =~ ^[A-Za-z0-9_.-]+\.log$ ]] || { echo "invalid_service_log_filename" >&2; exit 1; }
+mkdir -p "$log_root" "$root/.data/tmp"
 
 restrict_database_credentials() {
   unset SANDBOX_HARNESS_ADMIN_DATABASE_URL SANDBOX_HARNESS_DATABASE_URL
@@ -120,4 +126,4 @@ case "$component" in
   media-worker) command=("$release_python" -m sandbox_harness.services.media_worker.media_service) ;;
   site-worker) command=("$release_python" -m sandbox_harness.services.site_worker.site_service) ;;
 esac
-exec "${command[@]}" >>"$log_root/$component.log" 2>&1
+exec "${command[@]}" >>"$log_root/$log_file" 2>&1

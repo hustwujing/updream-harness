@@ -148,7 +148,7 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
         if released:event("scheduler.stale_reservations.released",count=len(released),node_id=node.node_id)
     except Exception as exc:
         event("scheduler.stale_reservations.reconcile_failed",level=40,node_id=node.node_id,
-            exception_type=type(exc).__name__)
+            exc=exc)
     stop=stop_event or asyncio.Event();loop=asyncio.get_running_loop()
     if stop_event is None:
         for name in (signal.SIGTERM,signal.SIGINT):
@@ -173,7 +173,7 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
 
 
 def run() -> None:
-    settings=load_settings();configure("job-worker",settings.data_root/"logs")
+    settings=load_settings();configure("job-worker",settings.data_root/"logs",settings)
     asyncio.run(serve(settings))
 
 

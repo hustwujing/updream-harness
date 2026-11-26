@@ -107,7 +107,7 @@ class ContinuationDispatcher:
             try:
                 count = await self.run_once()
             except Exception as exc:
-                event("job.continuation.failed", level=40, exception_type=type(exc).__name__)
+                event("job.continuation.failed", level=40, exc=exc)
                 count = 0
             if count:
                 continue

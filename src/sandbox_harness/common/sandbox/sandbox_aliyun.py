@@ -11,6 +11,7 @@ import httpx
 
 from sandbox_harness.common.contracts.domain import (Harness)
 from sandbox_harness.common.observability.observability import (observed)
+from sandbox_harness.common.observability.http import (observed_async_client)
 from sandbox_harness.common.contracts.sandbox_contracts import (Sandbox, SandboxAuthenticationFailed, SandboxCapabilities, SandboxCreateOutcomeUnknown, SandboxCreateRequest, SandboxEndpoint, SandboxEndpointUnavailable, SandboxHandle, SandboxNotFound, SandboxProfile, SandboxProfileUnavailable, SandboxProviderError, SandboxProviderUnavailable, SandboxRateLimited, SandboxRuntimeRoute, SandboxScope, SandboxState)
 
 
@@ -102,7 +103,7 @@ class AliyunSandboxBackend:
         self.route=SandboxRuntimeRoute(gateway_url,proxy_url)
         self.client = client or _E2BClient(api_key=api_key, api_url=self.api_url,
             domain=domain, request_timeout_seconds=request_timeout_seconds)
-        self.health_client = httpx.AsyncClient(timeout=10, trust_env=False,
+        self.health_client = observed_async_client('aliyun-sandbox',timeout=10, trust_env=False,
             transport=health_transport)
         self._profiles: dict[str, SandboxProfile] = {}
         self._handles: dict[str, Any] = {}

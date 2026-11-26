@@ -12,6 +12,8 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 from urllib.parse import quote, urlsplit
 
+from sandbox_harness.common.storage.directories import (ensure_private_directory)
+
 
 MEDIA_EXTENSIONS = {
     "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif",
@@ -25,7 +27,7 @@ class ObjectStore:
 
     def __init__(self, root: Path):
         self.root = root.resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
+        ensure_private_directory(self.root,boundary=self.root.parent)
 
     def _path(self, digest: str) -> Path:
         return self.root / digest[:2] / digest[2:]
@@ -44,7 +46,7 @@ class ObjectStore:
         digest = hashlib.sha256(data).hexdigest()
         target = self._path(digest)
         if not target.exists():
-            target.parent.mkdir(parents=True, exist_ok=True)
+            ensure_private_directory(target.parent,boundary=self.root)
             with NamedTemporaryFile(dir=target.parent, delete=False) as stream:
                 stream.write(data)
                 temporary = Path(stream.name)
@@ -72,7 +74,7 @@ class ObjectStore:
         if not valid_existing:
             if target.exists() and not repair:
                 raise ValueError("Existing object identity mismatch")
-            target.parent.mkdir(parents=True, exist_ok=True)
+            ensure_private_directory(target.parent,boundary=self.root)
             with NamedTemporaryFile(dir=target.parent, delete=False) as stream:
                 temporary = Path(stream.name)
                 with source.open("rb") as incoming:

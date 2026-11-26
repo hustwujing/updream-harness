@@ -8,6 +8,7 @@ from tempfile import NamedTemporaryFile
 import uuid
 
 from sandbox_harness.common.observability.observability import (event)
+from sandbox_harness.common.storage.directories import (ensure_private_directory)
 from sandbox_harness.common.sites.site_bundle import (MAX_SITE_ARCHIVE_BYTES, stage_site_archive)
 
 
@@ -34,7 +35,7 @@ class SiteWorker:
                 for task in finished:
                     if not task.cancelled() and task.exception():
                         event("site.worker.task_failed", level=40,
-                            exception_type=type(task.exception()).__name__)
+                            exc=task.exception())
                 available = self.concurrency - len(active)
                 if available > 0:
                     jobs = await self.store.claim_site_jobs(self.owner, limit=available,
@@ -65,7 +66,7 @@ class SiteWorker:
                 except Exception as exc:
                     renewed=False
                     event("site.worker.heartbeat_failed",level=40,job_id=job["id"],
-                        generation=generation,exception_type=type(exc).__name__)
+                        generation=generation,exc=exc)
                 if not renewed:
                     lost.set();owner.cancel();return
         heartbeat_task=asyncio.create_task(heartbeat(),name="site-heartbeat-"+job["id"])
@@ -78,7 +79,7 @@ class SiteWorker:
             heartbeat_task.cancel();await asyncio.gather(heartbeat_task,return_exceptions=True)
 
     def _copy_archive(self, job: dict) -> Path:
-        self.staging_root.mkdir(parents=True, exist_ok=True)
+        ensure_private_directory(self.staging_root,boundary=self.staging_root.parent)
         target=None
         try:
             with NamedTemporaryFile(dir=self.staging_root,
@@ -146,7 +147,7 @@ class SiteWorker:
                 error_detail="发布依赖暂时不可用，系统已自动重试；若重试耗尽可手动继续。",
                 retry_after_seconds=delay,max_attempts=self.max_attempts)
             event("site.job.retry_scheduled",level=30,job_id=job["id"],
-                exception_type=type(exc).__name__,retry_seconds=delay)
+                exc=exc,retry_seconds=delay)
         finally:
             if package:package.remove()
             if archive_path:archive_path.unlink(missing_ok=True)

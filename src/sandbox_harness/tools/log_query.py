@@ -16,7 +16,8 @@ def query(root,filters,*,since=None,limit=10000,related=False):
     try:
         db=sqlite3.connect(index_path)
         db.execute("CREATE TABLE records (identity TEXT PRIMARY KEY, timestamp TEXT, thread_id TEXT, "
-            "turn_id TEXT, request_id TEXT, sandbox_id TEXT, trace_id TEXT, span_id TEXT, payload TEXT)")
+            "turn_id TEXT, request_id TEXT, sandbox_id TEXT, job_id TEXT, execution_id TEXT, "
+            "allocation_id TEXT, provider_job_id TEXT, trace_id TEXT, span_id TEXT, payload TEXT)")
         for path in sorted(root.glob("*.telemetry.jsonl")):
             try:
                 with path.open() as stream:
@@ -33,13 +34,17 @@ def query(root,filters,*,since=None,limit=10000,related=False):
                             if row.get("signal")=="span" and row.get("trace_id") and row.get("span_id")
                             else str(row.get("signal") or "log")+":"+str(
                                 attrs.get("updream.source_event_id") or row.get("event_id") or fallback))
-                        db.execute("INSERT OR IGNORE INTO records VALUES (?,?,?,?,?,?,?,?,?)",(
+                        db.execute("INSERT OR IGNORE INTO records VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",(
                             identity,timestamp,attrs.get("updream.thread_id"),attrs.get("updream.turn_id"),
                             attrs.get("updream.request_id"),attrs.get("updream.sandbox_id"),
+                            attrs.get("updream.job_id"),attrs.get("updream.execution_id"),
+                            attrs.get("updream.allocation_id"),attrs.get("updream.provider_job_id"),
                             row.get("trace_id"),row.get("span_id"),json.dumps(row,ensure_ascii=False)))
             except (FileNotFoundError,PermissionError):continue
         db.commit();columns={"thread_id":"thread_id","turn_id":"turn_id","request_id":"request_id",
-            "sandbox_id":"sandbox_id","trace_id":"trace_id","span_id":"span_id"}
+            "sandbox_id":"sandbox_id","job_id":"job_id","execution_id":"execution_id",
+            "allocation_id":"allocation_id","provider_job_id":"provider_job_id",
+            "trace_id":"trace_id","span_id":"span_id"}
         clauses=[];parameters=[]
         for key,value in filters.items():clauses.append(columns[key]+"=?");parameters.append(value)
         direct=" AND ".join(clauses) or "1=1";where=direct;query_parameters=list(parameters)
@@ -61,14 +66,16 @@ def query(root,filters,*,since=None,limit=10000,related=False):
 def main():
     parser=argparse.ArgumentParser(description="updream-harness correlated log timeline")
     parser.add_argument("--log-dir",default=str(Path(os.getenv("SANDBOX_HARNESS_DATA_ROOT",".data"))/"logs"))
-    for key in ("thread","turn","trace","request","sandbox"):parser.add_argument("--"+key)
+    for key in ("thread","turn","trace","request","sandbox","job","execution","allocation","provider-job"):
+        parser.add_argument("--"+key)
     parser.add_argument("--since",help="UTC ISO-8601 timestamp")
     parser.add_argument("--limit",type=int,default=1000)
     parser.add_argument("--json",action="store_true")
     parser.add_argument("--related",action="store_true",help="Include related Turns across traces (automatic for --request)")
     args=parser.parse_args()
-    filters={key+"_id":getattr(args,key) for key in ("thread","turn","trace","request","sandbox")
-        if getattr(args,key)}
+    filters={key.replace('-','_')+"_id":getattr(args,key.replace('-','_'))
+        for key in ("thread","turn","trace","request","sandbox","job","execution","allocation","provider-job")
+        if getattr(args,key.replace('-','_'))}
     if not filters:parser.error("Supply at least one correlation ID")
     if args.since:
         try:

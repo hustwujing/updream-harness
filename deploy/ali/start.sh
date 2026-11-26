@@ -11,6 +11,16 @@ set -a
 source "$env_file"
 set +a
 
+writable_service_paths=(
+  "$root/.data/logs" "$root/.data/service-logs" "$root/.data/diagnostics"
+  "$root/.data/tmp" "$root/.data/cache" "$root/.data/pip-cache"
+  "$root/.data/uv-cache" "$root/.data/npm-cache" "$root/.data/playwright-browsers"
+  "$root/.data/objects" "$root/.data/preview-cache" "$root/.data/image-decompose"
+)
+for path in "${writable_service_paths[@]}"; do
+  install -d -o sandbox-harness -g sandbox-harness -m 0700 "$path"
+done
+
 release_tools="$root/.data/release-tools"
 install -d -o root -g root -m 0755 "$release_tools"
 for tool in service_release image_inference_release build_module module_manifest module_boundaries; do

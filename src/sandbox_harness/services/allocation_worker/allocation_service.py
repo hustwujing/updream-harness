@@ -32,7 +32,7 @@ def main():
     args=parser.parse_args()
     settings=(Settings.model_validate(json.loads(args.settings_file.read_text())['settings'])
         if args.settings_file else load_settings())
-    configure('sandbox-allocation',settings.data_root/'logs')
+    configure('sandbox-allocation',settings.data_root/'logs',settings)
     asyncio.run(serve(settings))
 
 

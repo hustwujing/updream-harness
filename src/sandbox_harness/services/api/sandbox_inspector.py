@@ -16,6 +16,7 @@ from websockets.asyncio.client import connect as websocket_connect
 from sandbox_harness.common.security.capability import (CapabilityCodec)
 from sandbox_harness.common.contracts.domain import (TERMINAL, identifier, now)
 from sandbox_harness.common.observability.observability import (event)
+from sandbox_harness.common.observability.http import (observed_async_client)
 from sandbox_harness.common.sandbox.sandbox import (Sandbox, SandboxNotFound)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxHandle)
 from sandbox_harness.common.storage.objects import (object_chunks)
@@ -113,7 +114,7 @@ class SandboxInspector:
                 self.cleanup_status = "degraded"; self.cleanup_last_error = type(exc).__name__
                 self.cleanup_failures += 1
                 event("sandbox.control.expiry_scan_failed", level=40,
-                    exception_type=type(exc).__name__, failures=self.cleanup_failures)
+                    exc=exc, failures=self.cleanup_failures)
                 try:
                     await asyncio.wait_for(self.stop_event.wait(), timeout=delay)
                 except asyncio.TimeoutError:
@@ -128,7 +129,7 @@ class SandboxInspector:
                 except Exception as exc:
                     event("sandbox.control.expiry_failed", level=40,
                         thread_id=control["thread_id"], sandbox_id=control["sandbox_id"],
-                        exception_type=type(exc).__name__)
+                        exc=exc)
             try:
                 await asyncio.wait_for(self.stop_event.wait(), timeout=30)
             except asyncio.TimeoutError:
@@ -465,7 +466,7 @@ class SandboxInspector:
                       gateway_url: str) -> None:
         if not nonce:
             return
-        async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+        async with observed_async_client('sandbox-runtime',timeout=10, trust_env=False) as client:
             response = await client.post(gateway_url.rstrip("/") + "/internal/revoke/" + nonce,
                 headers={"X-Sandbox-Harness-Control": self.settings.gateway_control_key,
                     "X-Updream-Turn-ID": thread_id, "X-Updream-Thread-ID": thread_id,
@@ -495,7 +496,7 @@ class SandboxInspector:
                 except (RuntimeError,httpx.HTTPError) as exc:
                     event("sandbox.control.handle_lookup_failed",level=40,
                         thread_id=thread_id,sandbox_id=raw["sandbox_id"],
-                        exception_type=type(exc).__name__)
+                        exc=exc)
                     raise RuntimeError("sandbox_release_cleanup_pending") from exc
             action=raw.get("release_action") or managed_action or ("preserve_work" if expired else "")
             changes=None
@@ -534,7 +535,7 @@ class SandboxInspector:
                     sandbox=None
                 except Exception as exc:
                     event("sandbox.control.checkpoint_failed",level=40,thread_id=thread_id,
-                        sandbox_id=control["sandbox_id"],exception_type=type(exc).__name__)
+                        sandbox_id=control["sandbox_id"],exc=exc)
                     raise RuntimeError("sandbox_checkpoint_retryable") from exc
                 if phase=="managed_resolved":
                     control=await self.store.advance_sandbox_release_phase(thread_id,owner_id,

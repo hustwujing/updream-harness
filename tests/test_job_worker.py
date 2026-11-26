@@ -300,7 +300,10 @@ async def test_infrastructure_pre_accept_failure_does_not_consume_business_retry
 
 
 @pytest.mark.parametrize('kind',[JobKind.OPERATION,JobKind.PROVIDER])
-async def test_service_capacity_wait_reuses_one_attempt_generation(tmp_path,kind):
+async def test_service_capacity_wait_reuses_one_attempt_generation(tmp_path,kind,monkeypatch):
+    import sandbox_harness.common.execution.job_worker as job_worker_module
+    lifecycle=[]
+    monkeypatch.setattr(job_worker_module,'event',lambda name,**fields:lifecycle.append((name,fields)))
     store,_,job=await setup(tmp_path,request(kind=kind,
         retry_policy={'max_pre_accept_attempts':1,'deterministic':True}))
     allocation_errors=[]
@@ -338,6 +341,12 @@ async def test_service_capacity_wait_reuses_one_attempt_generation(tmp_path,kind
         assert adapter.cleanup_calls==1
         assert attempts[0].external_execution_id=='external-1'
         assert attempts[0].accepted_at is not None
+        assert [name for name,_ in lifecycle].count('job.submission.capacity_wait')==2
+        assert [name for name,_ in lifecycle].count('job.submission.resumed')==2
+        accepted_event=next(fields for name,fields in lifecycle if name=='job.submission.accepted')
+        assert accepted_event['generation']==1 and accepted_event['external_execution_id']=='external-1'
+        terminal_event=next(fields for name,fields in lifecycle if name=='job.state.changed')
+        assert terminal_event['state_after']==JobState.SUCCEEDED
     finally:await store.close()
 
 

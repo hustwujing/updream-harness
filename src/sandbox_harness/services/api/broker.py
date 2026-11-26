@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sandbox_harness.common.observability.observability import (observed, event, enrich, carrier, add_link, telemetry, failure_origin)
+from sandbox_harness.common.observability.http import (observed_async_client)
 
 import asyncio
 import hashlib
@@ -288,7 +289,7 @@ class Broker:
             if claimed.state == TurnState.CLEANING and claimed.pending_final_state:
                 if claimed.capability_nonce:
                     try:
-                        async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
+                        async with observed_async_client('sandbox-gateway',timeout=5, trust_env=False) as client:
                             response = await client.post(self.settings.gateway_url.rstrip('/') + '/internal/revoke/' + claimed.capability_nonce,
                                 headers=self._revoke_headers(claimed))
                             response.raise_for_status()
@@ -561,7 +562,9 @@ class Broker:
         await self.store.append_event(turn_id, EventKind.STATE, {"state": turn.state.value},
             lease_owner=self.instance_id if generation is not None else None,
             recovery_generation=generation)
-        event("turn.state.changed",turn_id=turn_id,thread_id=turn.thread_id,state=turn.state,error_code=turn.error_code,failure_origin=failure_origin(turn.error_code) if turn.error_code else None)
+        event("turn.state.changed",turn_id=turn_id,thread_id=turn.thread_id,state=turn.state,
+            state_after=turn.state,generation=generation or 0,error_code=turn.error_code,
+            failure_origin=failure_origin(turn.error_code) if turn.error_code else None)
         return turn
 
     async def _heartbeat(self, turn_id: str, generation: int) -> None:
@@ -591,7 +594,7 @@ class Broker:
                     return
                 except Exception as exc:
                     event("sandbox.renew.failed",level=logging.WARNING,turn_id=turn_id,
-                        sandbox_id=sandbox.id,exception_type=type(exc).__name__)
+                        sandbox_id=sandbox.id,exc=exc)
             task = self.tasks.get(turn_id)
             task = task or self.reconciliation_tasks.get(turn_id)
             if (turn and turn.cancel_requested and turn.state != TurnState.CLEANING
@@ -1168,7 +1171,7 @@ class Broker:
                         if capability_nonce:
                             for attempt in range(3):
                                 try:
-                                    async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
+                                    async with observed_async_client('sandbox-gateway',timeout=5, trust_env=False) as client:
                                         response = await client.post(
                                             self.settings.gateway_url.rstrip('/') + '/internal/revoke/' + capability_nonce,
                                             headers=self._revoke_headers(turn,sandbox.id),

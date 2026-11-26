@@ -46,7 +46,7 @@ class JobWorker:
             raise failure from exc
         except Exception as exc:
             event('job.adapter.collection_failed',level=40,job_id=context.job.id,
-                generation=context.generation,exception_type=type(exc).__name__,exc=exc)
+                generation=context.generation,exc=exc)
             raise ExternalJobFailure('成果收集阶段发生内部错误',
                 error_code='artifact_collection_failed',failed_phase='collection',
                 retryable=True,retry_class='collect_same_execution',
@@ -60,7 +60,7 @@ class JobWorker:
                 result={**result,"review_dispatch":{"state":"unavailable",
                     "error":type(exc).__name__,"gates":gates}}
                 event("review.policy.dispatch_failed",level=40,job_id=context.job.id,
-                    exception_type=type(exc).__name__)
+                    exc=exc)
         return result
 
     async def run_once(self) -> int:
@@ -127,7 +127,7 @@ class JobWorker:
         try:await self.process(attempt,continuous=continuous,recovery_only=recovery_only)
         except Exception as exc:
             event('job.worker.process_failed',level=40,job_id=attempt.job_id,
-                generation=attempt.generation,exception_type=type(exc).__name__,exc=exc)
+                generation=attempt.generation,exc=exc)
             job=await self.store.get_job(attempt.job_id)
             if not job or job.state in TERMINAL_JOB_STATES:return
             state=getattr(exc,'terminal_state',
@@ -191,7 +191,7 @@ class JobWorker:
                     generation=context.generation,exc=exc)
                 return AdapterStatus(False)
             event('job.adapter.status_failed',level=40,job_id=context.job.id,
-                generation=context.generation,exception_type=type(exc).__name__,exc=exc)
+                generation=context.generation,exc=exc)
             raise ExternalJobFailure('外部任务状态查询失败',
                 error_code='external_status_unavailable',failed_phase='status',
                 terminal_state=JobState.UNKNOWN,retryable=True,retry_class='reconcile_only',
@@ -229,6 +229,9 @@ class JobWorker:
             previous_acceptance_receipt=accepted.acceptance_receipt if accepted else {},
             allocation_replacement=attempt.retry_kind=='allocation_replacement',
         )
+        event('job.attempt.started',job_id=job.id,worker_id=self.worker_id,
+            generation=attempt.generation,state_before=job.state,
+            retry_count=max(0,attempt.generation-1))
         external_id = context.previous_external_execution_id
         deadline=await self.store.job_deadline(job.id,request.timeout_seconds)
         submission_started=False
@@ -294,6 +297,8 @@ class JobWorker:
                 if submission is None:
                     await self.store.mark_job_submission_started(job.id,self.worker_id,attempt.generation)
                     submission_started=True
+                    event('job.submission.started',job_id=job.id,worker_id=self.worker_id,
+                        generation=attempt.generation,state_after='SUBMITTING')
                 try:
                     while True:
                         try:
@@ -315,12 +320,19 @@ class JobWorker:
                                     and exc.retry_class=='capacity_wait'):
                                 await self.store.mark_infrastructure_wait(job.id,self.worker_id,
                                     attempt.generation,error_detail=str(exc))
+                                event('job.submission.capacity_wait',level=30,job_id=job.id,
+                                    worker_id=self.worker_id,generation=attempt.generation,
+                                    state_after='infrastructure_wait',error_code=exc.error_code,
+                                    retry_seconds=exc.retry_after_seconds or 0)
                                 if exc.retry_after_seconds:
                                     await self._before_deadline(
                                         asyncio.sleep(exc.retry_after_seconds),deadline)
                                 if not self.stop_event.is_set():
                                     await self.store.mark_job_submission_started(
                                         job.id,self.worker_id,attempt.generation)
+                                    event('job.submission.resumed',job_id=job.id,
+                                        worker_id=self.worker_id,generation=attempt.generation,
+                                        state_before='INFRASTRUCTURE_WAIT',state_after='SUBMITTING')
                                     continue
                             elif retry and exc.retry_after_seconds:
                                 await self._before_deadline(
@@ -380,6 +392,9 @@ class JobWorker:
                 external_id = submission.external_execution_id
                 await self.store.record_job_acceptance(job.id, self.worker_id, attempt.generation,
                     external_execution_id=external_id, receipt=submission.acceptance_receipt)
+                event('job.submission.accepted',job_id=job.id,worker_id=self.worker_id,
+                    generation=attempt.generation,external_execution_id=external_id,
+                    state_after=JobState.WAITING_EXTERNAL,outcome='accepted')
                 context = replace(context, previous_external_execution_id=external_id,
                     previous_acceptance_receipt=submission.acceptance_receipt)
                 if submission.completed:
@@ -387,6 +402,9 @@ class JobWorker:
                         True,JobState.SUCCEEDED,submission.result)),deadline)
                     await self.store.transition_job(job.id, JobState.SUCCEEDED,
                         expected_generation=attempt.generation, result=result)
+                    event('job.state.changed',job_id=job.id,generation=attempt.generation,
+                        external_execution_id=external_id,state_before=JobState.WAITING_EXTERNAL,
+                        state_after=JobState.SUCCEEDED,outcome='success')
                     return
             status=await self._external_status(adapter,context,external_id,deadline)
             await self._finish_or_defer(adapter,context,external_id,status,continuous,deadline)
@@ -477,6 +495,10 @@ class JobWorker:
                 'unknown' if state==JobState.UNKNOWN else ('accepted' if external_id else 'none')))
         await self.store.transition_job(context.job.id, state,
             expected_generation=context.generation, result=result)
+        event('job.state.changed',job_id=context.job.id,generation=context.generation,
+            external_execution_id=external_id,state_before=JobState.WAITING_EXTERNAL,
+            state_after=state,outcome='success' if state==JobState.SUCCEEDED else 'failed',
+            error_code=str(result.get('error_code') or ''))
         participant=await self.store.get_pause_participant(context.job.thread_id,
             "child_harness",context.job.id)
         if participant and participant.state.value == "REQUESTED":
@@ -551,6 +573,8 @@ class JobWorker:
                 job=await self.store.get_job(row["job_id"]);request=await self.store.get_job_request(row["job_id"])
                 adapter=self.adapters.get(row["adapter"])
                 if not job or not request or not adapter:raise RuntimeError("cleanup_adapter_unavailable")
+                event('job.cleanup.started',job_id=row['job_id'],generation=row['generation'],
+                    external_execution_id=row['external_execution_id'],phase=row['phase'])
                 context=JobExecutionContext(job=job,request=request,generation=row["generation"],
                     previous_external_execution_id=row["external_execution_id"],
                     previous_acceptance_receipt=row["acceptance_receipt"])
@@ -575,11 +599,14 @@ class JobWorker:
                     release_capacity=getattr(adapter,"release_capacity",None)
                     if release_capacity:await release_capacity(context)
                 await self.store.finish_job_cleanup(row["cleanup_id"],self.worker_id,succeeded=True)
+                event('job.cleanup.completed',job_id=row['job_id'],generation=row['generation'],
+                    external_execution_id=row['external_execution_id'],state_after='completed',
+                    outcome='success')
             except asyncio.CancelledError:
                 if not lost.is_set():raise
             except Exception as exc:
                 event("job.worker.cleanup_failed",level=30,job_id=row["job_id"],
-                    exception_type=type(exc).__name__)
+                    exc=exc)
                 await self.store.finish_job_cleanup(row["cleanup_id"],self.worker_id,
                     succeeded=False,error=type(exc).__name__+": "+str(exc))
             finally:

@@ -346,9 +346,21 @@
       "owner": "namespace initializer",
       "target": "src/sandbox_harness/common/observability/__init__.py"
     },
+    "src/sandbox_harness/common/observability/diagnostics.py": {
+      "owner": "common/observability",
+      "target": "src/sandbox_harness/common/observability/diagnostics.py"
+    },
+    "src/sandbox_harness/common/observability/http.py": {
+      "owner": "common/observability",
+      "target": "src/sandbox_harness/common/observability/http.py"
+    },
     "src/sandbox_harness/common/observability/observability.py": {
       "owner": "common/observability",
       "target": "src/sandbox_harness/common/observability/observability.py"
+    },
+    "src/sandbox_harness/common/observability/schema.py": {
+      "owner": "common/observability",
+      "target": "src/sandbox_harness/common/observability/schema.py"
     },
     "src/sandbox_harness/common/observability/telemetry_ingest.py": {
       "owner": "common/observability",
@@ -449,6 +461,10 @@
     "src/sandbox_harness/common/storage/__init__.py": {
       "owner": "common/storage",
       "target": "src/sandbox_harness/common/storage/__init__.py"
+    },
+    "src/sandbox_harness/common/storage/directories.py": {
+      "owner": "common/storage",
+      "target": "src/sandbox_harness/common/storage/directories.py"
     },
     "src/sandbox_harness/common/storage/files.py": {
       "owner": "common/storage",

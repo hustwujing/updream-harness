@@ -7,6 +7,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 
 from sandbox_harness.common.artifacts.artifact_gateway import (MimeRegistry)
+from sandbox_harness.common.storage.directories import (ensure_private_directory)
 
 
 PRESENTATION_MIMES = {
@@ -26,7 +27,7 @@ def presentation_pdf(data: bytes, *, filename: str, mime: str, digest: str,
         raise ValueError("document_preview_unsupported")
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ValueError("document_preview_digest_invalid")
-    cache_root.mkdir(parents=True, exist_ok=True)
+    ensure_private_directory(cache_root,boundary=cache_root.parent)
     cached = cache_root / f"{digest}.pdf"
     if cached.exists():
         result = cached.read_bytes()

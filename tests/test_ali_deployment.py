@@ -57,6 +57,9 @@ def test_ali_environment_regenerates_service_secrets_and_isolates_paths():
     assert values["SANDBOX_HARNESS_OBJECT_PREFIX"]=="sandbox-harness-platform-parallel-ali/"
     assert values["SANDBOX_HARNESS_MODEL_CATALOG_SNAPSHOT_PATH"]==str(
         ALI_ROOT/".data/catalogs/model-catalog.json")
+    assert values["SANDBOX_HARNESS_LOG_DIR"]==str(ALI_ROOT/".data/logs")
+    assert values["SANDBOX_HARNESS_SERVICE_LOG_DIR"]==str(ALI_ROOT/".data/service-logs")
+    assert values["SANDBOX_HARNESS_DIAGNOSTIC_DIR"]==str(ALI_ROOT/".data/diagnostics")
     assert "SANDBOX_HARNESS_DATABASE_URL" not in values
     assert "@127.0.0.1:28433/postgres" in values["SANDBOX_HARNESS_ADMIN_DATABASE_URL"]
     assert values["SANDBOX_HARNESS_SESSION_SIGNING_KEY"]=="session-secret"
@@ -78,6 +81,7 @@ def test_ali_configurator_has_fail_closed_preflights():
     assert "SHARED_KEYS" in source
     assert "source.items()" not in source
     assert 'DATA_ROOT/"logs"' in source
+    assert 'DATA_ROOT/"diagnostics"' in source
     assert 'DATA_ROOT/"image-decompose"' in source
 
 
@@ -187,6 +191,11 @@ def test_ali_service_runner_uses_only_ali_environment_and_logs():
     source=(ROOT/"deploy/ali/run-service.sh").read_text()
     assert ".data/config/platform.env" in source
     assert ".data/service-logs" in source
+    assert "SANDBOX_HARNESS_SERVICE_LOG_DIR" in source
+    assert "SANDBOX_HARNESS_SERVICE_LOG_FILE_TEMPLATE" in source
+    assert "service_log_directory_outside_data_root" in source
+    assert "invalid_service_log_filename_template" in source
+    assert 'log_file=${log_template//\\{component\\}/$component}' in source
     assert "sandbox-harness-platform-parallel/.data" not in source
     assert "/data/wujing03/media-foundation-core" not in source
     assert 'export PYTHONPATH="$service_root:${PYTHONPATH:-}"' in source

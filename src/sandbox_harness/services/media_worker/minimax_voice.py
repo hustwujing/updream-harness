@@ -11,6 +11,7 @@ import httpx
 from sandbox_harness.common.contracts.domain import (now)
 from sandbox_harness.services.media_worker.media_errors import (classify_provider_error)
 from sandbox_harness.common.observability.observability import (event)
+from sandbox_harness.common.observability.http import (observed_async_client)
 
 
 class MiniMaxVoiceCloneError(RuntimeError):
@@ -40,7 +41,7 @@ class MiniMaxVoiceClones:
         self.worker_owner = worker_owner
 
     async def _client(self):
-        return httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10),
+        return observed_async_client('minimax',timeout=httpx.Timeout(120, connect=10),
             follow_redirects=True, trust_env=False)
 
     @property

@@ -58,3 +58,11 @@ def test_api_preview_temporary_files_stay_under_project_data():
     runner = (ROOT / "deploy/ali/run-service.sh").read_text()
     assert 'export TMPDIR="$root/.data/tmp"' in runner
     assert 'XDG_CACHE_HOME="$root/.data/cache"' in runner
+
+
+def test_ali_start_reasserts_private_service_directory_ownership():
+    start = (ROOT / "deploy/ali/start.sh").read_text()
+    assert "writable_service_paths" in start
+    for path in ("logs", "service-logs", "diagnostics", "tmp", "cache", "preview-cache"):
+        assert f'"$root/.data/{path}"' in start
+    assert "install -d -o sandbox-harness -g sandbox-harness -m 0700" in start

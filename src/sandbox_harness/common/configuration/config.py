@@ -14,6 +14,26 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SANDBOX_HARNESS_", env_file=".env", extra="ignore")
 
     data_root: Path = Path(".data")
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    log_dir: Path = Path("logs")
+    log_file_template: str = Field(default="{service}-{instance}.telemetry.jsonl", min_length=1, max_length=180)
+    log_queue_size: int = Field(default=8192, ge=1, le=65536)
+    log_ring_capacity: int = Field(default=8192, ge=128, le=65536)
+    log_max_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=1024)
+    runtime_log_max_bytes: int = Field(default=16 * 1024 * 1024, ge=1024)
+    log_segment_bytes: int = Field(default=8 * 1024 * 1024, ge=1024)
+    log_segment_max_age_seconds: int = Field(default=86400, ge=60, le=7 * 86400)
+    log_retention_days: int = Field(default=7, ge=1, le=3650)
+    log_otlp_timeout_seconds: float = Field(default=2, ge=0.1, le=60)
+    log_schema_strict: bool = False
+    diagnostic_capture: Literal["off", "metadata", "payload"] = "off"
+    diagnostic_dir: Path = Path("diagnostics")
+    diagnostic_file_template: str = Field(default="{service}-{instance}-{session}.diagnostic.jsonl", min_length=1, max_length=180)
+    diagnostic_capture_session: str = Field(default="", pattern=r"^$|^[A-Za-z0-9._-]{1,80}$")
+    diagnostic_trace_id: str = Field(default="", pattern=r"^$|^[0-9a-f]{32}$")
+    diagnostic_max_body_bytes: int = Field(default=256 * 1024, ge=0, le=16 * 1024 * 1024)
+    diagnostic_max_bytes: int = Field(default=256 * 1024 * 1024, ge=1024)
+    diagnostic_ttl_hours: int = Field(default=24, ge=1, le=168)
     api_bind_host: str = "127.0.0.1"
     api_bind_port: int = Field(default=24767, ge=1024, le=65535)
     database_url: str = "sqlite+aiosqlite:///.data/platform.db"

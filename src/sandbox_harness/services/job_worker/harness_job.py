@@ -22,6 +22,7 @@ from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCreateOut
 from sandbox_harness.common.sandbox.sandbox_factory import (SandboxProfileResolver)
 from sandbox_harness.common.storage.objects import (object_chunks)
 from sandbox_harness.common.catalog.profiles import (ProviderRelease)
+from sandbox_harness.common.observability.http import (observed_async_client)
 
 
 
@@ -696,7 +697,7 @@ class SandboxChildBackend(SandboxAllocationOwner):
                 collector.cancel();await asyncio.gather(collector,return_exceptions=True)
         nonce=str(receipt.get('capability_nonce',''))
         if nonce:
-            async with httpx.AsyncClient(timeout=10,trust_env=False) as client:
+            async with observed_async_client('sandbox-gateway',timeout=10,trust_env=False) as client:
                 response=await client.post(self.settings.gateway_url.rstrip('/')+'/internal/revoke/'+nonce,
                     headers={'X-Sandbox-Harness-Control':self.settings.gateway_control_key,
                         'X-Updream-Thread-Id':context.job.thread_id,

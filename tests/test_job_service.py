@@ -18,7 +18,7 @@ ROOT=Path(__file__).resolve().parents[1]
 
 def test_job_service_entrypoint_configures_dedicated_telemetry():
     source=(ROOT/"src/sandbox_harness/services/job_worker/job_service.py").read_text()
-    assert 'configure("job-worker",settings.data_root/"logs")' in source
+    assert 'configure("job-worker",settings.data_root/"logs",settings)' in source
 
 
 def runtime_profile(identity="general-cpu",reference=True,provider="opensandbox"):

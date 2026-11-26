@@ -39,6 +39,7 @@ from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate)
 from sandbox_harness.common.configuration.config import (Settings, load_settings, validate_service_settings)
 from sandbox_harness.common.configuration.databases import (DatabaseSettings)
 from sandbox_harness.common.observability.observability import (RequestLoggingMiddleware, telemetry, event)
+from sandbox_harness.common.observability.http import (observed_async_client)
 from sandbox_harness.common.contracts.domain import (Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, RegisterRequest, UpdateAccountRequest, MediaDraftCreate, MediaDraftUpdate, MediaReferenceUploadCreate, ProjectFileRename, SandboxReleaseRequest, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, TERMINAL, valid_attachment_name, now)
 from sandbox_harness.services.api.document_preview import (is_presentation, presentation_pdf)
 from sandbox_harness.services.api.model_discovery import (ModelDiscovery)
@@ -306,7 +307,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 except Exception as exc:
                     app.state.domain_protocol_status = "degraded"
                     app.state.domain_protocol_last_error = type(exc).__name__
-                    event("domain.protocol.failed", level=40, exception_type=type(exc).__name__)
+                    event("domain.protocol.failed", level=40, exc=exc)
                     delay = min(delay * 2, settings.supervisor_retry_max_seconds)
                 try:
                     await asyncio.wait_for(protocol_stop.wait(), timeout=max(.1, delay))
@@ -369,7 +370,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     app.state.media_outbox_last_error=type(exc).__name__
                     app.state.media_outbox_failures+=1
                     event("media.outbox.claim_failed",level=40,
-                        exception_type=type(exc).__name__,failures=app.state.media_outbox_failures)
+                        exc=exc,failures=app.state.media_outbox_failures)
                     try:await asyncio.wait_for(media_outbox_stop.wait(),timeout=delay)
                     except asyncio.TimeoutError:pass
                     delay=min(delay*2,settings.supervisor_retry_max_seconds)
@@ -396,7 +397,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     app.state.media_outbox_last_error=type(iteration_error).__name__
                     app.state.media_outbox_failures+=1
                     event("media.outbox.finish_failed",level=40,
-                        exception_type=type(iteration_error).__name__,
+                        exc=iteration_error,
                         failures=app.state.media_outbox_failures)
                     try:await asyncio.wait_for(media_outbox_stop.wait(),timeout=delay)
                     except asyncio.TimeoutError:pass
@@ -415,7 +416,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             while not draft_expiry_stop.is_set():
                 try:await store.expire_job_group_drafts()
                 except Exception as exc:event("job_group_draft.expiry_failed",level=40,
-                    exception_type=type(exc).__name__)
+                    exc=exc)
                 try:await asyncio.wait_for(draft_expiry_stop.wait(),timeout=5)
                 except asyncio.TimeoutError:pass
         draft_expiry_task=asyncio.create_task(expire_job_group_drafts(),
@@ -867,7 +868,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def refresh_media_job(job_id: str, request: Request):
         try:
             value = await store.request_media_refresh(job_id, request.state.owner_id)
-            event("media.job.refresh_requested", job_id=job_id, status=value.status,
+            event("media.job.refresh_requested", job_id=job_id, state=value.status,
                 phase=value.phase)
             return value
         except KeyError:
@@ -1601,7 +1602,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(502, "Sandbox port is unavailable")
         target = sandbox_preview_target(endpoint, path, request.url.query)
         body = await limited_body(request, 16 * 1024 * 1024)
-        client = httpx.AsyncClient(headers=endpoint_headers, timeout=60,
+        client = observed_async_client('sandbox-runtime',headers=endpoint_headers, timeout=60,
             follow_redirects=False, trust_env=False)
         try:
             upstream = await client.send(client.build_request(request.method, target,
@@ -1753,7 +1754,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return
         except Exception as exc:
             event("sandbox.port_websocket.relay_failed", level=logging.WARNING,
-                exception_type=type(exc).__name__)
+                exc=exc)
             with suppress(Exception):
                 await websocket.close(code=1011)
 
@@ -1929,10 +1930,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             pdf = await asyncio.to_thread(presentation_pdf, data, filename=filename, mime=value.mime,
                 digest=value.sha256, cache_root=settings.data_root / "preview-cache", maximum=maximum)
-        except (ValueError, RuntimeError) as exc:
+        except (ValueError, RuntimeError, OSError) as exc:
+            unavailable=isinstance(exc,OSError)
             event("document.preview.failed", level=40, source=source, file_id=file_id,
-                exception_type=type(exc).__name__)
-            raise HTTPException(422, str(exc))
+                error_code='preview_dependency_unavailable' if unavailable else
+                    'presentation_conversion_failed',exc=exc)
+            raise HTTPException(503 if unavailable else 422,
+                "Preview service is temporarily unavailable" if unavailable else str(exc))
         return Response(pdf, media_type="application/pdf",
             headers={"Content-Disposition": content_disposition(Path(filename).stem + ".pdf", inline=True),
                      "Content-Security-Policy": "sandbox; default-src 'none'",

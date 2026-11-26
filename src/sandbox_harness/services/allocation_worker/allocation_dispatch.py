@@ -65,6 +65,10 @@ class AllocationService:
                     if not row or row.claim_owner!=self.owner or row.state!='SENDING':return
                     row.claim_expires_at=now()+timedelta(seconds=self.lease_seconds)
         task=asyncio.create_task(heartbeat())
+        started=asyncio.get_running_loop().time()
+        event('sandbox.allocation.create.started',allocation_id=identity,job_id=value['job_id'],
+            generation=value['job_generation'],provider=self.backend.provider,state_before='PENDING',
+            state_after='SENDING')
         try:
             sandbox=await self.backend.create(request)
             if (sandbox.handle.provider!=request.profile.provider
@@ -72,12 +76,27 @@ class AllocationService:
                     or sandbox.compatibility_key!=request.profile.compatibility_key):
                 raise RuntimeError('sandbox_allocation_identity_mismatch')
             await self._finish(identity,'READY',handle=sandbox.handle)
+            event('sandbox.allocation.create.completed',allocation_id=identity,
+                job_id=value['job_id'],generation=value['job_generation'],provider=self.backend.provider,
+                sandbox_id=sandbox.id,state_after='READY',outcome='success',
+                duration_ms=round((asyncio.get_running_loop().time()-started)*1000,3))
         except tuple(REJECTIONS.values()) as exc:
             await self._finish(identity,'REJECTED',error_code=exc.code)
+            event('sandbox.allocation.create.rejected',level=30,allocation_id=identity,
+                job_id=value['job_id'],generation=value['job_generation'],provider=self.backend.provider,
+                state_after='REJECTED',outcome='rejected',error_code=exc.code,exc=exc,
+                duration_ms=round((asyncio.get_running_loop().time()-started)*1000,3))
         except asyncio.CancelledError:
-            await asyncio.shield(self._finish(identity,'UNKNOWN'));raise
-        except Exception:
+            await asyncio.shield(self._finish(identity,'UNKNOWN'))
+            event('sandbox.allocation.create.unknown',level=30,allocation_id=identity,
+                job_id=value['job_id'],generation=value['job_generation'],provider=self.backend.provider,
+                state_after='UNKNOWN',outcome='cancelled');raise
+        except Exception as exc:
             await self._finish(identity,'UNKNOWN')
+            event('sandbox.allocation.create.unknown',level=40,allocation_id=identity,
+                job_id=value['job_id'],generation=value['job_generation'],provider=self.backend.provider,
+                state_after='UNKNOWN',outcome='unknown',exc=exc,
+                duration_ms=round((asyncio.get_running_loop().time()-started)*1000,3))
         finally:
             task.cancel();await asyncio.gather(task,return_exceptions=True)
 
@@ -147,6 +166,9 @@ class AllocationService:
 
     async def _reconcile(self,value):
         request=decode_request(value['request_json']);handle=None;error_code='allocation_not_visible'
+        event('sandbox.allocation.reconcile.started',allocation_id=value['id'],job_id=value['job_id'],
+            generation=value['job_generation'],provider=self.backend.provider,
+            retry_count=value['reconcile_attempts'],state_before='UNKNOWN')
         try:
             async with asyncio.timeout(self.lease_seconds*.8):
                 sandbox=await self.backend.reconcile_create(SandboxScope(self.backend.namespace),request.allocation_id)
@@ -168,6 +190,10 @@ class AllocationService:
             else:
                 row.error_code=error_code
                 row.reconcile_after=now()+timedelta(seconds=min(30,2**min(row.reconcile_attempts-1,5)))
+        event('sandbox.allocation.reconcile.completed',allocation_id=value['id'],job_id=value['job_id'],
+            generation=value['job_generation'],provider=self.backend.provider,
+            retry_count=value['reconcile_attempts'],state_after='READY' if handle else 'UNKNOWN',
+            outcome='success' if handle else 'deferred',error_code='' if handle else error_code)
 
     async def reconcile_once(self,limit=8):
         await self._expire_creates()
@@ -183,7 +209,7 @@ class AllocationService:
                 tasks-=completed
                 for result in await asyncio.gather(*completed,return_exceptions=True):
                     if isinstance(result,Exception):
-                        event('sandbox.allocation.dispatch_failed',level=40,exception_type=type(result).__name__)
+                        event('sandbox.allocation.dispatch_failed',level=40,exc=result)
                 try:
                     if reconciliation:await self._expire_creates()
                     claim=self._claim_reconciliations if reconciliation else self._claim_creates
@@ -191,7 +217,7 @@ class AllocationService:
                     for value in await claim(concurrency-len(tasks)):
                         tasks.add(asyncio.create_task(execute(value)))
                 except Exception as exc:
-                    event('sandbox.allocation.dispatch_failed',level=40,exception_type=type(exc).__name__)
+                    event('sandbox.allocation.dispatch_failed',level=40,exc=exc)
                 try:await asyncio.wait_for(stop.wait(),timeout=.2)
                 except TimeoutError:pass
         finally:

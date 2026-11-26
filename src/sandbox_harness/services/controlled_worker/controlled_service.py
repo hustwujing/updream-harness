@@ -100,7 +100,7 @@ async def serve(settings:Settings,*,stop_event:asyncio.Event|None=None)->None:
         released=await scheduler.reap_stale_reservations(node.node_id,node.generation,set())
         if released:event('controlled.scheduler.stale_reservations.released',count=len(released))
     except Exception as exc:
-        event('controlled.scheduler.reconcile_failed',level=40,exception_type=type(exc).__name__)
+        event('controlled.scheduler.reconcile_failed',level=40,exc=exc)
     stop=stop_event or asyncio.Event();loop=asyncio.get_running_loop()
     if stop_event is None:
         for name in (signal.SIGTERM,signal.SIGINT):
@@ -121,7 +121,7 @@ async def serve(settings:Settings,*,stop_event:asyncio.Event|None=None)->None:
 
 
 def run()->None:
-    settings=load_settings();configure('controlled-worker',settings.data_root/'logs')
+    settings=load_settings();configure('controlled-worker',settings.data_root/'logs',settings)
     asyncio.run(serve(settings))
 
 

@@ -11,6 +11,7 @@ import httpx
 
 from sandbox_harness.common.contracts.domain import (Harness, identifier)
 from sandbox_harness.common.observability.observability import (event, observed)
+from sandbox_harness.common.observability.http import (observed_async_client)
 from sandbox_harness.common.contracts.sandbox_contracts import (Sandbox, SandboxAuthenticationFailed, SandboxCapabilities, SandboxCapacityUnavailable, SandboxCreateOutcomeUnknown, SandboxCreateRequest, SandboxEndpoint, SandboxEndpointUnavailable, SandboxHandle, SandboxNotFound, SandboxProfile, SandboxProfileUnavailable, SandboxProviderError, SandboxProviderUnavailable, SandboxRateLimited, SandboxScope, SandboxState, SandboxRuntimeRoute)
 
 
@@ -34,7 +35,7 @@ class OpenSandboxBackend:
                  gateway_url:str="http://172.31.0.1:29882",proxy_port:int=29883,
                  *,transport:httpx.AsyncBaseTransport|None=None):
         headers={"OPEN-SANDBOX-API-KEY":api_key} if api_key else {}
-        self.client=httpx.AsyncClient(base_url=base_url.rstrip("/"),headers=headers,
+        self.client=observed_async_client('opensandbox',base_url=base_url.rstrip("/"),headers=headers,
             timeout=30,trust_env=False,transport=transport)
         self.timeout_seconds=timeout_seconds;self.namespace=namespace
         gateway=urlsplit(gateway_url)

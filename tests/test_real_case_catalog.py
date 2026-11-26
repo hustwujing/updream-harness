@@ -57,3 +57,12 @@ def test_every_case_asset_is_manifested_and_available():
     referenced={name for case in catalog["cases"] for name in case.get("assets",[])}
     assert referenced<=names
     assert all((ROOT/"tests/real_cases/assets"/name).is_file() for name in referenced)
+
+
+def test_artifact_staging_recovery_is_a_serial_supplemental_real_gate():
+    source=(ROOT/'tests/run_real_parallel_protocol.py').read_text()
+    assert "'AS01':case_as01" in source
+    assert "SERIAL_CASES={'P13','P19','P21','P27','AS01'}" in source
+    assert "settings.data_root/'tmp'/'child-job-artifacts'" in source
+    assert "settings.data_root/'tmp'/'controlled-job-artifacts'" in source
+    assert "row.outcome=='COLLECTION_RETRY'" in source
