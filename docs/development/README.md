@@ -43,6 +43,7 @@ in [Getting started](getting-started.md). The current baseline is the
 | Logging, tracing or error reporting | [Recovery and observability](recovery-and-observability.md) and [observability contract](../observability.md) |
 | Change log schemas, HTTP capture or diagnostic payload retention | [Full-chain logging architecture](logging-architecture.md), [Recovery and observability](recovery-and-observability.md) and [observability contract](../observability.md) |
 | Deployment, service unit, image or environment change | [Deployment and collaboration](deployment-and-collaboration.md) |
+| Multi-replica, durable commands, public errors, metrics, key rotation, fair admission, circuits, object GC or usage ledger | [Production hardening](production-hardening.md) |
 
 ## Existing system references
 

@@ -20,17 +20,22 @@ To add another sandbox backend, follow
 The public repository is [hustwujing/updream-harness](https://github.com/hustwujing/updream-harness)
 on branch `sandbox-harness-platform-parallel-ali`.
 
-The current modular Ali candidate is verified at `a59df96`. Its product catalog
+The previous modular Ali baseline is verified at `a59df96`. Its product catalog
 contains 175 cases: the previous 169 cases plus XDB01-XDB06 for the split
-Accounts, Core, Media and Sites protocols. The composite gate is 175/175 with
+Accounts, Core, Media and Sites protocols. That composite gate is 175/175 with
 zero program or external failures and a mean duration of 283.920 seconds.
 Python verification passed 1469 tests with 21 environment-dependent skips;
 frontend verification passed 28 tests and the production build. See the
 [175-case cross-database report](docs/test-evidence/ali-cross-database-175-case-report.md).
 
-The candidate is deployed as eight independently restartable services:
-API, sandbox-gateway, JobWorker, AllocationWorker, ControlledWorker, MediaWorker,
-SiteWorker and image-inference. Seven Python services resolve immutable descriptors
+The current catalog contains 188 cases. `EVO01`-`EVO13` cover API/PlatformWorker
+restart separation, leader failover, multi-replica claims, bounded Outbox delivery,
+metrics, Trace links, key rotation, fair admission, Provider circuits, object GC,
+usage replay, public errors and authoritative browser stages.
+
+The candidate deploys as nine independently restartable services:
+API, PlatformWorker, sandbox-gateway, JobWorker, AllocationWorker, ControlledWorker,
+MediaWorker, SiteWorker and image-inference. Eight Python services resolve immutable descriptors
 under `.data/service-current/` and run from per-service source digests under
 `.data/service-releases/`; image-inference retains its separately materialized
 model/runtime boundary. Accounts, core execution, media and sites use four distinct
@@ -51,9 +56,9 @@ process receives only its declared database credentials.
 ## Services
 
 ```text
-Web → Session API → Leased Turn Worker → Warm Sandbox Pool → SandboxBackend
-                                      │                     │
-                                      └──── Capability Gateway ◄── Harness
+Web → Session API → PostgreSQL Turn → PlatformWorker → Warm Sandbox Pool → SandboxBackend
+                                             │                         │
+                                             └──── Capability Gateway ◄── Harness
 
 Media confirmation → Session API → PostgreSQL Job → Media Worker → Provider
                                       ├── reference → public BOSS → Ark Asset
@@ -77,6 +82,12 @@ PostgreSQL sites: site drafts, deployment Jobs and immutable versions
 Redis: live event fan-out and short-lived capability revocation
 Object storage: content-addressed checkpoints and artifacts
 ```
+
+API is a horizontally scalable request plane. It owns browser identity, owner
+checks, SSE, file endpoints and public projections; it does not execute Turn or
+singleton background loops. PlatformWorker replicas claim durable Turn and
+continuation work. One database-fenced leader owns warm-pool convergence,
+cross-domain relay, expiry, orphan cleanup, model discovery and object GC.
 
 The Ali checkout and branch are both `sandbox-harness-platform-parallel-ali`.
 Its working directory is `/data2/wujing03/sandbox-harness-platform-parallel-ali`,
@@ -148,7 +159,7 @@ JobWorker cleanup continues under full admission load, and bounded recovery
 observations reuse already accepted executions without submitting new work.
 Broker cancellation settles in-flight database operations and avoids repeatedly
 cancelling a task already handling cancellation. Current recovery evidence is
-included in the 175-case report above.
+included in the prior 175-case report above; the current candidate adds the EVO gate.
 
 The execution catalog publishes dynamic readiness. Unavailable Operations are
 rejected before confirmation or Job creation, and Provider references, modes
@@ -302,6 +313,7 @@ See [architecture.md](docs/architecture.md), [client API](docs/api.md), [data mo
 
 Current deployment, cross-database, recovery and case evidence is consolidated
 in the [175-case Ali report](docs/test-evidence/ali-cross-database-175-case-report.md).
+The current 188-case report is generated only after the final clean campaign.
 
 ## Runtime Toolchain
 
