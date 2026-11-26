@@ -20,11 +20,20 @@ import uuid
 import httpx
 from dotenv import dotenv_values
 
+from sandbox_harness.common.configuration.databases import DatabaseSettings
+from sandbox_harness.common.db.core import CoreRepository
+
 
 ROOT=Path(__file__).resolve().parents[1]
 TERMINAL_JOBS={'SUCCEEDED','FAILED','CANCELLED','BLOCKED','UNKNOWN'}
 PROTOCOL_LOCK=ROOT/'.data/tmp/real-protocol.lock'
 SERIAL_CASES={'P13','P19','P21','P27'}
+
+
+def core_repository(settings):
+    database=DatabaseSettings().for_service("api")["core"]
+    return CoreRepository(database,settings.redis_url,settings.redis_prefix,
+                          namespace=settings.namespace)
 
 
 def service_unit(args,role:str)->str:
@@ -271,7 +280,7 @@ async def artifact_boundary(client,args,identity,*,requires_review:bool,verdict:
     from sandbox_harness.common.artifacts.artifact_gateway import (ArtifactEmission, ArtifactGateway)
     from sandbox_harness.common.contracts.job_contracts import (JobExpectedOutput, JobGroupCreate, JobKind, JobRequest, JobState, OutputDisposition)
     from sandbox_harness.common.db.store import (Store)
-    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    store=core_repository(settings)
     owner=(await store.get_thread(thread['id'])).owner_id
     request=JobRequest(local_job_id='review-boundary',kind=JobKind.OPERATION,adapter='fixture',
         descriptor_id='fixture.review-boundary',descriptor_version='1',descriptor_digest='e'*64,
@@ -327,7 +336,7 @@ async def register_case_asset(thread_id:str,turn_id:str,path:Path):
     from sandbox_harness.common.db.store import (Store)
     data=path.read_bytes();objects=object_store(settings)
     object_ref,digest=await asyncio.to_thread(objects.put,data)
-    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    store=core_repository(settings)
     try:
         owner=(await store.get_thread(thread_id)).owner_id
         return await store.add_artifact(turn_id,path='inputs/'+path.name,sha256=digest,
@@ -339,7 +348,7 @@ async def register_case_asset(thread_id:str,turn_id:str,path:Path):
 async def job_artifacts(job_ids:list[str]):
     settings=load_platform_settings()
     from sandbox_harness.common.db.store import (Store)
-    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    store=core_repository(settings)
     try:
         return {job_id:await store.list_job_artifacts(job_id) for job_id in job_ids}
     finally:await store.close()
@@ -349,7 +358,7 @@ async def attempts_overlap(job_ids:list[str])->bool:
     settings=load_platform_settings()
     from sqlalchemy import select
     from sandbox_harness.common.db.store import (JobAttemptRow, Store)
-    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    store=core_repository(settings)
     try:
         async with store.connections() as db:
             attempts=list((await db.execute(select(JobAttemptRow).where(
@@ -365,7 +374,7 @@ async def verify_provider_coverage(thread_id:str,jobs:list[dict],expected:dict[s
     settings=load_platform_settings()
     from sqlalchemy import select
     from sandbox_harness.common.db.store import (JobAttemptRow, Store)
-    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    store=core_repository(settings)
     evidence={}
     try:
         owner=(await store.get_thread(thread_id)).owner_id
@@ -473,7 +482,7 @@ async def case_skill_coverage(client,args,identity:str):
     settings=load_platform_settings()
     from sandbox_harness.services.api.app import (object_store)
     from sandbox_harness.common.db.store import (Store)
-    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix);objects=object_store(settings)
+    store=core_repository(settings);objects=object_store(settings)
     evidence={}
     try:
         for row in completed:
@@ -545,7 +554,7 @@ async def case_k07(client,args):
     settings=load_platform_settings()
     from sandbox_harness.services.api.app import (object_store)
     from sandbox_harness.common.db.store import (Store)
-    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix);objects=object_store(settings)
+    store=core_repository(settings);objects=object_store(settings)
     try:
         by_local={row['local_job_id']:row for row in completed}
         requests={row['local_job_id']:await store.get_job_request(row['id']) for row in completed}
@@ -590,7 +599,7 @@ async def case_k08(client,args):
         raise AssertionError('audio/video operation attempts did not overlap')
     settings=load_platform_settings()
     from sandbox_harness.common.db.store import (Store)
-    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    store=core_repository(settings)
     try:descriptors={
         (await store.get_job_request(row['id'])).descriptor_id for row in completed}
     finally:await store.close()
@@ -874,7 +883,7 @@ async def case_p01(client,args):
     from sandbox_harness.common.db.store import (Store)
     data=(ROOT/'tests/real_cases/assets/poster.png').read_bytes()
     objects=object_store(settings);object_ref,digest=await asyncio.to_thread(objects.put,data)
-    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    store=core_repository(settings)
     try:
         artifact=await store.add_artifact(turn['id'],path='inputs/poster.png',sha256=digest,
             size=len(data),mime='image/png',object_ref=object_ref)
@@ -1078,7 +1087,7 @@ async def case_p13(client,args):
     settings=load_platform_settings()
     from sqlalchemy import select
     from sandbox_harness.common.db.store import (JobAttemptRow, Store)
-    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    store=core_repository(settings)
     try:
         async with store.connections() as db:
             attempts=list((await db.execute(select(JobAttemptRow).where(
@@ -1110,7 +1119,7 @@ async def case_p16(client,args):
     thread,turn=await origin(client,args,'P16');settings=load_platform_settings()
     from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobKind, JobRequest, JobState)
     from sandbox_harness.common.db.store import (Store)
-    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    store=core_repository(settings)
     try:
         owner=(await store.get_thread(thread['id'])).owner_id
         account=await store.configure_budget(owner,thread['id'],'provider.submissions',limit=1)
@@ -1154,7 +1163,7 @@ async def case_p17(client,args):
             self.status_calls+=1;self.handles.append(external_execution_id)
             return (AdapterStatus(False) if self.status_calls==1 else
                 AdapterStatus(True,JobState.SUCCEEDED,{'reconciled':True}))
-    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix);adapter=LostResponseAdapter()
+    store=core_repository(settings);adapter=LostResponseAdapter()
     try:
         owner=(await store.get_thread(thread['id'])).owner_id
         request=JobRequest(local_job_id='lost-response',kind=JobKind.PROVIDER,
@@ -1197,7 +1206,7 @@ async def case_p19(client,args):
     from sandbox_harness.common.artifacts.artifact_gateway import (ArtifactEmission, ArtifactGateway)
     from sandbox_harness.common.contracts.job_contracts import (JobExpectedOutput, JobGroupCreate, JobKind, JobRequest, JobState, OutputDisposition)
     from sandbox_harness.common.db.store import (Store)
-    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    store=core_repository(settings)
     try:
         owner=(await store.get_thread(thread['id'])).owner_id
         request=JobRequest(local_job_id='atomic-pair',kind=JobKind.OPERATION,adapter='fixture',
@@ -1338,8 +1347,7 @@ async def case_p23(client,args):
         return {'classification':('non_program_failure' if code.startswith(
             ('model_','provider_','upstream_')) else 'program_failure'),
             'reason':code,'turn_id':turn['id'],'state':final['state']}
-    settings=load_platform_settings();store=Store(
-        settings.database_url,settings.redis_url,settings.redis_prefix)
+    settings=load_platform_settings();store=core_repository(settings)
     try:
         async def planned_jobs():
             async with store.connections() as db:
@@ -1393,7 +1401,7 @@ async def case_p24(client,args):
     catalog=require(await client.get('api/catalog/execution')).json()
     settings=load_platform_settings()
     from sandbox_harness.common.db.store import (Store)
-    input_store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    input_store=core_repository(settings)
     try:
         owner=(await input_store.get_thread(thread['id'])).owner_id
         frozen=await input_store.turn_input_artifacts(turn['id'],owner)
@@ -1431,7 +1439,7 @@ async def case_p24(client,args):
     if child['state']!='SUCCEEDED':raise AssertionError('Child did not resume successfully: '+json.dumps(child))
     from sqlalchemy import select
     from sandbox_harness.common.db.store import (Store, JobRow)
-    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    store=core_repository(settings)
     try:
         async with store.connections() as db:
             operations=list((await db.execute(select(JobRow).where(JobRow.thread_id==thread['id'],
@@ -1585,7 +1593,7 @@ async def case_p27(client,args):
     settings=load_platform_settings()
     from sqlalchemy import select
     from sandbox_harness.common.db.store import (JobAttemptRow, Store)
-    store=Store(settings.database_url,settings.redis_url,settings.redis_prefix)
+    store=core_repository(settings)
     try:
         async with store.connections() as db:
             attempts=list((await db.execute(select(JobAttemptRow).where(
