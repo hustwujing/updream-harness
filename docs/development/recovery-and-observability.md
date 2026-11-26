@@ -335,6 +335,21 @@ state, so a later input failure cannot overwrite an earlier completion.
 
 ## Required fault checks
 
+Disposable writable directories are not durable state. Long-running services
+must reassert their log, diagnostic, artifact staging, Runtime download, media
+staging, site staging, preview cache and local object shard directories at the
+write boundary. Recreation is allowed only beneath the configured data root;
+symbolic links and path escape fail closed. PostgreSQL, persisted object data,
+Controlled work results and sandbox workspaces are authoritative or
+non-recreatable and must never be replaced with empty directories.
+
+`AS01` is the supplemental real gate for this boundary. It removes the Child
+Harness and Controlled Operation artifact staging roots while their services
+remain running, then executes the real P24 nested Child/`image.segment` flow.
+It requires successful publication, zero `COLLECTION_RETRY` attempts and one
+external execution identity per Job. AS01 is separate from the frozen 175-case
+business catalog.
+
 - API/Broker SIGKILL while a Runtime execution continues.
 - Lease expiry and stale-generation write rejection.
 - Transport loss with Runtime event replay and no second process.

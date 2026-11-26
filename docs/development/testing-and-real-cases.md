@@ -58,6 +58,12 @@ separately requested resource cases, with each result's actual revision. This is
 `composite_verified`; run the whole matrix on one revision only when a
 `clean_run` claim or a newly agreed release requirement needs it.
 
+Supplemental `AS01` injects deletion of host artifact staging roots after
+Worker startup and validates real Child Harness plus Controlled Operation
+collection without resubmission. Run it whenever `ArtifactGateway`, writable
+directory recovery, Child collection or Controlled collection changes. It does
+not change the frozen 175-case catalog count.
+
 Documentation-only updates to a verified baseline need content, source-reference
 and link checks, not another real-provider campaign or deployment. Preserve the
 tested/deployed revision and commit the documentation separately; do not rewrite

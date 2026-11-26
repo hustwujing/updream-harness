@@ -44,7 +44,11 @@ INFO records lifecycle events; WARNING covers recoverable transport/dependency i
 
 ## Confidentiality and bounded impact
 
-An allowlist controls attributes before persistence/export. Tokens, passwords, cookies, prompts, generated text, attachment contents, shell commands, SQL parameters, full URLs, arbitrary HTTP headers and exception messages are excluded. Structured exception records retain type and code-location stack frames without source lines or local variables. Foreign-library diagnostics retain severity/location rather than formatting potentially sensitive messages. Credential-like values are redacted even in allowed string fields. Sandbox telemetry is marked `origin=sandbox_reported`; it never drives business state.
+An allowlist controls operational attributes before persistence/export. Tokens, passwords, cookies, prompts, generated text, attachment contents, shell commands, SQL parameters, full URLs, arbitrary HTTP headers and exception messages are excluded from operational JSONL and OTLP. Structured exception records retain type and code-location stack frames without source lines or local variables. Foreign-library diagnostics retain severity/location rather than formatting potentially sensitive messages. Credential-like values are redacted even in allowed string fields. Sandbox telemetry is marked `origin=sandbox_reported`; it never drives business state.
+
+Unknown event fields are no longer discarded silently. Strict schema mode raises at the call site; normal production mode increments `schema_violations` and emits `telemetry.schema_violation` with safe field names only. The static observability audit checks every declared event, operation, bind and enrich field.
+
+Explicit diagnostic capture is a separate local JSONL plane. `metadata` records bounded request/response metadata and body digests. `payload` additionally records bounded text/JSON bodies and requires `DEBUG`. Credential headers, credential-bearing URLs and credential JSON fields remain redacted. Query strings are removed and binary bodies retain only size and SHA-256. Capture files use a separate directory, template, total budget and TTL; capture failure never changes a request result. Provider, Runtime, sandbox and media HTTPX clients propagate `traceparent` and emit request lifecycle events. Full payload capture is intended for a scoped session or `trace_id`, then disabled.
 
 Logging is asynchronous with a bounded queue. Queue overload increments `dropped_records`; the writer emits a drop summary. Disk errors and exporter errors increment independent counters and do not fail the business operation. `/api/health` and Gateway `/health` expose local telemetry counters and writer status. External OTLP failures leave local files intact. The final Runtime collection record also preserves its instance-cumulative drop/export/disk counters and last export HTTP status. The writer coalesces records for up to 200 ms or 128 records per batch. The single worker gives bounded memory/ordering but an unavailable exporter can increase queue occupancy, visible in these counters.
 
@@ -56,20 +60,48 @@ Runtime uses the standard OTLP/HTTP exporters to send logs and traces to the exi
 
 Before credential revocation and sandbox deletion, the Broker also fetches the Runtime's bounded in-memory diagnostics window. It validates records again, labels their origin, and preserves source event IDs. Queries deduplicate live export and fallback copies. Collection failure and an older window boundary are explicit events; a missing tail is never fabricated. The Runtime ring retains 8192 records, so a prolonged export outage can exceed the fallback window.
 
-Authoritative local telemetry files live at `<data_root>/logs`, deployed under `/data2/wujing03/sandbox-harness-platform-parallel-ali/.data/logs`. API/Gateway share a cross-process retention lock: default 7 days and 2 GiB total, oldest segments removed first. Files rotate at 8 MiB or daily. Retention uses segment modification time; idle writers also prune every 60 seconds. A segment can include up to one day of events, so event-age retention has that rotation granularity. Files are private to the service account. Per-sandbox temporary files are bounded to 16 MiB under `/run/harness/observability`; all durable storage remains on `/data2`. The Runtime's temporary directory is not a durable archive.
+Authoritative local telemetry files default to `<data_root>/logs`, deployed under `/data2/wujing03/sandbox-harness-platform-parallel-ali/.data/logs`. The directory and basename template are configurable but must remain beneath `data_root`; templates cannot contain path separators or traversal. API/Gateway share a cross-process retention lock: default 7 days and 2 GiB total, oldest segments removed first. Files rotate at 8 MiB or daily. Retention uses segment modification time; idle writers also prune every 60 seconds. A segment can include up to one day of events, so event-age retention has that rotation granularity. Files are private to the service account. Per-sandbox temporary files are bounded to 16 MiB under `/run/harness/observability`; all durable host storage remains on `/data2`. The Runtime's temporary directory is not a durable archive.
 
 | Setting | Default / behavior |
 | --- | --- |
-| `SANDBOX_HARNESS_LOG_LEVEL` | `INFO`; DEBUG enables high-frequency request diagnostics. |
+| `SANDBOX_HARNESS_LOG_LEVEL` | `INFO`; `payload` diagnostic capture requires `DEBUG`. |
+| `SANDBOX_HARNESS_LOG_DIR` | `<data_root>/logs`; must remain beneath `data_root`. |
+| `SANDBOX_HARNESS_LOG_FILE_TEMPLATE` | `{service}-{instance}.telemetry.jsonl`. |
 | `SANDBOX_HARNESS_LOG_QUEUE_SIZE` | 8192, validated range 1–65536. |
-| `SANDBOX_HARNESS_LOG_MAX_BYTES` | Host aggregate 2 GiB; Runtime temporary storage 16 MiB. |
+| `SANDBOX_HARNESS_LOG_RING_CAPACITY` | 8192 records, validated range 128–65536. |
+| `SANDBOX_HARNESS_LOG_MAX_BYTES` / `SANDBOX_HARNESS_RUNTIME_LOG_MAX_BYTES` | Host aggregate 2 GiB; Runtime temporary storage 16 MiB. |
+| `SANDBOX_HARNESS_LOG_SEGMENT_BYTES` | 8 MiB per segment. |
+| `SANDBOX_HARNESS_LOG_SEGMENT_MAX_AGE_SECONDS` | 86400 seconds. |
 | `SANDBOX_HARNESS_LOG_RETENTION_DAYS` | 7, configurable 1–3650. |
+| `SANDBOX_HARNESS_LOG_OTLP_TIMEOUT_SECONDS` | 2 seconds, configurable 0.1–60. |
+| `SANDBOX_HARNESS_LOG_SCHEMA_STRICT` | `false`; use `true` in development/test to reject undeclared fields. |
+| `SANDBOX_HARNESS_SERVICE_LOG_DIR` | Launcher stdout/stderr directory, default `<data_root>/service-logs`. |
+| `SANDBOX_HARNESS_SERVICE_LOG_FILE_TEMPLATE` | `{component}.log`. |
+| `SANDBOX_HARNESS_DIAGNOSTIC_CAPTURE` | `off`, `metadata` or `payload`; default `off`. |
+| `SANDBOX_HARNESS_DIAGNOSTIC_DIR` | `<data_root>/diagnostics`. |
+| `SANDBOX_HARNESS_DIAGNOSTIC_FILE_TEMPLATE` | `{service}-{instance}-{session}.diagnostic.jsonl`. |
+| `SANDBOX_HARNESS_DIAGNOSTIC_CAPTURE_SESSION` | Optional stable session identifier for a bounded investigation. |
+| `SANDBOX_HARNESS_DIAGNOSTIC_TRACE_ID` | Optional 32-character lowercase trace filter. |
+| `SANDBOX_HARNESS_DIAGNOSTIC_MAX_BODY_BYTES` | 256 KiB captured per request/response body. |
+| `SANDBOX_HARNESS_DIAGNOSTIC_MAX_BYTES` | 256 MiB aggregate capture budget. |
+| `SANDBOX_HARNESS_DIAGNOSTIC_TTL_HOURS` | 24 hours, configurable 1–168. |
 | `SANDBOX_HARNESS_ENVIRONMENT` | `local`, included as resource metadata. |
 | `SANDBOX_HARNESS_RELEASE` | Immutable selected service or Runtime release digest. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional external OTLP/HTTP base URL. SDK sends `/v1/logs` and `/v1/traces`. Without it, host files and the Runtime-to-Gateway pipeline remain active. |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Optional external exporter headers, never logged. Direct connection; ambient HTTP proxy credentials are not used. |
 
 Runtime export endpoint/credential is replaced on configure using the sandbox's current short-lived token. No long-lived observability credential is sent into the sandbox. External OTLP export is implemented and protocol-tested; an organization-specific collector address is deployment configuration, not a hardcoded dependency.
+
+Example scoped payload investigation:
+
+```bash
+SANDBOX_HARNESS_LOG_LEVEL=DEBUG
+SANDBOX_HARNESS_DIAGNOSTIC_CAPTURE=payload
+SANDBOX_HARNESS_DIAGNOSTIC_CAPTURE_SESSION=incident-20261126
+SANDBOX_HARNESS_DIAGNOSTIC_TRACE_ID=0123456789abcdef0123456789abcdef
+```
+
+Remove the capture mode and restart after collecting evidence. Operational logs can be queried with `sandbox-harness-logs --trace <trace_id> --related`; diagnostic files are intentionally excluded from that command and from OTLP export.
 
 ## Deploying a logging change
 

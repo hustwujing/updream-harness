@@ -41,6 +41,7 @@ in [Getting started](getting-started.md). The current baseline is the
 | Upload, file card or online document preview | [File upload and preview](file-upload-and-preview.md), [API and frontend](api-and-frontend.md) |
 | Static interactive site preparation, deployment, rollback or serving | [Static site deployment](static-site-deployment.md), [Adding a Runtime tool](add-runtime-tool.md), [Adding a Gateway capability](add-gateway-capability.md), [API and frontend](api-and-frontend.md) |
 | Logging, tracing or error reporting | [Recovery and observability](recovery-and-observability.md) and [observability contract](../observability.md) |
+| Change log schemas, HTTP capture or diagnostic payload retention | [Full-chain logging architecture](logging-architecture.md), [Recovery and observability](recovery-and-observability.md) and [observability contract](../observability.md) |
 | Deployment, service unit, image or environment change | [Deployment and collaboration](deployment-and-collaboration.md) |
 
 ## Existing system references

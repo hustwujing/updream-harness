@@ -353,4 +353,9 @@ Native interaction IDs exposed outside the sandbox are namespaced by execution; 
 
 The sidebar green dot means a completed Turn has not been viewed. Once the completed transcript is loaded in the focused, visible conversation, the client acknowledges that exact Turn through `POST /api/threads/{thread_id}/read`. The owner-scoped acknowledgement is stored on the Thread, survives reloads, and cannot pre-read a running Turn or acknowledge a newer completion through a stale request. Running Turns retain their spinner.
 
-Structured lifecycle logs and OpenTelemetry traces cover API, Broker, Gateway, storage and Runtime. Logs are stored under `.data/logs` with bounded queues, redaction and retention; Runtime records are exported to the existing Gateway and collected again before deletion. Use `.venv/bin/sandbox-harness-logs --turn TURN_ID` to assemble a timeline. See [logging, IDs, retention, export configuration and troubleshooting](docs/observability.md).
+Structured lifecycle logs and OpenTelemetry traces cover API, Broker, workers, Sandbox allocation, Gateway, provider HTTP, storage and Runtime. Operational logs are payload-free and use configurable directories, filenames, queues, rotation and retention beneath `.data`; explicit `DEBUG` diagnostic capture can retain bounded, redacted ingress/egress bodies in a separate TTL-limited directory. Runtime records are exported to the existing Gateway and collected again before deletion. Use `.venv/bin/sandbox-harness-logs --turn TURN_ID` to assemble a timeline. See [logging, IDs, diagnostic capture, retention, export configuration and troubleshooting](docs/observability.md).
+
+Disposable staging and telemetry directories are revalidated at each write and
+may be recreated only below the configured data root. The supplemental `AS01`
+real gate deletes Child and Controlled artifact staging roots while Workers are
+running and verifies successful collection without duplicate external work.

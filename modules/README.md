@@ -20,6 +20,12 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/pytest tests/test_module_manifests.py
 Service artifacts, dependency environments, generated manifests and logs belong
 under `.data`. No credentials are stored in these manifests.
 
+All Python services share the common OpenTelemetry event contract and HTTP trace
+propagation closure. Operational JSONL is payload-free. Explicit DEBUG payload
+capture uses the separate bounded diagnostic directory described in
+[`docs/observability.md`](../docs/observability.md); module implementations must
+use the shared wrappers instead of private log formats.
+
 The source/resource artifact builder follows actual local Python imports and
 includes parent package initializers. It rejects cross-service implementation
 imports, external symlink resources and altered artifacts. Its output is a
