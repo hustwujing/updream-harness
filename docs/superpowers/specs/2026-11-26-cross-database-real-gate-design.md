@@ -17,8 +17,8 @@ increasing the product gate from 169 to 175 cases.
 - Recovery reuses an accepted provider execution and does not create a second
   external execution or advance the source attempt generation while polling.
 - Cancellation prevents late Media output from being promoted into Core.
-- Lifecycle cleanup covers Accounts, Core, Media and Sites without leaving
-  owner or thread rows behind.
+- Lifecycle cleanup preserves the Accounts principal while removing the
+  deleted Thread's authoritative rows from Core, Media and Sites.
 - Test data uses unique owner, thread and idempotency identities and is cleaned
   through product lifecycle commands wherever the case exercises deletion.
 - No case-, provider- or operation-specific production branch is introduced.
@@ -32,7 +32,7 @@ increasing the product gate from 169 to 175 cases.
 | XDB03 | A real multi-output Media job preserves role, filename, position, object reference, SHA-256, MIME type and size when Core collects it. |
 | XDB04 | A Core source cancellation fences its Media permit; late output cannot be promoted to Core artifacts or project files. |
 | XDB05 | A Core site command is acknowledged by Sites with the exact manifest, version and file identities, then becomes observable through the deployed API. |
-| XDB06 | Account/thread deletion propagates through Core, Media and Sites and leaves no owner- or thread-scoped rows in any authoritative database. |
+| XDB06 | Accounts and Core agree on the owner identity; thread deletion propagates through Core, Media and Sites, leaves no thread-scoped rows, and preserves the Accounts principal. |
 
 ## Runner And Evidence
 
@@ -62,4 +62,3 @@ one classification model.
 - XDB01-XDB06 pass against the deployed Ali databases and services.
 - The merged report contains exactly the 175 catalog IDs with 175 successes.
 - Full Python and frontend checks pass at the final revision.
-
