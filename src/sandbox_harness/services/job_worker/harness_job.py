@@ -105,10 +105,11 @@ class HarnessJobAdapter(BaseJobAdapter):
     @staticmethod
     def execution_prompt(request,input_bindings=())->str:
         objective=str(request.parameters.get('objective',''))
-        if input_bindings and len(input_bindings)!=len(request.input_artifacts):
+        request_inputs=getattr(request,'input_artifacts',())
+        if input_bindings and len(input_bindings)!=len(request_inputs):
             raise ValueError('child_input_binding_count_mismatch')
         rows=[]
-        for index,value in enumerate(request.input_artifacts):
+        for index,value in enumerate(request_inputs):
             if input_bindings:
                 item,artifact=input_bindings[index]
                 if item!=value or artifact.id!=value.artifact_id:
