@@ -50,7 +50,8 @@ async def test_core_registration_refuses_active_turn_and_fences_new_admission(tm
                                                {"accounts", "media", "sites"})
         assert result.state == "refused" and result.error_code == "active_work_prevents_registration"
         await core.set_turn_state(turn.id, TurnState.COMPLETED)
-        async def terminal(session,envelope):return {"status":"empty"}
+        async def terminal(session,envelope):
+            return {"turn_id":envelope.payload["turn_id"],"status":"empty"}
         await core.relay_remote({"media":DomainHandoff(media,{"media.turn.finished":terminal})})
         result = await core.coordinator.start(LifecycleProposal("idle", "owner", "", 0, "register", "open"),
                                                {"accounts", "media", "sites"})
@@ -121,6 +122,8 @@ async def test_core_terminal_state_rolls_back_when_notification_cannot_commit(tm
 
 
 async def test_pending_remote_obligation_blocks_lifecycle_until_receipt(tmp_path):
+    from pydantic import BaseModel, ConfigDict
+    from sandbox_harness.common.contracts.domain_commands import DomainCommandContract
     from sandbox_harness.common.db.domain_database import DomainDatabase
     from sandbox_harness.common.db.handoff import DomainHandoff
     from sandbox_harness.common.db.lifecycle import LifecycleProposal
@@ -131,7 +134,18 @@ async def test_pending_remote_obligation_blocks_lifecycle_until_receipt(tmp_path
     async def receive(session, envelope):
         return {"accepted":True}
 
-    target = DomainHandoff(media, {"test.remote":receive})
+    class RemoteCommand(BaseModel):
+        model_config = ConfigDict(extra="forbid", strict=True)
+        thread_id: str
+
+    class RemoteResult(BaseModel):
+        model_config = ConfigDict(extra="forbid", strict=True)
+        accepted: bool
+
+    contract = DomainCommandContract(
+        "test.remote", "core", ("media",), RemoteCommand, RemoteResult)
+    core.handoff.contracts[contract.kind] = contract
+    target = DomainHandoff(media, {"test.remote":receive}, contracts={contract.kind:contract})
     try:
         await core.initialize(); await media.initialize()
         _, thread = await create_thread(core)

@@ -16,6 +16,9 @@ from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from sandbox_harness.common.contracts.domain_commands import (
+    DOMAIN_COMMAND_CONTRACTS, validate_command_payload, validate_command_result,
+)
 from sandbox_harness.common.contracts.domain import now
 from sandbox_harness.common.observability.observability import (
     add_link, canonical_traceparent, carrier, operation,
@@ -37,6 +40,8 @@ class Envelope:
     payload_json: str
     traceparent: str = ""
     version: int = 1
+    contract_version: int = 1
+    contract_digest: str = ""
 
     @property
     def payload(self) -> dict:
@@ -57,6 +62,7 @@ class Envelope:
     def validate(self):
         if (self.source not in DOMAIN_TABLES or self.target not in DOMAIN_TABLES
                 or self.source == self.target or self.version != 1
+                or self.contract_version != 1
                 or type(self.sequence) is not int or self.sequence < 1
                 or type(self.generation) is not int or self.generation < 0):
             raise ValueError("handoff_envelope_invalid")
@@ -72,6 +78,8 @@ class Envelope:
                 or len(self.traceparent) != 55
                 or canonical_traceparent(self.traceparent) != self.traceparent):
             raise ValueError("handoff_traceparent_invalid")
+        if not re.fullmatch(r"[0-9a-f]{64}", self.contract_digest):
+            raise ValueError("domain_command_contract_mismatch")
 
 
 Handler = Callable[[AsyncSession, Envelope], Awaitable[dict]]
@@ -91,9 +99,10 @@ class RelayResult:
 
 
 class DomainHandoff:
-    def __init__(self, database: DomainDatabase, handlers: dict[str, Handler]):
+    def __init__(self, database: DomainDatabase, handlers: dict[str, Handler], *, contracts=None):
         self.database = database
         self.handlers = dict(handlers)
+        self.contracts = dict(contracts or DOMAIN_COMMAND_CONTRACTS)
 
     async def _identity_lock(self, session, source, identity):
         if session.bind.dialect.name == "postgresql":
@@ -117,10 +126,13 @@ class DomainHandoff:
                       owner_id, generation, payload) -> Envelope:
         if session.info.get("domain") != self.database.domain or session.bind is not self.database.engine:
             raise ValueError("handoff_source_session_mismatch")
+        contract = validate_command_payload(kind, self.database.domain, target, payload,
+            contracts=self.contracts)
         proposed = Envelope(command_id=command_id,source=self.database.domain,target=target,
             kind=kind,aggregate_id=aggregate_id,owner_id=owner_id,generation=generation,
             sequence=1,payload_json=canonical_json(payload),
-            traceparent=canonical_traceparent(carrier().get("traceparent","")))
+            traceparent=canonical_traceparent(carrier().get("traceparent","")),
+            contract_version=contract.version, contract_digest=contract.digest)
         proposed.validate()
         await self._identity_lock(session, self.database.domain, command_id)
         existing = await session.get(DomainOutbox, command_id)
@@ -143,6 +155,11 @@ class DomainHandoff:
         envelope.validate()
         if envelope.target != self.database.domain:
             raise ValueError("handoff_target_mismatch")
+        contract = validate_command_payload(envelope.kind, envelope.source, envelope.target,
+            envelope.payload, contracts=self.contracts)
+        if (envelope.contract_version != contract.version
+                or envelope.contract_digest != contract.digest):
+            raise ValueError("domain_command_contract_mismatch")
         with operation("domain.handoff.receive",new_trace=True,
                 source_service=envelope.source,peer_service=envelope.target):
             add_link(envelope.traceparent)
@@ -163,6 +180,7 @@ class DomainHandoff:
                 result = await handler(session, envelope)
                 if not isinstance(result, dict):
                     raise ValueError("handoff_result_invalid")
+                validate_command_result(envelope.kind, result, contracts=self.contracts)
                 receipt = {"version": 1, "command_id": envelope.command_id, "digest": envelope.digest,
                            "source": envelope.source, "target": envelope.target,
                            "sequence": envelope.sequence, "result": result}

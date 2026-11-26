@@ -5,9 +5,11 @@ import os
 from uuid import uuid4
 
 import pytest
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select, text
 
 from sandbox_harness.common.contracts.domain import now
+from sandbox_harness.common.contracts.domain_commands import DomainCommandContract
 from sandbox_harness.common.db.domain_database import DomainDatabase, DomainInbox
 from sandbox_harness.common.db.handoff import DomainHandoff
 from sandbox_harness.common.db.models import SiteProjectRow
@@ -15,6 +17,31 @@ from sandbox_harness.common.db.models import SiteProjectRow
 
 URLS = json.loads(os.environ.get("PARALLEL_TEST_DOMAIN_URLS", "{}"))
 pytestmark = pytest.mark.skipif(not URLS, reason="disposable domain PostgreSQL databases not configured")
+
+
+class EmptyCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class CreateResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    id: str
+
+
+class UpdateCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    index: int
+
+
+class UpdateResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    updated: bool
+
+
+CREATE_CONTRACT = DomainCommandContract(
+    "create", "core", ("sites",), EmptyCommand, CreateResult)
+UPDATE_CONTRACT = DomainCommandContract(
+    "update", "core", ("media",), UpdateCommand, UpdateResult)
 
 
 async def test_domain_schemas_and_duplicate_delivery_have_one_effect():
@@ -36,7 +63,7 @@ async def test_domain_schemas_and_duplicate_delivery_have_one_effect():
         return {"id": envelope.aggregate_id}
 
     async def enqueue(database):
-        sender = DomainHandoff(database, {})
+        sender = DomainHandoff(database, {}, contracts={"create":CREATE_CONTRACT})
         async with database.transaction() as session:
             return await sender.enqueue(session, command_id=identity, target="sites", kind="create",
                 aggregate_id=identity, owner_id="owner", generation=1, payload={})
@@ -44,7 +71,8 @@ async def test_domain_schemas_and_duplicate_delivery_have_one_effect():
     try:
         envelopes = await asyncio.gather(*(enqueue(database) for database in sources))
         assert all(envelope == envelopes[0] for envelope in envelopes)
-        receivers = [DomainHandoff(database, {"create": create_site}) for database in targets]
+        receivers = [DomainHandoff(database, {"create": create_site},
+            contracts={"create":CREATE_CONTRACT}) for database in targets]
         receipts = await asyncio.gather(*(receiver.receive(envelopes[0]) for receiver in receivers))
         assert all(receipt == receipts[0] for receipt in receipts)
         # A replacement process retrieves the committed target receipt; no second effect.
@@ -66,7 +94,8 @@ async def test_concurrent_commands_share_monotonic_stream():
 
     async def enqueue(index, database):
         async with database.transaction() as session:
-            return await DomainHandoff(database, {}).enqueue(session, command_id=aggregate + "-" + str(index),
+            return await DomainHandoff(database, {}, contracts={"update":UPDATE_CONTRACT}).enqueue(
+                session, command_id=aggregate + "-" + str(index),
                 target="media", kind="update", aggregate_id=aggregate, owner_id="owner", generation=1,
                 payload={"index": index})
 

@@ -5,8 +5,10 @@ import json
 import logging
 
 import pytest
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 
+from sandbox_harness.common.contracts.domain_commands import DomainCommandContract
 from sandbox_harness.common.db.domain_database import DomainDatabase, DomainInbox, DomainOutbox
 from sandbox_harness.common.db.models import SiteProjectRow
 from sandbox_harness.common.db.models import canonical_digest
@@ -34,7 +36,26 @@ async def setup_pair(tmp_path):
         await session.flush()
         return {"project_id": envelope.aggregate_id}
 
-    return core, sites, DomainHandoff(core, {}), DomainHandoff(sites, {"create_site": create_site})
+    class SiteCommand(BaseModel):
+        model_config = ConfigDict(extra="forbid", strict=True)
+        title: str = ""
+
+    class SiteCreated(BaseModel):
+        model_config = ConfigDict(extra="forbid", strict=True)
+        project_id: str
+
+    class SiteRenamed(BaseModel):
+        model_config = ConfigDict(extra="forbid", strict=True)
+        renamed: bool
+
+    contracts = {
+        "create_site": DomainCommandContract(
+            "create_site", "core", ("sites",), SiteCommand, SiteCreated),
+        "rename": DomainCommandContract(
+            "rename", "core", ("sites",), SiteCommand, SiteRenamed),
+    }
+    return (core, sites, DomainHandoff(core, {}, contracts=contracts),
+            DomainHandoff(sites, {"create_site": create_site}, contracts=contracts))
 
 
 async def enqueue(core, sender, command="command-1", aggregate="project"):
@@ -50,8 +71,8 @@ async def test_lost_reply_and_process_restart_deduplicate_committed_effect(tmp_p
         envelope = await enqueue(core, sender)
         receipt = await receiver.receive(envelope)
         # Process died after target commit, before acknowledgement in core.
-        receiver = DomainHandoff(sites, receiver.handlers)
-        sender = DomainHandoff(core, {})
+        receiver = DomainHandoff(sites, receiver.handlers, contracts=receiver.contracts)
+        sender = DomainHandoff(core, {}, contracts=sender.contracts)
         assert await receiver.receive(envelope) == receipt
         assert (await sender.relay({"sites": receiver})).delivered == 1
         assert (await sender.relay({"sites": receiver})).delivered == 0
@@ -89,7 +110,7 @@ async def test_persisted_envelope_links_receive_after_restart(tmp_path,monkeypat
         with obs.operation("test.handoff.retry",new_trace=True):
             assert await enqueue(core,sender)==envelope
 
-        receiver=DomainHandoff(sites,receiver.handlers)
+        receiver=DomainHandoff(sites,receiver.handlers,contracts=receiver.contracts)
         await receiver.receive(restored)
         receive=next(row for row in telemetry_rows(telemetry)
             if row["signal"]=="span" and row["event_name"]=="domain.handoff.receive")
