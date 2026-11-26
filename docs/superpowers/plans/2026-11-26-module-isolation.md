@@ -121,12 +121,20 @@ schemas, commands/outbox/inbox, idempotency and recovery after the database
 partition boundary is settled. Existing red Store-boundary tests must follow
 that final design; old compatibility is no longer an acceptance requirement.
 
-- [ ] Add regression for metadata/Row identity, facade method coverage and atomic
-  cross-domain handoff/publication before splitting source ownership.
-- [ ] Extract models/upgrade helpers and domain method groups in reviewable steps;
-  preserve all original transaction bodies and generation/owner predicates.
-- [ ] Run relevant Store/component tests and isolated PostgreSQL populated-upgrade,
-  ownership, allocation, publication and concurrency tests; commit the separation.
+- [x] Extract the original 339 methods and ORM definitions without changing their
+  bodies; verify identity, owner/generation behavior and real PostgreSQL fences.
+- [x] Implement fresh domain schemas, domain/table/schema identity checks and
+  transaction-local ordered outbox/inbox/receipt handling. Verify concurrent
+  duplicates, rollback, reply loss, stream isolation and schema drift on PostgreSQL.
+- [x] Implement durable lifecycle prepare/commit/abort and owner/Thread admission
+  epochs. Core remains frozen until every decision acknowledgement is committed.
+- [ ] Finish accounts/core/media/sites repositories and all audited cross-domain
+  admissions, source permits, cancellation, publication and continuation paths.
+- [ ] Wire API/Gateway/workers to explicit domain credentials; remove the old
+  all-table Store, upgrades and deprecated configuration/entry points. Update the
+  browser to handle pending lifecycle operations and credential claim semantics.
+- [ ] Prove fresh-schema deployment, domain outage/restart and physical access
+  isolation. No historical schema/data upgrade gate is required by this task.
 
 ## Task 5: Isolated artifacts and compatibility metadata
 
@@ -137,8 +145,10 @@ that final design; old compatibility is no longer an acceptance requirement.
 returns an immutable artifact manifest; records source/common/dependency/resource
 hashes, schema/protocol compatibility and all external input identities.
 
-- [ ] Add red tests for source closure, excluded other services, unsafe sources,
-  hash mismatch, missing native/external inputs and cwd-independent resources.
+- [x] Add source closure, excluded services, unsafe source/hash/symlink tests and
+  cwd-independent resource resolution; build deterministic source/resource artifacts.
+- [ ] Add deployment gates for dependency environments and native/external inputs;
+  a source-only artifact is not independently deployable.
 - [ ] Build host service packages with exact common closure and immutable dependency
   environments; split native/runtime/content/image/inference/web build contracts.
 - [ ] Test imports and entry points in clean isolated environments without editable
@@ -162,8 +172,9 @@ allowlisted release paths/versions/catalogs. Never shell-evaluate manifest value
   only selected descriptor changes, old/new names never start duplicate Gateway.
 - [ ] Implement artifact launch with exact source/dependency path and resource
   selection, atomic descriptor promotion and tested compatible rollback.
-- [ ] Migrate sandbox-gateway CLI/unit/status/test controls while preserving ports,
-  authentication and provider routes; legacy lookup supports rollback only.
+- [ ] Replace Gateway CLI/unit/status/test controls with sandbox-gateway while
+  preserving ports, authentication and provider routes. Retire old entry aliases;
+  the frozen old test deployment remains an explicitly separate retained snapshot.
 - [ ] Verify one-service changes leave other process versions untouched and no
   released service imports mutable checkout paths; commit deployment tooling.
 
