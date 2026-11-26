@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     object_bucket: str = ""
     object_prefix: str = "sandbox-harness-platform-parallel-ali/"
     object_region: str = "updream"
+    object_gc_enabled: bool = True
+    object_gc_dry_run: bool = True
+    object_gc_grace_seconds: int = Field(default=7*86400,ge=60,le=365*86400)
+    object_gc_interval_seconds: int = Field(default=3600,ge=60,le=86400)
     object_public_endpoint: str = "https://boss-shjd.biliapi.net"
     media_reference_prefix: str = "aniforge"
     ark_control_endpoint: str = "https://ark.cn-beijing.volcengineapi.com"

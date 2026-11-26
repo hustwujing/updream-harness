@@ -498,6 +498,10 @@
       "owner": "common/storage",
       "target": "src/sandbox_harness/common/storage/files.py"
     },
+    "src/sandbox_harness/common/storage/object_gc.py": {
+      "owner": "common/storage",
+      "target": "src/sandbox_harness/common/storage/object_gc.py"
+    },
     "src/sandbox_harness/common/storage/objects.py": {
       "owner": "common/storage",
       "target": "src/sandbox_harness/common/storage/objects.py"

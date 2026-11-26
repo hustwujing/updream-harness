@@ -7,6 +7,7 @@ import hashlib
 import os
 import re
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
@@ -124,6 +125,23 @@ class ObjectStore:
 
     def prepare_media_upload(self, **_):
         raise RuntimeError("Public media upload requires the configured BOSS backend")
+
+    def list_objects(self):
+        result=[]
+        for directory in sorted(self.root.iterdir()):
+            if not directory.is_dir() or not re.fullmatch(r"[0-9a-f]{2}",directory.name):continue
+            for path in sorted(directory.iterdir()):
+                digest=directory.name+path.name
+                if path.is_file() and re.fullmatch(r"[0-9a-f]{64}",digest):
+                    stat=path.stat();result.append({"object_ref":"sha256:"+digest,
+                        "size":stat.st_size,"modified_at":datetime.fromtimestamp(
+                            stat.st_mtime,timezone.utc)})
+        return result
+
+    def delete(self,reference:str)->None:
+        path=self._path(self._digest(reference));path.unlink(missing_ok=True)
+        try:path.parent.rmdir()
+        except OSError:pass
 
 
 class S3ObjectStore:
@@ -243,6 +261,27 @@ class S3ObjectStore:
         if size > maximum:
             raise ValueError("Object exceeds byte limit")
         return size
+
+    def list_objects(self):
+        prefix=f"{self.prefix}/objects/";token=None;result=[]
+        while True:
+            values={"Bucket":self.bucket,"Prefix":prefix,"MaxKeys":1000}
+            if token:values["ContinuationToken"]=token
+            page=self.client.list_objects_v2(**values)
+            for item in page.get("Contents",[]):
+                relative=item["Key"].removeprefix(prefix).replace("/","")
+                if re.fullmatch(r"[0-9a-f]{64}",relative):
+                    modified=item["LastModified"]
+                    if modified.tzinfo is None:modified=modified.replace(tzinfo=timezone.utc)
+                    result.append({"object_ref":"sha256:"+relative,
+                        "size":int(item.get("Size",0)),"modified_at":modified})
+            if not page.get("IsTruncated"):break
+            token=page.get("NextContinuationToken")
+            if not token:raise RuntimeError("object_listing_cursor_missing")
+        return result
+
+    def delete(self,reference:str)->None:
+        self.client.delete_object(Bucket=self.bucket,Key=self._key(self._digest(reference)))
 
     def iter_bytes(self, reference: str, *, maximum: int, start: int = 0,
                    end: int | None = None, chunk_size: int = 1024 * 1024):

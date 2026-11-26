@@ -18,6 +18,9 @@ from sandbox_harness.common.observability.observability import (
     add_link, canonical_traceparent, configure, event, operation,
 )
 from sandbox_harness.common.sandbox.ownership_cleanup import OwnershipCleanup
+from sandbox_harness.common.storage.object_gc import (
+    ObjectGarbageCollector, authoritative_object_references,
+)
 
 from .job_continuation import ContinuationDispatcher
 
@@ -121,6 +124,22 @@ class PlatformWorker:
             except Exception as exc:event("sandbox.orphan.reconcile_failed",level=40,exc=exc)
             await self._wait(self.settings.orphan_reaper_seconds)
 
+    async def _object_gc(self)->None:
+        async def audit(value):
+            event('object.gc.deleted',object_digest=value['object_ref'].removeprefix('sha256:'),
+                bytes=value['size'],reason=value['reason'])
+        collector=ObjectGarbageCollector(self.components.objects,
+            lambda:authoritative_object_references(self.store),audit=audit)
+        while not self.stop_event.is_set():
+            try:
+                result=await collector.run(grace_seconds=self.settings.object_gc_grace_seconds,
+                    dry_run=self.settings.object_gc_dry_run)
+                event('object.gc.completed',count=result['deleted_count'],
+                    bytes=result['bytes_deleted'],partial=result['dry_run'])
+            except asyncio.CancelledError:raise
+            except Exception as exc:event('object.gc.failed',level=40,exc=exc)
+            await self._wait(self.settings.object_gc_interval_seconds)
+
     async def _warm_pool(self)->None:
         await supervise_warm_pool(self,self.pool,
             initial_delay=self.settings.supervisor_retry_initial_seconds,
@@ -142,6 +161,7 @@ class PlatformWorker:
             self._leader_renewal(generation)]
         if self.settings.model_catalog_discovery:loops.append(self._catalog_refresh())
         if self.pool.backend.provider!="fake":loops.append(self._warm_pool())
+        if self.settings.object_gc_enabled:loops.append(self._object_gc())
         self.leader_tasks={asyncio.create_task(value) for value in loops}
         event("platform.leader.acquired",worker_id=self.owner,generation=generation)
         try:
