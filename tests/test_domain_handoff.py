@@ -1,0 +1,164 @@
+from __future__ import annotations
+
+from dataclasses import replace
+
+import pytest
+from sqlalchemy import func, select
+
+from sandbox_harness.common.db.domain_database import DomainDatabase, DomainInbox, DomainOutbox
+from sandbox_harness.common.db.models import SiteProjectRow
+from sandbox_harness.common.contracts.domain import now
+
+
+async def setup_pair(tmp_path):
+    from sandbox_harness.common.db.handoff import DomainHandoff
+    core = DomainDatabase("core", "sqlite+aiosqlite:///" + str(tmp_path / "core.db"))
+    sites = DomainDatabase("sites", "sqlite+aiosqlite:///" + str(tmp_path / "sites.db"))
+    await core.initialize()
+    await sites.initialize()
+
+    async def create_site(session, envelope):
+        session.add(SiteProjectRow(id=envelope.aggregate_id, owner_id=envelope.owner_id,
+            thread_id="thread", slug=envelope.aggregate_id, name="site", current_version_id="",
+            created_at=now(), updated_at=now()))
+        await session.flush()
+        return {"project_id": envelope.aggregate_id}
+
+    return core, sites, DomainHandoff(core, {}), DomainHandoff(sites, {"create_site": create_site})
+
+
+async def enqueue(core, sender, command="command-1", aggregate="project"):
+    async with core.transaction() as session:
+        return await sender.enqueue(session, command_id=command, target="sites", kind="create_site",
+            aggregate_id=aggregate, owner_id="owner", generation=1, payload={"title": "site"})
+
+
+async def test_lost_reply_and_process_restart_deduplicate_committed_effect(tmp_path):
+    from sandbox_harness.common.db.handoff import DomainHandoff
+    core, sites, sender, receiver = await setup_pair(tmp_path)
+    try:
+        envelope = await enqueue(core, sender)
+        receipt = await receiver.receive(envelope)
+        # Process died after target commit, before acknowledgement in core.
+        receiver = DomainHandoff(sites, receiver.handlers)
+        sender = DomainHandoff(core, {})
+        assert await receiver.receive(envelope) == receipt
+        assert (await sender.relay({"sites": receiver})).delivered == 1
+        assert (await sender.relay({"sites": receiver})).delivered == 0
+        async with sites.transaction() as session:
+            assert await session.scalar(select(func.count()).select_from(SiteProjectRow)) == 1
+            assert await session.scalar(select(func.count()).select_from(DomainInbox)) == 1
+        async with core.transaction() as session:
+            row = await session.get(DomainOutbox, envelope.command_id)
+            assert row.state == "acknowledged"
+    finally:
+        await core.close()
+        await sites.close()
+
+
+async def test_source_rollback_does_not_leak_command(tmp_path):
+    core, sites, sender, receiver = await setup_pair(tmp_path)
+    try:
+        with pytest.raises(RuntimeError, match="injected"):
+            async with core.transaction() as session:
+                await sender.enqueue(session, command_id="rollback", target="sites", kind="create_site",
+                    aggregate_id="project", owner_id="owner", generation=1, payload={})
+                raise RuntimeError("injected")
+        assert (await sender.relay({"sites": receiver})).delivered == 0
+    finally:
+        await core.close()
+        await sites.close()
+
+
+async def test_target_failure_rolls_back_effect_and_receipt(tmp_path):
+    core, sites, sender, receiver = await setup_pair(tmp_path)
+    try:
+        envelope = await enqueue(core, sender)
+        good = receiver.handlers["create_site"]
+
+        async def failed(session, envelope):
+            await good(session, envelope)
+            raise RuntimeError("injected")
+
+        receiver.handlers["create_site"] = failed
+        with pytest.raises(RuntimeError, match="injected"):
+            await receiver.receive(envelope)
+        async with sites.transaction() as session:
+            assert await session.scalar(select(func.count()).select_from(SiteProjectRow)) == 0
+            assert await session.scalar(select(func.count()).select_from(DomainInbox)) == 0
+        receiver.handlers["create_site"] = good
+        assert (await sender.relay({"sites": receiver})).delivered == 1
+    finally:
+        await core.close()
+        await sites.close()
+
+
+async def test_conflicting_retry_and_wrong_target_are_rejected(tmp_path):
+    core, sites, sender, receiver = await setup_pair(tmp_path)
+    try:
+        envelope = await enqueue(core, sender)
+        assert await enqueue(core, sender) == envelope
+        await receiver.receive(envelope)
+        with pytest.raises(ValueError, match="handoff_identity_conflict"):
+            await enqueue(core, sender, aggregate="different")
+        with pytest.raises(ValueError, match="handoff_identity_conflict"):
+            await receiver.receive(replace(envelope, owner_id="different"))
+        with pytest.raises(ValueError, match="handoff_target_mismatch"):
+            await sender.receive(envelope)
+        with pytest.raises(ValueError, match="handoff_receipt_mismatch"):
+            await sender.acknowledge(envelope.command_id, {"digest": "wrong"})
+    finally:
+        await core.close()
+        await sites.close()
+
+
+async def test_stream_order_survives_reordered_delivery(tmp_path):
+    core, sites, sender, receiver = await setup_pair(tmp_path)
+    try:
+        first = await enqueue(core, sender)
+        async with core.transaction() as session:
+            second = await sender.enqueue(session, command_id="second", target="sites", kind="rename",
+                aggregate_id="project", owner_id="owner", generation=1, payload={"title": "second"})
+
+        async def rename(session, envelope):
+            row = await session.get(SiteProjectRow, envelope.aggregate_id)
+            row.name = envelope.payload["title"]
+            return {"renamed": True}
+
+        receiver.handlers["rename"] = rename
+        with pytest.raises(ValueError, match="handoff_sequence_gap"):
+            await receiver.receive(second)
+        await receiver.receive(first)
+        await receiver.receive(second)
+        await receiver.receive(first)
+        async with sites.transaction() as session:
+            assert (await session.get(SiteProjectRow, "project" )).name == "second"
+    finally:
+        await core.close()
+        await sites.close()
+
+
+async def test_failed_stream_does_not_block_other_work(tmp_path):
+    core, sites, sender, receiver = await setup_pair(tmp_path)
+    try:
+        await enqueue(core, sender, command="bad", aggregate="bad-project")
+        await enqueue(core, sender, command="good", aggregate="good-project")
+        original = receiver.handlers["create_site"]
+
+        async def handler(session, envelope):
+            if envelope.aggregate_id == "bad-project":
+                raise ConnectionError("injected")
+            return await original(session, envelope)
+
+        receiver.handlers["create_site"] = handler
+        result = await sender.relay({"sites": receiver})
+        assert result.delivered == 1 and len(result.failures) == 1
+        async with sites.transaction() as session:
+            assert await session.get(SiteProjectRow, "good-project") is not None
+            assert await session.get(SiteProjectRow, "bad-project") is None
+        # Backoff on the failed stream also prevents starving newer work.
+        await enqueue(core, sender, command="good-next", aggregate="next-project")
+        assert (await sender.relay({"sites": receiver}, limit=1)).delivered == 1
+    finally:
+        await core.close()
+        await sites.close()

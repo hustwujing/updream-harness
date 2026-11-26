@@ -150,6 +150,10 @@
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/cleanup.py"
     },
+    "src/sandbox_harness/common/db/domain_database.py": {
+      "owner": "common/db",
+      "target": "src/sandbox_harness/common/db/domain_database.py"
+    },
     "src/sandbox_harness/common/db/events.py": {
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/events.py"
@@ -157,6 +161,10 @@
     "src/sandbox_harness/common/db/files.py": {
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/files.py"
+    },
+    "src/sandbox_harness/common/db/handoff.py": {
+      "owner": "common/db",
+      "target": "src/sandbox_harness/common/db/handoff.py"
     },
     "src/sandbox_harness/common/db/interactions.py": {
       "owner": "common/db",
