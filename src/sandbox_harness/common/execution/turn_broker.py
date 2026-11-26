@@ -67,7 +67,7 @@ class Broker:
         self.objects = objects
         self.pool = pool
         self.runtime = runtime
-        self.codec = CapabilityCodec(settings.gateway_signing_key)
+        self.codec = CapabilityCodec.from_settings(settings)
         self.catalog = catalog
         self.execution_enabled = execution_enabled
         self.tasks: dict[str, asyncio.Task] = {}

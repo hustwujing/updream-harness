@@ -1289,9 +1289,9 @@ def create_app() -> FastAPI:
             raise HTTPException(409, "Job capability is not configured")
         token = token_path.read_text().strip()
         try:
-            encoded = token.split(".", 1)[0]
+            encoded = token.split(".")[1]
             claims = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
-        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        except (IndexError, ValueError, TypeError, json.JSONDecodeError) as exc:
             raise HTTPException(409, "Job capability token is malformed") from exc
         if (claims.get("scope") != "job" or claims.get("job_id") != value.job_id
                 or int(claims.get("generation") or 0) != value.generation):

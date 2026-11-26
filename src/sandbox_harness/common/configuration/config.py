@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     public_proxy_allowlist: list[str] = Field(default_factory=list)
     public_proxy_denylist: list[str] = Field(default_factory=list)
     gateway_signing_key: str = Field(default="development-only-change-me", min_length=16)
+    gateway_signing_key_id: str = Field(default="current",
+        pattern=r"^[a-z0-9][a-z0-9_-]{0,31}$")
+    gateway_previous_signing_key: str = ""
+    gateway_previous_signing_key_id: str = Field(default="previous",
+        pattern=r"^[a-z0-9][a-z0-9_-]{0,31}$")
     gateway_control_key: str = Field(default="development-control-change-me", min_length=16)
     session_signing_key: str = Field(default="development-session-change-me", min_length=16)
     auth_session_ttl_seconds: int = Field(default=30 * 86400, ge=300, le=365 * 86400)
@@ -222,6 +227,11 @@ class Settings(BaseSettings):
             "handoff_max_age_seconds": self.handoff_delivery_max_age_seconds,
         }
 
+    @property
+    def gateway_previous_signing_keys(self) -> dict[str, str]:
+        return ({self.gateway_previous_signing_key_id:self.gateway_previous_signing_key}
+            if self.gateway_previous_signing_key else {})
+
 
 def load_settings() -> Settings:
     value = Settings()
@@ -231,6 +241,11 @@ def load_settings() -> Settings:
 
 
 def validate_service_settings(value: Settings) -> None:
+    if value.gateway_previous_signing_key and len(value.gateway_previous_signing_key)<16:
+        raise ValueError("Previous gateway signing key is too short")
+    if (value.gateway_previous_signing_key
+            and value.gateway_previous_signing_key_id==value.gateway_signing_key_id):
+        raise ValueError("Gateway signing key ids must be distinct")
     if value.backend != "fake":
         configured = (value.gateway_signing_key, value.gateway_control_key, value.session_signing_key)
         if any(secret in DEVELOPMENT_SECRETS for secret in configured):

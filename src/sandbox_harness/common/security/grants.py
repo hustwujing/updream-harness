@@ -67,8 +67,14 @@ def _routes_within(child: tuple[str, ...], parent: list[str]) -> bool:
 
 
 class GrantAuthority:
-    def __init__(self, signing_key: str):
-        self.codec = CapabilityCodec(signing_key)
+    def __init__(self, signing_key: str, *, kid: str = "current",
+                 previous_keys: dict[str,str] | None = None):
+        self.codec = CapabilityCodec(signing_key,kid=kid,previous_keys=previous_keys)
+
+    @classmethod
+    def from_settings(cls,settings):
+        return cls(settings.gateway_signing_key,kid=settings.gateway_signing_key_id,
+            previous_keys=settings.gateway_previous_signing_keys)
 
     def issue_turn(self, value: TurnGrantRequest) -> tuple[str, CapabilityClaims]:
         return self.codec.issue(

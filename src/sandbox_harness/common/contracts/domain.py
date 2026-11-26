@@ -410,7 +410,8 @@ class RuntimeResult(BaseModel):
 
 class CapabilityClaims(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    version: Literal[3] = 3
+    version: Literal[4] = 4
+    kid: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,31}$")
     traceparent: str = ""
     thread_id: str
     turn_id: str

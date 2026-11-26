@@ -34,9 +34,9 @@ def _value(raw: str) -> dict:
 
 def _job_headers(token:str)->dict[str,str]:
     try:
-        raw=token.split('.',1)[0];raw+='='*(-len(raw)%4)
+        raw=token.split('.')[1];raw+='='*(-len(raw)%4)
         claims=json.loads(base64.urlsafe_b64decode(raw))
-    except (ValueError,TypeError,json.JSONDecodeError):return {}
+    except (IndexError,ValueError,TypeError,json.JSONDecodeError):return {}
     if claims.get('scope')!='job':return {}
     mapping={'x-updream-thread-id':'thread_id','x-updream-turn-id':'turn_id',
         'x-updream-group-id':'group_id','x-updream-job-id':'job_id',

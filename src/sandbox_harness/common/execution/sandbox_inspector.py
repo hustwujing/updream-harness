@@ -79,7 +79,7 @@ class SandboxInspector:
         self.pool = pool
         self.runtime = runtime
         self.broker = broker
-        self.capabilities = CapabilityCodec(settings.gateway_signing_key)
+        self.capabilities = CapabilityCodec.from_settings(settings)
         self.tickets = TerminalTicketCodec(settings.session_signing_key)
         self.locks: dict[str, asyncio.Lock] = {}
         self.cleanup_task: asyncio.Task | None = None

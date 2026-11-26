@@ -46,7 +46,8 @@ class ChildExecutionBackend(Protocol):
 
 
 class JobGrantFactory:
-    def __init__(self,settings):self.settings=settings;self.authority=GrantAuthority(settings.gateway_signing_key)
+    def __init__(self,settings):
+        self.settings=settings;self.authority=GrantAuthority.from_settings(settings)
     async def __call__(self,context:JobExecutionContext,reservation,sandbox_id:str):
         request=context.request;harness=Harness(reservation.harness)
         capability_ids=tuple(request.resource_requirements.get('required_capability_ids',()))

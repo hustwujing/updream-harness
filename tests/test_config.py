@@ -115,3 +115,17 @@ def test_handoff_retry_budget_is_configurable_and_bounded():
         Settings(_env_file=None, handoff_delivery_max_attempts=0)
     with pytest.raises(ValueError):
         Settings(_env_file=None, handoff_delivery_max_age_seconds=0)
+
+
+def test_gateway_signing_keyring_requires_distinct_bounded_ids():
+    current=Settings(_env_file=None,gateway_signing_key="n"*32,
+        gateway_signing_key_id="next",gateway_previous_signing_key="o"*32,
+        gateway_previous_signing_key_id="old")
+    validate_service_settings(current.model_copy(update={"backend":"fake"}))
+    assert current.gateway_previous_signing_keys=={"old":"o"*32}
+    with pytest.raises(ValueError,match="distinct"):
+        validate_service_settings(current.model_copy(update={
+            "gateway_previous_signing_key_id":"next","backend":"fake"}))
+    with pytest.raises(ValueError,match="too short"):
+        validate_service_settings(current.model_copy(update={
+            "gateway_previous_signing_key":"short","backend":"fake"}))
