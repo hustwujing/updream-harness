@@ -1,5 +1,7 @@
+import asyncio
+
 from sandbox_harness.common.catalog.catalog import HarnessCatalog
-from sandbox_harness.common.contracts.domain import Harness, ThreadCreate, TurnCreate
+from sandbox_harness.common.contracts.domain import Harness, ThreadCreate, TurnCreate, TurnState
 from sandbox_harness.common.db.core import CoreRepository
 from sandbox_harness.common.db.job_attempts import JobAttemptsTransactions
 
@@ -26,6 +28,28 @@ async def test_turn_owner_quota_does_not_block_another_owner(tmp_path):
         assert await store.claim_turn(first.id,"worker-one",30,owner_limit=1)
         assert await store.claim_turn(second.id,"worker-two",30,owner_limit=1) is None
         assert await store.claim_turn(other.id,"worker-two",30,owner_limit=1)
+        await store.set_turn_state(first.id,TurnState.COMPLETED,lease_owner="worker-one",
+            recovery_generation=1)
         await store.release_turn_lease(first.id,"worker-one",1)
         assert await store.claim_turn(second.id,"worker-two",30,owner_limit=1)
+    finally:await store.close()
+
+
+async def test_turn_owner_quota_claims_oldest_even_when_tasks_arrive_reversed(tmp_path):
+    store=CoreRepository("sqlite+aiosqlite:///"+str(tmp_path/"oldest.db"),namespace="owners")
+    await store.initialize();catalog=HarnessCatalog();profile=catalog.resolve("codex","gpt-5.6","standard")
+    turns=[]
+    try:
+        for index in range(3):
+            thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+                reasoning_level="standard",title=f"oldest {index}"),profile,"owner")
+            value,_,_=await store.create_turn(thread.id,TurnCreate(message="work",
+                idempotency_key=f"oldest-turn-{index}"),profile,"owner")
+            turns.append(value)
+            await asyncio.sleep(.002)
+        results=await asyncio.gather(*(store.claim_turn(value.id,f"worker-{index}",30,
+            owner_limit=2) for index,value in reversed(list(enumerate(turns)))))
+        claimed={value.id for value in results if value}
+        assert claimed=={turns[0].id,turns[1].id}
+        assert turns[2].id not in claimed
     finally:await store.close()

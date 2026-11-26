@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 from datetime import (timedelta)
-from sqlalchemy import (case, func, or_, select, update)
+from sqlalchemy import (and_, case, func, or_, select, update)
 from sandbox_harness.common.observability.observability import (observed)
 from sandbox_harness.common.contracts.domain import (Event, EventKind, ItemType, ThreadControlState, TurnCreate, TurnInputCreate, TurnInputView, TurnState, TurnView, TERMINAL, identifier, now)
 from sandbox_harness.common.catalog.catalog import (ResolvedProfile)
@@ -184,7 +184,7 @@ class TurnsTransactions:
                 ThreadRow.active_turn_id == TurnRow.id).join(TurnOrderRow,
                 TurnOrderRow.turn_id == TurnRow.id).where(TurnRow.state.not_in(terminal),
                 or_(TurnRow.lease_expires_at.is_(None), TurnRow.lease_expires_at <= now()))
-                .order_by(TurnOrderRow.sequence))).scalars().all()
+                .order_by(TurnRow.created_at,TurnRow.id,TurnOrderRow.sequence))).scalars().all()
         return [self.turn_view(row) for row in rows]
 
 
@@ -220,6 +220,17 @@ class TurnsTransactions:
                         ThreadRow.owner_id==thread.owner_id,TurnRow.id!=row.id,
                         TurnRow.lease_owner!="",TurnRow.lease_expires_at>timestamp))
                 if active>=owner_limit:return None
+                available=owner_limit-active
+                older=await db.scalar(select(func.count()).select_from(TurnRow).join(
+                    ThreadRow,ThreadRow.id==TurnRow.thread_id).where(
+                        ThreadRow.owner_id==thread.owner_id,
+                        ThreadRow.active_turn_id==TurnRow.id,
+                        TurnRow.state.not_in(terminal),
+                        or_(TurnRow.lease_owner=="",TurnRow.lease_expires_at.is_(None),
+                            TurnRow.lease_expires_at<=timestamp),
+                        or_(TurnRow.created_at<row.created_at,and_(
+                            TurnRow.created_at==row.created_at,TurnRow.id<row.id))))
+                if older>=available:return None
                 admission.updated_at=timestamp
             if row.lease_owner!=owner:row.recovery_generation+=1
             row.lease_owner=owner
