@@ -25,7 +25,7 @@ from sandbox_harness.common.sandbox.pool import (SandboxPool)
 from sandbox_harness.common.sandbox.runtime import (RuntimeClient, RuntimeStreamInterrupted)
 from sandbox_harness.common.sandbox.sandbox import (SandboxNotFound)
 from sandbox_harness.common.sandbox.sandbox_factory import (SandboxProfileResolver)
-from sandbox_harness.common.contracts.sandbox_contracts import (SandboxHandle)
+from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCreateOutcomeUnknown, SandboxHandle)
 from sandbox_harness.common.db.models import utc_datetime
 from sandbox_harness.common.sites.site_bundle import (build_site_archive_from_paths, normalize_site_slug)
 
@@ -1155,35 +1155,42 @@ class Broker:
                     except Exception:
                         pass
         except Exception as exc:
-            error_code = getattr(exc, "error_code", type(exc).__name__)
-            error_detail = str(exc)
-            event("turn.execution.failed",level=logging.ERROR,exc=exc,turn_id=turn.id,execution_id=turn.runtime_execution_id)
-            if sandbox and not lost_lease:
-                try:
-                    await self._state(turn.id, TurnState.CHECKPOINTING, sandbox_id=sandbox.id)
-                    await self._save_workspace(sandbox, thread.id, turn.id,
-                        thread.native_thread_id, partial=True)
-                except Exception as save_error:
-                    event("workspace.partial_save.failed",level=logging.WARNING,exc=save_error,
-                        turn_id=turn.id,sandbox_id=sandbox.id)
+            allocation_wait=(isinstance(exc,SandboxCreateOutcomeUnknown) or
+                isinstance(exc,RuntimeError) and str(exc)=="sandbox_creation_requires_reconciliation")
+            if allocation_wait and not turn.runtime_execution_id:
+                abandoned=True
+                event("turn.sandbox.reconciliation_wait",level=logging.WARNING,turn_id=turn.id,
+                    generation=generation,error_code="sandbox_creation_outcome_unknown")
+            else:
+                error_code = getattr(exc, "error_code", type(exc).__name__)
+                error_detail = str(exc)
+                event("turn.execution.failed",level=logging.ERROR,exc=exc,turn_id=turn.id,execution_id=turn.runtime_execution_id)
+                if sandbox and not lost_lease:
                     try:
-                        await self.store.append_event(turn.id, EventKind.WARNING,
-                            {"code": "partial_workspace_save_failed",
-                             "detail": "本轮中间文件未能完整保存。"},
-                            lease_owner=self.instance_id, recovery_generation=generation)
-                    except RuntimeError as fence_error:
-                        if str(fence_error) == "stale_turn_lease":
-                            lost_lease = True
-                        else:
-                            raise
-            try:
-                await self.store.append_event(turn.id, EventKind.ERROR,
-                    {"code": error_code, "detail": error_detail[:1000]},
-                    lease_owner=self.instance_id, recovery_generation=generation)
-            except RuntimeError as fence_error:
-                if str(fence_error) != "stale_turn_lease":
-                    raise
-                lost_lease = True
+                        await self._state(turn.id, TurnState.CHECKPOINTING, sandbox_id=sandbox.id)
+                        await self._save_workspace(sandbox, thread.id, turn.id,
+                            thread.native_thread_id, partial=True)
+                    except Exception as save_error:
+                        event("workspace.partial_save.failed",level=logging.WARNING,exc=save_error,
+                            turn_id=turn.id,sandbox_id=sandbox.id)
+                        try:
+                            await self.store.append_event(turn.id, EventKind.WARNING,
+                                {"code": "partial_workspace_save_failed",
+                                 "detail": "本轮中间文件未能完整保存。"},
+                                lease_owner=self.instance_id, recovery_generation=generation)
+                        except RuntimeError as fence_error:
+                            if str(fence_error) == "stale_turn_lease":
+                                lost_lease = True
+                            else:
+                                raise
+                try:
+                    await self.store.append_event(turn.id, EventKind.ERROR,
+                        {"code": error_code, "detail": error_detail[:1000]},
+                        lease_owner=self.instance_id, recovery_generation=generation)
+                except RuntimeError as fence_error:
+                    if str(fence_error) != "stale_turn_lease":
+                        raise
+                    lost_lease = True
         finally:
             try:
                 if abandoned:

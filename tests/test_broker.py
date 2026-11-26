@@ -1325,3 +1325,39 @@ async def test_request_only_broker_persists_turn_without_starting_execution(tmp_
         assert broker.status()['execution_enabled'] is False
     finally:
         await broker.close();await pool.close();await store.close()
+
+
+async def test_primary_unknown_sandbox_create_waits_for_reconciliation_without_terminal_failure(
+        tmp_path,monkeypatch):
+    settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(
+        tmp_path/'primary-create-reconcile.db'),backend='fake',gateway_signing_key='k'*32,
+        gateway_url='http://127.0.0.1:9',session_keepalive_seconds=0)
+    store=Store(settings.database_url);await store.initialize();objects=ObjectStore(tmp_path/'objects')
+    backend=FakeSandboxBackend();pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness})
+    catalog=HarnessCatalog();broker=Broker(settings,store,objects,pool,Runtime(),catalog)
+    acquire=pool.acquire;calls=0
+    async def uncertain(**kwargs):
+        nonlocal calls;calls+=1
+        if calls==1:raise RuntimeError('sandbox_creation_requires_reconciliation')
+        return await acquire(**kwargs)
+    monkeypatch.setattr(pool,'acquire',uncertain)
+    try:
+        profile=catalog.resolve('codex','gpt-5.6','standard')
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level='standard',title='Create reconciliation'),profile,'a'*64)
+        turn=await broker.submit(thread.id,TurnCreate(message='run',
+            idempotency_key='primary-create-reconcile-turn'))
+        async with asyncio.timeout(3):
+            while turn.id in broker.tasks:await asyncio.sleep(.01)
+        waiting=await store.get_turn(turn.id)
+        assert waiting.state==TurnState.RESTORING and not waiting.error_code
+        assert not [item for item in await store.items_after(thread.id) if item.type.value=='error']
+        broker._schedule(turn.id)
+        async with asyncio.timeout(5):
+            while True:
+                current=await store.get_turn(turn.id)
+                if current.state==TurnState.COMPLETED and turn.id not in broker.tasks:break
+                await asyncio.sleep(.01)
+        assert calls==2 and current.state==TurnState.COMPLETED
+    finally:
+        await broker.close();await pool.close();await store.close()
