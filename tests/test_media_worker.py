@@ -6,6 +6,7 @@ import pytest
 
 from sandbox_harness.services.media_worker.media_worker import (MediaWorker)
 from sandbox_harness.services.media_worker.media_reference_publisher import (MediaReferencePreparationError)
+from sandbox_harness.common.contracts.media_provider import ProviderResult
 
 
 class Response:
@@ -89,6 +90,26 @@ def worker(store=None, objects=None):
         dashscope_video_create_url="https://dashscope.test/video-synthesis",
         dashscope_video_task_url="https://dashscope.test/tasks")
     return MediaWorker(settings, store or Store(), objects or Objects(), None)
+
+
+@pytest.mark.asyncio
+async def test_terminal_provider_result_cancelled_before_collection_never_calls_cancel_adapter(monkeypatch):
+    class CancelAfterResultStore(Store):
+        def __init__(self):super().__init__();self.cancel_checks=0
+        async def media_cancel_requested(self,*args,**kwargs):
+            self.cancel_checks+=1
+            return self.cancel_checks>=2
+    store=CancelAfterResultStore();value=worker(store)
+    async def completed(_):return ProviderResult('success',url='https://result.test/image.png')
+    async def unexpected_cancel(_):raise AssertionError('terminal result must not call cancel adapter')
+    monkeypatch.setattr(value,'_execute',completed)
+    monkeypatch.setattr(value,'_cancel_external',unexpected_cancel)
+    await value._process_claimed({'id':'job','generation':1,'source_job_id':'source',
+        'status':'created','phase':'prepared','adapter':'ark_image','provider':'ark',
+        'model':'seedream-5.0','kind':'image','parameters':{},'references':[],
+        'provider_job_id':'','provider_result':{},'staged_outputs':[]})
+    assert store.updates[-1][2]['status']=='cancelled'
+    assert store.updates[-1][2]['phase']=='terminal'
 
 
 @pytest.mark.asyncio

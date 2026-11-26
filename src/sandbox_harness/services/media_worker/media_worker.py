@@ -177,7 +177,14 @@ class MediaWorker:
                 else await self._execute(job))
             if job.get("source_job_id") and await self.store.media_cancel_requested(
                     job["id"],self.owner,job["generation"]):
-                await self._cancel_external(job);return
+                if result.status in {"success","failed","cancelled"}:
+                    await self.store.update_media_job(job["id"],self.owner,job["generation"],
+                        status="cancelled",phase="terminal",
+                        provider_job_id=result.provider_job_id)
+                else:
+                    await self._cancel_external({**job,"provider_job_id":
+                        result.provider_job_id or job.get("provider_job_id","")})
+                return
             if result.status == "cancelled":
                 await self.store.update_media_job(job["id"],self.owner,job["generation"],
                     status="cancelled",phase="terminal",provider_job_id=result.provider_job_id)
