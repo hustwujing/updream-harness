@@ -61,8 +61,10 @@ Effect = Callable[[AsyncSession, LifecycleProposal], Awaitable[None]]
 
 
 class LifecycleParticipant:
-    def __init__(self, database: DomainDatabase, check: Check | None = None, effect: Effect | None = None):
+    def __init__(self, database: DomainDatabase, check: Check | None = None, effect: Effect | None = None,
+                 abort_effect: Effect | None = None):
         self.database, self.check, self.effect = database, check, effect
+        self.abort_effect = abort_effect
         self.handoff = DomainHandoff(database, {
             "lifecycle.prepare": self._receive_prepare,
             "lifecycle.commit": self._receive_commit,
@@ -150,6 +152,8 @@ class LifecycleParticipant:
                 scope.state, scope.generation = proposal.target_state, proposal.generation + 1
             if not retain_barrier:
                 scope.frozen_by = ""
+        if not commit and self.abort_effect:
+            await self.abort_effect(session, proposal)
         row.state = wanted
         return {"state": wanted}
 
@@ -191,6 +195,7 @@ class LifecycleCoordinator:
         if participant.database.domain != "core":
             raise ValueError("lifecycle_authority_invalid")
         self.local, self.database, self.handoff = participant, participant.database, participant.handoff
+        self.handoff.handlers["lifecycle.request"] = self._receive_request
 
     @staticmethod
     def _view(row):
@@ -209,25 +214,50 @@ class LifecycleCoordinator:
                 generation=proposal.generation, payload=asdict(proposal))
 
     async def start(self, proposal, participants):
+        async with self.database.transaction() as session:
+            return await self.start_in_session(session, proposal, participants)
+
+    async def start_in_session(self, session, proposal, participants, *, requester=""):
         proposal.validate()
         if not participants or not set(participants) <= DOMAIN_TABLES.keys() - {"core"}:
             raise ValueError("lifecycle_participants_invalid")
+        if requester and requester not in participants:
+            raise ValueError("lifecycle_requester_invalid")
         encoded, targets = canonical_json(asdict(proposal)), canonical_json(sorted(participants))
-        async with self.database.transaction() as session:
-            await self.handoff._identity_lock(session, "lifecycle", proposal.operation_id)
-            row = await session.get(DomainLifecycle, proposal.operation_id)
-            if row:
-                if row.proposal_json != encoded or row.participants_json != targets:
-                    raise ValueError("lifecycle_identity_conflict")
-                return self._view(row)
-            result = await self.local.prepare(session, proposal)
-            row = DomainLifecycle(id=proposal.operation_id, owner_id=proposal.owner_id, proposal_json=encoded,
-                participants_json=targets, phase="preparing" if result["prepared"] else "refused",
-                error_code=result["error_code"])
-            session.add(row)
-            if result["prepared"]:
-                await self._enqueue(session, proposal, participants, "prepare")
+        await self.handoff._identity_lock(session, "lifecycle", proposal.operation_id)
+        row = await session.get(DomainLifecycle, proposal.operation_id)
+        if row:
+            if row.proposal_json != encoded or row.participants_json != targets or row.requester != requester:
+                raise ValueError("lifecycle_identity_conflict")
             return self._view(row)
+        result = await self.local.prepare(session, proposal)
+        row = DomainLifecycle(id=proposal.operation_id, owner_id=proposal.owner_id, proposal_json=encoded,
+            participants_json=targets, phase="preparing" if result["prepared"] else "refused",
+            error_code=result["error_code"], requester=requester)
+        session.add(row)
+        if result["prepared"]:
+            await self._enqueue(session, proposal, participants, "prepare")
+        else:
+            await self._notify_requester(session, row)
+        return self._view(row)
+
+    async def _receive_request(self, session, envelope):
+        proposal = LifecycleProposal(**envelope.payload)
+        proposal.validate()
+        if (envelope.source != "accounts" or proposal.action != "register"
+                or envelope.owner_id != proposal.owner_id or envelope.aggregate_id != proposal.scope_id
+                or envelope.generation != proposal.generation):
+            raise ValueError("lifecycle_requester_invalid")
+        result = await self.start_in_session(session, proposal, {"accounts", "media", "sites"}, requester="accounts")
+        return asdict(result)
+
+    async def _notify_requester(self, session, row):
+        if not row.requester:
+            return
+        proposal = LifecycleProposal(**json.loads(row.proposal_json))
+        await self.handoff.enqueue(session, command_id=self._command_id(row.id, row.requester, "result"),
+            target=row.requester, kind="lifecycle.result", aggregate_id=proposal.scope_id,
+            owner_id=proposal.owner_id, generation=proposal.generation, payload=asdict(self._view(row)))
 
     async def status(self, operation_id, owner_id=None):
         async with self.database.connections() as session:
@@ -277,4 +307,5 @@ class LifecycleCoordinator:
                     raise ValueError("lifecycle_receipt_invalid")
                 await self.local.release_decision(session, proposal)
                 row.phase = "completed" if row.phase == "committing" else "refused"
+                await self._notify_requester(session, row)
             return self._view(row)

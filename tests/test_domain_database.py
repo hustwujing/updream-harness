@@ -24,7 +24,7 @@ async def test_fresh_domains_contain_only_owned_tables(tmp_path):
             observed.update(owned)
         finally:
             await db.close()
-    assert len(observed) == 55
+    assert len(observed) == 56
 
 
 async def test_wrong_domain_and_unversioned_database_fail_without_mutation(tmp_path):

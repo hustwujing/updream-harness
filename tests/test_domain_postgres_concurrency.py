@@ -118,3 +118,35 @@ async def test_lifecycle_decision_recovery_is_idempotent_across_connections():
                 assert (scope.generation, scope.state, scope.frozen_by) == (1, "archived", "")
     finally:
         await asyncio.gather(*(database.close() for database in databases + list(targets.values())))
+
+
+async def test_registration_uses_four_databases_and_retains_principal_on_restart():
+    from datetime import timedelta
+    from sandbox_harness.common.db.accounts import AccountsRepository
+    from sandbox_harness.common.db.lifecycle import LifecycleCoordinator, LifecycleParticipant
+    accounts = AccountsRepository(URLS["accounts"])
+    domains = {name: DomainDatabase(name, URLS[name]) for name in ("core", "media", "sites")}
+    participants = {name: LifecycleParticipant(database) for name, database in domains.items()}
+    coordinator = LifecycleCoordinator(participants["core"])
+    identity = uuid4().hex
+    try:
+        await accounts.begin_registration(identity, identity, "reg." + identity, "test-password-hash",
+            session_token_hash=identity, session_expires_at=now() + timedelta(hours=1), owner_generation=0)
+        await accounts.handoff.relay({"core": coordinator.handoff})
+        destinations = {name: p.handoff for name, p in participants.items() if name != "core"}
+        destinations["accounts"] = accounts.handoff
+        await coordinator.handoff.relay(destinations)
+        await coordinator.advance(identity)
+        await coordinator.handoff.relay(destinations)
+        await coordinator.advance(identity)
+        await coordinator.handoff.relay(destinations)
+        await accounts.close()
+        accounts = AccountsRepository(URLS["accounts"])
+        result = await accounts.registration_result(identity, identity)
+        assert result["state"] == "completed"
+        assert (await accounts.get_user(result["user_id"])).owner_id == identity
+        assert not await accounts.guest_owner_available(identity)
+        assert (await accounts.resolve_auth_session(identity)).owner_id == identity
+    finally:
+        await accounts.close()
+        await asyncio.gather(*(database.close() for database in domains.values()))

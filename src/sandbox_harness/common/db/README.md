@@ -29,6 +29,14 @@ abort acknowledgements becomes a final refusal. Business check/effect callbacks
 must use only their supplied local transaction, and every new-work path must
 participate in admission. The protocol is not a replacement for those checks.
 
+`AccountsRepository` owns account/session operations and durable registration
+requests. Registration obtains a core-coordinated owner barrier, preserves the
+anonymous owner identity, and atomically commits the User, Session and principal
+claim. Old anonymous credentials must consult `guest_owner_available`; even a
+disabled account retains its claim. Only the registration replay flow may recover
+a session using the original signed proof plus password verification. The API
+middleware has not yet been switched to this repository.
+
 These primitives are verified independently on SQLite and disposable PostgreSQL
 databases. The service entry points still use the original Store until their
 business transactions have been converted; these primitives alone are not a

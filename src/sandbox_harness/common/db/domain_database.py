@@ -16,10 +16,11 @@ from sqlalchemy.sql.elements import TextClause
 from sqlalchemy.sql.schema import Table
 
 from .models import Base, SCHEMA_INITIALIZATION_LOCK_ID, canonical_digest
+from .account_models import AccountBase
 
 
 DOMAIN_TABLES = {
-    "accounts": frozenset({"users", "auth_sessions", "registration_intents"}),
+    "accounts": frozenset({"users", "auth_sessions", "registration_intents", "account_registrations"}),
     "core": frozenset({
         "artifacts", "authorization_snapshots", "budget_accounts", "budget_ledger",
         "budget_reservations", "capability_ledger", "child_job_continuations", "events",
@@ -115,6 +116,7 @@ class DomainLifecycle(ProtocolBase):
     participants_json: Mapped[str] = mapped_column(Text)
     phase: Mapped[str] = mapped_column(String(24), index=True)
     error_code: Mapped[str] = mapped_column(String(80), default="")
+    requester: Mapped[str] = mapped_column(String(32), default="")
 
 
 PROTOCOL_TABLES = frozenset(ProtocolBase.metadata.tables)
@@ -172,7 +174,8 @@ class DomainDatabase:
             raise ValueError("database_domain_invalid")
         self.domain, self.url = domain, url
         self.owned_tables = DOMAIN_TABLES[domain] | PROTOCOL_TABLES
-        self.tables = {name: Base.metadata.tables[name] for name in DOMAIN_TABLES[domain]}
+        self.tables = {name: table for metadata in (Base.metadata, AccountBase.metadata)
+                       for name, table in metadata.tables.items() if name in DOMAIN_TABLES[domain]}
         self.tables.update(ProtocolBase.metadata.tables)
         self.engine = create_async_engine(url)
         self.shape = {name: _table_shape(table, self.engine.dialect.name) for name, table in self.tables.items()}
@@ -214,8 +217,9 @@ class DomainDatabase:
                     raise RuntimeError("database_schema_mismatch")
                 await connection.run_sync(self._check_shape)
                 return
-            await connection.run_sync(lambda c: Base.metadata.create_all(c,
-                tables=[self.tables[name] for name in DOMAIN_TABLES[self.domain]]))
+            for metadata in (Base.metadata, AccountBase.metadata):
+                await connection.run_sync(lambda c, metadata=metadata: metadata.create_all(c,
+                    tables=[table for name, table in metadata.tables.items() if name in DOMAIN_TABLES[self.domain]]))
             await connection.run_sync(ProtocolBase.metadata.create_all)
             await connection.execute(DomainIdentity.__table__.insert().values(
                 id=1, domain=self.domain, version=self.schema_version, schema_digest=self.schema_digest))
