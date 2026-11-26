@@ -8,6 +8,17 @@ This revision incorporates the user's explicit `sandbox-gateway` naming and
 full deployment-location isolation requirements. The independent builder check
 was repeated for the revised design with no material unanswered questions.
 
+## Latest user steering: fresh independent databases
+
+The user subsequently requested independent databases for deployment and
+explicitly removed backward-compatibility requirements because this product is
+not yet launched. This supersedes the earlier same-database, old-import/CLI
+compatibility and old/new mixed-version acceptance clauses below. The database
+partition boundary is being clarified (business-domain databases versus strictly
+one database per service). New deployment will use fresh databases and canonical
+entry points; old test evidence and unresolved resource ownership remain retained
+until their own cleanup is proven. Full fresh 184-case verification remains required.
+
 ## Intent and scope
 
 The user requested module isolation with shared code in `common`, to simplify

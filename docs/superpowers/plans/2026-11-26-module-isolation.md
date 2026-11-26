@@ -8,7 +8,8 @@
 **Goal:** Isolate every service/execution artifact and package shared capabilities
 as explicit common libraries, supporting independent service releases/rollback.
 
-**Architecture:** Keep one repository and one authoritative platform database.
+**Architecture:** Keep one repository; the later user instruction requires fresh
+independent accounts/core/media/sites databases with explicit durable handoffs.
 Seven host platform services consume declared common closures; sandbox Runtime,
 Bootstrap, content/images, controlled execution, inference and browser artifacts
 have separate manifests and immutable versions. Preserve transactions/protocols.
@@ -16,7 +17,8 @@ have separate manifests and immutable versions. Preserve transactions/protocols.
 **Tech Stack:** Python 3.13 host, existing FastAPI/SQLAlchemy/PostgreSQL/systemd,
 existing signed sandbox bundles/images and controlled interpreter/model snapshots.
 
-**Spec:** `docs/superpowers/specs/2026-11-26-module-isolation-design.md`.
+**Spec:** `docs/superpowers/specs/2026-11-26-module-isolation-design.md` and the
+superseding database design `docs/superpowers/specs/2026-11-26-independent-databases.md`.
 
 ## Global Constraints
 
@@ -107,14 +109,17 @@ forward during migration, without duplicate implementations.
 - [x] Run focused API/worker/Runtime/CLI tests and full collection/import checks;
   fix source-reference tests to check new authoritative locations, then commit.
 
-## Task 4: Shared database source separation
+## Task 4: Database separation — scope revised by user
 
 **Files:** `src/sandbox_harness/common/db/{models,base,upgrades,store}.py`,
 domain transaction modules, Store tests and PostgreSQL tests.
 
-**Interfaces:** `Store` public method signatures and single metadata/Row identities
-remain unchanged. Transaction method groups may be composed into one facade;
-existing sessions/commit blocks stay intact with no repository auto-commit.
+**Revision:** The user now requires independent databases and no backward
+compatibility. The mechanical shared-Store source split may prepare clear domain method
+groups but is not the final physical-database design. Complete the cross-domain transaction audit and define new owned
+schemas, commands/outbox/inbox, idempotency and recovery after the database
+partition boundary is settled. Existing red Store-boundary tests must follow
+that final design; old compatibility is no longer an acceptance requirement.
 
 - [ ] Add regression for metadata/Row identity, facade method coverage and atomic
   cross-domain handoff/publication before splitting source ownership.
