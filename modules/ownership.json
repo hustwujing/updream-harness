@@ -246,6 +246,10 @@
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/sandbox_ownership.py"
     },
+    "src/sandbox_harness/common/db/site_repository.py": {
+      "owner": "common/db",
+      "target": "src/sandbox_harness/common/db/site_repository.py"
+    },
     "src/sandbox_harness/common/db/sites.py": {
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/sites.py"
