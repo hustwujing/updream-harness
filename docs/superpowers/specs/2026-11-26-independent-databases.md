@@ -190,6 +190,36 @@ is immediate.
 
 ## Implementation and gates
 
+### Retained sandbox ownership during lifecycle commit
+
+The integration audit found that `Pool.discard_thread` only consulted in-memory
+attached objects, while failed deletion moved an object into a retiring set.
+Repeated discard could therefore return without confirming deletion. Its local
+retry is corrected separately; process loss still requires durable ownership.
+Inspector-only restored sandboxes can have neither a Turn handle nor a takeover
+record, so scanning those two tables is not complete ownership recovery.
+
+Core must record every Thread sandbox creation intent and binding, including
+Inspector restore, retained execution and takeover release. Records retain the
+immutable provider/allocation identity, request/profile and eventual handle;
+unknown creation remains an obligation. Warm instances bind to at most one Thread
+when first used. New binding and lifecycle preparation use the same admission
+fence. Old observer-only ownership cannot be inferred from mutable metadata.
+
+After all participants prepare, the coordinator persists the commit decision and
+local cleanup intents. A worker claims cleanup in a short transaction, performs
+generic backend reconciliation/get/delete outside the transaction, then records
+the result under a claim/generation fence. Unknown outcomes remain pending;
+inventory absence and elapsed TTL do not prove deletion. Capacity release follows
+confirmed absence, using the existing allocation identity/debt rules. The core
+lifecycle effect and final response wait for cleanup completion; failure after
+the commit decision rolls forward and never reopens admission. Redis/Pool memory
+is a cache of these facts, not ownership authority.
+
+The lifecycle primitive now supports transaction-local `prepare_commit` and
+`commit_ready` callbacks for this deferred local effect. Actual sandbox ledger,
+all binding hooks, cleanup worker and restart tests still need integration.
+
 1. Separate existing database source responsibilities as a mechanical preparation:
    compare all 339 method bodies and ORM definitions, then run focused regression.
    This step is not a claim of physical database isolation.

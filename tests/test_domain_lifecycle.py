@@ -144,3 +144,40 @@ async def test_invalid_proposal_cannot_create_a_barrier(tmp_path, action, target
             assert await session.scalar(select(func.count()).select_from(DomainBarrier)) == 0
     finally:
         await cleanup(databases)
+
+
+async def test_committed_cleanup_decision_stays_pending_across_restart_until_confirmed(tmp_path):
+    from sandbox_harness.common.db.lifecycle import LifecycleCoordinator, LifecycleProposal
+    databases, participants, coordinator, applied = await lifecycle(tmp_path)
+    ready = False
+    requested = []
+
+    async def queue_cleanup(session, proposal):
+        requested.append(proposal.operation_id)
+
+    async def cleanup_confirmed(session, proposal):
+        return ready
+
+    participants["core"].prepare_commit = queue_cleanup
+    participants["core"].commit_ready = cleanup_confirmed
+    proposal = LifecycleProposal("cleanup", "owner", "thread", 0, "delete", "deleted")
+    targets = {name: part.handoff for name, part in participants.items() if name != "core"}
+    try:
+        await coordinator.start(proposal, set(targets))
+        await coordinator.handoff.relay(targets)
+        assert (await coordinator.advance("cleanup")).state == "pending"
+        assert requested == ["cleanup"] and applied == []
+        await coordinator.handoff.relay(targets)
+        coordinator = LifecycleCoordinator(participants["core"])
+        assert (await coordinator.advance("cleanup")).state == "pending"
+        assert ("core", "delete") not in applied
+        async with databases["core"].transaction() as session:
+            with pytest.raises(RuntimeError, match="lifecycle_admission_blocked"):
+                await participants["core"].admit(session, "owner", "thread", generation=0)
+        ready = True
+        assert (await coordinator.advance("cleanup")).state == "completed"
+        assert (await coordinator.advance("cleanup")).state == "completed"
+        assert requested == ["cleanup"]
+        assert applied.count(("core", "delete")) == 1
+    finally:
+        await cleanup(databases)

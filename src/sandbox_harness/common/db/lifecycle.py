@@ -58,13 +58,16 @@ class ScopeVersion:
 
 Check = Callable[[AsyncSession, LifecycleProposal], Awaitable[str]]
 Effect = Callable[[AsyncSession, LifecycleProposal], Awaitable[None]]
+Ready = Callable[[AsyncSession, LifecycleProposal], Awaitable[bool]]
 
 
 class LifecycleParticipant:
     def __init__(self, database: DomainDatabase, check: Check | None = None, effect: Effect | None = None,
-                 abort_effect: Effect | None = None):
+                 abort_effect: Effect | None = None, *, prepare_commit: Effect | None = None,
+                 commit_ready: Ready | None = None):
         self.database, self.check, self.effect = database, check, effect
         self.abort_effect = abort_effect
+        self.prepare_commit, self.commit_ready = prepare_commit, commit_ready
         self.handoff = DomainHandoff(database, {
             "lifecycle.prepare": self._receive_prepare,
             "lifecycle.commit": self._receive_commit,
@@ -287,6 +290,12 @@ class LifecycleCoordinator:
             if row.phase in {"completed", "refused"}:
                 return self._view(row)
             proposal = LifecycleProposal(**json.loads(row.proposal_json))
+            if row.phase == "committing":
+                barrier = await session.get(DomainBarrier, operation_id)
+                if barrier.state == "prepared":
+                    if self.local.commit_ready and not await self.local.commit_ready(session, proposal):
+                        return self._view(row)
+                    await self.local.decide(session, proposal, True, retain_barrier=True)
             targets = json.loads(row.participants_json)
             phase = {"preparing": "prepare", "committing": "commit", "aborting": "abort"}[row.phase]
             commands = [await session.get(DomainOutbox, self._command_id(row.id, target, phase)) for target in targets]
@@ -297,9 +306,12 @@ class LifecycleCoordinator:
             if row.phase == "preparing":
                 errors = [result["error_code"] for result in results if not result["prepared"]]
                 commit = not errors
-                await self.local.decide(session, proposal, commit, retain_barrier=True)
                 row.phase = "committing" if commit else "aborting"
                 row.error_code = errors[0] if errors else ""
+                if commit and self.local.prepare_commit:
+                    await self.local.prepare_commit(session, proposal)
+                if not commit or not self.local.commit_ready or await self.local.commit_ready(session, proposal):
+                    await self.local.decide(session, proposal, commit, retain_barrier=True)
                 await self._enqueue(session, proposal, targets, "commit" if commit else "abort")
             else:
                 wanted = "committed" if row.phase == "committing" else "aborted"
