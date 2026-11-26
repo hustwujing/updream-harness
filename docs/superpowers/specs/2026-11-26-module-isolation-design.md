@@ -3,7 +3,9 @@
 Status: proposed design, awaiting user approval. No product source, database or
 running deployment changes are part of this design commit.
 
-Independent builder check completed with no material unanswered design questions.
+This revision incorporates the user's explicit `sandbox-gateway` naming and
+full deployment-location isolation requirements. The independent builder check
+was repeated for the revised design with no material unanswered questions.
 
 ## Intent and scope
 
@@ -19,9 +21,11 @@ boundaries and independently installable/releasable artifacts, not just moving
 files into folders. Preserve public APIs, database schema, serialized contracts,
 job outcomes and provider-neutral recovery behavior.
 
-Implementation choices below are the author's recommendations, not decisions
-already approved by the user. The existing native implementation workflow is
-suitable; focused independent reviews follow transaction and deployment stages.
+The user explicitly selected the name `sandbox-gateway` and required code that
+runs inside sandboxes or other execution environments to be independently owned
+and released. The remaining implementation choices below are the author's
+recommendations, not an assertion that the whole design is already approved.
+The existing native implementation workflow is suitable; focused independent reviews follow transaction and deployment stages.
 
 ## Approaches
 
@@ -57,8 +61,8 @@ Source: `3438c46`; running application release: `8b79ea5`.
   single global release/PYTHONPATH into `platform.env`.
 - `controlled_media_adapter.py` imports `staged_file_chunks` from `harness_job`.
   `media_worker.py` imports `_process_start` from the Runtime HTTP client and
-  address validation from Gateway's proxy implementation.
-- API and Gateway legitimately share Job preflight/coordinator and review
+  address validation from sandbox-gateway's proxy implementation.
+- API and sandbox-gateway legitimately share Job preflight/coordinator and review
   contracts. They must share domain libraries, not import another service.
 - Runtime Code Bundle explicitly copies six host modules; Runtime imports
   observability, domain/Job contracts, media catalog and site packaging helpers.
@@ -77,7 +81,7 @@ src/
   sandbox_harness/
     services/
       api/                  # HTTP, Broker, inspector, browser serving
-      gateway/              # capability routes, streaming, public proxy server
+      sandbox_gateway/      # host capability routes and sandbox egress proxy
       job_worker/           # sandbox Child/Reviewer/Operation adapters
       allocation_worker/    # provider-create and reconciliation runner
       media_worker/         # external media lifecycle and provider transports
@@ -103,17 +107,26 @@ src/
     tools/                  # administrative/log CLI consumers
   sandbox_runtime/          # in-sandbox app, CLIs and Harness adapters
   sandbox_bootstrap/        # image-owned signature verification and activation
-services/
-  api/service.toml
-  gateway/service.toml
-  job-worker/service.toml
-  allocation-worker/service.toml
-  media-worker/service.toml
-  controlled-worker/service.toml
-  site-worker/service.toml
-  image-inference/service.toml
-  runtime/service.toml
-  bootstrap/service.toml
+  controlled_runtime/       # fixed programs launched inside bwrap, no host service imports
+modules/                     # explicit build/release manifests, grouped by location
+  host/
+    api/module.toml
+    sandbox-gateway/module.toml
+    job-worker/module.toml
+    allocation-worker/module.toml
+    media-worker/module.toml
+    controlled-worker/module.toml
+    site-worker/module.toml
+  sandbox/
+    runtime/module.toml
+    bootstrap/module.toml
+    content/module.toml
+    images/module.toml
+  execution/
+    controlled-runtime/module.toml
+    image-inference/module.toml
+  browser/
+    web-ui/module.toml
 web/                        # frontend built only for API release
 runtime/                    # signed bundles, profiles, Skills and image inputs
 ```
@@ -127,11 +140,129 @@ package roots; a new package-root allowlist or image rebuild is unnecessary for
 source moves alone. Actual dependency or Bootstrap changes still require image
 rebuild and image gates under existing rules.
 
-Each `service.toml` defines identity, console/module entry, allowed source files,
-common dependencies, third-party dependencies, non-secret required config names,
-packaged data, runtime assets and verification commands. Inference's manifest
+Each `module.toml` defines identity, execution location, artifact type, applicable
+console/module entry, allowed source files, common dependencies, third-party dependencies, non-secret required config names,
+packaged data, runtime assets, compatible consumers and verification commands.
+A static bundle/image manifest has no invented daemon entry point. Inference's manifest
 pins the existing materialized implementation/environment; do not copy model
 weights into application wheels or import source from predecessor projects.
+
+## Complete deployment-location inventory
+
+The inventory contains **14 independently owned build/release modules**, plus
+common libraries. It still represents **eight long-running host application
+services** (seven platform services and inference), plus the database dependency.
+Bundles, images, browser assets and per-sandbox/per-Job processes are deployment
+artifacts, not additional always-running host services.
+
+| Module ID | Runs or is consumed where | Source and deployment artifact | Activation / version boundary |
+| --- | --- | --- | --- |
+| `api` | Host | API/Broker package and pinned web-ui artifact | API unit's immutable release descriptor |
+| `sandbox-gateway` | Host, accessed by sandboxes | Capability/streaming/egress package | Dedicated host unit; provider route selected by config |
+| `job-worker` | Host | Sandbox Job adapter package | JobWorker descriptor and frozen common/contracts |
+| `allocation-worker` | Host | Provider-create/reconciliation package | AllocationWorker descriptor |
+| `media-worker` | Host | Media lifecycle and HTTP Provider adapters | MediaWorker descriptor; inference is an external endpoint |
+| `controlled-worker` | Host | Job engine integration, bwrap launcher, resource/lease management | Worker descriptor pins the controlled-runtime execution manifest |
+| `site-worker` | Host | Site publication lifecycle package | SiteWorker descriptor |
+| `sandbox-runtime` | Inside each Ali/OpenSandbox instance | `src/sandbox_runtime`, Harness bridges, Runtime CLIs, portable common closure; signed Code Bundle | Bootstrap verifies and activates a digest; running executions remain on their frozen code |
+| `sandbox-bootstrap` | Inside each sandbox, image-owned | `src/sandbox_bootstrap`, entrypoint, signature key, CLI dispatcher; Bootstrap image layer | Image/template rollout; compatibility with Code Bundles verified first |
+| `sandbox-content` | Materialized inside sandboxes and consumed by Runtime/Harnesses | Skills, prompts, instruction assets and Skill metadata; signed Content Bundle | Content digest frozen per execution independently of host release |
+| `sandbox-images` | Provider registry/templates; layers execute inside sandboxes | Foundation/common/profile/Harness Dockerfiles, native helpers, OS/Python/Node dependencies and Codex/Claude/DeepSeek client pins | Immutable image digests, Ali template revisions and complete signed profile catalog |
+| `controlled-runtime` | Per-Job bwrap namespace on host | Fixed SAM3/ZIM/transcribe programs plus references to existing immutable model/interpreter snapshots | Separate program/runtime manifest pinned by Worker; no importing worker modules inside bwrap |
+| `image-inference` | Separate model-serving process | Existing materialized image-layering implementation, dependency/model manifest and integration launcher | Independent provider release and health check; MediaWorker uses HTTP |
+| `web-ui` | JavaScript in browser; assets served by API | Existing `web/` sources and deterministic static build | Versioned artifact pinned by API; changing other workers does not rebuild it |
+
+PostgreSQL, Redis, registry, ingress/network setup and upstream sandbox/model
+providers are infrastructure or external dependencies, not new application
+modules. Shared infrastructure is not redeployed as part of module isolation.
+Build scripts, administrative CLIs and test runners have explicit tooling
+ownership and consume the same module manifests; they do not become services.
+
+### Sandbox-owned code and content
+
+Runtime and Bootstrap remain different source and release boundaries. Python
+Harness bridges and dynamic Runtime CLIs belong to sandbox-runtime. Native
+Codex/Claude clients, DeepSeek SDK, browser/proxy/drawio helpers and other
+image-installed programs belong to the declared sandbox-image layer/profile.
+The image's CLI dispatcher is Bootstrap-owned and resolves the activated Code
+Bundle; it does not embed a second mutable Runtime implementation.
+
+Skills may contain executable tools. Their manifest must identify which files
+are content-delivered scripts and which are Code Bundle payloads. Today `editppt`
+is copied into the Code Bundle from its Skill source and is also present in the
+Skill tree in the Content Bundle. Preserve one canonical source and explicitly
+record both consumers/digests during migration; do not silently drop either copy
+or permit divergent implementations. A change to that shared source invalidates
+both affected artifacts, while unrelated content changes need no image rebuild.
+Instruction-generation functions/assets currently imported by the content builder
+from Runtime must also have declared build dependencies; content builds must
+not boot a Runtime server or require a host service installation.
+
+A sandbox-image release pins Bootstrap/native dependency/Harness-client versions;
+a Runtime release pins its portable common closure and required image ABI/lock;
+a Content release pins its Skills and compatibility requirements. A release set
+records and verifies this tuple instead of forcing all artifacts to share one
+version or assuming any independently built versions can be combined.
+
+### Controlled execution and model serving
+
+ControlledWorker stays responsible for database leases, resource ownership,
+launch, cancellation and result validation. Its executed fixed programs become
+a separate `controlled-runtime` module, with entry-point paths, input/result
+schema versions and content hashes. Resolve programs from that immutable
+manifest and copy only the declared program into the Job's isolated work area.
+Keep the current bwrap mounts, network isolation, GPU ownership and output
+validation behavior.
+
+The host's CPython 3.13 requirement does not impose that ABI on the existing
+SAM3/ZIM/Whisper or inference environments. Their manifests retain the actual
+interpreter/model versions and executable paths. Large model/environment
+snapshots remain referenced and shared read-only under the established ownership
+rules; service packaging must not duplicate them or introduce writes into their
+external source trees. Existing materialized inference code must be versioned
+from its current managed snapshot; do not re-import predecessor application
+source or fetch unpinned upstream code to fill the new module directory.
+
+Tests must launch controlled programs using only the declared program/runtime
+artifacts, without the host checkout or `sandbox_harness.services` on sys.path.
+Inference is independently smoke-tested through its HTTP contract, not imported
+as a Python implementation by MediaWorker.
+
+### Portable common versus host-only common
+
+Common has one source tree but several declared packaging closures. Runtime's
+allowlist includes only pure contracts, needed catalog/site helpers and bounded
+telemetry. Host-only DB, sandbox-provider SDKs, credentials, scheduling and
+service-startup configuration remain outside every sandbox bundle and image.
+Controlled fixed programs keep their existing minimal imports and receive only
+the specific portable helpers they actually need, compatible with their own
+interpreter. They do not install the host common distribution wholesale.
+
+## sandbox-gateway naming and migration
+
+The user-selected module/service name is `sandbox-gateway`. Its Python package
+is `sandbox_harness.services.sandbox_gateway` (Python identifier uses underscore),
+its manifest is `modules/host/sandbox-gateway/module.toml`, and its canonical
+entry point is `sandbox-harness-parallel-sandbox-gateway`. It runs on the host;
+"sandbox" describes the clients and controlled access boundary.
+
+For Ali deployment, migrate the owned unit prefix from
+`sandbox-harness-parallel-ali-gateway-{aliyun,opensandbox}` to
+`sandbox-harness-parallel-ali-sandbox-gateway-{aliyun,opensandbox}`. These are
+config-selected listener variants of one service role, not two modules. Preserve
+ports, origin URLs, capability routes, protocol payloads and namespace identities.
+Update launch/start/stop/status scripts, release selectors, observability service
+labels, test controls and network-rule ownership checks consistently.
+
+During the controlled rename, record the old unit/version, stop only that owned
+listener and start its renamed replacement on the same ports. Verify health,
+sandbox model/capability access and terminal proxy/recovery; rollback starts the
+old verified unit if the replacement fails. Never leave both old/new units
+competing for the port or rename another project's service. Keep old CLI/unit
+names in an explicit migration lookup for status/cleanup and rollback only;
+new releases use the new canonical identity. Historical logs keep their original
+service names, and no durable Job/Turn identity is rewritten to match a display
+name. Ports and provider route configuration are not inferred from the new name.
 
 ## Source ownership and extractions
 
@@ -142,11 +273,12 @@ following fixes the ownership and extraction decisions.
 | Owner | Existing implementation / required extraction |
 | --- | --- |
 | API | `main`, `app`, `broker`, `sandbox_inspector`, `document_preview`, `execution_graph`, `job_continuation`, `auth`, `sessions`, `model_discovery` |
-| Gateway | `gateway`, proxy listener/CONNECT logic from `public_proxy`; network validation primitives move to common/security |
+| sandbox-gateway | `gateway`, proxy listener/CONNECT logic from `public_proxy`; network validation primitives move to common/security |
 | JobWorker | `job_service`, `harness_job`, `media_render_adapter`, `media_job_adapter`, `image_decompose_adapter`, execution adapter part of `reviewer` |
 | AllocationWorker | `allocation_service`, worker/service half of `allocation_dispatch` |
 | MediaWorker | `media_service`, `media_worker`, `image_decompose_provider`, `media_reference_publisher`, `ark_assets`, `minimax_voice`, provider-specific response classifier from `media_errors` |
-| ControlledWorker | `controlled_service`, `controlled_media_adapter`, `controlled_media_runner`, `sam3_job`, `transcribe_job` kept together for relative script materialization |
+| ControlledWorker | `controlled_service`, `controlled_media_adapter`, host launch/validation logic from `controlled_media_runner`; consumes the pinned controlled-runtime manifest |
+| Controlled Runtime | `sam3_job`, `transcribe_job` move out of the host service package; fixed execution entry points and model/environment compatibility belong to `src/controlled_runtime` and its execution manifest |
 | SiteWorker | `site_service`, `site_worker` |
 | Common contracts | `domain`, `job_contracts`, `sandbox_contracts`, `job_errors`, stable media-error guidance and pure receipts/protocols from `media_provider` |
 | Common execution / jobs | `job_worker`, `job_adapters`, `job_coordinator`, shared review coordinator/types; transactional media handoff interfaces if extracted from adapters |
@@ -157,7 +289,7 @@ following fixes the ownership and extraction decisions.
 
 `staged_file_chunks` moves to common/storage; process identity to common/process;
 public address normalization/validation to common/security. These extractions
-remove the demonstrated Controlled→Harness and Media→Runtime/Gateway imports
+remove the demonstrated Controlled→Harness and Media→Runtime/sandbox-gateway imports
 without duplicating behavior. Allocation clients must not import the allocation
 service loop. Provider result structures used by Store must not import a media
 transport or its service startup.
@@ -254,8 +386,10 @@ Build and verify first, then atomically switch only that service's descriptor an
 restart its existing unit. Verify loaded module paths and manifest digests, not
 just process env version strings. Rollback switches that descriptor to the last
 validated compatible release. A failed health/startup check rolls back only the
-changed service and preserves current work's frozen identities. Systemd unit
-names, original-project ports and shared infrastructure remain unchanged.
+changed service and preserves current work's frozen identities. The
+sandbox-gateway rename has the explicit unit migration described above;
+other systemd unit names, original-project ports and shared infrastructure remain
+unchanged.
 
 The existing global release command needs an explicit compatibility migration:
 old CLI aliases remain thin launchers for supported operator/test commands;
@@ -265,9 +399,11 @@ second implementation or a silent fallback to the mutable checkout.
 
 Package data paths use explicit release resources/settings, not `__file__.parents`
 assumptions about the old checkout depth. Include profile/job catalogs, Skill
-manifest, public verification key, controlled scripts and web assets only where
-needed. Preserve the existing external model/environment manifests and scratch
-paths; do not duplicate the 38 GiB controlled environment per release.
+manifest, public verification key, controlled-runtime manifest references and web assets
+only where needed. ControlledWorker resolves fixed programs through the pinned
+execution manifest instead of `Path(__file__).with_name(...)`; script copying
+into each owned bwrap work directory uses those declared immutable files.
+Preserve the existing external model/environment manifests and scratch paths; do not duplicate the 38 GiB controlled environment per release.
 
 ## Runtime and old executions
 
@@ -286,20 +422,25 @@ change frozen profile identity. Provider selection remains configuration-driven.
 
 ## Migration stages and acceptance
 
-1. Freeze the source/service/import inventory, complete module ownership map,
-   add failing import/package/entrypoint boundary tests, and define manifests.
+1. Freeze the full host/sandbox/execution/browser inventory, complete source and
+   build-input ownership maps, add failing import/package/entrypoint boundary
+   tests, and define all 14 module manifests, including sandbox-gateway naming.
 2. Extract true shared helpers/contracts, including the portable Runtime subset;
    remove the concrete cross-owner imports identified above. Validate signed
    bundle compatibility and no leaked host dependency/credential paths.
 3. Move each service into its owner package in small independently testable
-   commits, updating imports, tests, CLI entry points and data-resource lookups.
+   commits. Separate fixed controlled-runtime programs from host launchers;
+   update imports, tests, CLI entry points, manifest-based program lookup and
+   data-resource lookups. Include sandbox Runtime/Bootstrap/content/image inputs
+   and web/inference modules in the ownership and independent-build gates.
 4. Split Store models/upgrades and coherent transaction groups, preserving the
    public facade and schema. Run isolated populated PostgreSQL upgrades and
    lease/ownership/atomicity/race gates before dependent moves ship.
 5. Build isolated service artifacts and install each in a clean environment with
    no repository cwd/PYTHONPATH. Verify process entry, data inclusion, service
    config validation, dependency closure and cross-service import rejection.
-6. Introduce per-service release descriptors and tested rollback. Deploy on the
+6. Introduce per-service release descriptors, artifact compatibility selection,
+   sandbox-gateway unit migration and tested rollback. Deploy on the
    Ali instance, record existing work first, restart the selected service and
    verify takeover with no extra external execution. User already authorized
    test restarts; do not demand a drain just to avoid testing recovery.
@@ -316,8 +457,10 @@ intended to remain the same. Existing unaffected receipts retain their revisions
 
 Required release proofs include: isolated service imports; ABI/schema identity;
 old/new mixed-version service operation; allocation recovery and capacity;
-Controlled Operation; MediaWorker handoff; site deployment; API/Gateway/browser;
-real Ali and OpenSandbox Runtime/CLI/restore; one-service restart and rollback
+Controlled Operation; MediaWorker handoff; site deployment; API/sandbox-gateway/browser;
+real Ali and OpenSandbox Runtime/Bootstrap/CLI/content/restore; isolated
+controlled-runtime program launch; independently selected web assets; old/new
+sandbox-gateway identity migration; one-service restart and rollback
 while other services' loaded versions stay unchanged. Use the existing suite and
 appropriate real gates; add tests for newly exposed package/release boundaries.
 
@@ -327,9 +470,11 @@ that gate green; do not silently change the provider model for this migration.
 
 ## Completion and protected constraints
 
-- Seven platform services remain seven independent units; inference remains one
-  separate provider process. Runtime/Bootstrap are sandbox artifacts, not new
-  always-running host service counts. Frontend remains served by API.
+- Fourteen deployable module definitions cover host services, sandbox code/content/
+  images, controlled execution, inference and browser assets. Seven platform
+  services remain seven independent units; inference remains one separate provider
+  process. Artifact modules do not inflate the host service count. Frontend remains
+  served by API and sandbox-gateway remains a host service.
 - Every product source module has an owner; no service implementation cross-imports,
   no common→service edges, no hidden checkout fallback in packaged deployment.
 - Every service can build, start, health-check, upgrade and roll back with a pinned
@@ -352,11 +497,12 @@ production artifacts if no production import requires it.
 | Owner | Existing module stems |
 | --- | --- |
 | API | `main`, `app`, `broker`, `sandbox_inspector`, `document_preview`, `execution_graph`, `job_continuation`, `auth`, `sessions`, `model_discovery` |
-| Gateway | `gateway` |
+| sandbox-gateway | `gateway` |
 | JobWorker | `job_service`, `harness_job`, `media_render_adapter`, `media_job_adapter`, `image_decompose_adapter` |
 | AllocationWorker | `allocation_service` |
 | MediaWorker | `media_service`, `media_worker`, `image_decompose_provider`, `media_reference_publisher`, `ark_assets`, `minimax_voice` |
-| ControlledWorker | `controlled_service`, `controlled_media_adapter`, `controlled_media_runner`, `sam3_job`, `transcribe_job` |
+| ControlledWorker | `controlled_service`, `controlled_media_adapter`, `controlled_media_runner` |
+| Controlled Runtime | `sam3_job`, `transcribe_job` |
 | SiteWorker | `site_service`, `site_worker` |
 | common/contracts | `domain`, `job_contracts`, `sandbox_contracts`, `job_errors`, `media_provider`, `errors` |
 | common/execution | `job_worker`, `job_adapters` |
@@ -374,7 +520,7 @@ production artifacts if no production import requires it.
 | common/events | `events`, `activity_projection` |
 | common/sites | `site_bundle` |
 | tools | `auth_cli`, `log_query` |
-| split: Gateway + common/security | `public_proxy` |
+| split: sandbox-gateway + common/security | `public_proxy` |
 | split: JobWorker + common/jobs | `reviewer` |
 | split: AllocationWorker + common/sandbox | `allocation_dispatch` |
 | split: MediaWorker + common/contracts | `media_errors` |
