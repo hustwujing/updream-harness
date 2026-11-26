@@ -286,7 +286,7 @@ async def test_seedream_reference_payload_uses_frozen_object_urls(monkeypatch):
         "parameters":{"prompt":"merge","size":"2K"}})
     payload=client.posts[0][1]["json"]
     assert result.status=="success" and payload["image"]==[refs[0]["public_url"],refs[1]["public_url"]]
-    assert payload["sequential_image_generation"]=="disabled"
+    assert "sequential_image_generation" not in payload
 
 
 @pytest.mark.asyncio

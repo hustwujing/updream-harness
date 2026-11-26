@@ -422,7 +422,6 @@ class MediaWorker:
         if references:
             urls = [await self._reference_url(item) for item in references]
             payload["image"] = urls[0] if len(urls) == 1 else urls
-            payload["sequential_image_generation"] = "disabled"
         if not await self.store.update_media_job(job["id"], self.owner, job["generation"], status="running", phase="requesting"):
             return ProviderResult("failed", error="media_job_lease_lost")
         async with await self._client() as client:
