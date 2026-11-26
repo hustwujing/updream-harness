@@ -4,12 +4,12 @@ import asyncio
 from dataclasses import asdict
 import httpx
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import time
 from typing import Any, Awaitable, Callable, Protocol
 
 from sandbox_harness.common.storage.files import (staged_file_chunks)
-from sandbox_harness.common.contracts.domain import (Harness)
+from sandbox_harness.common.contracts.domain import (Harness, valid_attachment_name)
 from sandbox_harness.common.sandbox.job_allocation import (SandboxAllocationOwner)
 from sandbox_harness.common.security.grants import (GrantAuthority, JobGrantRequest, TurnGrantRequest)
 from sandbox_harness.common.execution.job_adapters import (AdapterStatus, AdapterSubmission, BaseJobAdapter, JobExecutionContext, PreAcceptCancelled, PreAcceptFailure, SubmissionRecovery, SubmissionOutcomeUnknown, SubmissionInterrupted, reserve_job_resources, recover_resource_reservation)
@@ -96,8 +96,33 @@ class HarnessJobAdapter(BaseJobAdapter):
         self.scheduler=scheduler;self.backend=backend
 
     @staticmethod
-    def execution_prompt(request)->str:
+    def _materialized_input_path(item,artifact)->str:
+        filename=PurePosixPath(artifact.path).name
+        if not valid_attachment_name(filename):
+            raise ValueError('child_input_filename_invalid')
+        return f'assets/inputs/{item.artifact_role}-{artifact.id}/{filename}'
+
+    @staticmethod
+    def execution_prompt(request,input_bindings=())->str:
         objective=str(request.parameters.get('objective',''))
+        if input_bindings and len(input_bindings)!=len(request.input_artifacts):
+            raise ValueError('child_input_binding_count_mismatch')
+        rows=[]
+        for index,value in enumerate(request.input_artifacts):
+            if input_bindings:
+                item,artifact=input_bindings[index]
+                if item!=value or artifact.id!=value.artifact_id:
+                    raise ValueError('child_input_binding_identity_mismatch')
+                filename=PurePosixPath(artifact.path).name
+                rows.append(f'- artifact_id={value.artifact_id}; role={value.artifact_role}; '
+                    f'filename={filename}; sha256={artifact.sha256}; '
+                    f'materialized_path={HarnessJobAdapter._materialized_input_path(item,artifact)}')
+            else:
+                rows.append(f'- artifact_id={value.artifact_id}; role={value.artifact_role}; '
+                    f'materialized_path=assets/inputs/{value.artifact_role}-{value.artifact_id}')
+        inputs='\n'.join(rows)
+        if inputs:
+            objective+='\n\nFrozen input bindings (use these exact authoritative filenames and materialized paths):\n'+inputs
         if request.adapter=='reviewer-harness':
             context=request.parameters.get('review_context',{})
             return (objective+'\n\nYou are an independent read-only Reviewer. Inspect only the frozen input '
@@ -110,11 +135,6 @@ class HarnessJobAdapter(BaseJobAdapter):
                 +json.dumps(context.get('candidates',[]),sort_keys=True)+'\n'
                 'artifact_digests must exactly equal: '
                 +json.dumps(context.get('artifact_digests',[]),sort_keys=True))
-        inputs='\n'.join(f'- artifact_id={value.artifact_id}; role={value.artifact_role}; '
-            f'materialized_path=assets/inputs/{value.artifact_role}-{value.artifact_id}'
-            for value in request.input_artifacts)
-        if inputs:
-            objective+='\n\nFrozen input bindings (use these exact materialized paths):\n'+inputs
         contracts=[value.model_dump(mode='json') for value in request.expected_outputs]
         if not contracts:
             return (objective+'\n\nFrozen output contract: text-only. Return the complete result in your final '
@@ -391,9 +411,9 @@ class SandboxChildBackend(SandboxAllocationOwner):
                         if value is sentinel:return
                         yield value
                 await self.runtime.put_project_file_stream(sandbox,
-                    f"assets/inputs/{item.artifact_role}-{artifact.id}",chunks(),
+                    HarnessJobAdapter._materialized_input_path(item,artifact),chunks(),
                     size=artifact.size,mime=artifact.mime)
-            message=HarnessJobAdapter.execution_prompt(context.request)
+            message=HarnessJobAdapter.execution_prompt(context.request,inputs)
             if restoring:
                 message=('Continue the interrupted Job from its durable checkpoint. Preserve completed '
                     'work, do not repeat external side effects, and finish this frozen objective:\n\n'+message)

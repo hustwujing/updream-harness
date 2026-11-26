@@ -292,10 +292,19 @@ def test_child_prompt_freezes_output_contract_and_reviewer_verdict_path():
 
 
 def test_child_prompt_names_exact_materialized_input_paths():
-    bound=request(input_artifacts=({'artifact_id':'a'*32,'artifact_role':'source'},))
-    prompt=HarnessJobAdapter.execution_prompt(bound)
-    assert 'assets/inputs/source-'+'a'*32 in prompt
+    bound=request(input_artifacts=({'artifact_id':'a'*32,'artifact_role':'input_1'},
+        {'artifact_id':'c'*32,'artifact_role':'input_2'}))
+    artifact=SimpleNamespace(id='a'*32,path='input/assets/portrait.png',sha256='b'*64)
+    second=SimpleNamespace(id='c'*32,path='input/assets/rocket.png',sha256='d'*64)
+    bindings=((bound.input_artifacts[0],artifact),(bound.input_artifacts[1],second))
+    prompt=HarnessJobAdapter.execution_prompt(bound,bindings)
+    assert 'assets/inputs/input_1-'+'a'*32+'/portrait.png' in prompt
     assert 'artifact_id='+'a'*32 in prompt
+    assert 'filename=portrait.png' in prompt and 'sha256='+'b'*64 in prompt
+    assert 'assets/inputs/input_2-'+'c'*32+'/rocket.png' in prompt
+    reviewer=HarnessJobAdapter.execution_prompt(bound.model_copy(update={'adapter':'reviewer-harness',
+        'parameters':{'objective':'Check inputs','review_context':{}}}),bindings)
+    assert 'filename=portrait.png' in reviewer and 'filename=rocket.png' in reviewer
 
 
 async def test_opensandbox_child_collects_output_into_atomic_delivery(tmp_path):
@@ -538,7 +547,8 @@ async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(
     sandbox=Sandbox(id="sandbox-stream",harness=Harness.CODEX,image=image,
         runtime_url="http://runtime",metadata={})
     chunks=[b"x"*(1024*1024),b"y"*(1024*1024),b"z"*17]
-    artifact=SimpleNamespace(id="a"*32,object_ref="sha256:"+"b"*64,
+    artifact=SimpleNamespace(id="a"*32,path="input/assets/report.bin",sha256="b"*64,
+        object_ref="sha256:"+"b"*64,
         size=sum(map(len,chunks)),mime="application/octet-stream")
     class Store:
         allocations=[]
@@ -557,13 +567,15 @@ async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(
             self.acquired+=1;self.acquired_kwargs=kwargs;return sandbox
         async def release(self,*args,**kwargs):pass
     class Runtime:
-        sizes=[];injected={}
+        sizes=[];injected={};paths=[];messages=[]
         async def inject(self,*args,**kwargs):self.injected=kwargs
         async def put_project_file_stream(self,sandbox,path,content,*,size,mime):
+            self.paths.append(path)
             seen=0
             async for value in content:self.sizes.append(len(value));seen+=len(value)
             assert seen==size and path.startswith("assets/inputs/")
-        async def start_execution(self,*args,**kwargs):return {"accepted":True}
+        async def start_execution(self,*args,**kwargs):
+            self.messages.append(kwargs["message"]);return {"accepted":True}
     async def token(*args):return "token",SimpleNamespace(nonce="nonce")
     class Profiles:
         def provider_release(self,*args,**kwargs):
@@ -586,6 +598,10 @@ async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(
         node_id="node",node_generation=1)
     execution,_=await backend.start(context,reservation)
     assert execution.startswith("c"*32) and Runtime.sizes==[len(value) for value in chunks]
+    expected_path="assets/inputs/report-"+artifact.id+"/report.bin"
+    assert Runtime.paths==[expected_path]
+    assert expected_path in Runtime.messages[0]
+    assert "filename=report.bin" in Runtime.messages[0] and "sha256="+artifact.sha256 in Runtime.messages[0]
     assert backend.runtime.injected['logical_thread_id']=='d'*32
     assert backend.runtime.injected['logical_turn_id']=='e'*32
     assert backend.runtime.injected['gateway_url']=='http://sandbox-gateway:29880'
