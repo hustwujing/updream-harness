@@ -1,5 +1,118 @@
-"""Stable public failure reasons, independent of provider exception classes."""
+"""Bounded internal failures and stable public failure projections."""
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+import json
 import re
+from uuid import uuid4
+
+
+ERROR_PHASES = frozenset({
+    "input_validation", "authorization", "capacity", "submission", "status",
+    "execution", "collection", "validation", "review", "cancellation",
+    "reconciliation", "cleanup", "internal",
+})
+SIDE_EFFECT_STATES = frozenset({"none", "possible", "accepted", "completed", "unknown"})
+_SAFE_CODE = re.compile(r"[a-z][a-z0-9_]{0,79}")
+_SAFE_ORIGIN = re.compile(r"[a-z][a-z0-9-]{0,63}")
+_SAFE_CLASS = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,119}")
+_SAFE_MARKER = re.compile(r"[a-z][a-z0-9_.:-]{0,159}")
+
+
+@dataclass(frozen=True)
+class ErrorEnvelope:
+    """Internal diagnostic contract that cannot contain raw external content."""
+
+    code: str
+    origin: str
+    phase: str
+    retryable: bool
+    retry_class: str
+    side_effect_state: str
+    exception_type: str = ""
+    internal_ref: str = ""
+    safe_detail: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.code, str) or not _SAFE_CODE.fullmatch(self.code):
+            raise ValueError("error_code_invalid")
+        if not isinstance(self.origin, str) or not _SAFE_ORIGIN.fullmatch(self.origin):
+            raise ValueError("error_origin_invalid")
+        if self.phase not in ERROR_PHASES:
+            raise ValueError("error_phase_invalid")
+        if type(self.retryable) is not bool:
+            raise ValueError("error_retryable_invalid")
+        if (not isinstance(self.retry_class, str)
+                or not _SAFE_MARKER.fullmatch(self.retry_class)):
+            raise ValueError("error_retry_class_invalid")
+        if self.side_effect_state not in SIDE_EFFECT_STATES:
+            raise ValueError("error_side_effect_state_invalid")
+        if (self.exception_type and (not isinstance(self.exception_type, str)
+                or not _SAFE_CLASS.fullmatch(self.exception_type))):
+            raise ValueError("error_exception_type_invalid")
+        if (not isinstance(self.internal_ref, str)
+                or not re.fullmatch(r"[0-9a-f]{32}", self.internal_ref)):
+            raise ValueError("error_internal_ref_invalid")
+        if (self.safe_detail and (not isinstance(self.safe_detail, str)
+                or not _SAFE_MARKER.fullmatch(self.safe_detail))):
+            raise ValueError("error_safe_detail_invalid")
+
+    def model_dump(self) -> dict:
+        return asdict(self)
+
+    def model_dump_json(self) -> str:
+        return json.dumps(asdict(self), ensure_ascii=False, separators=(",", ":"))
+
+
+@dataclass(frozen=True)
+class PublicError:
+    code: str
+    message: str
+    action: str
+    troubleshooting_id: str
+
+    def model_dump(self) -> dict:
+        return asdict(self)
+
+    def model_dump_json(self) -> str:
+        return json.dumps(asdict(self), ensure_ascii=False, separators=(",", ":"))
+
+
+def error_envelope(exc: BaseException | None = None, *, code: str, origin: str,
+                   phase: str, retryable: bool = False, retry_class: str = "none",
+                   side_effect_state: str = "unknown", safe_detail: str = "",
+                   internal_ref: str = "") -> ErrorEnvelope:
+    """Create an internal failure without copying an exception message."""
+    return ErrorEnvelope(code=code, origin=origin, phase=phase, retryable=retryable,
+        retry_class=retry_class, side_effect_state=side_effect_state,
+        exception_type=type(exc).__name__ if exc is not None else "",
+        internal_ref=internal_ref or uuid4().hex, safe_detail=safe_detail)
+
+
+_PUBLIC_ERRORS = {
+    "provider_service_unavailable": (
+        "provider_service_unavailable",
+        "外部服务暂时不可用，系统将继续处理原任务。",
+        "无需重复提交；稍后刷新任务状态。",
+    ),
+    "provider_rate_limited": (
+        "provider_rate_limited", "外部服务当前请求较多。", "无需重复提交；系统会按原任务退避处理。"),
+    "provider_submission_outcome_unknown": (
+        "provider_submission_pending", "外部服务是否已接受任务尚未确认。", "请等待系统对账，切勿重复提交。"),
+    "infrastructure_capacity_wait": (
+        "infrastructure_capacity_wait", "执行资源暂时不足。", "无需重复提交；系统会在资源恢复后继续。"),
+    "model_token_budget_exhausted": (
+        "model_token_budget_exhausted", "本轮模型预算已达到上限。", "请减少长工具输出或图片预览后继续。"),
+    "model_request_too_large": (
+        "model_request_too_large", "本轮发送给模型的内容超过大小上限。", "请减少图片预览或长工具输出后继续。"),
+}
+
+
+def public_error(value: ErrorEnvelope) -> PublicError:
+    code, message, action = _PUBLIC_ERRORS.get(value.code, (
+        "execution_failed", "本次执行未能完成。", "请保留查询编号并稍后重试；若问题持续，请联系管理员。"))
+    return PublicError(code=code, message=message, action=action,
+        troubleshooting_id=value.internal_ref)
 
 
 def public_failure(code: str, detail: str) -> tuple[str, str]:
