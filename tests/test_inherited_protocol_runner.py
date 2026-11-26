@@ -65,7 +65,7 @@ def test_destructive_protocols_are_serialized_and_business_assets_are_configured
     inherited=(ROOT/'tests/run_real_inherited_protocol.py').read_text()
     parallel=(ROOT/'tests/run_real_parallel_protocol.py').read_text()
     assert 'parallel.protocol_lock() if serial else parallel.concurrent_case()' in inherited
-    assert "SERIAL_CASES={'P13','P19','P21','P27','AS01'}" in parallel
+    assert "SERIAL_CASES={'P13','P19','P21','P27','K08','AS01'}" in parallel
     assert 'boundary=protocol_lock() if args.case in SERIAL_CASES else concurrent_case()' in parallel
     assert 'async with boundary:' in parallel
     assert "args.asset_root=" in inherited and "ResilientAsyncClient" in inherited
@@ -84,7 +84,7 @@ async def test_only_shared_service_mutators_take_inherited_protocol_lock(monkeyp
     monkeypatch.setattr(runner.parallel,'protocol_lock',locked)
     monkeypatch.setattr(runner.parallel,'concurrent_case',concurrent)
     async def handler(client,args):return {'classification':'success'}
-    for protocol,expected in [('P01','concurrent'),('P13','locked'),
+    for protocol,expected in [('P01','concurrent'),('P13','locked'),('K08','locked'),
                               ('P19','locked'),('P21','locked'),('P27','locked')]:
         monkeypatch.setitem(runner.parallel.HANDLERS,protocol,handler)
         monkeypatch.setitem(runner.SOURCE_CASES,'test',{'expect':{'kind':'protocol'}})

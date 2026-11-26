@@ -29,7 +29,7 @@ from sandbox_harness.common.db.media_repository import MediaRepository
 ROOT=Path(__file__).resolve().parents[1]
 TERMINAL_JOBS={'SUCCEEDED','FAILED','CANCELLED','BLOCKED','UNKNOWN'}
 PROTOCOL_LOCK=ROOT/'.data/tmp/real-protocol.lock'
-SERIAL_CASES={'P13','P19','P21','P27','AS01'}
+SERIAL_CASES={'P13','P19','P21','P27','K08','AS01'}
 
 
 def core_repository(settings):
