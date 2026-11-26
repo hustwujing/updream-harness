@@ -86,6 +86,10 @@
       "owner": "common/configuration",
       "target": "src/sandbox_harness/common/configuration/config.py"
     },
+    "src/sandbox_harness/common/configuration/databases.py": {
+      "owner": "common/configuration",
+      "target": "src/sandbox_harness/common/configuration/databases.py"
+    },
     "src/sandbox_harness/common/configuration/resources.py": {
       "owner": "common/configuration",
       "target": "src/sandbox_harness/common/configuration/resources.py"
