@@ -5,6 +5,7 @@ import threading
 import time
 import asyncio
 import io
+import logging
 import tarfile
 import wave
 import subprocess
@@ -31,6 +32,14 @@ def test_runtime_guidance_has_network_and_browser_fallbacks():
     assert "do not use an absolute `/workspace/outputs` path" in runtime_app.RUNTIME_GUIDANCE
     assert "Never print binary asset contents" in runtime_app.RUNTIME_GUIDANCE
     assert "publish the declared outputs before additional narrative" in runtime_app.RUNTIME_GUIDANCE
+
+
+def test_runtime_stderr_log_limit_uses_one_megabyte_for_negative_values():
+    assert runtime_app.stderr_log_limit(-1)==1024*1024
+    assert runtime_app.stderr_log_limit(-999)==1024*1024
+    assert runtime_app.stderr_log_limit(0)==0
+    assert runtime_app.stderr_log_limit(1024)==1024
+    assert runtime_app.stderr_log_limit(2*1024*1024)==1024*1024
     assert "sandbox-background cancel JOB_ID" in runtime_app.RUNTIME_GUIDANCE
 
 
@@ -274,6 +283,38 @@ def test_runtime_stream_accepts_bounded_large_native_json_lines(tmp_path, monkey
     rows = [json.loads(line) for line in response.text.splitlines()]
     assert len(rows[0]["payload"]["text"]) == 100_000
     assert rows[-1]["type"] == "result" and rows[-1]["result"]["status"] == "completed"
+
+
+def test_runtime_logs_bounded_harness_stderr_without_publishing_it(tmp_path,monkeypatch,caplog):
+    monkeypatch.setattr(runtime_app,'RUN',tmp_path/'run')
+    monkeypatch.setattr(runtime_app,'WORKSPACE',tmp_path/'workspace')
+    monkeypatch.setattr(runtime_app,'OUTPUTS',tmp_path/'workspace/outputs')
+    monkeypatch.setattr(runtime_app,'PERSISTENT',('project','state'))
+    secret='provider-url?token=PRIVATE-HARNESS-STDERR'
+    runner=tmp_path/'stderr.py';runner.write_text(f'''import json,sys
+sys.stderr.write({(secret+chr(10))!r});sys.stderr.flush()
+for line in sys.stdin:
+ print(json.dumps({{'type':'result','session_id':'native','usage':{{}}}}),flush=True)
+''')
+    monkeypatch.setenv('HARNESS_COMMAND_JSON',json.dumps({name:[sys.executable,str(runner)]
+        for name in ('codex','claude','deepseek')}))
+    caplog.set_level(logging.INFO)
+    app=runtime_app.create_app()
+    with TestClient(app) as client:
+        assert client.post('/v1/configure',json={'capability_token':'x'*32,
+            'gateway_url':'http://gateway:28600','harness':'claude','model':'model',
+            'proxy_url':'http://172.31.0.1:28601'}).status_code==200
+        response=client.post('/v1/turns',json={'message':'hello','reasoning_effort':'high'})
+    assert response.status_code==200 and secret not in response.text
+    rows=[json.loads(line) for line in response.text.splitlines()]
+    assert rows[-1]['result']['status']=='completed',rows[-1]
+    record=next(value for value in caplog.records
+        if getattr(value,'event_name','')=='runtime.harness.stderr')
+    attributes=record.event_attributes
+    assert secret not in json.dumps(attributes)
+    assert '[REDACTED]' in attributes['updream.stderr_tail']
+    assert attributes['updream.bytes']==len((secret+'\n').encode())
+    assert attributes['updream.count']==1 and attributes['updream.partial'] is False
 
 
 def test_claude_live_stream_accepts_appended_input_before_first_result(tmp_path, monkeypatch):

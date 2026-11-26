@@ -963,6 +963,7 @@ class Broker:
                             or self.settings.runtime_code_bundle_digest),
                         runtime_profile_id="primary-full-cpu", skill_ids=primary_skills,
                         telemetry_metrics_enabled=self.settings.runtime_metrics_enabled,
+                        stderr_log_max_bytes=getattr(self.settings,'runtime_stderr_log_max_bytes',1024),
                         skill_digests={identity:self.catalog.profile_resolver.skills[identity].digest
                             for identity in primary_skills} if self.catalog.profile_resolver else {},
                     )

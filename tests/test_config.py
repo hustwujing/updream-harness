@@ -93,3 +93,12 @@ def test_model_body_budget_is_separately_configurable_and_bounded(monkeypatch):
     assert settings.gateway_request_max_bytes==16*1024*1024
     for value in (1023,64*1024*1024+1):
         with pytest.raises(ValueError):Settings(_env_file=None,gateway_model_request_max_bytes=value)
+
+
+def test_runtime_stderr_log_budget_allows_disable_and_negative_maximum():
+    from pydantic import ValidationError
+    assert Settings(_env_file=None).runtime_stderr_log_max_bytes==1024
+    assert Settings(_env_file=None,runtime_stderr_log_max_bytes=0).runtime_stderr_log_max_bytes==0
+    assert Settings(_env_file=None,runtime_stderr_log_max_bytes=-1).runtime_stderr_log_max_bytes==-1
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None,runtime_stderr_log_max_bytes=1024*1024+1)

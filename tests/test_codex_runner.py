@@ -80,3 +80,24 @@ for line in sys.stdin:
     assert any(row.get("type")=="harness.interaction.applied"
         and row.get("id")=="codex-900" for row in rows)
     assert any(row.get("type") == "harness.input.completed" for row in rows)
+
+
+def test_codex_runner_does_not_expose_app_server_stderr(tmp_path):
+    fake=tmp_path/"codex";secret="provider-url?token=PRIVATE-RUNNER-SECRET"
+    fake.write_text(f'''#!/usr/bin/env python3
+import sys
+for line in sys.stdin:
+    sys.stderr.write({(secret+chr(10))!r});sys.stderr.flush();raise SystemExit(17)
+''')
+    fake.chmod(0o755)
+    environment={**os.environ,"PATH":str(tmp_path)+os.pathsep+os.environ["PATH"],
+        "PYTHONPATH":str(Path(__file__).resolve().parents[1]/"src")}
+    process=subprocess.run([sys.executable,"-m","sandbox_runtime.codex_runner","--model","model"],
+        input="",stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=environment,timeout=5)
+    assert process.returncode!=0 and secret not in process.stdout and secret in process.stderr
+    rows=[json.loads(line) for line in process.stdout.splitlines()]
+    failure=next(row for row in rows if row.get("type")=="error")
+    assert failure["error_code"]=="harness_runner_failed"
+    assert failure["diagnostics"]["exception_type"] in {"CodexAppServerExited","BrokenPipeError"}
+    assert set(failure["diagnostics"])<=set(
+        ["exception_type","stderr_line_count","stderr_sha256"])

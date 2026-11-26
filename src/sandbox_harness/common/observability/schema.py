@@ -26,6 +26,7 @@ BUSINESS_FIELDS = frozenset({
     "returncode", "runtime_bundle_digest", "runtime_sequence", "sandbox_id", "schema_event_name", "skill_count", "source",
     "source_event_id", "source_instance", "source_service", "source_span_id", "source_trace_id",
     "state", "state_after", "state_before", "thread_generation", "thread_id", "tool_id", "tool_name", "turn_id",
+    "stderr_tail",
     "unknown_field_count", "unknown_fields", "upstream_request_id", "usage_source",
     "violation_kind", "worker_id",
 })
@@ -122,7 +123,8 @@ def sanitize_fields(fields: Mapping[str, object], *, strict: bool = False) -> di
             value = SECRET.sub("[REDACTED]", value)
             if canonical.endswith("_id") and not IDENTIFIER.fullmatch(value):
                 value = "invalid-id"
-            limit = 2048 if persisted == "exception.stacktrace" else 512 if canonical == "unknown_fields" else 256
+            limit = (1024*1024 if canonical == "stderr_tail" else 2048 if persisted == "exception.stacktrace"
+                else 512 if canonical == "unknown_fields" else 256)
             value = value.replace("\r", " ").replace("\n", " ")[:limit]
         result[persisted] = value
     return result

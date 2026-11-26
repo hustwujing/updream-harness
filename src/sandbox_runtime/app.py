@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 import mimetypes
 import os
 import pwd
@@ -59,6 +60,12 @@ HARNESS_JSONL_LIMIT = 16 * 1024 * 1024
 RUNTIME_EVENT_JOURNAL_LIMIT = 256 * 1024 * 1024
 MAX_OUTPUT_ARTIFACTS = 50_000
 MAX_CHECKPOINT_BYTES = 4 * 1024 * 1024 * 1024
+MAX_HARNESS_STDERR_LOG_BYTES = 1024 * 1024
+
+
+def stderr_log_limit(value:int)->int:
+    return MAX_HARNESS_STDERR_LOG_BYTES if value<0 else min(
+        value,MAX_HARNESS_STDERR_LOG_BYTES)
 
 
 def require_output_artifact_count(count: int) -> None:
@@ -126,6 +133,7 @@ class Configure(BaseModel):
     delegation_depth: int = Field(default=0, ge=0, le=4)
     background_job_max_seconds: float = Field(default=3600, ge=1, le=86400)
     telemetry_metrics_enabled: bool = False
+    stderr_log_max_bytes: int = Field(default=1024,le=MAX_HARNESS_STDERR_LOG_BYTES)
 
 
 class PtyCreate(BaseModel):
@@ -374,6 +382,14 @@ class Execution:
     journal_bytes: int = 0
     protocol_state: dict[str, Any] = field(default_factory=dict)
     project_output_snapshot: dict[str, tuple[int, int]] = field(default_factory=dict)
+    stderr_task: asyncio.Task | None = None
+    stderr_bytes: int = 0
+    stderr_line_count: int = 0
+    stderr_last_byte: int = -1
+    stderr_digest: Any = field(default_factory=hashlib.sha256)
+    stderr_reported: bool = False
+    stderr_log_max_bytes: int = 1024
+    stderr_tail: bytearray = field(default_factory=bytearray)
 
 
 def execution_input_ids(execution: Execution) -> list[str]:
@@ -450,6 +466,7 @@ def create_app() -> FastAPI:
     app.state.interaction_response_lock = asyncio.Lock()
     app.state.model_start_timeout_seconds = 150.0
     app.state.event_idle_timeout_seconds = 900.0
+    app.state.stderr_log_max_bytes = 1024
     app.state.harness = ""
     app.state.runtime_profile_id = ""
     app.state.skill_ids = []
@@ -610,6 +627,34 @@ def create_app() -> FastAPI:
                     pass
         await process.wait()
 
+    async def drain_harness_stderr(execution: Execution) -> None:
+        stream=execution.process.stderr
+        if stream is None:return
+        while chunk:=await stream.read(65536):
+            execution.stderr_bytes+=len(chunk)
+            execution.stderr_line_count+=chunk.count(b'\n')
+            execution.stderr_last_byte=chunk[-1]
+            execution.stderr_digest.update(chunk)
+            if execution.stderr_log_max_bytes:
+                execution.stderr_tail.extend(chunk)
+                overflow=len(execution.stderr_tail)-execution.stderr_log_max_bytes
+                if overflow>0:del execution.stderr_tail[:overflow]
+
+    async def report_harness_stderr(execution: Execution) -> None:
+        if execution.stderr_task is not None:
+            await asyncio.gather(execution.stderr_task,return_exceptions=True)
+        if not execution.stderr_bytes or execution.stderr_reported:return
+        execution.stderr_reported=True
+        count=execution.stderr_line_count+(execution.stderr_last_byte!=ord('\n'))
+        tail=(bytes(execution.stderr_tail).decode(errors='replace')
+            if execution.stderr_log_max_bytes else None)
+        event('runtime.harness.stderr',
+            level=(logging.WARNING if execution.process.returncode else logging.INFO),
+            execution_id=execution.id,harness=app.state.harness,
+            bytes=execution.stderr_bytes,count=count,
+            object_digest=execution.stderr_digest.hexdigest(),
+            stderr_tail=tail,partial=execution.stderr_bytes>len(execution.stderr_tail))
+
     async def stop_process(execution: Execution) -> None:
         async with execution.stop_lock:
             process = execution.process
@@ -621,6 +666,7 @@ def create_app() -> FastAPI:
                 except asyncio.TimeoutError:
                     pass
             await terminate_group(process)
+            await report_harness_stderr(execution)
             if app.state.process is process:
                 app.state.process = None
                 app.state.process_command = None
@@ -1170,6 +1216,7 @@ def create_app() -> FastAPI:
         os.environ["npm_config_registry"] = "https://registry.npmmirror.com"
         app.state.model_start_timeout_seconds = value.model_start_timeout_seconds
         app.state.event_idle_timeout_seconds = value.event_idle_timeout_seconds
+        app.state.stderr_log_max_bytes = stderr_log_limit(value.stderr_log_max_bytes)
         app.state.background_job_max_seconds = value.background_job_max_seconds
         proxy = urlsplit(value.proxy_url)
         authenticated_proxy = f"{proxy.scheme}://{quote(value.capability_token, safe='')}:@{proxy.netloc}"
@@ -1547,14 +1594,17 @@ def create_app() -> FastAPI:
             environment = {**os.environ, **selected.environment, "HOME": "/workspace/state/home", "PWD": "/workspace/project"}
             Path(environment["HOME"]).mkdir(parents=True, exist_ok=True)
             process = await asyncio.create_subprocess_exec(*selected.argv, cwd=WORKSPACE / "project", env=environment,
-                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 start_new_session=True, limit=HARNESS_JSONL_LIMIT)
             execution = Execution(id=value.execution_id, process=process, selected=selected,
                 native_thread_id=value.native_thread_id,
-                project_output_snapshot=project_output_snapshot())
+                project_output_snapshot=project_output_snapshot(),
+                stderr_log_max_bytes=app.state.stderr_log_max_bytes)
             app.state.execution = execution
             app.state.process = process
             app.state.process_command = selected
+            execution.stderr_task=asyncio.create_task(drain_harness_stderr(execution),
+                name='harness-stderr-'+value.execution_id)
         try:
             submitted = await submit_input(execution, value, initial=created)
         except Exception:

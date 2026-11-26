@@ -446,6 +446,7 @@ class SandboxInspector:
                     gateway_url=route.gateway_url, proxy_url=route.proxy_url,
                     harness=thread.harness.value, model=thread.model,
                     telemetry_metrics_enabled=getattr(self.settings,'runtime_metrics_enabled',False),
+                    stderr_log_max_bytes=getattr(self.settings,'runtime_stderr_log_max_bytes',1024),
                     defer_skill_install=bool(thread.checkpoint_ref and not sandbox.reused))
                 if not sandbox.reused:
                     await self._restore_new(thread, sandbox)

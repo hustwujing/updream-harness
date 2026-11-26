@@ -213,6 +213,7 @@ class RuntimeClient:
                      skill_ids: list[str] | None = None, skill_digests: dict[str, str] | None = None,
                      child_mode: bool = False, delegation_depth: int = 0,
                      telemetry_metrics_enabled: bool = False,
+                     stderr_log_max_bytes: int = 1024,
                      logical_thread_id: str = "", logical_turn_id: str = "",
                      logical_job_id: str = "") -> None:
         await self._resolve_endpoint(sandbox)
@@ -228,6 +229,7 @@ class RuntimeClient:
             "skill_digests":skill_digests or {},"child_mode":child_mode,
             "delegation_depth":delegation_depth,
             "telemetry_metrics_enabled":telemetry_metrics_enabled,
+            "stderr_log_max_bytes":stderr_log_max_bytes,
             "thread_id":logical_thread_id or sandbox.thread_id,
             "turn_id":logical_turn_id or sandbox.turn_id,"sandbox_id":sandbox.id,
             "job_id":logical_job_id}

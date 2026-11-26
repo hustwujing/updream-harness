@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections import deque
+import hashlib
 import json
 import os
 import queue
@@ -13,13 +14,29 @@ from .adapters import normalize_error_code
 from .instructions import runtime_instructions
 
 
+class CodexAppServerExited(RuntimeError):
+    def __init__(self,errors):
+        values=list(errors);raw=''.join(values).encode(errors='replace')
+        self.diagnostics={'exception_type':type(self).__name__,
+            'stderr_line_count':len(values),'stderr_sha256':hashlib.sha256(raw).hexdigest()}
+        super().__init__('Codex app-server exited')
+
+
+def runner_failure(exc):
+    diagnostics={'exception_type':type(exc).__name__}
+    if isinstance(exc,CodexAppServerExited):diagnostics=exc.diagnostics
+    return {'type':'error','error_code':'harness_runner_failed',
+        'message':'Harness runner failed','diagnostics':diagnostics}
+
+
 class Bridge:
     def __init__(self, interaction_responses, interaction_condition):
         self.process = subprocess.Popen(["codex", "app-server", "--listen", "stdio://"], stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1, env=os.environ)
         self.messages = queue.Queue(); self.forwarded = queue.Queue(); self.errors = deque(maxlen=50); self.sequence = 0
         threading.Thread(target=self._read, daemon=True).start()
-        threading.Thread(target=self._read_errors, daemon=True).start()
+        self.error_reader=threading.Thread(target=self._read_errors,daemon=True)
+        self.error_reader.start()
         self.interaction_responses = interaction_responses
         self.interaction_condition = interaction_condition
 
@@ -33,7 +50,12 @@ class Bridge:
         self.messages.put(None)
 
     def _read_errors(self):
-        for line in iter(lambda: self.process.stderr.readline(4096), ""): self.errors.append(line[:2000])
+        for line in iter(lambda: self.process.stderr.readline(4096), ""):
+            self.errors.append(line[:2000]);sys.stderr.write(line);sys.stderr.flush()
+
+    def exited(self):
+        self.error_reader.join(.2)
+        return CodexAppServerExited(self.errors)
 
     def write(self, value):
         self.process.stdin.write(json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n"); self.process.stdin.flush()
@@ -72,7 +94,7 @@ class Bridge:
         self.sequence += 1; identity = self.sequence; self.write({"id": identity, "method": method, "params": params})
         while True:
             message = self.messages.get()
-            if message is None: raise RuntimeError("Codex app-server exited: " + "".join(self.errors)[-2000:])
+            if message is None:raise self.exited()
             if message.get("id") == identity and "method" not in message:
                 if "error" in message: raise RuntimeError(str(message["error"].get("message", "Codex RPC failed")))
                 return message.get("result", {})
@@ -136,7 +158,7 @@ def main():
                 if completed: break
                 try: message = bridge.messages.get(timeout=.05)
                 except queue.Empty: continue
-                if message is None: raise RuntimeError("Codex app-server exited: " + "".join(bridge.errors)[-2000:])
+                if message is None:raise bridge.exited()
                 if "id" in message and "method" in message: bridge.respond(message); continue
                 bridge.emit(message)
                 if message.get("method") == "turn/completed" and message.get("params", {}).get("turn", {}).get("id") == turn_id:
@@ -150,8 +172,8 @@ def main():
                     if native_code else "harness_failed" if status=="failed" else ""),
                 "error_detail": error.get("message") or ""})
     except Exception as exc:
-        bridge.emit({"type": "error", "message": type(exc).__name__ + ": " + str(exc)}); raise
+        bridge.emit(runner_failure(exc));return 1
     finally: bridge.close()
 
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":raise SystemExit(main())

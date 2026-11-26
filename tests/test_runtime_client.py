@@ -178,12 +178,13 @@ async def test_runtime_configuration_retries_transient_proxy_startup_errors():
     sandbox = Sandbox(id="sandbox", harness=Harness.CLAUDE, image="image", runtime_url="http://runtime", metadata={})
     await runtime.inject(sandbox, capability_token="x" * 32, gateway_url="http://gateway:28600",
         proxy_url="http://proxy:28601", harness="claude", model="claude-opus-5-5",
-        telemetry_metrics_enabled=True)
+        telemetry_metrics_enabled=True,stderr_log_max_bytes=-1)
 
     assert len(requests) == 3
     payload=json.loads(requests[-1].content)
     assert payload["model"] == "claude-opus-5-5"
     assert payload["telemetry_metrics_enabled"] is True
+    assert payload["stderr_log_max_bytes"]==-1
 
 
 async def test_child_runtime_configuration_uses_logical_protocol_identity():

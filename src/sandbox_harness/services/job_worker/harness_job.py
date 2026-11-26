@@ -390,6 +390,7 @@ class SandboxChildBackend(SandboxAllocationOwner):
                 model_start_timeout_seconds=self.settings.runtime_model_start_timeout_seconds,
                 event_idle_timeout_seconds=self.settings.runtime_event_idle_timeout_seconds,
                 telemetry_metrics_enabled=self.settings.runtime_metrics_enabled,
+                stderr_log_max_bytes=getattr(self.settings,'runtime_stderr_log_max_bytes',1024),
                 runtime_bundle_digest=self.settings.runtime_bundle_digest,
                 runtime_code_bundle_digest=self.settings.runtime_code_bundle_digest,
                 runtime_profile_id=reservation.runtime_profile_id,
