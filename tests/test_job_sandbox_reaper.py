@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from sandbox_harness.services.api.broker import (Broker)
+from sandbox_harness.common.execution.turn_broker import (Broker)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxHandle)
 
 

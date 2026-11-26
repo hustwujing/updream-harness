@@ -9,6 +9,7 @@ from sqlalchemy.exc import ArgumentError
 
 SERVICE_DOMAINS = {
     "api": ("accounts", "core", "media", "sites"),
+    "platform-worker": ("accounts", "core", "media", "sites"),
     "sandbox-gateway": ("core", "media", "sites"),
     "job-worker": ("core", "media"),
     "allocation-worker": ("core",),

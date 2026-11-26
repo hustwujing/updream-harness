@@ -3,7 +3,6 @@ from collections import OrderedDict
 import json
 import logging
 from pathlib import Path
-import threading
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -11,8 +10,9 @@ from fastapi.testclient import TestClient
 import sandbox_harness.services.sandbox_gateway.gateway as gateway_module
 from sandbox_harness.services.api.app import (create_app, web_distribution_digest)
 from sandbox_harness.common.configuration.config import (Settings)
-from sandbox_harness.services.api.sandbox_inspector import (SandboxInspector)
+from sandbox_harness.common.execution.sandbox_inspector import (SandboxInspector)
 import sandbox_harness.common.observability.observability as obs
+from sandbox_harness.services.platform_worker.platform_service import PlatformWorker
 
 
 def settings(tmp_path,name="health"):
@@ -22,57 +22,58 @@ def settings(tmp_path,name="health"):
         supervisor_retry_max_seconds=.02)
 
 
-def test_api_health_tracks_database_and_required_supervisors(tmp_path):
+def platform_worker(value,store,broker=None):
+    worker=PlatformWorker.__new__(PlatformWorker)
+    worker.settings=value;worker.store=store;worker.broker=broker or SimpleNamespace()
+    worker.owner="platform-test";worker.stop_event=asyncio.Event()
+    worker.media_outbox_status="stopped";worker.media_outbox_last_error=""
+    worker.media_outbox_failures=0
+    return worker
+
+
+def test_api_health_tracks_database_and_external_platform_leader(tmp_path):
     app=create_app(settings(tmp_path));store=app.state.store
     with TestClient(app) as client:
-        assert client.get("/api/health").status_code==200
+        response=client.get("/api/health")
+        assert response.status_code==200 and response.json()["status"]=="degraded"
+        client.portal.call(store.core.claim_platform_leader,
+            "platform-coordinator","platform-test",30)
+        response=client.get("/api/health")
+        assert response.json()["status"]=="ok"
+        assert response.json()["platform_worker"]["active"] is True
         original=store.healthcheck
         async def unavailable():raise ConnectionError("database offline")
         store.healthcheck=unavailable
         response=client.get("/api/health")
         assert response.status_code==503 and response.json()["database"]["available"] is False
         store.healthcheck=original
-        class DeadTask:
-            def done(self):return True
-        app.state.required_tasks["injected_dead"]=DeadTask()
-        response=client.get("/api/health")
-        assert response.status_code==503 and response.json()["supervisors"]["injected_dead"] is False
-        del app.state.required_tasks["injected_dead"]
         assert client.get("/api/health").status_code==200
 
 
-def test_media_outbox_claim_failure_recovers_without_task_restart(tmp_path):
-    app=create_app(settings(tmp_path,"media-loop"));store=app.state.store
-    original=store.claim_media_batches;calls=0
-    async def flaky(*args,**kwargs):
-        nonlocal calls;calls+=1
-        if calls<=3:raise ConnectionError("temporary database failure")
-        return await original(*args,**kwargs)
-    store.claim_media_batches=flaky
-    with TestClient(app) as client:
-        for _ in range(40):
-            if calls>=4:break
-            __import__('time').sleep(.05)
-        response=client.get("/api/health")
-        assert response.status_code==200 and calls>=4
-        assert response.json()["media_outbox"]["failures"]==3
-        assert response.json()["supervisors"]["media_outbox"] is True
+async def test_media_outbox_claim_failure_recovers_without_task_restart(tmp_path):
+    calls=0
+    class Store:
+        async def claim_media_batches(self,*args,**kwargs):
+            nonlocal calls;calls+=1
+            if calls<=3:raise ConnectionError("temporary database failure")
+            return []
+    worker=platform_worker(settings(tmp_path,"media-loop"),Store())
+    task=asyncio.create_task(worker._media_outbox())
+    for _ in range(100):
+        if calls>=4:break
+        await asyncio.sleep(.01)
+    worker.stop_event.set();task.cancel();await asyncio.gather(task,return_exceptions=True)
+    assert calls>=4 and worker.media_outbox_failures==3
 
 
-def test_media_continuation_dispatch_links_durable_origin_trace(tmp_path,monkeypatch):
+async def test_media_continuation_dispatch_links_durable_origin_trace(tmp_path,monkeypatch):
     telemetry=obs.Telemetry("media-continuation-test",tmp_path/"logs")
     monkeypatch.setattr(obs,"_PROVIDER",telemetry.provider)
     monkeypatch.setattr(obs,"_TELEMETRY",telemetry)
     root=logging.getLogger();old_level=root.level;root.setLevel(logging.INFO);root.addHandler(telemetry.handler)
     with obs.operation("test.media.origin",new_trace=True):
         expected=obs.carrier()["traceparent"]
-    app=create_app(settings(tmp_path,"media-linked"));store=app.state.store
-    claimed=False;done=threading.Event()
-    async def claim(*args,**kwargs):
-        nonlocal claimed
-        if claimed:return []
-        claimed=True
-        return [{"turn_id":"a"*32,"thread_id":"b"*32,"owner_id":"owner"}]
+    store=SimpleNamespace()
     async def group(*args,**kwargs):
         return True,[{"status":"failed","output_role":"candidate","job_id":"c"*32,
             "draft_id":"d"*32,"kind":"image","model":"test","project_path":"",
@@ -81,11 +82,11 @@ def test_media_continuation_dispatch_links_durable_origin_trace(tmp_path,monkeyp
         return SimpleNamespace(network_access="restricted",last_traceparent=expected,
             submit_traceparent="")
     async def submit(*args,**kwargs):return SimpleNamespace(id="e"*32)
-    async def finish(*args,**kwargs):done.set()
-    store.claim_media_batches=claim;store.media_continuation_group=group
-    store.get_turn=origin;store.finish_media_batch=finish;app.state.broker.submit=submit
+    store.media_continuation_group=group;store.get_turn=origin
+    worker=platform_worker(settings(tmp_path,"media-linked"),store,
+        SimpleNamespace(submit=submit))
     try:
-        with TestClient(app):assert done.wait(3)
+        await worker._continue_media({"turn_id":"a"*32,"thread_id":"b"*32,"owner_id":"owner"})
         assert telemetry.flush(5)
         rows=[json.loads(line) for path in telemetry.sink.root.glob("*.telemetry.jsonl")
             for line in path.read_text().splitlines()]
@@ -160,8 +161,8 @@ def test_configured_frontend_digest_is_enforced_at_app_creation(tmp_path):
         raise AssertionError("mutated frontend digest was accepted")
 
 
-def test_media_outbox_finish_success_write_failure_recovers(tmp_path):
-    app=create_app(settings(tmp_path,"finish-success"));store=app.state.store
+async def test_media_outbox_finish_success_write_failure_recovers(tmp_path):
+    store=SimpleNamespace()
     batch={"turn_id":"turn","thread_id":"thread"};done=False;finishes=0
     async def claim(*args,**kwargs):return [] if done else [batch]
     async def group(*args,**kwargs):return True,[{"status":"cancelled","output_role":"candidate",
@@ -172,16 +173,17 @@ def test_media_outbox_finish_success_write_failure_recovers(tmp_path):
         if finishes==1:raise ConnectionError("ack failed")
         assert kwargs["delivered"] is True;done=True
     store.claim_media_batches=claim;store.media_continuation_group=group;store.finish_media_batch=finish
-    with TestClient(app) as client:
-        for _ in range(100):
-            if done:break
-            __import__('time').sleep(.02)
-        assert done and finishes==2
-        assert client.get("/api/health").json()["supervisors"]["media_outbox"] is True
+    worker=platform_worker(settings(tmp_path,"finish-success"),store)
+    task=asyncio.create_task(worker._media_outbox())
+    for _ in range(100):
+        if done:break
+        await asyncio.sleep(.01)
+    worker.stop_event.set();task.cancel();await asyncio.gather(task,return_exceptions=True)
+    assert done and finishes==2
 
 
-def test_media_outbox_finish_failure_write_failure_recovers(tmp_path):
-    app=create_app(settings(tmp_path,"finish-failure"));store=app.state.store
+async def test_media_outbox_finish_failure_write_failure_recovers(tmp_path):
+    store=SimpleNamespace()
     batch={"turn_id":"turn","thread_id":"thread"};done=False;finishes=0
     async def claim(*args,**kwargs):return [] if done else [batch]
     async def group(*args,**kwargs):return False,[]
@@ -190,12 +192,13 @@ def test_media_outbox_finish_failure_write_failure_recovers(tmp_path):
         if finishes==1:raise ConnectionError("nack failed")
         assert kwargs["delivered"] is False;done=True
     store.claim_media_batches=claim;store.media_continuation_group=group;store.finish_media_batch=finish
-    with TestClient(app) as client:
-        for _ in range(100):
-            if done:break
-            __import__('time').sleep(.02)
-        assert done and finishes==2
-        assert client.get("/api/health").json()["supervisors"]["media_outbox"] is True
+    worker=platform_worker(settings(tmp_path,"finish-failure"),store)
+    task=asyncio.create_task(worker._media_outbox())
+    for _ in range(100):
+        if done:break
+        await asyncio.sleep(.01)
+    worker.stop_event.set();task.cancel();await asyncio.gather(task,return_exceptions=True)
+    assert done and finishes==2
 
 
 def test_telemetry_fallback_expires_windows_and_enforces_capacity():

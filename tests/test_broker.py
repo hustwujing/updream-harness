@@ -7,7 +7,7 @@ import httpx
 import pytest
 from types import SimpleNamespace
 
-from sandbox_harness.services.api.broker import (Broker, reconcile_native_model_error)
+from sandbox_harness.common.execution.turn_broker import (Broker, reconcile_native_model_error)
 from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.configuration.config import (Settings)
 from sandbox_harness.common.contracts.domain import (EventKind, Harness, InteractionResponse, RuntimeEvent, RuntimeResult, ThreadCreate, TurnCreate, TurnInputCreate, TurnState, now)
@@ -125,7 +125,7 @@ async def test_turn_inventory_rejects_nonterminal_sandbox_without_handle():
 
 async def test_runtime_diagnostics_are_incremental_and_report_counter_deltas(monkeypatch):
     import logging
-    import sandbox_harness.services.api.broker as broker_module
+    import sandbox_harness.common.execution.turn_broker as broker_module
     import sandbox_harness.common.observability.telemetry_ingest as ingest
     snapshots=[
         {'instance_id':'runtime-1','retained_from':1,'last_sequence':1,
@@ -153,7 +153,7 @@ async def test_runtime_diagnostics_are_incremental_and_report_counter_deltas(mon
 
 
 async def test_runtime_diagnostics_handle_instance_reset_rotation_and_bound(monkeypatch):
-    import sandbox_harness.services.api.broker as broker_module
+    import sandbox_harness.common.execution.turn_broker as broker_module
     import sandbox_harness.common.observability.telemetry_ingest as ingest
     class RuntimeDiagnostics:
         def __init__(self):self.after=[];self.snapshots=[]

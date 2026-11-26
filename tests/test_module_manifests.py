@@ -9,7 +9,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_IDS = {
-    "api", "sandbox-gateway", "job-worker", "allocation-worker", "media-worker",
+    "api", "platform-worker", "sandbox-gateway", "job-worker", "allocation-worker", "media-worker",
     "controlled-worker", "site-worker", "sandbox-runtime", "sandbox-bootstrap",
     "sandbox-content", "sandbox-images", "controlled-runtime", "image-inference",
     "web-ui",
@@ -28,7 +28,7 @@ def loader():
 def test_all_deployment_locations_have_explicit_owners():
     manifests = loader().load_manifests(ROOT)
     assert set(manifests) == MODULE_IDS
-    assert sum(value["kind"] == "service" for value in manifests.values()) == 8
+    assert sum(value["kind"] == "service" for value in manifests.values()) == 9
     assert manifests["sandbox-gateway"]["location"] == "host"
     assert manifests["sandbox-runtime"]["location"] == "sandbox"
     assert manifests["controlled-runtime"]["location"] == "controlled"

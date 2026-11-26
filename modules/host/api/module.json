@@ -6,14 +6,10 @@
   "sources": [
     "src/sandbox_harness/services/api/main.py",
     "src/sandbox_harness/services/api/app.py",
-    "src/sandbox_harness/services/api/broker.py",
-    "src/sandbox_harness/services/api/sandbox_inspector.py",
     "src/sandbox_harness/services/api/document_preview.py",
     "src/sandbox_harness/services/api/execution_graph.py",
-    "src/sandbox_harness/services/api/job_continuation.py",
     "src/sandbox_harness/common/security/auth.py",
-    "src/sandbox_harness/services/api/sessions.py",
-    "src/sandbox_harness/services/api/model_discovery.py"
+    "src/sandbox_harness/services/api/sessions.py"
   ],
   "source_roots": [],
   "entry_points": {

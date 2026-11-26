@@ -25,7 +25,7 @@ mkdir -p "$log_root" "$root/.data/tmp"
 restrict_database_credentials() {
   unset SANDBOX_HARNESS_ADMIN_DATABASE_URL SANDBOX_HARNESS_DATABASE_URL
   case "$component" in
-    api) ;;
+    api|platform-worker) ;;
     sandbox-gateway-opensandbox|sandbox-gateway-aliyun)
       unset SANDBOX_HARNESS_ACCOUNTS_DATABASE_URL
       ;;
@@ -79,7 +79,7 @@ export TRITON_CACHE_DIR="$root/.data/cache/triton"
 
 case "$component" in
   sandbox-gateway-opensandbox|sandbox-gateway-aliyun) service=sandbox-gateway ;;
-  api|job-worker|allocation-worker|controlled-worker|media-worker|site-worker) service="$component" ;;
+  api|platform-worker|job-worker|allocation-worker|controlled-worker|media-worker|site-worker) service="$component" ;;
   image-inference) service="" ;;
   *) echo "unknown Ali service: $component" >&2; exit 2 ;;
 esac
@@ -97,6 +97,7 @@ fi
 
 case "$component" in
   api) command=("$release_python" -m sandbox_harness.services.api.main) ;;
+  platform-worker) command=("$release_python" -m sandbox_harness.services.platform_worker.platform_service) ;;
   sandbox-gateway-opensandbox)
     export SANDBOX_HARNESS_GATEWAY_BIND_HOST="172.31.0.1"
     export SANDBOX_HARNESS_GATEWAY_URL="http://172.31.0.1:${SANDBOX_HARNESS_GATEWAY_BIND_PORT}"

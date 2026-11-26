@@ -107,6 +107,7 @@ runtime-media = [
 
 [project.scripts]
 sandbox-harness-api = "sandbox_harness.services.api.main:run"
+sandbox-harness-platform-worker = "sandbox_harness.services.platform_worker.platform_service:run"
 sandbox-harness-gateway = "sandbox_harness.services.sandbox_gateway.gateway:run"
 sandbox-harness-job-worker = "sandbox_harness.services.job_worker.job_service:run"
 sandbox-harness-allocation-worker = "sandbox_harness.services.allocation_worker.allocation_service:main"

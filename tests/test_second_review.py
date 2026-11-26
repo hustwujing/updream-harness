@@ -197,7 +197,7 @@ async def test_failed_input_is_terminal_and_old_execution_cannot_deliver(tmp_pat
     finally:await store.close()
 
 async def test_slow_cleanup_keeps_heartbeat_running(tmp_path,monkeypatch):
-    from sandbox_harness.services.api.broker import (Broker)
+    from sandbox_harness.common.execution.turn_broker import (Broker)
     from sandbox_harness.common.configuration.config import (Settings)
     from sandbox_harness.common.storage.objects import (ObjectStore)
     from sandbox_harness.common.sandbox.pool import (SandboxPool)
@@ -233,7 +233,7 @@ async def test_old_worker_does_not_cancel_runtime_after_lease_takeover(tmp_path)
     from datetime import timedelta
     from sandbox_harness.common.contracts.domain import (now)
     from test_support.legacy_store import (TurnRow)
-    from sandbox_harness.services.api.broker import (Broker)
+    from sandbox_harness.common.execution.turn_broker import (Broker)
     from sandbox_harness.common.configuration.config import (Settings)
     from sandbox_harness.common.storage.objects import (ObjectStore)
     from sandbox_harness.common.sandbox.pool import (SandboxPool)

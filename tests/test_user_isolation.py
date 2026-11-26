@@ -166,7 +166,7 @@ def test_slow_model_probe_does_not_block_api_startup(tmp_path, monkeypatch):
     import asyncio
     async def unavailable(self):
         await asyncio.Event().wait()
-    monkeypatch.setattr('sandbox_harness.services.api.model_discovery.ModelDiscovery.refresh', unavailable)
+    monkeypatch.setattr('sandbox_harness.common.catalog.model_discovery.ModelDiscovery.refresh', unavailable)
     settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'startup.db'),
         redis_url='',backend='fake',object_backend='local',model_catalog_discovery=True,
         session_signing_key='startup-browser-session-secret')

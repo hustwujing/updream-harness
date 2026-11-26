@@ -5,7 +5,7 @@ import pytest
 from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.configuration.config import (Settings)
 from sandbox_harness.common.contracts.domain import (Harness)
-from sandbox_harness.services.api.model_discovery import (ModelDiscovery, compatible_models, parse_model_ids)
+from sandbox_harness.common.catalog.model_discovery import (ModelDiscovery, compatible_models, parse_model_ids)
 
 
 def test_model_discovery_uses_configured_snapshot_path(tmp_path):

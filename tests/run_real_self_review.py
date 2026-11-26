@@ -11,7 +11,7 @@ from pathlib import Path
 
 import httpx
 from dotenv import dotenv_values
-from sandbox_harness.services.api.broker import (Broker)
+from sandbox_harness.common.execution.turn_broker import (Broker)
 from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.configuration.config import (Settings)
 from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate)

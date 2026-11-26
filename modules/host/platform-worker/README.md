@@ -1,0 +1,13 @@
+# Platform Worker
+
+Host control-plane execution service. Every replica may claim durable Turn,
+continuation and interaction work. A database-fenced leader lease owns singleton
+coordination loops such as warm-pool convergence, lifecycle relay, model catalog
+refresh, expiry and orphan cleanup.
+
+- Entry: `sandbox_harness.services.platform_worker.platform_service:run`
+- Databases: accounts, core, media and sites through independent repositories
+- Runtime state: `.data`; immutable code/resources: selected service release
+- Verification: leader fencing, API-independent restart, Turn recovery, Outbox and real Ali cases
+
+The API persists requests but does not run PlatformWorker loops.

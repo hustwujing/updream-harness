@@ -6,6 +6,7 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
   echo "unexpected_project_root:$root" >&2; exit 1; }
 stop_units=(
   sandbox-harness-parallel-ali-api
+  sandbox-harness-parallel-ali-platform-worker
   sandbox-harness-parallel-ali-site-worker
   sandbox-harness-parallel-ali-media-worker
   sandbox-harness-parallel-ali-controlled-worker

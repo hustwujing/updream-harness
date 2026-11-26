@@ -70,6 +70,10 @@
       "owner": "common/catalog",
       "target": "src/sandbox_harness/common/catalog/media_references.py"
     },
+    "src/sandbox_harness/common/catalog/model_discovery.py": {
+      "owner": "common/catalog",
+      "target": "src/sandbox_harness/common/catalog/model_discovery.py"
+    },
     "src/sandbox_harness/common/catalog/profiles.py": {
       "owner": "common/catalog",
       "target": "src/sandbox_harness/common/catalog/profiles.py"
@@ -102,6 +106,10 @@
       "owner": "common/contracts",
       "target": "src/sandbox_harness/common/contracts/domain.py"
     },
+    "src/sandbox_harness/common/contracts/domain_commands.py": {
+      "owner": "common/contracts",
+      "target": "src/sandbox_harness/common/contracts/domain_commands.py"
+    },
     "src/sandbox_harness/common/contracts/errors.py": {
       "owner": "common/contracts",
       "target": "src/sandbox_harness/common/contracts/errors.py"
@@ -121,6 +129,10 @@
     "src/sandbox_harness/common/contracts/media_provider.py": {
       "owner": "common/contracts",
       "target": "src/sandbox_harness/common/contracts/media_provider.py"
+    },
+    "src/sandbox_harness/common/contracts/public_errors.py": {
+      "owner": "common/contracts",
+      "target": "src/sandbox_harness/common/contracts/public_errors.py"
     },
     "src/sandbox_harness/common/contracts/sandbox_contracts.py": {
       "owner": "common/contracts",
@@ -226,6 +238,10 @@
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/lifecycle.py"
     },
+    "src/sandbox_harness/common/db/leaders.py": {
+      "owner": "common/db",
+      "target": "src/sandbox_harness/common/db/leaders.py"
+    },
     "src/sandbox_harness/common/db/media_drafts.py": {
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/media_drafts.py"
@@ -309,6 +325,18 @@
     "src/sandbox_harness/common/execution/job_worker.py": {
       "owner": "common/execution",
       "target": "src/sandbox_harness/common/execution/job_worker.py"
+    },
+    "src/sandbox_harness/common/execution/platform_components.py": {
+      "owner": "common/execution",
+      "target": "src/sandbox_harness/common/execution/platform_components.py"
+    },
+    "src/sandbox_harness/common/execution/sandbox_inspector.py": {
+      "owner": "common/execution",
+      "target": "src/sandbox_harness/common/execution/sandbox_inspector.py"
+    },
+    "src/sandbox_harness/common/execution/turn_broker.py": {
+      "owner": "common/execution",
+      "target": "src/sandbox_harness/common/execution/turn_broker.py"
     },
     "src/sandbox_harness/common/jobs/__init__.py": {
       "owner": "common/jobs",
@@ -498,10 +526,6 @@
       "owner": "API",
       "target": "src/sandbox_harness/services/api/app.py"
     },
-    "src/sandbox_harness/services/api/broker.py": {
-      "owner": "API",
-      "target": "src/sandbox_harness/services/api/broker.py"
-    },
     "src/sandbox_harness/services/api/document_preview.py": {
       "owner": "API",
       "target": "src/sandbox_harness/services/api/document_preview.py"
@@ -510,21 +534,9 @@
       "owner": "API",
       "target": "src/sandbox_harness/services/api/execution_graph.py"
     },
-    "src/sandbox_harness/services/api/job_continuation.py": {
-      "owner": "API",
-      "target": "src/sandbox_harness/services/api/job_continuation.py"
-    },
     "src/sandbox_harness/services/api/main.py": {
       "owner": "API",
       "target": "src/sandbox_harness/services/api/main.py"
-    },
-    "src/sandbox_harness/services/api/model_discovery.py": {
-      "owner": "API",
-      "target": "src/sandbox_harness/services/api/model_discovery.py"
-    },
-    "src/sandbox_harness/services/api/sandbox_inspector.py": {
-      "owner": "API",
-      "target": "src/sandbox_harness/services/api/sandbox_inspector.py"
     },
     "src/sandbox_harness/services/api/sessions.py": {
       "owner": "API",
@@ -605,6 +617,18 @@
     "src/sandbox_harness/services/media_worker/minimax_voice.py": {
       "owner": "MediaWorker",
       "target": "src/sandbox_harness/services/media_worker/minimax_voice.py"
+    },
+    "src/sandbox_harness/services/platform_worker/__init__.py": {
+      "owner": "namespace initializer",
+      "target": "src/sandbox_harness/services/platform_worker/__init__.py"
+    },
+    "src/sandbox_harness/services/platform_worker/job_continuation.py": {
+      "owner": "PlatformWorker",
+      "target": "src/sandbox_harness/services/platform_worker/job_continuation.py"
+    },
+    "src/sandbox_harness/services/platform_worker/platform_service.py": {
+      "owner": "PlatformWorker",
+      "target": "src/sandbox_harness/services/platform_worker/platform_service.py"
     },
     "src/sandbox_harness/services/sandbox_gateway/__init__.py": {
       "owner": "namespace initializer",

@@ -1,6 +1,6 @@
 # Module inventory
 
-The 14 `module.json` files declare product ownership, runtime location and build
+The 15 `module.json` files declare product ownership, runtime location and build
 inputs. Each host service builds and deploys independently through its immutable
 descriptor. See [architecture and ownership](../docs/development/architecture-and-ownership.md).
 

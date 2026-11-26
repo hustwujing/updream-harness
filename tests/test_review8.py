@@ -13,7 +13,7 @@ from starlette.requests import Request
 
 import sandbox_runtime.app as runtime_app
 from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
-from sandbox_harness.services.api.broker import (Broker)
+from sandbox_harness.common.execution.turn_broker import (Broker)
 from sandbox_harness.common.configuration.config import (Settings)
 from sandbox_harness.common.contracts.domain import (Attachment, Harness, ItemType, ThreadCreate, TurnCreate, TurnInputCreate, RuntimeResult, TurnState)
 from sandbox_harness.common.sandbox.runtime import (RuntimeClient, RuntimeTransferError)

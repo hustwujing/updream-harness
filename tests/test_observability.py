@@ -654,7 +654,7 @@ def test_log_query_supports_worker_and_external_execution_identifiers(tmp_path):
 
 
 async def test_shutdown_does_not_start_queued_successor(tmp_path,monkeypatch):
-    from sandbox_harness.services.api.broker import (Broker)
+    from sandbox_harness.common.execution.turn_broker import (Broker)
     from test_support.legacy_store import (Store)
     from sandbox_harness.common.configuration.config import (Settings)
     from sandbox_harness.common.storage.objects import (ObjectStore)

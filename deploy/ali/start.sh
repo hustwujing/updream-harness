@@ -101,6 +101,8 @@ start_transient sandbox-harness-parallel-ali-media-worker sandbox-harness \
   "$root/deploy/ali/run-service.sh" media-worker
 start_transient sandbox-harness-parallel-ali-site-worker sandbox-harness \
   "$root/deploy/ali/run-service.sh" site-worker
+start_transient sandbox-harness-parallel-ali-platform-worker sandbox-harness \
+  "$root/deploy/ali/run-service.sh" platform-worker
 start_transient sandbox-harness-parallel-ali-api sandbox-harness \
   "$root/deploy/ali/run-service.sh" api
 wait_port 127.0.0.1 24767

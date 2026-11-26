@@ -10,7 +10,6 @@ import json
 import logging
 import re
 import time
-import uuid
 from botocore.exceptions import ClientError
 from datetime import timedelta
 from collections import defaultdict, deque
@@ -26,43 +25,30 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from websockets.asyncio.client import connect as websocket_connect
 
-from sandbox_harness.services.api.broker import (Broker)
 from sandbox_harness.common.security.auth import (AUTH_COOKIE, AccountAuth, normalize_username)
-from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.catalog.job_catalog import (JobCatalog)
 from sandbox_harness.common.catalog.profiles import (ProfileResolver)
 from sandbox_harness.common.jobs.job_coordinator import (JobCoordinator, JobGroupDraftUpdate)
-from sandbox_harness.services.api.job_continuation import (ContinuationDispatcher)
 from sandbox_harness.services.api.execution_graph import (ExecutionGraphProjector)
 from sandbox_harness.common.catalog.execution_readiness import (ExecutionReadiness)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobView)
 from sandbox_harness.common.contracts.public_errors import public_job_result
 from sandbox_harness.common.contracts.errors import error_reference, public_exception_code
 from sandbox_harness.common.configuration.config import (Settings, load_settings, validate_service_settings)
-from sandbox_harness.common.configuration.databases import (DatabaseSettings)
+from sandbox_harness.common.execution.platform_components import build_platform_components
 from sandbox_harness.common.observability.observability import (
-    RequestLoggingMiddleware, add_link, canonical_traceparent, event, operation, telemetry,
+    RequestLoggingMiddleware, event, telemetry,
 )
 from sandbox_harness.common.observability.http import (observed_async_client)
 from sandbox_harness.common.contracts.domain import (Attachment, ChangePasswordRequest, ChangeUsernameRequest, Harness, InteractionResponse, LoginRequest, RegisterRequest, UpdateAccountRequest, MediaDraftCreate, MediaDraftUpdate, MediaReferenceUploadCreate, ProjectFileRename, SandboxReleaseRequest, ThreadCreate, ThreadRead, TurnCreate, TurnInputCreate, TERMINAL, valid_attachment_name, now)
 from sandbox_harness.services.api.document_preview import (is_presentation, presentation_pdf)
-from sandbox_harness.services.api.model_discovery import (ModelDiscovery)
-from sandbox_harness.common.catalog.media_catalog import (MediaCatalog)
 from sandbox_harness.common.catalog.media_references import (inspect_reference, resolve_media_references)
 from sandbox_harness.common.catalog.provider_preflight import (ProviderPreflight)
-from sandbox_harness.common.storage.objects import (object_store)
-from sandbox_harness.common.sandbox.pool import (SandboxPool)
-from sandbox_harness.common.sandbox.ownership_cleanup import (OwnershipCleanup)
-from sandbox_harness.common.sandbox.runtime import (RuntimeClient)
+from sandbox_harness.common.storage.objects import object_store
 import sandbox_harness.common.sandbox.sandbox_factory as sandbox_factory
-from sandbox_harness.services.api.sandbox_inspector import (SandboxInspector, websocket_endpoint_headers)
+from sandbox_harness.common.execution.sandbox_inspector import (SandboxInspector, websocket_endpoint_headers)
 from sandbox_harness.common.sites.site_bundle import (safe_site_path)
 from sandbox_harness.services.api.sessions import (COOKIE, Sessions)
-from sandbox_harness.common.db.accounts import (AccountsRepository)
-from sandbox_harness.common.db.api_repositories import (ApiRepositories)
-from sandbox_harness.common.db.core import (CoreRepository)
-from sandbox_harness.common.db.media_repository import (MediaRepository)
-from sandbox_harness.common.db.site_repository import (SiteRepository)
 
 logger = logging.getLogger(__name__)
 
@@ -127,14 +113,6 @@ def avatar_mime(data: bytes) -> str:
     raise ValueError("Avatar must be PNG, JPEG, WebP or GIF")
 
 
-def media_group_has_executed_job(items: list[dict]) -> bool:
-    return any(item.get("job_id") for item in items)
-
-
-def media_group_needs_agent_continuation(items: list[dict]) -> bool:
-    return media_group_has_executed_job(items) or any(item.get("status") == "expired" for item in items)
-
-
 def valid_filename(value: str) -> bool:
     return valid_attachment_name(value)
 
@@ -196,93 +174,10 @@ def managed_project_path(value: str, *, upload: bool = False) -> str:
 
 
 def components(settings: Settings):
-    try:
-        databases = DatabaseSettings().for_service("api")
-    except ValueError:
-        if settings.backend != "fake":
-            raise
-        databases = {
-            "accounts": "sqlite+aiosqlite:///" + str(settings.data_root / "api-accounts.db"),
-            "core": settings.database_url,
-            "media": "sqlite+aiosqlite:///" + str(settings.data_root / "api-media.db"),
-            "sites": "sqlite+aiosqlite:///" + str(settings.data_root / "api-sites.db"),
-        }
-    core = CoreRepository(databases["core"], settings.redis_url, settings.redis_prefix,
-        namespace=settings.namespace, **settings.handoff_options)
-    store = ApiRepositories(AccountsRepository(databases["accounts"], **settings.handoff_options), core,
-        MediaRepository(databases["media"], **settings.handoff_options),
-        SiteRepository(databases["sites"], **settings.handoff_options))
-    objects = object_store(settings)
-    backend=sandbox_factory.build_sandbox_registry(settings)
-    releases=sandbox_factory.primary_provider_releases(settings,backend.provider)
-    profile_resolver=sandbox_factory.build_profile_resolver(settings,backend,releases)
-    images = {harness: releases[harness].ref for harness in Harness}
-    targets = {
-        Harness.CODEX: settings.warm_pool_codex,
-        Harness.CLAUDE: settings.warm_pool_claude,
-        Harness.DEEPSEEK: settings.warm_pool_deepseek,
-    }
-    if sum(targets.values()) >= settings.max_sandboxes:
-        raise ValueError("max_sandboxes must exceed the total warm pool target")
-    pool=SandboxPool(backend,images,targets,max_sandboxes=settings.max_sandboxes,
-        profile_resolver=profile_resolver,ttl_seconds=settings.sandbox_timeout_seconds,
-        ownership=core.ownership)
-    runtime = RuntimeClient(timeout_seconds=settings.sandbox_timeout_seconds,
-        reattach_attempts=settings.runtime_stream_reattach_attempts,
-        reattach_max_delay_seconds=settings.runtime_stream_reattach_max_delay_seconds,
-        bundle_dir=settings.runtime_bundle_dir,
-        default_bundle_digest=settings.runtime_bundle_digest,
-        code_bundle_dir=settings.runtime_code_bundle_dir,
-        default_code_bundle_digest=settings.runtime_code_bundle_digest,
-        staging_root=settings.data_root / "tmp" / "runtime-downloads",backend=backend)
-    catalog = HarnessCatalog(settings.harness_catalog_json or None)
-    media_catalog = MediaCatalog(settings.media_catalog_json,
-        ark_assets_configured=bool(settings.ark_access_key and settings.ark_secret_key
-            and settings.ark_asset_group_id and settings.ark_project_name),
-        tripo_configured=bool(settings.tripo_api_key))
-    discovery = ModelDiscovery(settings, catalog)
-    if settings.model_catalog_discovery:
-        discovery.load_snapshot()
-    return store, objects, pool, catalog, discovery, media_catalog, Broker(settings, store, objects, pool, runtime, catalog)
-
-
-async def supervise_warm_pool(app, pool, *, initial_delay: float = .5,
-                               maximum_delay: float = 30,
-                               probe_interval: float = 30) -> None:
-    delay = initial_delay
-    while True:
-        app.state.pool_attempts += 1
-        fill_error = None
-        try:
-            await pool.fill()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            fill_error = exc
-            logger.exception("Sandbox warm pool convergence failed; retrying")
-        try:
-            available = await pool.execution_available()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            app.state.execution_backend_available = False
-            app.state.pool_status = "unavailable"
-            app.state.pool_last_error = "probe:" + type(exc).__name__
-            logger.exception("Sandbox availability probe failed; retrying")
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, maximum_delay)
-            continue
-        app.state.execution_backend_available = available
-        if fill_error:
-            app.state.pool_status = "degraded" if available else "unavailable"
-            app.state.pool_last_error = type(fill_error).__name__
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, maximum_delay)
-        else:
-            app.state.pool_status = "ready" if available else "unavailable"
-            app.state.pool_last_error = "" if available else "execution_unavailable"
-            delay = initial_delay
-            await asyncio.sleep(probe_interval if available else delay)
+    value=build_platform_components(settings,execution_enabled=False,
+        object_store_factory=object_store)
+    return (value.store,value.objects,value.pool,value.catalog,value.discovery,
+        value.media_catalog,value.broker)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -305,7 +200,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     job_coordinator = JobCoordinator(store, job_catalog, profile_resolver=profile_resolver,
         draft_ttl_seconds=settings.media_draft_ttl_seconds,readiness=readiness,
         provider_preflight=provider_preflight)
-    continuation_dispatcher = ContinuationDispatcher(store, broker)
     execution_graph = ExecutionGraphProjector(store)
     sessions = Sessions(settings.session_signing_key)
     account_auth = AccountAuth(store, settings.auth_session_ttl_seconds)
@@ -315,198 +209,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await store.initialize()
-        await pool.restore_allocation_capacity(await store.core.ownership.capacity_obligations())
-        await broker.start()
-        await inspector.start()
-        protocol_stop = asyncio.Event()
-        ownership_cleanup = OwnershipCleanup(store.core.ownership, pool.backend, pool)
-
-        async def drive_domain_protocols():
-            delay = settings.supervisor_retry_initial_seconds
-            while not protocol_stop.is_set():
-                try:
-                    await store.relay_pending()
-                    await store.advance_lifecycle_operations()
-                    await ownership_cleanup.run_once()
-                    app.state.domain_protocol_status = "running"
-                    app.state.domain_protocol_last_error = ""
-                    delay = settings.supervisor_retry_initial_seconds
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    app.state.domain_protocol_status = "degraded"
-                    app.state.domain_protocol_last_error = type(exc).__name__
-                    event("domain.protocol.failed", level=40, exc=exc)
-                    delay = min(delay * 2, settings.supervisor_retry_max_seconds)
-                try:
-                    await asyncio.wait_for(protocol_stop.wait(), timeout=max(.1, delay))
-                except asyncio.TimeoutError:
-                    pass
-
-        app.state.domain_protocol_status = "running"
-        app.state.domain_protocol_last_error = ""
-        protocol_task = asyncio.create_task(drive_domain_protocols(), name="domain-protocols")
-        continuation_task = asyncio.create_task(continuation_dispatcher.run(),
-            name="job-continuation-dispatcher")
-        media_outbox_stop = asyncio.Event()
-        media_outbox_owner = "media-outbox-" + uuid.uuid4().hex
-        async def continue_media(batch: dict):
-            turn_id = batch.get("turn_id") or ""
-            if not turn_id:
-                return
-            ready, jobs = await store.media_continuation_group(turn_id)
-            if not ready:
-                raise RuntimeError("media_group_pending")
-            if not media_group_needs_agent_continuation(jobs):
-                event("media.batch.ended_without_jobs", turn_id=turn_id,
-                    cancelled=sum(item["status"] == "cancelled" for item in jobs),
-                    expired=sum(item["status"] == "expired" for item in jobs))
-                return
-            results = []
-            for item in jobs:
-                candidate = (item["status"] == "succeeded" and item["output_role"] == "candidate"
-                    and bool(item["job_id"]))
-                results.append({"draft_id": item["draft_id"], "job_id": item["job_id"],
-                    "kind": item["kind"], "model": item["model"], "status": item["status"],
-                    "output_role": item["output_role"],
-                    "path": "/workspace/project/" + item["project_path"] if item["project_path"] else "",
-                    "inspect_command": f"sandbox-media fetch --job-id {item['job_id']} --output /workspace/outputs/{item['job_id']}"
-                        if candidate else "",
-                    "error": item["error_code"] or ""})
-            expired_only = bool(results) and all(item["status"] == "expired" for item in results)
-            if expired_only:
-                message = ("[media_group_expired] The media drafts expired before confirmation. "
-                    "Recreate the same validated drafts, commit the batch once, and tell the user to use the media confirmation cards. "
-                    "Do not use sandbox-interact approval as a substitute or claim that a Provider Job was submitted. Expired drafts: "
-                    + json.dumps(results, ensure_ascii=False, sort_keys=True))
-            else:
-                message = ("[media_group_completed] Continue the original user task. Use only results with status=succeeded and a non-empty path or inspect_command; never invent a path for a failed result. Verify input files exist before composition. Media results: "
-                    + json.dumps(results, ensure_ascii=False, sort_keys=True))
-            origin = await store.get_turn(turn_id)
-            with operation("media.continuation.dispatch",new_trace=True,
-                    thread_id=batch["thread_id"],turn_id=turn_id):
-                if origin:
-                    add_link(canonical_traceparent(origin.last_traceparent)
-                        or canonical_traceparent(origin.submit_traceparent))
-                await broker.submit(batch["thread_id"], TurnCreate(message=message,
-                    idempotency_key=f"media-continuation-{turn_id}", delivery_mode="queue"),
-                    network_access=origin.network_access if origin else "restricted", internal=True)
-        async def dispatch_media_outbox():
-            initial_delay=settings.supervisor_retry_initial_seconds
-            delay = initial_delay
-            while not media_outbox_stop.is_set():
-                try:
-                    batches = await store.claim_media_batches(media_outbox_owner)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    app.state.media_outbox_status="degraded"
-                    app.state.media_outbox_last_error=type(exc).__name__
-                    app.state.media_outbox_failures+=1
-                    event("media.outbox.claim_failed",level=40,
-                        exc=exc,failures=app.state.media_outbox_failures)
-                    try:await asyncio.wait_for(media_outbox_stop.wait(),timeout=delay)
-                    except asyncio.TimeoutError:pass
-                    delay=min(delay*2,settings.supervisor_retry_max_seconds)
-                    continue
-                iteration_error=None
-                for batch in batches:
-                    try:
-                        try:
-                            await continue_media(batch)
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception as exc:
-                            permanent=isinstance(exc,RuntimeError) and str(exc)=="thread_archived"
-                            await store.finish_media_batch(batch["turn_id"], media_outbox_owner,
-                                delivered=False, error=type(exc).__name__,permanent=permanent)
-                        else:
-                            await store.finish_media_batch(batch["turn_id"], media_outbox_owner, delivered=True)
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as exc:
-                        iteration_error=exc;break
-                if iteration_error:
-                    app.state.media_outbox_status="degraded"
-                    app.state.media_outbox_last_error=type(iteration_error).__name__
-                    app.state.media_outbox_failures+=1
-                    event("media.outbox.finish_failed",level=40,
-                        exc=iteration_error,
-                        failures=app.state.media_outbox_failures)
-                    try:await asyncio.wait_for(media_outbox_stop.wait(),timeout=delay)
-                    except asyncio.TimeoutError:pass
-                    delay=min(delay*2,settings.supervisor_retry_max_seconds)
-                    continue
-                app.state.media_outbox_status="running";app.state.media_outbox_last_error="";delay=initial_delay
-                try:
-                    await asyncio.wait_for(media_outbox_stop.wait(), timeout=2)
-                except asyncio.TimeoutError:
-                    pass
-        app.state.media_outbox_status="running";app.state.media_outbox_last_error=""
-        app.state.media_outbox_failures=0
-        media_outbox_task = asyncio.create_task(dispatch_media_outbox(), name="media-outbox-dispatcher")
-        draft_expiry_stop=asyncio.Event()
-        async def expire_job_group_drafts():
-            while not draft_expiry_stop.is_set():
-                try:await store.expire_job_group_drafts()
-                except Exception as exc:event("job_group_draft.expiry_failed",level=40,
-                    exc=exc)
-                try:await asyncio.wait_for(draft_expiry_stop.wait(),timeout=5)
-                except asyncio.TimeoutError:pass
-        draft_expiry_task=asyncio.create_task(expire_job_group_drafts(),
-            name="job-group-draft-expiry")
-        pool_task = None
-        catalog_task = None
-        if settings.model_catalog_discovery:
-            async def refresh_catalog():
-                while True:
-                    try:
-                        await discovery.refresh()
-                    except Exception:
-                        logger.exception("Model catalog refresh failed; retaining the previous catalog")
-                    await asyncio.sleep(settings.model_catalog_refresh_seconds)
-
-            catalog_task = asyncio.create_task(refresh_catalog(), name="model-catalog-refresh")
-        if pool.backend.provider != "fake":
-            app.state.pool_status = "starting"
-            app.state.execution_backend_available = False
-            app.state.pool_attempts = 0
-            app.state.pool_last_error = ""
-
-            async def fill_pool():
-                await supervise_warm_pool(app,pool)
-
-            pool_task = asyncio.create_task(fill_pool(), name="warm-pool-fill")
-        else:
-            app.state.pool_status = "disabled"
-            app.state.execution_backend_available = True
-            app.state.pool_attempts = 0
-            app.state.pool_last_error = ""
-        app.state.required_tasks={"job_continuation":continuation_task,
-            "media_outbox":media_outbox_task,"sandbox_expiry":inspector.cleanup_task,
-            "turn_recovery":broker.recovery_task,"orphan_reaper":broker.reaper_task,
-            "job_group_draft_expiry":draft_expiry_task,"domain_protocols":protocol_task}
-        if pool_task:app.state.required_tasks["warm_pool_supervisor"]=pool_task
+        await pool.restore_allocation_capacity(
+            await store.core.ownership.capacity_obligations())
+        app.state.required_tasks = {}
+        app.state.pool_status = "external"
+        app.state.execution_backend_available = True
+        app.state.pool_attempts = 0
+        app.state.pool_last_error = ""
+        app.state.media_outbox_status = "external"
+        app.state.media_outbox_last_error = ""
+        app.state.media_outbox_failures = 0
         yield
-        if catalog_task:
-            catalog_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await catalog_task
-        if pool_task and not pool_task.done():
-            pool_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await pool_task
-        protocol_stop.set()
-        await protocol_task
-        media_outbox_stop.set()
-        await media_outbox_task
-        draft_expiry_stop.set();await draft_expiry_task
-        continuation_dispatcher.stop_event.set()
-        await continuation_task
-        await inspector.close()
-        preserve_sandbox_keys = await broker.close()
-        await pool.close(preserve_sandbox_keys=(preserve_sandbox_keys
-            | await store.active_sandbox_keys()))
+        await broker.close()
+        await pool.close(preserve_sandbox_keys=await store.active_sandbox_keys())
         await pool.backend.aclose()
         await store.close()
 
@@ -520,7 +235,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.account_auth = account_auth
     app.state.inspector = inspector
     app.state.job_coordinator = job_coordinator
-    app.state.continuation_dispatcher = continuation_dispatcher
     app.state.execution_graph = execution_graph
 
     def cookie_path(request: Request) -> str:
@@ -578,31 +292,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/health")
     async def health():
-        pool_status = app.state.pool_status
-        available=app.state.execution_backend_available
         try:
             await asyncio.wait_for(store.healthcheck(),timeout=1)
             database={"available":True,"error":""}
         except Exception as exc:
             database={"available":False,"error":type(exc).__name__}
-        supervisors={name:bool(task and not task.done())
-            for name,task in getattr(app.state,"required_tasks",{}).items()}
-        supervisors_ready=bool(supervisors) and all(supervisors.values())
-        ready=available and database["available"] and supervisors_ready
-        payload = {"status": "ok" if ready else "degraded",
-                   "backend": settings.backend, "execution_backend_available":available,
+        try:platform=await store.core.platform_leader_status("platform-coordinator")
+        except Exception:platform={"active":False,"owner":"","generation":0,"expires_at":None}
+        if platform.get("expires_at"):
+            platform={**platform,"expires_at":platform["expires_at"].isoformat()}
+        ready=database["available"]
+        payload = {"status":"ok" if ready and platform["active"] else "degraded",
+                   "backend":settings.backend,
+                   "execution_backend_available":platform["active"],
                    "web_dist_digest":app.state.web_dist_digest,
-                   "database":database,"supervisors":supervisors,
-                   "media_outbox":{"status":app.state.media_outbox_status,
-                       "last_error":app.state.media_outbox_last_error,
-                       "failures":app.state.media_outbox_failures},
-                   "sandbox_expiry":{"status":inspector.cleanup_status,
-                       "last_error":inspector.cleanup_last_error,
-                       "failures":inspector.cleanup_failures},
-                   "warm_pool": pool_status,
-                   "warm_pool_optional_degraded": pool_status == "degraded" and available,
-                   "warm_pool_attempts": app.state.pool_attempts,
-                   "warm_pool_last_error": app.state.pool_last_error,
+                   "database":database,"platform_worker":platform,
                    "broker": broker.status(),
                    "model_catalog": discovery.status(),"observability":telemetry().status() if telemetry() else {"enabled":False}}
         return JSONResponse(payload,status_code=200 if ready else 503)

@@ -11,7 +11,7 @@ from sandbox_harness.common.configuration.config import (Settings)
 from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate, TurnState, now)
 from sandbox_harness.common.sandbox.pool import (SandboxPool)
 from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
-from sandbox_harness.services.api.sandbox_inspector import (SandboxInspector, TerminalTicketCodec, websocket_endpoint_headers)
+from sandbox_harness.common.execution.sandbox_inspector import (SandboxInspector, TerminalTicketCodec, websocket_endpoint_headers)
 from test_support.legacy_store import (SandboxControlRow, Store)
 from sqlalchemy import update
 from sandbox_harness.common.sandbox.runtime import (StagedRuntimeObject)
@@ -188,7 +188,7 @@ async def test_inspector_restore_takeover_terminal_port_and_release(tmp_path, mo
         monkeypatch.setattr(httpx,"create_ssl_context",lambda **kwargs:ssl_context)
         def connect(url,**kwargs):
             connections.append((url,kwargs));return "runtime-websocket"
-        monkeypatch.setattr("sandbox_harness.services.api.sandbox_inspector.websocket_connect",connect)
+        monkeypatch.setattr("sandbox_harness.common.execution.sandbox_inspector.websocket_connect",connect)
         assert await inspector.terminal_connection(renewed["ticket"],owner,12)=="runtime-websocket"
         assert runtime.terminal_calls[-1]==("endpoint",sandbox.id,"pty-one",12)
         assert connections[0][0]=="wss://runtime/v1/pty/pty-one/ws?since=12"
@@ -285,7 +285,7 @@ def test_terminal_ticket_rejects_tamper_and_expiry(monkeypatch):
         pty_session_id="pty",ttl_seconds=10)
     assert codec.verify(value)["thread_id"]=="b"*32
     with pytest.raises(ValueError):codec.verify(value+"x")
-    monkeypatch.setattr("sandbox_harness.services.api.sandbox_inspector.time.time",lambda:10_000)
+    monkeypatch.setattr("sandbox_harness.common.execution.sandbox_inspector.time.time",lambda:10_000)
     with pytest.raises(ValueError,match="expired"):codec.verify(codec.issue(owner_id="a"*64,
         thread_id="b"*32,sandbox_id="sandbox",pty_session_id="pty",ttl_seconds=-1))
 

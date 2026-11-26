@@ -17,6 +17,7 @@ units=(
   sandbox-harness-parallel-ali-controlled-worker
   sandbox-harness-parallel-ali-media-worker
   sandbox-harness-parallel-ali-site-worker
+  sandbox-harness-parallel-ali-platform-worker
   sandbox-harness-parallel-ali-api
 )
 for unit in "${units[@]}"; do

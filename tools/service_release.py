@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 
 HOST_SERVICES = frozenset({
-    "api", "sandbox-gateway", "job-worker", "allocation-worker",
+    "api", "platform-worker", "sandbox-gateway", "job-worker", "allocation-worker",
     "controlled-worker", "media-worker", "site-worker",
 })
 

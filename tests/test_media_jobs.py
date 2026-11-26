@@ -8,7 +8,9 @@ import pytest
 from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.contracts.domain import (Harness, MediaDraftCreate, ThreadCreate, TurnCreate, TurnState, now)
 from sandbox_harness.services.media_worker.media_worker import (MediaWorker)
-from sandbox_harness.services.api.app import (media_group_has_executed_job, media_group_needs_agent_continuation)
+from sandbox_harness.services.platform_worker.platform_service import (
+    media_group_has_executed_job, media_group_needs_agent_continuation,
+)
 from test_support.legacy_store import (ArtifactRow, ItemRow, MediaJobOutputRow, MediaOutboxRow, Store)
 
 

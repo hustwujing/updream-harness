@@ -149,7 +149,7 @@ class Broker:
             "orphan_reaper": bool(self.reaper_task and not self.reaper_task.done()),
         }
 
-    async def start(self) -> None:
+    async def start(self, *, start_reaper: bool = True) -> None:
         if not self.execution_enabled:
             raise RuntimeError("request_only_broker_cannot_start")
         validate=getattr(self.pool.backend,"validate_active_providers",None)
@@ -161,7 +161,8 @@ class Broker:
         except Exception:
             logger.exception("Startup orphan reconciliation failed")
         self.recovery_task = asyncio.create_task(self._recovery_loop(), name="turn-recovery-loop")
-        self.reaper_task = asyncio.create_task(self._reaper_loop(), name="sandbox-orphan-reaper")
+        if start_reaper:
+            self.reaper_task = asyncio.create_task(self._reaper_loop(), name="sandbox-orphan-reaper")
 
     async def cleanup_startup_orphans(self) -> None:
         await self.pool.retry_deletions()

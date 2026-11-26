@@ -118,6 +118,7 @@ class Settings(BaseSettings):
     turn_heartbeat_seconds: int = Field(default=10, ge=2, le=60)
     recovery_scan_seconds: int = Field(default=15, ge=5, le=300)
     orphan_reaper_seconds: int = Field(default=60, ge=15, le=3600)
+    platform_leader_lease_seconds: int = Field(default=30, ge=6, le=300)
     max_attachment_bytes: int = Field(default=512 * 1024 * 1024, ge=1)
     max_artifact_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=1)
     max_checkpoint_bytes: int = Field(default=4 * 1024 * 1024 * 1024, ge=1)

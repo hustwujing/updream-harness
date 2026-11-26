@@ -4,7 +4,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from sandbox_harness.services.api.app import (create_app, supervise_warm_pool)
+from sandbox_harness.services.api.app import create_app
+from sandbox_harness.services.platform_worker.platform_service import supervise_warm_pool
 from sandbox_harness.common.configuration.config import (Settings)
 
 
@@ -75,7 +76,7 @@ async def test_warm_pool_probe_exceptions_recover_without_supervisor_restart():
     with pytest.raises(asyncio.CancelledError):await task
 
 
-def test_optional_warm_pool_degradation_is_visible_without_failing_api_readiness(tmp_path):
+def test_api_readiness_is_independent_from_platform_warm_pool(tmp_path):
     settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'health.db'),
         redis_url='',backend='fake',object_backend='local',model_catalog_discovery=False,
         session_signing_key='warm-health-secret')
@@ -85,11 +86,7 @@ def test_optional_warm_pool_degradation_is_visible_without_failing_api_readiness
         app.state.pool_attempts=3
         app.state.pool_last_error='ConnectionError'
         response=client.get('/api/health')
-        assert response.status_code==503
+        assert response.status_code==200
         assert response.json()['status']=='degraded'
         assert response.json()['execution_backend_available'] is False
-        assert response.json()['warm_pool_last_error']=='ConnectionError'
-        app.state.pool_status='degraded';app.state.execution_backend_available=True
-        response=client.get('/api/health')
-        assert response.status_code==200 and response.json()['status']=='ok'
-        assert response.json()['warm_pool_optional_degraded'] is True
+        assert response.json()['platform_worker']['active'] is False
