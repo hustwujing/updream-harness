@@ -23,6 +23,14 @@ def protocol(identity,title,prompt,expect,*,assets=(),features=(),hook=None,cont
         **({"coverage":coverage} if coverage else {})}
 
 
+def cross_database(identity,title,prompt,expect,*,features=(),hook=None):
+    return {"id":identity,"title":title,"complexity":"cross_database","assets":[],
+        "prompt":prompt,"expect":expect,"content_checks":[],"hook":hook,
+        "status":"not_run","attempts":[],"entry_mode":"deployed_api_and_databases",
+        "executor":"cross_database","required_features":list(features),
+        "provenance":"split-database-design"}
+
+
 PARALLEL_CASES=[
     protocol("P01","混合并行 JobGroup",
         "并行生成两张太空海报、检查上传图片，并委托子 Harness 生成一份对照说明；全部完成后汇总。",
@@ -230,6 +238,40 @@ COVERAGE_CASES=[
 ]
 
 
+CROSS_DATABASE_CASES=[
+    cross_database("XDB01","Core到Media授权与精确收集",
+        "验证Core授权的真实Media任务及精确产物收集。",
+        {"databases":["core","media"],"provider":"real","exact_output_identity":True},
+        features=("cross_database","media_authority","provider_coverage","artifact_identity")),
+    cross_database("XDB02","Media接受后JobWorker硬杀恢复",
+        "Media接受真实任务后硬杀JobWorker，验证原执行恢复与单次收集。",
+        {"databases":["core","media"],"provider":"real","same_generation":True,
+            "same_external_execution":True},
+        features=("cross_database","recovery","sigkill","provider_coverage","generation_fence"),
+        hook="job_worker_sigkill_after_media_acceptance"),
+    cross_database("XDB03","Media多产物身份跨库一致",
+        "验证真实多产物Media任务在Core与Media之间的完整身份一致性。",
+        {"databases":["core","media"],"min_outputs":2,"ordered_identity":True},
+        features=("cross_database","multiple_outputs","artifact_identity")),
+    cross_database("XDB04","Core取消与Media许可围栏",
+        "验证Core取消传播到Media许可并阻止迟到产物提升。",
+        {"databases":["core","media"],"permit_cancelled":True,
+            "late_promotion_blocked":True},
+        features=("cross_database","cancellation","generation_fence"),
+        hook="cancel_after_media_authorization"),
+    cross_database("XDB05","Core到Sites发布确认一致",
+        "验证Core站点命令、Sites版本和发布文件清单完全一致。",
+        {"databases":["core","sites"],"manifest_identity":True,"published":True},
+        features=("cross_database","site_publish","command_receipt","manifest_identity")),
+    cross_database("XDB06","四库账号身份与线程生命周期清理",
+        "验证Accounts账号身份与Core、Media、Sites线程删除协议无孤儿数据。",
+        {"databases":["accounts","core","media","sites"],
+            "owner_identity_preserved":True,"orphan_count":0},
+        features=("cross_database","account_lifecycle","cleanup","orphan_audit"),
+        hook="account_delete"),
+]
+
+
 def inherited_adaptation(value):
     hook=value.get("dynamic_hook") or "artifact_contract"
     return ("Preserve the original "+value["id"]+" risk and assertions through the Parallel "
@@ -272,10 +314,12 @@ def main():
         "rules":{"stop_on_program_or_prompt_defect":True,"rerun_failed_then_affected_only":True,
             "success_requires_user_surface_and_internal_audit":True,"evidence_root":".data/evidence/real-campaign",
             "forbid_case_specific_product_fixes":True},
-        "runnable_case_count":len(business)+len(inherited)+len(PARALLEL_CASES)+len(COVERAGE_CASES),
+        "runnable_case_count":(len(business)+len(inherited)+len(PARALLEL_CASES)
+            +len(COVERAGE_CASES)+len(CROSS_DATABASE_CASES)),
         "business_case_count":len(business),"inherited_protocol_case_count":len(inherited),
         "parallel_case_count":len(PARALLEL_CASES)+len(COVERAGE_CASES),
-        "cases":[*business,*inherited,*PARALLEL_CASES,*COVERAGE_CASES],
+        "cross_database_case_count":len(CROSS_DATABASE_CASES),
+        "cases":[*business,*inherited,*PARALLEL_CASES,*COVERAGE_CASES,*CROSS_DATABASE_CASES],
         "superseded_cases":superseded}
     OUTPUT.write_text(json.dumps(result,ensure_ascii=False,indent=2)+"\n")
     print(json.dumps({"output":str(OUTPUT),"runnable":len(result["cases"]),

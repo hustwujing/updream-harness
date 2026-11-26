@@ -7786,14 +7786,26 @@
       "complexity": "cross_database",
       "assets": [],
       "prompt": "验证Core授权的真实Media任务及精确产物收集。",
-      "expect": {"databases": ["core", "media"], "provider": "real", "exact_output_identity": true},
+      "expect": {
+        "databases": [
+          "core",
+          "media"
+        ],
+        "provider": "real",
+        "exact_output_identity": true
+      },
       "content_checks": [],
       "hook": null,
       "status": "not_run",
       "attempts": [],
       "entry_mode": "deployed_api_and_databases",
       "executor": "cross_database",
-      "required_features": ["cross_database", "media_authority", "provider_coverage", "artifact_identity"],
+      "required_features": [
+        "cross_database",
+        "media_authority",
+        "provider_coverage",
+        "artifact_identity"
+      ],
       "provenance": "split-database-design"
     },
     {
@@ -7802,14 +7814,28 @@
       "complexity": "cross_database",
       "assets": [],
       "prompt": "Media接受真实任务后硬杀JobWorker，验证原执行恢复与单次收集。",
-      "expect": {"databases": ["core", "media"], "provider": "real", "same_generation": true, "same_external_execution": true},
+      "expect": {
+        "databases": [
+          "core",
+          "media"
+        ],
+        "provider": "real",
+        "same_generation": true,
+        "same_external_execution": true
+      },
       "content_checks": [],
       "hook": "job_worker_sigkill_after_media_acceptance",
       "status": "not_run",
       "attempts": [],
       "entry_mode": "deployed_api_and_databases",
       "executor": "cross_database",
-      "required_features": ["cross_database", "recovery", "sigkill", "provider_coverage", "generation_fence"],
+      "required_features": [
+        "cross_database",
+        "recovery",
+        "sigkill",
+        "provider_coverage",
+        "generation_fence"
+      ],
       "provenance": "split-database-design"
     },
     {
@@ -7818,14 +7844,25 @@
       "complexity": "cross_database",
       "assets": [],
       "prompt": "验证真实多产物Media任务在Core与Media之间的完整身份一致性。",
-      "expect": {"databases": ["core", "media"], "min_outputs": 2, "ordered_identity": true},
+      "expect": {
+        "databases": [
+          "core",
+          "media"
+        ],
+        "min_outputs": 2,
+        "ordered_identity": true
+      },
       "content_checks": [],
       "hook": null,
       "status": "not_run",
       "attempts": [],
       "entry_mode": "deployed_api_and_databases",
       "executor": "cross_database",
-      "required_features": ["cross_database", "multiple_outputs", "artifact_identity"],
+      "required_features": [
+        "cross_database",
+        "multiple_outputs",
+        "artifact_identity"
+      ],
       "provenance": "split-database-design"
     },
     {
@@ -7834,14 +7871,25 @@
       "complexity": "cross_database",
       "assets": [],
       "prompt": "验证Core取消传播到Media许可并阻止迟到产物提升。",
-      "expect": {"databases": ["core", "media"], "permit_cancelled": true, "late_promotion_blocked": true},
+      "expect": {
+        "databases": [
+          "core",
+          "media"
+        ],
+        "permit_cancelled": true,
+        "late_promotion_blocked": true
+      },
       "content_checks": [],
       "hook": "cancel_after_media_authorization",
       "status": "not_run",
       "attempts": [],
       "entry_mode": "deployed_api_and_databases",
       "executor": "cross_database",
-      "required_features": ["cross_database", "cancellation", "generation_fence"],
+      "required_features": [
+        "cross_database",
+        "cancellation",
+        "generation_fence"
+      ],
       "provenance": "split-database-design"
     },
     {
@@ -7850,14 +7898,26 @@
       "complexity": "cross_database",
       "assets": [],
       "prompt": "验证Core站点命令、Sites版本和发布文件清单完全一致。",
-      "expect": {"databases": ["core", "sites"], "manifest_identity": true, "published": true},
+      "expect": {
+        "databases": [
+          "core",
+          "sites"
+        ],
+        "manifest_identity": true,
+        "published": true
+      },
       "content_checks": [],
       "hook": null,
       "status": "not_run",
       "attempts": [],
       "entry_mode": "deployed_api_and_databases",
       "executor": "cross_database",
-      "required_features": ["cross_database", "site_publish", "command_receipt", "manifest_identity"],
+      "required_features": [
+        "cross_database",
+        "site_publish",
+        "command_receipt",
+        "manifest_identity"
+      ],
       "provenance": "split-database-design"
     },
     {
@@ -7866,14 +7926,28 @@
       "complexity": "cross_database",
       "assets": [],
       "prompt": "验证Accounts账号身份与Core、Media、Sites线程删除协议无孤儿数据。",
-      "expect": {"databases": ["accounts", "core", "media", "sites"], "owner_identity_preserved": true, "orphan_count": 0},
+      "expect": {
+        "databases": [
+          "accounts",
+          "core",
+          "media",
+          "sites"
+        ],
+        "owner_identity_preserved": true,
+        "orphan_count": 0
+      },
       "content_checks": [],
       "hook": "account_delete",
       "status": "not_run",
       "attempts": [],
       "entry_mode": "deployed_api_and_databases",
       "executor": "cross_database",
-      "required_features": ["cross_database", "account_lifecycle", "cleanup", "orphan_audit"],
+      "required_features": [
+        "cross_database",
+        "account_lifecycle",
+        "cleanup",
+        "orphan_audit"
+      ],
       "provenance": "split-database-design"
     }
   ],

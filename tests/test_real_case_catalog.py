@@ -15,7 +15,9 @@ def test_real_case_catalog_is_reproducible_complete_and_parallel_specific():
     assert catalog["source_snapshot"]["sha256"]==hashlib.sha256(source).hexdigest()
     assert catalog["source_snapshot"]["source_case_count"]==129
     assert catalog["business_case_count"]==78
-    assert catalog["parallel_case_count"]>=22 and catalog["runnable_case_count"]>=100
+    assert catalog["parallel_case_count"]==40
+    assert catalog["cross_database_case_count"]==6
+    assert catalog["runnable_case_count"]==175
     assert len(catalog["cases"])==catalog["runnable_case_count"]
     assert len({row["id"] for row in catalog["cases"]})==len(catalog["cases"])
     assert catalog["superseded_cases"]==[]
@@ -25,6 +27,8 @@ def test_real_case_catalog_is_reproducible_complete_and_parallel_specific():
     assert {row["id"] for row in catalog["cases"] if row["id"].startswith("P")}=={
         *(f"P{value:02d}" for value in range(1,21)),
         *(f"P{value:02d}" for value in range(22,28))}
+    assert [row["id"] for row in catalog["cases"] if row["id"].startswith("XDB")]==[
+        f"XDB{value:02d}" for value in range(1,7)]
     compact=next(row for row in catalog["cases"] if row["id"]=="P22")
     assert compact["executor"]=="parallel_protocol"
     assert compact["expect"]=={"compiled_jobs":2,"metadata_required":False,
