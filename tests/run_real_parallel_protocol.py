@@ -96,6 +96,21 @@ class ResilientAsyncClient(httpx.AsyncClient):
                 if not safe or time.monotonic()>=deadline:raise
                 await asyncio.sleep(delay);delay=min(2,delay*2)
 TERMINAL_TURNS={'COMPLETED','FAILED','CANCELLED','WAITING_USER','PAUSED'}
+NON_PROGRAM_JOB_ERROR_PREFIXES=('model_','provider_','infrastructure_','upstream_',
+    'media_reference_','voice_clone_')
+
+
+class JobOutcomeFailure(RuntimeError):
+    def __init__(self,failed:list[dict]):
+        failures=[{'id':value['id'],'state':value['state'],'error_code':str(
+            (value.get('result') or {}).get('error_code') or value['state'])} for value in failed]
+        codes=[value['error_code'] for value in failures]
+        classification=('non_program_failure' if codes and all(
+            code.startswith(NON_PROGRAM_JOB_ERROR_PREFIXES) for code in codes)
+            else 'program_failure')
+        self.outcome={'classification':classification,'reason':','.join(codes),
+            'failed_jobs':[value['local_job_id'] for value in failed],'failures':failures}
+        super().__init__('jobs_not_succeeded:'+json.dumps(failures,ensure_ascii=True,sort_keys=True))
 
 
 def require(response:httpx.Response)->httpx.Response:
@@ -248,8 +263,7 @@ async def wait_job(client,job_id,timeout=900):
 async def wait_jobs(client,jobs,timeout=900):
     values=await asyncio.gather(*(wait_job(client,job['id'],timeout) for job in jobs))
     failed=[value for value in values if value['state']!='SUCCEEDED']
-    if failed:raise AssertionError('jobs_not_succeeded:'+json.dumps(
-        [{'id':value['id'],'state':value['state'],'result':value.get('result',{})} for value in failed],ensure_ascii=False))
+    if failed:raise JobOutcomeFailure(failed)
     return values
 
 
@@ -1642,6 +1656,8 @@ async def main():
         async with boundary:
             async with ResilientAsyncClient(base_url=args.base_url,timeout=None,trust_env=False) as client:
                 session=await client.get('api/session');session.raise_for_status();value=await handler(client,args)
+    except JobOutcomeFailure as exc:
+        value=exc.outcome
     except Exception as exc:
         value={'classification':'program_failure','reason':type(exc).__name__+':'+str(exc)[:500]}
     args.report.parent.mkdir(parents=True,exist_ok=True);args.report.write_text(

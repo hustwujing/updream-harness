@@ -2,6 +2,8 @@ import ast
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -26,6 +28,30 @@ def test_inherited_runner_reports_source_and_parallel_boundary():
     assert value=={'classification':'success','job_id':'job','source_case_id':'D01',
         'source_project':'sandbox-harness-platform-plus',
         'parallel_boundary':'staged_job_continuation'}
+
+
+def test_structured_job_outcome_failure_preserves_external_classification():
+    runner=load_runner();failure=runner.parallel.JobOutcomeFailure([{
+        'id':'a'*32,'local_job_id':'image-0','state':'FAILED',
+        'result':{'error_code':'provider_endpoint_unavailable','error_detail':'do not expose'}},
+        {'id':'b'*32,'local_job_id':'image-1','state':'FAILED',
+         'result':{'error_code':'provider_service_unavailable'}}])
+    assert failure.outcome=={'classification':'non_program_failure',
+        'reason':'provider_endpoint_unavailable,provider_service_unavailable',
+        'failed_jobs':['image-0','image-1'],'failures':[
+            {'id':'a'*32,'state':'FAILED','error_code':'provider_endpoint_unavailable'},
+            {'id':'b'*32,'state':'FAILED','error_code':'provider_service_unavailable'}]}
+    assert 'do not expose' not in str(failure)
+
+
+def test_unknown_or_mixed_job_outcome_failure_remains_program_failure():
+    runner=load_runner();failure=runner.parallel.JobOutcomeFailure([{
+        'id':'a'*32,'local_job_id':'image-0','state':'FAILED',
+        'result':{'error_code':'provider_endpoint_unavailable'}},
+        {'id':'b'*32,'local_job_id':'child-0','state':'FAILED',
+         'result':{'error_code':'output_contract_violation'}}])
+    assert failure.outcome['classification']=='program_failure'
+    assert failure.outcome['reason']=='provider_endpoint_unavailable,output_contract_violation'
 
 
 def test_inherited_non_protocol_cases_require_real_business_artifact_execution():

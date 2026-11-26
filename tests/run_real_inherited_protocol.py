@@ -174,6 +174,8 @@ async def main():
         async with parallel.ResilientAsyncClient(base_url=args.base_url,timeout=None,trust_env=False) as client:
             parallel.require(await client.get('api/session'))
             value=await HANDLERS[args.case](client,args)
+    except parallel.JobOutcomeFailure as exc:
+        value=decorate(args.case,MAPPINGS[args.case][0],exc.outcome)
     except Exception as exc:
         value={'classification':'program_failure','reason':type(exc).__name__+':'+str(exc)[:1000],
             'source_case_id':args.case,'source_project':'sandbox-harness-platform-plus',
@@ -181,7 +183,7 @@ async def main():
     args.report.parent.mkdir(parents=True,exist_ok=True)
     args.report.write_text(json.dumps({'case':args.case,**value},ensure_ascii=False,indent=2)+'\n')
     print(json.dumps({'case':args.case,**value},ensure_ascii=False))
-    if value.get('classification')!='success':raise SystemExit(2)
+    if value.get('classification') in {'program_failure','optimizable_prompt'}:raise SystemExit(2)
 
 
 if __name__=='__main__':asyncio.run(main())
