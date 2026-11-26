@@ -44,6 +44,16 @@ endpoint blocks D02 plus ten unrun cases. K02 passed on the new images. Do not i
 historical completed baselines as a pass for this current gate. See
 [allocation recovery and release evidence](docs/test-evidence/allocation-recovery.md).
 
+The modular Ali candidate is deployed as eight independently restartable services:
+API, sandbox-gateway, JobWorker, AllocationWorker, ControlledWorker, MediaWorker,
+SiteWorker and image-inference. Seven Python services resolve immutable descriptors
+under `.data/service-current/` and run from per-service source digests under
+`.data/service-releases/`; image-inference retains its separately materialized
+model/runtime boundary. Accounts, core execution, media and sites use four distinct
+PostgreSQL databases and roles. Cross-domain work uses durable ordered receipts and
+a Core-coordinated lifecycle protocol. Its fresh 169-case product gate is running;
+prior composite results do not count as final evidence for this candidate.
+
 ## Services
 
 ```text
@@ -66,7 +76,10 @@ Job sandbox allocation → PostgreSQL allocation ledger → Allocation Worker
 Site confirmation  → Session API → PostgreSQL Job → Site Worker → Object storage
                                                         └── immutable version → public route
 
-PostgreSQL: Session, Turn, event and artifact metadata
+PostgreSQL accounts: users, sessions and registration claims
+PostgreSQL core: Threads, Turns, Jobs, artifacts and sandbox ownership
+PostgreSQL media: media drafts, provider executions, outputs and references
+PostgreSQL sites: site drafts, deployment Jobs and immutable versions
 Redis: live event fan-out and short-lived capability revocation
 Object storage: content-addressed checkpoints and artifacts
 ```

@@ -11,7 +11,11 @@ the summary.
 | --- | --- |
 | `app.py` | FastAPI routes, browser identity middleware, owner checks, uploads/downloads, SSE and static web serving |
 | `domain.py` | Public Pydantic contracts, enums and identifier helpers |
-| `store.py` | SQLAlchemy tables, inline schema upgrades, transactions, event/item persistence and Redis notification integration |
+| `common/db/accounts.py` | account, session and anonymous-principal registration authority |
+| `common/db/core.py` | Thread, Turn, Job, artifact, lifecycle and sandbox-ownership authority |
+| `common/db/media_repository.py` | media draft, execution, reference and output authority |
+| `common/db/site_repository.py` | static-site draft, deployment and version authority |
+| `common/db/handoff.py` / `lifecycle.py` | ordered cross-domain commands, receipts and lifecycle barriers |
 | `broker.py` | Turn scheduling, leases, recovery, Runtime orchestration, checkpoint/artifact publication and cleanup |
 | `pool.py` | Pristine warm pool, Thread-attached sandboxes, capacity and deletion retry ownership |
 | `sandbox_contracts.py` / `sandbox_factory.py` | provider-neutral lifecycle, capability gate and configured backend construction |
@@ -64,10 +68,11 @@ selection, SSE, transcript, composer, interactions, project files and inspector.
 
 ## Dependency direction
 
-Browser → API → Store/Broker → Pool/Runtime/Object store. Sandbox Runtime →
-Capability Gateway → configured upstream. Gateway must not call the API to make
-business decisions, and Runtime must not connect to PostgreSQL, Redis or object
-storage.
+Browser → API → domain repositories/Broker → Pool/Runtime/Object store. Core
+emits durable commands to Media and Sites; no business transaction spans
+database authorities. Sandbox Runtime → sandbox-gateway → configured upstream.
+Gateway must not call the API to make business decisions, and Runtime must not
+connect to PostgreSQL, Redis or object storage.
 
 ## Completion
 

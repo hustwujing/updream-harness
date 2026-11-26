@@ -91,3 +91,17 @@ def test_unknown_source_module_fails_ownership_gate(tmp_path):
 def test_current_source_ownership_is_complete():
     ownership = json.loads((ROOT / "modules/ownership.json").read_text())
     loader().validate_source_ownership(ROOT, ownership)
+
+
+def test_every_release_module_has_local_readme_and_agent_rules():
+    manifests=loader().load_manifests(ROOT)
+    for module in manifests.values():
+        directory=Path(module["_manifest_path"]).parent if "_manifest_path" in module else None
+        if directory is None:
+            candidates=list((ROOT/"modules").rglob("module.json"))
+            directory=next(path.parent for path in candidates
+                           if json.loads(path.read_text())["id"]==module["id"])
+        for name in ("README.md","AGENTS.md"):
+            path=directory/name
+            assert path.is_file() and path.read_text().startswith("# "),(
+                module["id"],name)

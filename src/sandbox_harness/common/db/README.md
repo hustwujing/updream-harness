@@ -1,9 +1,9 @@
 # Persistence source ownership
 
-`models.py` is the canonical ORM registry. `store.py` composes domain transaction
-methods; its connection and locks are shared within one Store instance. Source
-separation preserves the existing transaction bodies, owner/generation fences
-and model identities. It does not itself provide independent databases.
+`models.py`, `account_models.py`, `media_models.py` and `ownership_models.py` are
+the canonical ORM registries. `AccountsRepository`, `CoreRepository`,
+`MediaRepository` and `SiteRepository` each own one independently credentialed
+database. `DomainDatabase` rejects access to tables outside that authority.
 
 Method groups cover connections/upgrades, capabilities/budgets, pause, Job
 admission/attempts/allocation/cleanup/publication, accounts, Threads/Turns/events,
@@ -34,8 +34,8 @@ requests. Registration obtains a core-coordinated owner barrier, preserves the
 anonymous owner identity, and atomically commits the User, Session and principal
 claim. Old anonymous credentials must consult `guest_owner_available`; even a
 disabled account retains its claim. Only the registration replay flow may recover
-a session using the original signed proof plus password verification. The API
-middleware has not yet been switched to this repository.
+a session using the original signed proof plus password verification. API identity
+middleware fails closed when an anonymous principal has already been claimed.
 
 `CoreRepository` initializes only core tables and records Turn completion and its
 media notification atomically. Its lifecycle coordinator preserves core Job,
@@ -46,10 +46,9 @@ effect until cleanup records progress through confirmed absence and capacity
 release. Cleanup uses the backend's required deletion-convergence contract without
 requiring a healthy Runtime, and resumes from the durable phase after process loss.
 
-Pool/Inspector creation/binding/retention hooks, source permit/publication flows
-and application entry points still need integration. The old public Store
-lifecycle methods must be replaced by the coordinator result contract during API
-wiring; these libraries are not a completed application deployment.
+Pool/Inspector creation, binding and retention use the Core ownership ledger.
+API archive/delete and registration return coordinator results; pending operations
+resume through the domain-protocol supervisor and browser polling.
 
 The API Pool integration supplies the browser owner identity for Primary and
 Inspector acquire/adopt calls. A new external create is preceded by a durable
@@ -59,10 +58,9 @@ rejection releases the intent and permits retry, while an unknown create keeps
 capacity charged and a replacement process reconciles the original allocation
 identity without resubmission. All Pool deletion paths update the same ledger.
 
-`SiteRepository` initializes only the sites authority. SiteWorker now requires
-the explicit sites connection and has no core database credential. API-side site
-admission and preparation still require durable core-to-sites commands before
-this repository is used by the full application.
+`SiteRepository` initializes only the sites authority. SiteWorker receives only
+the sites credential; API and sandbox-gateway create drafts through durable
+Core-to-Sites commands.
 
 `MediaRepository` gives MediaWorker only the media authority. Core issues a
 generation-fenced source permit in the same transaction as its remote obligation;
@@ -77,11 +75,10 @@ Turn media/site preparation and media promotion use `CrossDomainCommands`.
 Every source transaction records an explicit remote obligation, so lifecycle
 operations reject pending delivery. Target effects and receipts are idempotent;
 media promotion commits Core ProjectFiles before acknowledging their identities
-back to media. `GatewayRepositories` exposes only the sandbox-gateway method
-allowlist, but the gateway entry point still awaits configuration/test migration
-before it replaces the transitional Store.
+back to media. `GatewayRepositories` exposes only the sandbox-gateway allowlist.
+`ApiRepositories` routes explicit local methods and owns cross-domain commands;
+both production entry points require independent database credentials.
 
-These primitives are verified independently on SQLite and disposable PostgreSQL
-databases. The service entry points still use the original Store until their
-business transactions have been converted; these primitives alone are not a
-completed multi-database deployment.
+These boundaries are verified on SQLite and disposable PostgreSQL databases. The
+Ali deployment uses distinct database roles with cross-database CONNECT revoked,
+and service releases resolve immutable source and dependency digests before launch.

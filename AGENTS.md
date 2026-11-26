@@ -42,11 +42,24 @@ claims made by documentation.
 - Files leave a sandbox only through validated attachments, managed project
   files, checkpoints or `/workspace/outputs` artifacts.
 
+## Module Boundaries
+
+- `modules/**/module.json` is the machine-readable ownership, entry-point,
+  dependency, resource and external-input contract for each release module.
+- Every module directory has its own `README.md` and `AGENTS.md`. Read that
+  module guidance before changing owned source, packaging or deployment.
+- Service implementations may import declared common libraries, never another
+  service implementation. Common code may not import a service.
+- Cross-domain state changes use the durable handoff/lifecycle protocols. A
+  service may open only the database authorities declared for it.
+- Changes to shared contracts require consumer tests in every affected module;
+  changes to one module release must not silently change another descriptor.
+
 ## Development Discipline
 
-- Treat `src/sandbox_harness/common/contracts/domain.py`, `store.py`, the API routes and tests as
-  the source of truth. If documentation disagrees, verify the behavior and fix
-  the documentation in the same change.
+- Treat `src/sandbox_harness/common/contracts/`, the Accounts/Core/Media/Sites
+  repositories, API routes, module manifests and tests as the source of truth.
+  If documentation disagrees, verify behavior and fix it in the same change.
 - Keep generated data, dependencies, caches, logs, databases and temporary
   files under `.data` or another explicit `/data2` path.
 - Reuse the existing ownership, isolation, cancellation, recovery, event and
