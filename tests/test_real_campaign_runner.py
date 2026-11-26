@@ -25,17 +25,19 @@ def test_campaign_runner_has_bounded_parallel_stop_and_resume_protocol():
 
 def test_real_case_catalog_includes_every_inherited_d_case_with_provenance():
     catalog=__import__('json').loads((ROOT/'tests/real_cases/cases.json').read_text())
-    groups={prefix:[] for prefix in ('S','C','R','D','P','K','XDB')}
+    groups={prefix:[] for prefix in ('S','C','R','D','P','K','XDB','EVO')}
     for case in catalog['cases']:
-        prefix='XDB' if case['id'].startswith('XDB') else case['id'][0]
+        prefix=('XDB' if case['id'].startswith('XDB') else 'EVO'
+            if case['id'].startswith('EVO') else case['id'][0])
         groups[prefix].append(case)
     assert {key:len(value) for key,value in groups.items()}=={
-        'S':31,'C':30,'R':17,'D':51,'P':26,'K':14,'XDB':6}
-    assert len(catalog['cases'])==175 and catalog['runnable_case_count']==175
+        'S':31,'C':30,'R':17,'D':51,'P':26,'K':14,'XDB':6,'EVO':13}
+    assert len(catalog['cases'])==188 and catalog['runnable_case_count']==188
     assert not catalog['superseded_cases']
     assert [case['id'] for case in groups['XDB']]==[
         f'XDB{index:02d}' for index in range(1,7)]
     assert all(case['executor']=='cross_database' for case in groups['XDB'])
+    assert all(case['executor']=='evolution' for case in groups['EVO'])
     assert [case['id'] for case in groups['D']]==[f'D{index:02d}' for index in range(1,52)]
     assert all(case['executor']=='inherited_protocol' for case in groups['D'])
     assert all(case['provenance']==f"sandbox-harness-platform-plus:{case['id']}"

@@ -14,11 +14,12 @@
     "evidence_root": ".data/evidence/real-campaign",
     "forbid_case_specific_product_fixes": true
   },
-  "runnable_case_count": 175,
+  "runnable_case_count": 188,
   "business_case_count": 78,
   "inherited_protocol_case_count": 51,
   "parallel_case_count": 40,
   "cross_database_case_count": 6,
+  "evolution_case_count": 13,
   "cases": [
     {
       "id": "S01",
@@ -7949,6 +7950,310 @@
         "orphan_audit"
       ],
       "provenance": "split-database-design"
+    },
+    {
+      "id": "EVO01",
+      "title": "API重启不打断PlatformWorker真实Turn",
+      "complexity": "production_evolution",
+      "assets": [],
+      "prompt": "验证多副本生产加固合同：API重启不打断PlatformWorker真实Turn",
+      "expect": {
+        "api_restarted": true,
+        "same_execution": true,
+        "terminal": true
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_api_workers_databases_and_real_sandbox",
+      "executor": "evolution",
+      "required_features": [
+        "platform_worker",
+        "api_restart",
+        "real_sandbox"
+      ],
+      "provenance": "production-hardening-2026-11-27"
+    },
+    {
+      "id": "EVO02",
+      "title": "PlatformWorker leader故障转移不重放",
+      "complexity": "production_evolution",
+      "assets": [],
+      "prompt": "验证多副本生产加固合同：PlatformWorker leader故障转移不重放",
+      "expect": {
+        "leader_generation_increased": true,
+        "duplicate_execution": false
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_api_workers_databases_and_real_sandbox",
+      "executor": "evolution",
+      "required_features": [
+        "platform_worker",
+        "leader_failover",
+        "recovery"
+      ],
+      "provenance": "production-hardening-2026-11-27"
+    },
+    {
+      "id": "EVO03",
+      "title": "多副本Worker随机硬杀零重复",
+      "complexity": "production_evolution",
+      "assets": [],
+      "prompt": "验证多副本生产加固合同：多副本Worker随机硬杀零重复",
+      "expect": {
+        "workers_killed": true,
+        "duplicate_external_execution": false
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_api_workers_databases_and_real_sandbox",
+      "executor": "evolution",
+      "required_features": [
+        "multi_replica",
+        "sigkill",
+        "generation_fence"
+      ],
+      "provenance": "production-hardening-2026-11-27"
+    },
+    {
+      "id": "EVO04",
+      "title": "Outbox依赖中断与丢回执有界收敛",
+      "complexity": "production_evolution",
+      "assets": [],
+      "prompt": "验证多副本生产加固合同：Outbox依赖中断与丢回执有界收敛",
+      "expect": {
+        "bounded_attempts": true,
+        "exact_effect_count": 1,
+        "failed_hot_loop": false
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_api_workers_databases_and_real_sandbox",
+      "executor": "evolution",
+      "required_features": [
+        "outbox",
+        "dependency_outage",
+        "lost_receipt"
+      ],
+      "provenance": "production-hardening-2026-11-27"
+    },
+    {
+      "id": "EVO05",
+      "title": "OTel业务指标与数据库转换精确一致",
+      "complexity": "production_evolution",
+      "assets": [],
+      "prompt": "验证多副本生产加固合同：OTel业务指标与数据库转换精确一致",
+      "expect": {
+        "metric_reconciled": true,
+        "high_cardinality_labels": 0
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_api_workers_databases_and_real_sandbox",
+      "executor": "evolution",
+      "required_features": [
+        "otel_metrics",
+        "database_reconciliation"
+      ],
+      "provenance": "production-hardening-2026-11-27"
+    },
+    {
+      "id": "EVO06",
+      "title": "全异步链路Trace links贯穿Artifact",
+      "complexity": "production_evolution",
+      "assets": [],
+      "prompt": "验证多副本生产加固合同：全异步链路Trace links贯穿Artifact",
+      "expect": {
+        "durable_claims_linked": true,
+        "artifact_trace_reachable": true
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_api_workers_databases_and_real_sandbox",
+      "executor": "evolution",
+      "required_features": [
+        "trace_links",
+        "restart",
+        "artifact"
+      ],
+      "provenance": "production-hardening-2026-11-27"
+    },
+    {
+      "id": "EVO07",
+      "title": "Capability kid滚动换钥保活",
+      "complexity": "production_evolution",
+      "assets": [],
+      "prompt": "验证多副本生产加固合同：Capability kid滚动换钥保活",
+      "expect": {
+        "previous_token_valid_during_roll": true,
+        "new_token_uses_current": true
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_api_workers_databases_and_real_sandbox",
+      "executor": "evolution",
+      "required_features": [
+        "capability_rotation",
+        "real_sandbox"
+      ],
+      "provenance": "production-hardening-2026-11-27"
+    },
+    {
+      "id": "EVO08",
+      "title": "Owner公平队列无饥饿",
+      "complexity": "production_evolution",
+      "assets": [],
+      "prompt": "验证多副本生产加固合同：Owner公平队列无饥饿",
+      "expect": {
+        "flood_owner_limited": true,
+        "second_owner_started": true
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_api_workers_databases_and_real_sandbox",
+      "executor": "evolution",
+      "required_features": [
+        "fair_queue",
+        "owner_quota"
+      ],
+      "provenance": "production-hardening-2026-11-27"
+    },
+    {
+      "id": "EVO09",
+      "title": "Provider circuit半开恢复且清理不中断",
+      "complexity": "production_evolution",
+      "assets": [],
+      "prompt": "验证多副本生产加固合同：Provider circuit半开恢复且清理不中断",
+      "expect": {
+        "new_create_blocked": true,
+        "cleanup_progressed": true,
+        "half_open_probes": 1
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_api_workers_databases_and_real_sandbox",
+      "executor": "evolution",
+      "required_features": [
+        "provider_circuit",
+        "cleanup"
+      ],
+      "provenance": "production-hardening-2026-11-27"
+    },
+    {
+      "id": "EVO10",
+      "title": "对象存储mark-sweep二次确认",
+      "complexity": "production_evolution",
+      "assets": [],
+      "prompt": "验证多副本生产加固合同：对象存储mark-sweep二次确认",
+      "expect": {
+        "referenced_preserved": true,
+        "rescued_preserved": true,
+        "unreferenced_deleted": true
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_api_workers_databases_and_real_sandbox",
+      "executor": "evolution",
+      "required_features": [
+        "object_gc",
+        "object_store"
+      ],
+      "provenance": "production-hardening-2026-11-27"
+    },
+    {
+      "id": "EVO11",
+      "title": "Usage Ledger跨kill回放精确一次",
+      "complexity": "production_evolution",
+      "assets": [],
+      "prompt": "验证多副本生产加固合同：Usage Ledger跨kill回放精确一次",
+      "expect": {
+        "duplicate_usage_rows": 0,
+        "totals_exact": true
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_api_workers_databases_and_real_sandbox",
+      "executor": "evolution",
+      "required_features": [
+        "usage_ledger",
+        "replay",
+        "sigkill"
+      ],
+      "provenance": "production-hardening-2026-11-27"
+    },
+    {
+      "id": "EVO12",
+      "title": "真实Harness失败内外错误分层",
+      "complexity": "production_evolution",
+      "assets": [],
+      "prompt": "验证多副本生产加固合同：真实Harness失败内外错误分层",
+      "expect": {
+        "public_detail_leaked": false,
+        "troubleshooting_id_stable": true
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_api_workers_databases_and_real_sandbox",
+      "executor": "evolution",
+      "required_features": [
+        "error_envelope",
+        "real_sandbox"
+      ],
+      "provenance": "production-hardening-2026-11-27"
+    },
+    {
+      "id": "EVO13",
+      "title": "浏览器阶段与权威状态一致",
+      "complexity": "production_evolution",
+      "assets": [],
+      "prompt": "验证多副本生产加固合同：浏览器阶段与权威状态一致",
+      "expect": {
+        "stages": [
+          "queued",
+          "sandbox_wait",
+          "harness",
+          "provider",
+          "collection",
+          "recovery",
+          "blocked"
+        ]
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_api_workers_databases_and_real_sandbox",
+      "executor": "evolution",
+      "required_features": [
+        "browser",
+        "execution_stage",
+        "database_authority"
+      ],
+      "provenance": "production-hardening-2026-11-27"
     }
   ],
   "superseded_cases": []

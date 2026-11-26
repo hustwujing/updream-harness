@@ -31,6 +31,15 @@ def cross_database(identity,title,prompt,expect,*,features=(),hook=None):
         "provenance":"split-database-design"}
 
 
+def evolution(identity,title,expect,*,features=(),hook=None):
+    return {"id":identity,"title":title,"complexity":"production_evolution","assets":[],
+        "prompt":"验证多副本生产加固合同："+title,"expect":expect,"content_checks":[],
+        "hook":hook,"status":"not_run","attempts":[],
+        "entry_mode":"deployed_api_workers_databases_and_real_sandbox",
+        "executor":"evolution","required_features":list(features),
+        "provenance":"production-hardening-2026-11-27"}
+
+
 PARALLEL_CASES=[
     protocol("P01","混合并行 JobGroup",
         "并行生成两张太空海报、检查上传图片，并委托子 Harness 生成一份对照说明；全部完成后汇总。",
@@ -272,6 +281,49 @@ CROSS_DATABASE_CASES=[
 ]
 
 
+EVOLUTION_CASES=[
+    evolution("EVO01","API重启不打断PlatformWorker真实Turn",
+        {"api_restarted":True,"same_execution":True,"terminal":True},
+        features=("platform_worker","api_restart","real_sandbox")),
+    evolution("EVO02","PlatformWorker leader故障转移不重放",
+        {"leader_generation_increased":True,"duplicate_execution":False},
+        features=("platform_worker","leader_failover","recovery")),
+    evolution("EVO03","多副本Worker随机硬杀零重复",
+        {"workers_killed":True,"duplicate_external_execution":False},
+        features=("multi_replica","sigkill","generation_fence")),
+    evolution("EVO04","Outbox依赖中断与丢回执有界收敛",
+        {"bounded_attempts":True,"exact_effect_count":1,"failed_hot_loop":False},
+        features=("outbox","dependency_outage","lost_receipt")),
+    evolution("EVO05","OTel业务指标与数据库转换精确一致",
+        {"metric_reconciled":True,"high_cardinality_labels":0},
+        features=("otel_metrics","database_reconciliation")),
+    evolution("EVO06","全异步链路Trace links贯穿Artifact",
+        {"durable_claims_linked":True,"artifact_trace_reachable":True},
+        features=("trace_links","restart","artifact")),
+    evolution("EVO07","Capability kid滚动换钥保活",
+        {"previous_token_valid_during_roll":True,"new_token_uses_current":True},
+        features=("capability_rotation","real_sandbox")),
+    evolution("EVO08","Owner公平队列无饥饿",
+        {"flood_owner_limited":True,"second_owner_started":True},
+        features=("fair_queue","owner_quota")),
+    evolution("EVO09","Provider circuit半开恢复且清理不中断",
+        {"new_create_blocked":True,"cleanup_progressed":True,"half_open_probes":1},
+        features=("provider_circuit","cleanup")),
+    evolution("EVO10","对象存储mark-sweep二次确认",
+        {"referenced_preserved":True,"rescued_preserved":True,"unreferenced_deleted":True},
+        features=("object_gc","object_store")),
+    evolution("EVO11","Usage Ledger跨kill回放精确一次",
+        {"duplicate_usage_rows":0,"totals_exact":True},
+        features=("usage_ledger","replay","sigkill")),
+    evolution("EVO12","真实Harness失败内外错误分层",
+        {"public_detail_leaked":False,"troubleshooting_id_stable":True},
+        features=("error_envelope","real_sandbox")),
+    evolution("EVO13","浏览器阶段与权威状态一致",
+        {"stages":["queued","sandbox_wait","harness","provider","collection","recovery","blocked"]},
+        features=("browser","execution_stage","database_authority")),
+]
+
+
 def inherited_adaptation(value):
     hook=value.get("dynamic_hook") or "artifact_contract"
     return ("Preserve the original "+value["id"]+" risk and assertions through the Parallel "
@@ -315,11 +367,13 @@ def main():
             "success_requires_user_surface_and_internal_audit":True,"evidence_root":".data/evidence/real-campaign",
             "forbid_case_specific_product_fixes":True},
         "runnable_case_count":(len(business)+len(inherited)+len(PARALLEL_CASES)
-            +len(COVERAGE_CASES)+len(CROSS_DATABASE_CASES)),
+            +len(COVERAGE_CASES)+len(CROSS_DATABASE_CASES)+len(EVOLUTION_CASES)),
         "business_case_count":len(business),"inherited_protocol_case_count":len(inherited),
         "parallel_case_count":len(PARALLEL_CASES)+len(COVERAGE_CASES),
         "cross_database_case_count":len(CROSS_DATABASE_CASES),
-        "cases":[*business,*inherited,*PARALLEL_CASES,*COVERAGE_CASES,*CROSS_DATABASE_CASES],
+        "evolution_case_count":len(EVOLUTION_CASES),
+        "cases":[*business,*inherited,*PARALLEL_CASES,*COVERAGE_CASES,*CROSS_DATABASE_CASES,
+            *EVOLUTION_CASES],
         "superseded_cases":superseded}
     OUTPUT.write_text(json.dumps(result,ensure_ascii=False,indent=2)+"\n")
     print(json.dumps({"output":str(OUTPUT),"runnable":len(result["cases"]),

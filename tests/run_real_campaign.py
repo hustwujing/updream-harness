@@ -539,6 +539,26 @@ async def cross_database_case(case,args,running):
     return value
 
 
+async def evolution_case(case,args,running):
+    report=Path(args.report).parent/(case["id"]+".json")
+    process=await asyncio.create_subprocess_exec(str(ROOT/".venv/bin/python"),
+        str(ROOT/"tests/run_real_evolution.py"),"--base-url",args.base_url,
+        "--case",case["id"],"--report",str(report),"--timeout",str(args.timeout),
+        "--harness",args.harness,"--model",args.model,"--reasoning",args.reasoning,
+        "--job-worker-unit",args.job_worker_unit,"--api-unit",args.api_unit,
+        "--platform-worker-unit",args.platform_worker_unit)
+    running[case["id"]]["state"]="EVOLUTION_RUNNING"
+    try:return_code=await asyncio.wait_for(process.wait(),args.timeout)
+    except asyncio.TimeoutError:process.kill();await process.wait();raise TimeoutError(
+        "evolution_timeout")
+    value=(json.loads(report.read_text()) if report.is_file() else
+        {"classification":"program_failure","reason":"evolution_report_missing"})
+    if return_code and value.get("classification") not in DEFECT_CLASSES:
+        value.update(classification="program_failure",reason=value.get("reason") or
+            "evolution_failed")
+    return value
+
+
 async def progress(total,running,results,started_count,stop,interval):
     while not stop.is_set():
         try:await asyncio.wait_for(stop.wait(),interval);continue
@@ -588,7 +608,10 @@ async def main():
     parser.add_argument("--job-worker-start-command",default=(
         os.environ.get("SANDBOX_HARNESS_JOB_WORKER_START_COMMAND") or ""))
     parser.add_argument("--api-unit",default=(os.environ.get("SANDBOX_HARNESS_API_UNIT") or
-        "sandbox-harness-parallel-ali-api.service"));args=parser.parse_args()
+        "sandbox-harness-parallel-ali-api.service"))
+    parser.add_argument("--platform-worker-unit",default=(os.environ.get(
+        "SANDBOX_HARNESS_PLATFORM_WORKER_UNIT") or
+        "sandbox-harness-parallel-ali-platform-worker.service"));args=parser.parse_args()
     catalog=json.loads(args.catalog.read_text());explicit=set(args.case)|set(args.affected_case)
     configured_root=Path(catalog.get('asset_root') or ROOT/'tests/real_cases/assets')
     args.asset_root=(configured_root if configured_root.is_absolute()
@@ -601,12 +624,15 @@ async def main():
         selected=[row for row in selected if (row["id"] in set(args.affected_case)
             or prior.get(row["id"],{}).get("classification")!="success")]
     running={};results=dict(prior);started_count=[0];stop=asyncio.Event();defect=asyncio.Event()
+    evolution_lock=asyncio.Lock()
     revision=subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip()
     target=Path(args.report);report_lock=asyncio.Lock()
     queue=asyncio.Queue()
     for case in selected:queue.put_nowait(case)
     async with ResilientAsyncClient(base_url=args.base_url,timeout=None,trust_env=False) as client:
         session=await client.get("api/session");session.raise_for_status()
+        async def run_evolution(case):
+            async with evolution_lock:return await evolution_case(case,args,running)
         async def worker():
             while not queue.empty() and not defect.is_set():
                 try:case=queue.get_nowait()
@@ -619,7 +645,8 @@ async def main():
                         else await inherited_protocol_case(case,args,running)
                         if case["executor"]=="inherited_protocol" else await cross_database_case(
                             case,args,running) if case["executor"]=="cross_database"
-                        else await protocol_case(case,args,running))
+                        else await run_evolution(case)
+                        if case["executor"]=="evolution" else await protocol_case(case,args,running))
                 except Exception as exc:
                     value={"classification":"program_failure","reason":type(exc).__name__+":"+str(exc)[:500]}
                 value.update(case_id=identity,title=case["title"],elapsed_seconds=round(time.monotonic()-started,3),
