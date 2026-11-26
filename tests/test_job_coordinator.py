@@ -369,6 +369,8 @@ async def test_harness_infrastructure_fields_are_resolved_by_host_not_manager(tm
         assert frozen.parameters['harness']=='codex' and frozen.parameters['model']=='gpt-5.6'
         assert frozen.parameters['reasoning_effort']=='medium'
         assert frozen.retry_policy['max_collection_attempts']==2
+        assert frozen.cancellation_policy=={'supported':True}
+        assert frozen.reconciliation_policy=={'supported':True}
     finally:await store.close()
 
 
