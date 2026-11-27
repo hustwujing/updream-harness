@@ -273,7 +273,8 @@ async def test_media_render_adapter_reserves_profile_injects_frozen_input_and_bi
     finally:await store.close()
 
 
-async def test_media_render_adapter_collects_role_addressed_operation_outputs(tmp_path):
+@pytest.mark.parametrize('publish_report',[True,False])
+async def test_media_render_adapter_collects_role_addressed_operation_outputs(tmp_path,publish_report):
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'multi-output.db'));await store.initialize()
     try:
         profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
@@ -281,13 +282,15 @@ async def test_media_render_adapter_collects_role_addressed_operation_outputs(tm
             reasoning_level='standard',title='Audio Operation'),profile,'owner')
         turn,_,_=await store.create_turn(thread.id,TurnCreate(message='audio',
             idempotency_key='audio-operation-turn'),profile,'owner')
+        expected=[JobExpectedOutput(artifact_role='processed_audio',output_disposition='delivery',min_items=1,
+            validators=('audio',))]
+        if publish_report:
+            expected.append(JobExpectedOutput(artifact_role='measurement_report',
+                output_disposition='workspace',min_items=1))
         request=JobRequest(local_job_id='audio',kind=JobKind.OPERATION,adapter='audio.process',
             descriptor_id='audio.process',descriptor_version='1',descriptor_digest='d'*64,
             idempotency_key='audio-operation-job',parameters={'recipe':{'operation':'audio.process'}},
-            expected_outputs=(
-                JobExpectedOutput(artifact_role='processed_audio',output_disposition='delivery',min_items=1,
-                    validators=('audio',)),
-                JobExpectedOutput(artifact_role='measurement_report',output_disposition='workspace',min_items=1)))
+            expected_outputs=tuple(expected))
         _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id=thread.id,
             origin_turn_id=turn.id,idempotency_key='audio-operation-group',jobs=[request]))
         attempt=(await store.claim_available_jobs('worker','node',60,limit=1,
@@ -319,7 +322,7 @@ async def test_media_render_adapter_collects_role_addressed_operation_outputs(tm
                 {'role':'measurement_report','path':'audio-process-report.json','mime':'application/json',
                 'size':len(outputs['audio-process-report.json']),
                 'sha256':__import__('hashlib').sha256(outputs['audio-process-report.json']).hexdigest()}]}))
-        assert {row['artifact_role'] for row in result['artifacts']}=={
-            'processed_audio','measurement_report'}
+        assert {row['artifact_role'] for row in result['artifacts']}==(
+            {'processed_audio','measurement_report'} if publish_report else {'processed_audio'})
         assert {row['state'] for row in result['collections']}=={'published'}
     finally:await store.close()

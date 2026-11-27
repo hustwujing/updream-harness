@@ -184,7 +184,9 @@ class MediaRenderOperationAdapter(SandboxAllocationOwner,BaseJobAdapter):
             "path":status.result.get('path',''),"mime":status.result.get('mime','application/octet-stream'),
             "size":status.result.get('size'),"sha256":status.result.get('sha256')}]
             if status.result.get('path') else [])
-        if not contracts or {str(value.get('role','')) for value in values}!=set(contracts):
+        values=[value for value in values if str(value.get('role','')) in contracts]
+        roles=[str(value.get('role','')) for value in values]
+        if not contracts or len(roles)!=len(set(roles)) or set(roles)!=set(contracts):
             raise RuntimeError('operation_output_roles_mismatch')
         artifacts=[];collections=[]
         async with self.scheduler.hold(str(receipt['reservation_id']),str(receipt['node_id']),
