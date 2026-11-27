@@ -130,6 +130,25 @@ def test_s3_media_upload_uses_public_endpoint_and_stable_aniforge_key():
     assert value["headers"]["x-amz-meta-sha256"] == "1" * 64
 
 
+def test_s3_media_upload_accepts_safe_configured_media_prefix():
+    class Client:
+        def generate_presigned_url(self, method, *, Params, ExpiresIn):
+            assert method == "put_object" and ExpiresIn == 900
+            assert Params["Key"] == "aniforge/wujing02/image/11/" + "1" * 64 + ".png"
+            return "https://boss-shjd.biliapi.net/signed-put"
+
+    store = S3ObjectStore(bucket="updream", prefix="scope", media_prefix="/aniforge/wujing02/",
+        client=Client(), public_client=Client())
+    value = store.prepare_media_upload(kind="image", digest="1" * 64,
+        mime="image/png", size=123)
+    assert value["public_url"] == ("https://boss-shjd.biliapi.net/updream/"
+        "aniforge/wujing02/image/11/" + "1" * 64 + ".png")
+    for media_prefix in ("", "/", "aniforge/../shared"):
+        with pytest.raises(ValueError, match="non-empty safe path"):
+            S3ObjectStore(bucket="updream", prefix="scope", media_prefix=media_prefix,
+                client=Client(), public_client=Client())
+
+
 def test_reference_selector_requires_exactly_one_identity():
     with pytest.raises(ValueError):
         MediaReferenceInput(role="reference_image", project_file_id="f" * 32,

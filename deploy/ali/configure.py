@@ -102,6 +102,7 @@ def build_environment(source:dict[str,str],*,token=lambda:secrets.token_urlsafe(
         "SANDBOX_HARNESS_REDIS_URL":source.get("SANDBOX_HARNESS_REDIS_URL","redis://127.0.0.1:6379/0"),
         "SANDBOX_HARNESS_REDIS_PREFIX":identity.REDIS_PREFIX,
         "SANDBOX_HARNESS_OBJECT_PREFIX":identity.OBJECT_PREFIX,
+        "SANDBOX_HARNESS_MEDIA_REFERENCE_PREFIX":identity.MEDIA_REFERENCE_PREFIX,
         "SANDBOX_HARNESS_GATEWAY_URL":f"http://172.31.0.1:{identity.PORTS['gateway']}",
         "SANDBOX_HARNESS_GATEWAY_BIND_HOST":"172.31.0.1",
         "SANDBOX_HARNESS_GATEWAY_BIND_PORT":str(identity.PORTS["gateway"]),
@@ -164,21 +165,26 @@ def main()->None:
     target=DATA_ROOT/"config/platform.env"
     if target.exists() and not args.force:raise FileExistsError(target)
     staging_paths=tuple(DATA_ROOT/"tmp"/name for name in (
-        "job-artifacts","child-job-artifacts","controlled-job-artifacts",
+        "job-artifacts","child-job-artifacts",
         "operation-job-artifacts","provider-job-artifacts","provider-outputs",
         "runtime-downloads","site-stages"))
+    controlled_paths=(DATA_ROOT/"controlled-operations",DATA_ROOT/"controlled-gpu-probes",
+        DATA_ROOT/"tmp"/"controlled-job-artifacts")
     service_paths=(DATA_ROOT/"logs",DATA_ROOT/"cache",DATA_ROOT/"pip-cache",
         DATA_ROOT/"npm-cache",DATA_ROOT/"playwright-browsers",DATA_ROOT/"objects",
         DATA_ROOT/"service-logs",DATA_ROOT/"diagnostics",DATA_ROOT/"tmp",DATA_ROOT/"image-decompose",
         DATA_ROOT/"preview-cache",DATA_ROOT/"services",DATA_ROOT/"catalogs",
-        DATA_ROOT/"runtime-bundles",DATA_ROOT/"runtime-code-bundles",
-        DATA_ROOT/"controlled-operations",*staging_paths)
-    for path in (DATA_ROOT/"config",*service_paths,DATA_ROOT/"postgresql",DATA_ROOT/"postgresql/run"):
+        DATA_ROOT/"runtime-bundles",DATA_ROOT/"runtime-code-bundles",*staging_paths)
+    for path in (DATA_ROOT/"config",*service_paths,*controlled_paths,
+                 DATA_ROOT/"postgresql",DATA_ROOT/"postgresql/run"):
         path.mkdir(parents=True,exist_ok=True)
     service_uid=pwd.getpwnam("sandbox-harness").pw_uid
     service_gid=grp.getgrnam("sandbox-harness").gr_gid
+    os.chown(DATA_ROOT/"config",0,service_gid);(DATA_ROOT/"config").chmod(0o750)
     for path in service_paths:
         os.chown(path,service_uid,service_gid);path.chmod(0o700)
+    for path in controlled_paths:
+        os.chown(path,0,0);path.chmod(0o700)
     temporary=target.with_suffix(".tmp")
     temporary.write_text(render_environment(values));temporary.chmod(0o600)
     temporary.replace(target);os.chown(target,service_uid,service_gid)

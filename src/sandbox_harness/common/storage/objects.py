@@ -163,8 +163,8 @@ class S3ObjectStore:
         parsed = urlsplit(self.public_endpoint)
         if parsed.scheme != "https" or not parsed.netloc or parsed.path:
             raise ValueError("BOSS public endpoint must be an HTTPS origin")
-        if self.media_prefix != "aniforge":
-            raise ValueError("Media reference prefix must be aniforge")
+        if not self.media_prefix or ".." in self.media_prefix.split("/"):
+            raise ValueError("Media reference prefix must be a non-empty safe path")
         if client is None:
             import boto3
             from botocore.config import Config

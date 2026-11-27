@@ -14,16 +14,23 @@ set +a
 writable_service_paths=(
   "$root/.data/logs" "$root/.data/service-logs" "$root/.data/diagnostics"
   "$root/.data/tmp" "$root/.data/tmp/job-artifacts"
-  "$root/.data/tmp/child-job-artifacts" "$root/.data/tmp/controlled-job-artifacts"
+  "$root/.data/tmp/child-job-artifacts"
   "$root/.data/tmp/operation-job-artifacts" "$root/.data/tmp/provider-job-artifacts"
   "$root/.data/tmp/provider-outputs" "$root/.data/tmp/runtime-downloads"
-  "$root/.data/tmp/site-stages" "$root/.data/controlled-operations"
+  "$root/.data/tmp/site-stages"
   "$root/.data/cache" "$root/.data/pip-cache"
   "$root/.data/uv-cache" "$root/.data/npm-cache" "$root/.data/playwright-browsers"
   "$root/.data/objects" "$root/.data/preview-cache" "$root/.data/image-decompose"
 )
 for path in "${writable_service_paths[@]}"; do
   install -d -o sandbox-harness -g sandbox-harness -m 0700 "$path"
+done
+controlled_service_paths=(
+  "$root/.data/controlled-operations" "$root/.data/controlled-gpu-probes"
+  "$root/.data/tmp/controlled-job-artifacts"
+)
+for path in "${controlled_service_paths[@]}"; do
+  install -d -o root -g root -m 0700 "$path"
 done
 
 release_tools="$root/.data/release-tools"
@@ -43,15 +50,22 @@ wait_port() {
 
 start_transient() {
   local unit=$1 user=$2
+  local load_state stop_timeout=30
   shift 2
   if systemctl is-active --quiet "$unit.service"; then return 0; fi
-  if [[ $(systemctl show -p LoadState --value "$unit.service" 2>/dev/null || true) != not-found ]]; then
+  load_state=$(systemctl show -p LoadState --value "$unit.service" 2>/dev/null || true)
+  if [[ -n "$load_state" && "$load_state" != not-found ]]; then
     systemctl restart "$unit.service"
     return 0
   fi
+  case "$unit" in
+    *-postgresql) stop_timeout=60 ;;
+    *-sandbox-gateway-*) stop_timeout=15 ;;
+  esac
   systemd-run --unit="$unit" --collect --uid="$user" \
     --property=WorkingDirectory="$root" --property=Restart=on-failure \
-    --property=RestartSec=3 --property=KillMode=control-group "$@"
+    --property=RestartSec=3 --property=KillMode=control-group \
+    --property=TimeoutStopSec="$stop_timeout" "$@"
 }
 
 start_transient sandbox-harness-parallel-ali-postgresql sandbox-harness-db \

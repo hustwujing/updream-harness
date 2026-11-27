@@ -29,6 +29,7 @@ def test_ali_identity_matrix_is_disjoint_from_parallel():
     assert identity.NAMESPACE=="sandbox-harness-platform-parallel-ali-wujing02"
     assert identity.REDIS_PREFIX=="sandbox-harness-platform-parallel-ali-wujing02:"
     assert identity.OBJECT_PREFIX=="sandbox-harness-platform-parallel-ali-wujing02/"
+    assert identity.MEDIA_REFERENCE_PREFIX=="aniforge/wujing02"
     assert identity.REGISTRY_PREFIX=="127.0.0.1:25001/sandbox-harness-platform-parallel-ali-wujing02"
     assert not {24767,28433,29882,29883}&{24766,28432,29880,29881}
 
@@ -55,6 +56,7 @@ def test_ali_environment_regenerates_service_secrets_and_isolates_paths():
     assert values["SANDBOX_HARNESS_NAMESPACE"]=="sandbox-harness-platform-parallel-ali-wujing02"
     assert values["SANDBOX_HARNESS_REDIS_PREFIX"]=="sandbox-harness-platform-parallel-ali-wujing02:"
     assert values["SANDBOX_HARNESS_OBJECT_PREFIX"]=="sandbox-harness-platform-parallel-ali-wujing02/"
+    assert values["SANDBOX_HARNESS_MEDIA_REFERENCE_PREFIX"]=="aniforge/wujing02"
     assert values["SANDBOX_HARNESS_MODEL_CATALOG_SNAPSHOT_PATH"]==str(
         ALI_ROOT/".data/catalogs/model-catalog.json")
     assert values["SANDBOX_HARNESS_LOG_DIR"]==str(ALI_ROOT/".data/logs")
@@ -96,6 +98,21 @@ def test_ali_configurator_provisions_private_preview_cache(tmp_path,monkeypatch)
     assert preview.is_dir()
     assert metadata.st_uid==pwd.getpwnam("sandbox-harness").pw_uid
     assert stat.S_IMODE(metadata.st_mode)==0o700
+
+
+def test_ali_configurator_keeps_root_controlled_staging_private(tmp_path,monkeypatch):
+    configure=load("ali_configure_controlled",ROOT/"deploy/ali/configure.py")
+    source_env=tmp_path/"source.env";source_env.write_text("")
+    monkeypatch.setattr(configure,"DATA_ROOT",tmp_path/"data")
+    monkeypatch.setattr(configure,"ensure_checkout",lambda:None)
+    monkeypatch.setattr(sys,"argv",["configure.py","--source-env",str(source_env),"--allow-running"])
+    configure.main()
+    for path in (configure.DATA_ROOT/"controlled-operations",
+                 configure.DATA_ROOT/"controlled-gpu-probes",
+                 configure.DATA_ROOT/"tmp/controlled-job-artifacts"):
+        metadata=path.stat()
+        assert metadata.st_uid==0 and metadata.st_gid==0
+        assert stat.S_IMODE(metadata.st_mode)==0o700
 
 
 def test_ali_postgresql_scripts_use_dedicated_cluster_under_data2():
@@ -155,6 +172,9 @@ def test_ali_transient_service_graph_is_complete_and_root_partition_free():
                     "media-worker","site-worker","api"):
         assert f"sandbox-harness-parallel-ali-{service}" in combined
     assert "systemd-run" in start and "--collect" in start
+    assert 'load_state=$(systemctl show -p LoadState --value "$unit.service"' in start
+    assert '[[ -n "$load_state" && "$load_state" != not-found ]]' in start
+    assert '--property=TimeoutStopSec="$stop_timeout"' in start
     assert 'systemctl restart "$unit.service"' in start
     gateway_positions=(start.index("ali-sandbox-gateway-opensandbox"),start.index("ali-sandbox-gateway-aliyun"))
     assert start.index("ali-postgresql")<start.index("ali-network")<min(gateway_positions)
@@ -171,6 +191,8 @@ def test_ali_image_decompose_service_is_materialized_under_data2():
     assert "/data/wujing02/sandbox-harness-platform-parallel-ali" in source
     assert "source_root=/data/wujing03/image-layered" in source
     assert 'model_source="$source_root/models"' in source
+    assert "image-inference-overlay-requirements.txt" in source
+    assert '"$target/python-packages"' in source
     assert "ln -s" in source and "models" in source
     assert 'media_core_source=/data/wujing03/media-foundation-core/media_core' in source
     assert '"$media_core_source" "$target/"' in source
@@ -185,6 +207,7 @@ def test_image_inference_launch_requires_selected_external_release():
     assert 'image_inference_release.py" resolve' in runner
     assert 'command=("$image_python" -m uvicorn' in runner
     assert "image_inference_release" in start
+    assert 'PYTHONPATH="$service_root/python-packages:$service_root"' in runner
 
 
 def test_ali_service_runner_uses_only_ali_environment_and_logs():
@@ -198,7 +221,7 @@ def test_ali_service_runner_uses_only_ali_environment_and_logs():
     assert 'log_file=${log_template//\\{component\\}/$component}' in source
     assert "sandbox-harness-platform-parallel/.data" not in source
     assert "/data/wujing03/media-foundation-core" not in source
-    assert 'export PYTHONPATH="$service_root:${PYTHONPATH:-}"' in source
+    assert 'export PYTHONPATH="$service_root/python-packages:$service_root"' in source
     assert "unexpected_project_root" in source
     assert '.data/release-tools/service_release.py' in source
     assert 'sandbox-gateway-opensandbox)' in source and 'SANDBOX_HARNESS_GATEWAY_BIND_HOST="172.31.0.1"' in source
