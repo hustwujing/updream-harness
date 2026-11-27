@@ -1,7 +1,7 @@
 """Media Drafts persistence; transaction boundaries are preserved."""
 from __future__ import annotations
 import json
-from datetime import (datetime)
+from datetime import (datetime,timedelta)
 from sqlalchemy import (func, select, update)
 from sqlalchemy.ext.asyncio import (AsyncSession)
 from sandbox_harness.common.contracts.domain import (TurnState, TERMINAL, identifier, now, MediaDraftView, MediaJobView, MediaJobOutputView)
@@ -34,12 +34,20 @@ class MediaDraftsTransactions:
             if row.error_code else {})
         if row.provider_job_id and error.get('side_effect_state') in {'none','possible'}:
             error['side_effect_state']='accepted'
+        polling=bool(row.provider_job_id and row.status in {'submitted','running','unknown'})
+        last_checked=utc_datetime(row.updated_at) if polling else None
         return MediaJobView(id=row.id, thread_id=row.thread_id, turn_id=row.turn_id or "", kind=row.kind,
             model=row.model, generation_mode=row.generation_mode or "",
             references=[] if row.source_job_id else json.loads(row.references_json or "[]"),
             provider=row.provider, adapter=row.adapter, execution_mode=row.execution_mode,
             cancellation_mode=row.cancellation_mode, status=row.status, phase=row.phase or "",
-            progress=row.progress, error_code=row.error_code or "", error_detail=row.error_detail or "",
+            progress=row.progress,provider_started_at=(utc_datetime(row.provider_started_at)
+                if row.provider_started_at else None),provider_last_checked_at=last_checked,
+            provider_next_check_at=(last_checked+timedelta(seconds=15) if last_checked else None),
+            provider_poll_attempts=max(0,row.generation),
+            provider_recovered=bool(row.provider_job_id and row.generation>1),
+            provider_job_short_id=(row.provider_job_id[:8] if row.provider_job_id else ""),
+            error_code=row.error_code or "", error_detail=row.error_detail or "",
             error_message=error.get('error_message',''),
             error_reason=public_error_reason(row.error_detail),
             error_guidance=error.get('error_guidance',''),failed_phase=error.get('failed_phase',''),

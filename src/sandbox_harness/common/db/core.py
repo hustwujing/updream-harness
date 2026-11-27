@@ -95,6 +95,20 @@ class CoreRepository(CoreThreadLifecycle, DomainDatabase, BaseConnections, Capab
                 "owner_generation": owner.generation if owner else 0,
                 "thread_generation":generation})
 
+    async def _wake_media_batches_on_resume(self,db,thread,control,resume_turn_id):
+        identity=canonical_digest(["media.thread.resumed",thread.id,str(control.generation),resume_turn_id])
+        if await db.get(DomainOutbox,identity):return
+        scope_id=canonical_digest([thread.owner_id,thread.id])
+        scope=await db.get(DomainScope,scope_id)
+        owner=await db.get(DomainScope,canonical_digest([thread.owner_id,""]))
+        generation=scope.generation if scope else 0
+        await self.enqueue_remote(db,command_id=identity,target="media",kind="media.thread.resumed",
+            aggregate_id=scope_id,owner_id=thread.owner_id,generation=generation,thread_id=thread.id,
+            payload={"owner_id":thread.owner_id,"thread_id":thread.id,"turn_id":"",
+                "owner_generation":owner.generation if owner else 0,
+                "thread_generation":generation,"resume_turn_id":resume_turn_id,
+                "pause_generation":control.generation})
+
     async def _check_lifecycle(self, db, proposal):
         if proposal.action == "register":
             active_turn = await db.scalar(select(TurnRow.id).join(ThreadRow,

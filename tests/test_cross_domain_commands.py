@@ -43,6 +43,38 @@ async def test_media_draft_and_terminal_seal_cross_databases(tmp_path):
         for repository in (core,media,sites):await repository.close()
 
 
+async def test_resume_turn_wakes_paused_media_batch_through_durable_command(tmp_path):
+    core,media,sites,commands,thread,turn=await setup(tmp_path)
+    value=MediaDraftCreate(kind="image",model="image/model",generation_mode="text_to_image",
+        parameters={"prompt":"opaque"},references=[],idempotency_key="resume-media-draft",
+        turn_id=turn.id,output_role="candidate")
+    spec=type("Spec",(),{"provider":"provider","adapter":"image_api",
+                         "execution":"async","cancellation":"supported"})()
+    try:
+        draft,_=await commands.create_media_draft("owner",thread.id,value,
+            expires_at=now()+timedelta(hours=1),provider_spec=spec)
+        job=await media.confirm_media_draft(draft.id,"owner",provider_spec=spec)
+        claimed=(await media.claim_media_jobs("worker"))[0]
+        await media.update_media_job(job.id,"worker",claimed["generation"],status="failed",
+            phase="terminal",error_code="provider_processing_failed")
+        await core.set_turn_state(turn.id,TurnState.COMPLETED);await commands.relay_pending()
+        batch=(await media.claim_media_batches("dispatcher"))[0]
+        await media.finish_media_batch(batch["turn_id"],"dispatcher",delivered=False,
+            error="thread_paused",waiting_thread_resume=True)
+        assert (await media.media_batch_status(turn.id,"owner"))["status"]=="waiting_thread_resume"
+        await core.request_thread_pause(thread.id,"owner")
+        await core.resume_thread(thread.id,"owner")
+        profile=HarnessCatalog().resolve("codex","gpt-5.6","standard")
+        resumed,_,_=await core.create_turn(thread.id,TurnCreate(message="继续",
+            idempotency_key="resume-wake-turn"),profile,"owner")
+        assert "[pause_resume_context]" in resumed.runtime_message
+        await commands.relay_pending()
+        assert (await media.media_batch_status(turn.id,"owner"))["status"]=="sealed"
+        assert len(await media.claim_media_batches("dispatcher-two"))==1
+    finally:
+        for repository in (core,media,sites):await repository.close()
+
+
 async def test_site_draft_cross_database_is_idempotent(tmp_path):
     core,media,sites,commands,thread,turn=await setup(tmp_path)
     values={"name":"Demo","slug":"demo","idempotency_key":"site-draft-key",

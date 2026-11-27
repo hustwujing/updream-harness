@@ -618,6 +618,12 @@ class MediaJobView(BaseModel):
     status: str
     phase: str = ""
     progress: int | None = None
+    provider_started_at: datetime | None = None
+    provider_last_checked_at: datetime | None = None
+    provider_next_check_at: datetime | None = None
+    provider_poll_attempts: int = 0
+    provider_recovered: bool = False
+    provider_job_short_id: str = ""
     error_code: str = ""
     error_detail: str = Field(default="", exclude=True)
     error_message: str = ""

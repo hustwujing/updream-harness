@@ -385,16 +385,19 @@ class MediaJobsTransactions:
 
 
     async def finish_media_batch(self, turn_id: str, owner: str, *, delivered: bool,
-                                 error: str = "", permanent: bool = False) -> None:
+                                 error: str = "", permanent: bool = False,
+                                 waiting_thread_resume: bool = False) -> None:
         async with self.connections.begin() as db:
             row = (await db.execute(select(MediaBatchRow).where(MediaBatchRow.turn_id == turn_id,
                 MediaBatchRow.lease_owner == owner).with_for_update())).scalar_one_or_none()
             if not row:
                 return
-            row.status = "continued" if delivered else "blocked" if permanent else "sealed"
+            row.status = ("continued" if delivered else "waiting_thread_resume"
+                if waiting_thread_resume else "blocked" if permanent else "sealed")
             row.continued_at = now() if delivered else None
             row.last_error = error[:2000]; row.lease_owner = ""
-            row.lease_expires_at = None if delivered or permanent else now() + timedelta(seconds=15)
+            row.lease_expires_at = (None if delivered or permanent or waiting_thread_resume
+                else now() + timedelta(seconds=15))
             row.updated_at = now()
             if delivered:
                 job_ids = select(MediaJobRow.id).where(MediaJobRow.turn_id == turn_id)

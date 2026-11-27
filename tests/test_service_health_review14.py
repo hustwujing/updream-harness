@@ -235,6 +235,33 @@ async def test_media_outbox_finish_failure_write_failure_recovers(tmp_path):
     assert done and finishes==2
 
 
+async def test_paused_media_continuation_waits_for_resume_without_timer_retry(tmp_path):
+    store=SimpleNamespace();done=False;claims=0;finishes=[]
+    batch={"turn_id":"turn","thread_id":"thread"}
+    async def claim(*args,**kwargs):
+        nonlocal claims
+        if done:return []
+        claims+=1;return [batch]
+    async def control(*args,**kwargs):
+        return SimpleNamespace(state=__import__(
+            'sandbox_harness.common.contracts.domain',fromlist=['ThreadControlState']).ThreadControlState.PAUSED)
+    async def group(*args,**kwargs):raise AssertionError('paused batch must not be projected')
+    async def finish(*args,**kwargs):
+        nonlocal done;finishes.append(kwargs);done=True
+    store.claim_media_batches=claim;store.get_thread_control=control
+    store.media_continuation_group=group;store.finish_media_batch=finish
+    worker=platform_worker(settings(tmp_path,"paused-media"),store)
+    task=asyncio.create_task(worker._media_outbox())
+    for _ in range(100):
+        if done:break
+        await asyncio.sleep(.01)
+    await asyncio.sleep(.05);worker.stop_event.set();task.cancel()
+    await asyncio.gather(task,return_exceptions=True)
+    assert claims==1
+    assert finishes==[{"delivered":False,"error":"thread_paused",
+        "waiting_thread_resume":True}]
+
+
 def test_telemetry_fallback_expires_windows_and_enforces_capacity():
     state=OrderedDict();capacity=64
     for index in range(200):

@@ -1088,6 +1088,10 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             if activity:
                 await activity.observe(chunk)
                 if activity.probe.completed or activity.probe.failed:
+                    request=getattr(response,"_request",None)
+                    observation=(request.extensions.get("updream.observation") if request else None)
+                    if observation is not None and activity.probe.completed:
+                        observation["terminal_success"]=True
                     await activity.finish(response.status_code)
                     await finalize_tokens()
 

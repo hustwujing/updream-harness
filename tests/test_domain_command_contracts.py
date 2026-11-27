@@ -26,6 +26,7 @@ def test_production_command_manifest_is_complete_and_stable():
         "usage.record",
         "media.source.authorize", "media.source.cancel",
         "media.turn.draft", "media.turn.seal", "media.turn.finished",
+        "media.thread.resumed",
         "media.promotion.ack", "site.turn.draft",
     }
     assert all(value["version"] == 1 for value in manifest.values())

@@ -36,6 +36,7 @@ class MediaRepository(DomainDatabase, MediaReferencesTransactions,
             "media.turn.draft": self._receive_turn_draft,
             "media.turn.seal": self._receive_turn_seal,
             "media.turn.finished": self._receive_turn_finished,
+            "media.thread.resumed": self._receive_thread_resumed,
             "media.promotion.ack": self._receive_promotion_ack,
         })
 
@@ -299,6 +300,17 @@ class MediaRepository(DomainDatabase, MediaReferencesTransactions,
                 batch.status = "sealed"; batch.sealed_at = now()
             batch.updated_at = now()
         return {"turn_id":value["turn_id"],"status":batch.status if batch else "empty"}
+
+    async def _receive_thread_resumed(self,db,envelope):
+        value=envelope.payload
+        if (envelope.source!="core" or envelope.owner_id!=value.get("owner_id")
+                or envelope.generation!=value.get("thread_generation")):
+            raise ValueError("media_resume_envelope_invalid")
+        result=await db.execute(update(MediaBatchRow).where(
+            MediaBatchRow.thread_id==value["thread_id"],
+            MediaBatchRow.status=="waiting_thread_resume").values(
+                status="sealed",lease_owner="",lease_expires_at=None,last_error="",updated_at=now()))
+        return {"thread_id":value["thread_id"],"woken":result.rowcount}
 
     async def media_batch_status(self, turn_id, owner_id):
         async with self.connections() as db:

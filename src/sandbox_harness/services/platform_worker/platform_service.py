@@ -9,7 +9,7 @@ from contextlib import suppress
 from types import SimpleNamespace
 
 from sandbox_harness.common.configuration.config import Settings, load_settings, validate_service_settings
-from sandbox_harness.common.contracts.domain import TurnCreate
+from sandbox_harness.common.contracts.domain import (ThreadControlState,TurnCreate)
 from sandbox_harness.common.execution.platform_components import (
     PlatformComponents, build_platform_components,
 )
@@ -31,6 +31,10 @@ def media_group_has_executed_job(items: list[dict]) -> bool:
 
 def media_group_needs_agent_continuation(items: list[dict]) -> bool:
     return media_group_has_executed_job(items) or any(item.get("status")=="expired" for item in items)
+
+
+class MediaContinuationDeferred(RuntimeError):
+    pass
 
 
 async def supervise_warm_pool(state,pool,*,initial_delay:float=.5,
@@ -196,6 +200,11 @@ class PlatformWorker:
     async def _continue_media(self,batch:dict)->None:
         turn_id=batch.get("turn_id") or ""
         if not turn_id:return
+        get_control=getattr(self.store,"get_thread_control",None)
+        if get_control:
+            control=await get_control(batch["thread_id"])
+            if control.state!=ThreadControlState.RUNNING:
+                raise MediaContinuationDeferred(control.state.value)
         ready,jobs=await self.store.media_continuation_group(turn_id)
         if not ready:raise RuntimeError("media_group_pending")
         promote=[item for item in jobs if item["status"]=="succeeded"
@@ -237,9 +246,13 @@ class PlatformWorker:
                 thread_id=batch["thread_id"],turn_id=turn_id):
             if origin:add_link(canonical_traceparent(origin.last_traceparent)
                 or canonical_traceparent(origin.submit_traceparent))
-            await self.broker.submit(batch["thread_id"],TurnCreate(message=message,
-                idempotency_key=f"media-continuation-{turn_id}",delivery_mode="queue"),
-                network_access=origin.network_access if origin else "restricted",internal=True)
+            try:
+                await self.broker.submit(batch["thread_id"],TurnCreate(message=message,
+                    idempotency_key=f"media-continuation-{turn_id}",delivery_mode="queue"),
+                    network_access=origin.network_access if origin else "restricted",internal=True)
+            except RuntimeError as exc:
+                if str(exc)=="thread_paused":raise MediaContinuationDeferred("PAUSED") from exc
+                raise
 
     async def _media_outbox(self)->None:
         owner="media-outbox-"+self.owner
@@ -262,6 +275,12 @@ class PlatformWorker:
                 try:
                     try:await self._continue_media(batch)
                     except asyncio.CancelledError:raise
+                    except MediaContinuationDeferred as exc:
+                        await self.store.finish_media_batch(batch["turn_id"],owner,
+                            delivered=False,error="thread_paused",waiting_thread_resume=True)
+                        event("media.continuation.deferred",thread_id=batch["thread_id"],
+                            turn_id=batch["turn_id"],state_after="WAITING_THREAD_RESUME",
+                            error_code="thread_paused",outcome="deferred")
                     except Exception as exc:
                         permanent=isinstance(exc,RuntimeError) and str(exc)=="thread_archived"
                         await self.store.finish_media_batch(batch["turn_id"],owner,

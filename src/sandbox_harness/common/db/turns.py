@@ -29,6 +29,10 @@ def _mark_internal_context(detail: str, state: str, turn_id: str) -> str:
 
 
 class TurnsTransactions:
+    async def _wake_media_batches_on_resume(self,db,thread,control,resume_turn_id):
+        """Single-database test stores have no cross-domain Media authority."""
+        return None
+
     @observed("db.turn.create")
     async def create_turn(self, thread_id: str, value: TurnCreate, resolved: ResolvedProfile, owner_id: str, *,
                           traceparent: str = "", network_access: str = "restricted",
@@ -127,6 +131,8 @@ class TurnsTransactions:
             if not active_running:
                 thread.active_turn_id = row.id
             thread.updated_at = timestamp
+            if consume_resume_context:
+                await self._wake_media_batches_on_resume(db,thread,control,row.id)
         return self.turn_view(row), True, not active_running
 
 

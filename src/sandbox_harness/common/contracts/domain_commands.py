@@ -138,14 +138,24 @@ class MediaTurnFinished(MediaTurnRequiredScope):
     origin_finished: Literal[True]
 
 
+class MediaThreadResumed(MediaTurnScope):
+    resume_turn_id: str = Field(min_length=1,max_length=32)
+    pause_generation: int = Field(ge=0)
+
+
 class DraftResult(_StrictModel):
     draft_id: str = Field(min_length=1, max_length=32)
 
 
 class MediaBatchResult(_StrictModel):
     turn_id: str = Field(min_length=1, max_length=32)
-    status: Literal["open", "sealed", "delivering", "continued", "empty"]
+    status: Literal["open", "sealed", "delivering", "waiting_thread_resume", "continued", "empty"]
     draft_count: int | None = Field(default=None, ge=0)
+
+
+class MediaWakeResult(_StrictModel):
+    thread_id: str = Field(min_length=1,max_length=32)
+    woken: int = Field(ge=0)
 
 
 class PromotionOutput(_StrictModel):
@@ -265,6 +275,7 @@ DOMAIN_COMMAND_CONTRACTS = {
         _contract("media.turn.draft", "core", ("media",), MediaTurnDraft, DraftResult),
         _contract("media.turn.seal", "core", ("media",), MediaTurnRequiredScope, MediaBatchResult),
         _contract("media.turn.finished", "core", ("media",), MediaTurnFinished, MediaBatchResult),
+        _contract("media.thread.resumed", "core", ("media",), MediaThreadResumed, MediaWakeResult),
         _contract("media.promotion.ack", "core", ("media",), MediaPromotionAck, PromotionResult),
         _contract("site.turn.draft", "core", ("sites",), SiteTurnDraft, DraftResult),
     )

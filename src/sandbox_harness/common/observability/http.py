@@ -93,7 +93,9 @@ def httpx_event_hooks(peer_service: str, *, route: str = "external") -> dict[str
         state=response.request.extensions.get('updream.observation')
         if not state:return
         response.stream=_TeeStream(response.stream,state['response_body'],
-            lambda stream_error:state['finish'](response,stream_error))
+            lambda stream_error:state['finish'](response,None
+                if state.get('terminal_success') and isinstance(stream_error,asyncio.CancelledError)
+                else stream_error))
 
     return {'request':[request_hook],'response':[response_hook]}
 
