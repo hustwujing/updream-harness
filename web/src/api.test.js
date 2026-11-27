@@ -20,6 +20,17 @@ describe('API boundary',()=>{
  await expect(api('threads')).rejects.toMatchObject({status:401,code:'authentication_required',
    requestId:'request-1',message:'请先登录。（排查编号：request-1）'});
  });
+ it('classifies expired and changed media confirmations clearly',async()=>{
+  globalThis.document={baseURI:'https://example.test/app/'};
+  const replies=['media_confirmation_expired','media_confirmation_state_changed'];
+  globalThis.fetch=vi.fn(async()=>new Response(JSON.stringify({detail:replies.shift()}),{status:409}));
+  await expect(api('media/drafts/expired/confirm',{method:'POST'})).rejects.toMatchObject({
+   code:'media_confirmation_expired',
+   message:'确认已过期，未提交任何生成任务。请让 Agent 重新生成确认单。'});
+  await expect(api('media/drafts/cancelled/confirm',{method:'POST'})).rejects.toMatchObject({
+   code:'media_confirmation_state_changed',
+   message:'确认状态已变化，未重复提交生成任务。请刷新后查看当前状态。'});
+ });
  it('never exposes an HTML proxy error body',async()=>{
   globalThis.document={baseURI:'https://example.test/sandbox-harness-platform-parallel/'};
   globalThis.fetch=vi.fn(async()=>new Response('<!doctype html><title>502 Bad Gateway</title>',{

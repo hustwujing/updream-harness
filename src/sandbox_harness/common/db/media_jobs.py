@@ -128,8 +128,10 @@ class MediaJobsTransactions:
             if draft.job_id:
                 job = await db.get(MediaJobRow, draft.job_id)
                 if job: return self._media_job_view(job)
-            if draft.status != "awaiting_confirmation" or utc_datetime(draft.expires_at) <= now():
-                raise RuntimeError("media_draft_not_confirmable")
+            if draft.status != "awaiting_confirmation":
+                raise RuntimeError("media_confirmation_state_changed")
+            if utc_datetime(draft.expires_at) <= now():
+                raise RuntimeError("media_confirmation_expired")
             job = MediaJobRow(id=identifier(), owner_id=owner_id, thread_id=draft.thread_id, turn_id=draft.turn_id, draft_id=draft.id,
                 kind=draft.kind, model=draft.model, generation_mode=draft.generation_mode,
                 provider=provider_spec.provider, adapter=provider_spec.adapter,
@@ -151,14 +153,16 @@ class MediaJobsTransactions:
             if not batch or batch.owner_id!=owner_id:
                 raise KeyError("media_batch_not_found")
             if batch.status not in {"sealed","delivering","continued"}:
-                raise RuntimeError("media_batch_not_confirmable")
+                raise RuntimeError("media_confirmation_state_changed")
             drafts=list((await db.execute(select(MediaDraftRow).where(
                 MediaDraftRow.turn_id==turn_id,MediaDraftRow.owner_id==owner_id)
                 .order_by(MediaDraftRow.created_at,MediaDraftRow.id).with_for_update())).scalars().all())
             if not drafts or any(draft.status not in {"awaiting_confirmation","confirmed"}
-                    or draft.status=="awaiting_confirmation" and utc_datetime(draft.expires_at)<=now()
                     for draft in drafts):
-                raise RuntimeError("media_batch_not_confirmable")
+                raise RuntimeError("media_confirmation_state_changed")
+            if any(draft.status=="awaiting_confirmation" and utc_datetime(draft.expires_at)<=now()
+                    for draft in drafts):
+                raise RuntimeError("media_confirmation_expired")
             pending=[draft for draft in drafts if not draft.job_id]
             if any(draft.id not in provider_specs for draft in pending):
                 raise RuntimeError("media_batch_provider_spec_missing")

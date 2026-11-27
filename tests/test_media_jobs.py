@@ -43,6 +43,8 @@ async def test_media_draft_confirm_is_idempotent_and_snapshots_provider(tmp_path
         assert ready is False
         cancelled = await store.cancel_media_draft(cancellable.id, owner)
         assert cancelled.status == "cancelled"
+        with pytest.raises(RuntimeError,match="media_confirmation_state_changed"):
+            await store.confirm_media_draft(cancellable.id,owner,provider_spec=spec)
         assert {item.id for item in await store.list_media_drafts(thread.id, owner)} == {draft.id, cancellable.id}
         claimed = await store.claim_media_jobs("worker")
         assert claimed[0]["id"] == first.id
@@ -126,7 +128,7 @@ async def test_media_batch_confirm_rejects_entire_batch_when_one_draft_expired(t
             model="seedream-5.0",turn_id=turn.id,idempotency_key="batch-expired"),
             expires_at=now()-timedelta(seconds=1),provider_spec=spec)
         await store.seal_media_batch(turn.id,thread.id,owner)
-        with pytest.raises(RuntimeError,match="media_batch_not_confirmable"):
+        with pytest.raises(RuntimeError,match="media_confirmation_expired"):
             await store.confirm_media_batch(turn.id,owner,
                 provider_specs={valid.id:spec,expired.id:spec})
         assert await store.list_media_jobs(thread.id,owner)==[]
@@ -144,7 +146,7 @@ async def test_expired_media_draft_cannot_confirm(tmp_path):
         spec = SimpleNamespace(provider="ark", adapter="ark_image", execution="sync", cancellation="unsupported")
         draft, _ = await store.create_media_draft("a" * 64, "b" * 32, value,
             expires_at=now() - timedelta(seconds=1), provider_spec=spec)
-        with pytest.raises(RuntimeError, match="not_confirmable"):
+        with pytest.raises(RuntimeError, match="media_confirmation_expired"):
             await store.confirm_media_draft(draft.id, "a" * 64, provider_spec=spec)
     finally:
         await store.close()
