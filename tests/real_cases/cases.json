@@ -14,10 +14,10 @@
     "evidence_root": ".data/evidence/real-campaign",
     "forbid_case_specific_product_fixes": true
   },
-  "runnable_case_count": 196,
+  "runnable_case_count": 198,
   "business_case_count": 78,
   "inherited_protocol_case_count": 51,
-  "parallel_case_count": 43,
+  "parallel_case_count": 45,
   "cross_database_case_count": 6,
   "evolution_case_count": 18,
   "cases": [
@@ -7145,6 +7145,70 @@
         "node_loss",
         "recovery",
         "continuation"
+      ],
+      "provenance": "parallel-design"
+    },
+    {
+      "id": "P28",
+      "title": "Primary流式批次硬杀恢复",
+      "complexity": "parallel_protocol",
+      "assets": [],
+      "prompt": "Primary长文本存在尚未落库的Runtime事件时SIGKILL PlatformWorker；接管后从已提交序号继续，正文无丢失无重复。",
+      "expect": {
+        "execution_identity_preserved": true,
+        "markers_exactly_once": true,
+        "uncommitted_gap_observed": true,
+        "batched_persistence": true
+      },
+      "content_checks": [
+        "硬杀发生在Runtime序号领先数据库提交序号时",
+        "恢复沿用原execution ID",
+        "首尾标记各出现一次",
+        "至少一个持久文本批次覆盖多个Runtime序号"
+      ],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_browser_or_api",
+      "executor": "parallel_protocol",
+      "required_features": [
+        "primary_harness",
+        "stream_batching",
+        "redis_live_stream",
+        "node_loss",
+        "runtime_replay"
+      ],
+      "provenance": "parallel-design"
+    },
+    {
+      "id": "P29",
+      "title": "Child流式批次硬杀恢复",
+      "complexity": "parallel_protocol",
+      "assets": [],
+      "prompt": "Child Harness长文本存在尚未落库的Runtime事件时SIGKILL JobWorker；接管后从已提交序号继续，JobActivity聚合且正文无丢失无重复。",
+      "expect": {
+        "execution_identity_preserved": true,
+        "markers_exactly_once": true,
+        "uncommitted_gap_observed": true,
+        "batched_persistence": true
+      },
+      "content_checks": [
+        "硬杀发生在Runtime序号领先JobActivity序号时",
+        "恢复沿用原Child execution ID",
+        "首尾标记各出现一次",
+        "至少一个Child文本批次覆盖多个Runtime序号"
+      ],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_browser_or_api",
+      "executor": "parallel_protocol",
+      "required_features": [
+        "child_harness",
+        "stream_batching",
+        "redis_live_stream",
+        "node_loss",
+        "runtime_replay"
       ],
       "provenance": "parallel-design"
     },

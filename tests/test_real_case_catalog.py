@@ -15,10 +15,10 @@ def test_real_case_catalog_is_reproducible_complete_and_parallel_specific():
     assert catalog["source_snapshot"]["sha256"]==hashlib.sha256(source).hexdigest()
     assert catalog["source_snapshot"]["source_case_count"]==129
     assert catalog["business_case_count"]==78
-    assert catalog["parallel_case_count"]==43
+    assert catalog["parallel_case_count"]==45
     assert catalog["cross_database_case_count"]==6
     assert catalog["evolution_case_count"]==18
-    assert catalog["runnable_case_count"]==196
+    assert catalog["runnable_case_count"]==198
     assert len(catalog["cases"])==catalog["runnable_case_count"]
     assert len({row["id"] for row in catalog["cases"]})==len(catalog["cases"])
     assert catalog["superseded_cases"]==[]
@@ -27,7 +27,7 @@ def test_real_case_catalog_is_reproducible_complete_and_parallel_specific():
         f"D{value:02d}" for value in range(1,52)}
     assert {row["id"] for row in catalog["cases"] if row["id"].startswith("P")}=={
         *(f"P{value:02d}" for value in range(1,21)),
-        *(f"P{value:02d}" for value in range(22,28))}
+        *(f"P{value:02d}" for value in range(22,30))}
     assert [row["id"] for row in catalog["cases"] if row["id"].startswith("XDB")]==[
         f"XDB{value:02d}" for value in range(1,7)]
     assert [row["id"] for row in catalog["cases"] if row["id"].startswith("EVO")]==[

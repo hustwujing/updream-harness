@@ -132,6 +132,23 @@ PARALLEL_CASES=[
             "continuation"),
         content_checks=("Worker 重启发生在至少两个成员在途时","已接受 Provider 不重复提交",
             "独立成员均达到终态","整个 JobGroup 只创建一次 Primary continuation")),
+    protocol("P28","Primary流式批次硬杀恢复",
+        "Primary长文本存在尚未落库的Runtime事件时SIGKILL PlatformWorker；接管后从已提交序号继续，正文无丢失无重复。",
+        {"execution_identity_preserved":True,"markers_exactly_once":True,
+            "uncommitted_gap_observed":True,"batched_persistence":True},
+        features=("primary_harness","stream_batching","redis_live_stream","node_loss",
+            "runtime_replay"),
+        content_checks=("硬杀发生在Runtime序号领先数据库提交序号时","恢复沿用原execution ID",
+            "首尾标记各出现一次","至少一个持久文本批次覆盖多个Runtime序号")),
+    protocol("P29","Child流式批次硬杀恢复",
+        "Child Harness长文本存在尚未落库的Runtime事件时SIGKILL JobWorker；接管后从已提交序号继续，JobActivity聚合且正文无丢失无重复。",
+        {"execution_identity_preserved":True,"markers_exactly_once":True,
+            "uncommitted_gap_observed":True,"batched_persistence":True},
+        features=("child_harness","stream_batching","redis_live_stream","node_loss",
+            "runtime_replay"),
+        content_checks=("硬杀发生在Runtime序号领先JobActivity序号时",
+            "恢复沿用原Child execution ID","首尾标记各出现一次",
+            "至少一个Child文本批次覆盖多个Runtime序号")),
 ]
 
 
