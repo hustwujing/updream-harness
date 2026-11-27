@@ -1,16 +1,16 @@
-# Ali Production-Hardening 188-Case Report
+# Ali Production-Hardening 190-Case Report
 
 ## Outcome
 
-The 188-case catalog has 188 successful latest results, zero program failures
-and zero non-program failures. Mean elapsed time is 216.355 seconds. The report
+The 190-case catalog has 190 successful latest results, zero program failures
+and zero non-program failures. Mean elapsed time is 215.437 seconds. The report
 is `composite_verified`: every case has real evidence after 2026-11-26 23:00
 Asia/Shanghai, and failed or affected cases were rerun after each shared fix.
 Unrelated successful cases retain their actual revision instead of being
 repeated solely to manufacture a single-revision report.
 
 The machine-readable report is
-`.data/evidence/real-campaign/final-188-composite-c346638.json`. Every result
+`.data/evidence/real-campaign/final-190-composite-c6acbe9.json`. Every result
 retains its own `run_revision`, `finished_at`, classification, elapsed time and
 case-specific evidence.
 
@@ -23,8 +23,8 @@ case-specific evidence.
 | P | 26 | 26 | 0 | 0 |
 | K | 14 | 14 | 0 | 0 |
 | XDB | 6 | 6 | 0 | 0 |
-| EVO | 13 | 13 | 0 | 0 |
-| **Total** | **188** | **188** | **0** | **0** |
+| EVO | 15 | 15 | 0 | 0 |
+| **Total** | **190** | **190** | **0** | **0** |
 
 ## Issue-To-Evidence Map
 
@@ -58,12 +58,20 @@ case-specific evidence.
 | Child terminal check raced a newly durable continuation | Re-read the continuation after the open-group check before publishing terminal Child state. | `services/job_worker/harness_job.py` | Child continuation and Harness tests | P24 in `affected-continuation-c346638.json` |
 | API showed a stale model catalog while PlatformWorker had refreshed it | API reloads the shared snapshot and trusts freshness only inside the bounded refresh window. | `common/catalog/model_discovery.py`, API catalog/health routes | catalog/model discovery tests | deployed health reports all three inventories fresh |
 | Logged-in idle Thread still displayed historical restricted mode | Active work shows its actual authority; idle UI shows the next Turn entitlement from the current session. | `web/src/network-access.js`, `main.jsx` | 31 Vitest tests, `browser_auth.cjs` | deployed frontend digest and browser regression |
+| Media cancellation after Worker takeover targeted the new generation | Acceptance receipts retain the original source generation; cancellation fences the current owner but derives the Media permit and command from the accepted generation. | `common/jobs/media_authority.py`, `services/job_worker/media_job_adapter.py`, `image_decompose_adapter.py` | `test_media_repository.py`; 95 focused adapter/repository tests | K10, XDB04 and EVO15; accepted generation 1, takeover generation 2, acknowledged cancel generation 1, zero duplicate submission |
+| Gateway crash left almost the whole model budget reserved | Each request reserves only conservative input plus bounded output; capability revoke atomically releases unfinished child and parent reservations while preserving finalized usage. | `common/db/capabilities.py`, `services/sandbox_gateway/gateway.py` | 76 Gateway/capability tests, including orphan reservation and parent ledger assertions | EVO14 SIGKILL; second real request succeeded, `token_reserved=0`; affected thread ledger repaired from 1,971,628 reserved to zero with 28,372 consumed unchanged |
+| Hardened staging directories could be owned by root at service restart | Deployment now reasserts `sandbox-harness:0700` for every long-lived Gateway, Runtime download, Child, Controlled, Operation, Provider, Media and Site staging root. | `deploy/ali/start.sh`, `deploy/ali/configure.py`, `common/storage/directories.py` | 32 deployment, directory and provisioning tests | New Gateway release first failed closed on owner mismatch, then started healthy after provisioning fix |
+| Unknown sandbox cleanup retried every 0.5 seconds | Failed cleanup claims persist exponential eligibility delay in the existing claim fence, from 2 seconds to a 300-second ceiling; ownership and capacity stay retained. | `common/db/cleanup.py`, `common/execution/job_worker.py` | 141 JobWorker/Store/Harness durability tests plus 12 allocation timing combinations | JobWorker SIGKILL recovery; old instance emitted every 0.5 seconds, new release emitted once in 20 seconds then entered the 300-second retained retry window |
 
 ## Focused Final Reruns
 
-The latest affected set is 13/13 successful: C16, C29, C30, P24, P27 and
-K07-K14. P27 includes a JobWorker SIGKILL, one unchanged Provider execution and
-one Primary continuation. C05 and R12 were audited separately; both latest
+The previous affected set was 13/13 successful: C16, C29, C30, P24, P27 and
+K07-K14. The final affected set adds EVO14, EVO15 and XDB04, all successful at
+`c6acbe9`. EVO14 validates Gateway SIGKILL budget recovery; EVO15 validates
+accepted Media takeover cancellation without duplicate Provider submission;
+XDB04 retains ordinary same-generation cancellation coverage. P27 includes a
+JobWorker SIGKILL, one unchanged Provider execution and one Primary
+continuation. C05 and R12 were audited separately; both latest
 successful records contain `job_failures=[]` and no hidden
 `submission_outcome_unknown`, `ReadError` or `external_status_unavailable`.
 
@@ -79,5 +87,7 @@ successful records contain `job_failures=[]` and no hidden
   against the deployed API frontend.
 - API health reports the Ali backend and four databases available; model
   inventories are fresh and the selected frontend digest matches served files.
-- Full Python release gate: 1569 passed, 23 environment-dependent tests skipped,
-  179 existing deprecation warnings; elapsed time 347.32 seconds.
+- Full Python release gate: 1572 passed, 23 environment-dependent tests skipped,
+  179 existing deprecation warnings; elapsed time 345.39 seconds.
+- Selected immutable releases: sandbox-gateway `bb42549d...`, JobWorker
+  `5344a387...`; both recovered from SIGKILL and report healthy service state.

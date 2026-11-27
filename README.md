@@ -20,18 +20,19 @@ To add another sandbox backend, follow
 The public repository is [hustwujing/updream-harness](https://github.com/hustwujing/updream-harness)
 on branch `sandbox-harness-platform-parallel-ali`.
 
-The current modular Ali baseline contains 188 cases and is
-`composite_verified` at `c346638`: 188 successes, zero program failures and zero
+The current modular Ali baseline contains 190 cases and is
+`composite_verified` at `c6acbe9`: 190 successes, zero program failures and zero
 non-program failures, with each retained result preserving its actual tested
 revision. See the
-[188-case production-hardening report](docs/test-evidence/ali-production-hardening-188-case-report.md).
+[190-case production-hardening report](docs/test-evidence/ali-production-hardening-190-case-report.md).
 The earlier [175-case cross-database report](docs/test-evidence/ali-cross-database-175-case-report.md)
 remains the split-database baseline.
 
-`EVO01`-`EVO13` cover API/PlatformWorker
+`EVO01`-`EVO15` cover API/PlatformWorker
 restart separation, leader failover, multi-replica claims, bounded Outbox delivery,
 metrics, Trace links, key rotation, fair admission, Provider circuits, object GC,
-usage replay, public errors and authoritative browser stages.
+usage replay, public errors, authoritative browser stages, Gateway budget recovery
+after SIGKILL and generation-correct Media cancellation after JobWorker takeover.
 
 The candidate deploys as nine independently restartable services:
 API, PlatformWorker, sandbox-gateway, JobWorker, AllocationWorker, ControlledWorker,
@@ -312,7 +313,7 @@ affected lifecycle, Gateway, Runtime, image, Skill, API or deployment boundary.
 See [architecture.md](docs/architecture.md), [client API](docs/api.md), [data model](docs/data-model.md), [product interface](docs/product-interface.md), [gateway.md](docs/gateway.md), [Runtime Skill Bundle](docs/skills.md) and [deployment.md](docs/deployment.md).
 
 Current deployment, cross-database, recovery and case evidence is consolidated
-in the [188-case Ali report](docs/test-evidence/ali-production-hardening-188-case-report.md).
+in the [190-case Ali report](docs/test-evidence/ali-production-hardening-190-case-report.md).
 
 ## Runtime Toolchain
 

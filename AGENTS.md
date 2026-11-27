@@ -34,6 +34,12 @@ claims made by documentation.
   to the pristine warm pool.
 - Persist the intended final state before cleanup. Revoke capability access,
   quiesce Runtime work and confirm sandbox deletion before releasing capacity.
+- Accepted external work keeps its original generation identity across Worker
+  takeover; cancellation and cleanup target that accepted identity while the
+  current lease generation fences the caller.
+- Failed durable cleanup persists bounded retry eligibility and retained
+  ownership. A Worker restart must not turn an unresolved dependency into a
+  hot retry loop or release its capacity.
 - PostgreSQL is authoritative. Redis is a bounded notification/replay aid.
 - Checkpoint commit precedes successful or waiting publication. Artifact and
   checkpoint writes remain lease-fenced and content-addressed.
@@ -62,6 +68,10 @@ claims made by documentation.
   If documentation disagrees, verify behavior and fix it in the same change.
 - Keep generated data, dependencies, caches, logs, databases and temporary
   files under `.data` or another explicit `/data2` path.
+- Provision every long-lived writable directory for the service account and
+  revalidate its boundary, type, owner and write access whenever work writes
+  through it. Disposable staging may be recreated; ownership mismatch fails
+  closed.
 - Reuse the existing ownership, isolation, cancellation, recovery, event and
   observability mechanisms. A feature is incomplete if it bypasses them.
 - Fix shared contracts without case-, operation- or sandbox-provider-specific
