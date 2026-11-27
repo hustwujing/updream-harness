@@ -18,6 +18,8 @@ from sandbox_harness.common.models.model_activity import (OutputProbe)
 
 @pytest.fixture
 def ingress(tmp_path,monkeypatch):
+    for harness in Harness:
+        monkeypatch.setenv('SANDBOX_HARNESS_UPSTREAM_'+harness.value.upper()+'_KEY','test-key')
     import sandbox_harness.services.sandbox_gateway.gateway as gateway
     state=SimpleNamespace(upstream=[],activities=[],reservations=[],reservation_error=None)
     class SecurityStore:

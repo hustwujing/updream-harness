@@ -2,6 +2,13 @@ import asyncio
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def configured_model_credentials(monkeypatch):
+    from sandbox_harness.common.contracts.domain import (Harness)
+    for harness in Harness:
+        monkeypatch.setenv('SANDBOX_HARNESS_UPSTREAM_'+harness.value.upper()+'_KEY','test-key')
+
+
 class CapabilityStoreStub:
     async def authorize_capability(self,claims,usage="request"):
         return {"request_count":1,"public_request_count":0,

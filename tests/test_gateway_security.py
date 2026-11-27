@@ -13,6 +13,12 @@ from sandbox_harness.services.sandbox_gateway.gateway import (bounded_request_bo
 from test_support.legacy_store import (Store)
 
 
+@pytest.fixture(autouse=True)
+def configured_model_credentials(monkeypatch):
+    for harness in Harness:
+        monkeypatch.setenv('SANDBOX_HARNESS_UPSTREAM_'+harness.value.upper()+'_KEY','test-key')
+
+
 def claims(settings, *, nonce="", token_budget=10, max_requests=3, parent_nonce="",
            parent_token_budget=0):
     _, value = CapabilityCodec(settings.gateway_signing_key).issue(
