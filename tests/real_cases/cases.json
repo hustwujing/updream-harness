@@ -14,12 +14,12 @@
     "evidence_root": ".data/evidence/real-campaign",
     "forbid_case_specific_product_fixes": true
   },
-  "runnable_case_count": 188,
+  "runnable_case_count": 190,
   "business_case_count": 78,
   "inherited_protocol_case_count": 51,
   "parallel_case_count": 40,
   "cross_database_case_count": 6,
-  "evolution_case_count": 13,
+  "evolution_case_count": 15,
   "cases": [
     {
       "id": "S01",
@@ -8252,6 +8252,60 @@
         "browser",
         "execution_stage",
         "database_authority"
+      ],
+      "provenance": "production-hardening-2026-11-27"
+    },
+    {
+      "id": "EVO14",
+      "title": "Gateway硬杀后模型预算预留恢复",
+      "complexity": "production_evolution",
+      "assets": [],
+      "prompt": "验证多副本生产加固合同：Gateway硬杀后模型预算预留恢复",
+      "expect": {
+        "gateway_restarted": true,
+        "second_request_succeeded": true,
+        "orphan_reservation_released": true,
+        "token_reserved": 0
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_api_workers_databases_and_real_sandbox",
+      "executor": "evolution",
+      "required_features": [
+        "gateway",
+        "sigkill",
+        "model_budget",
+        "real_provider"
+      ],
+      "provenance": "production-hardening-2026-11-27"
+    },
+    {
+      "id": "EVO15",
+      "title": "Media接受后接管取消沿用原generation",
+      "complexity": "production_evolution",
+      "assets": [],
+      "prompt": "验证多副本生产加固合同：Media接受后接管取消沿用原generation",
+      "expect": {
+        "accepted_generation": 1,
+        "takeover_generation": 2,
+        "cancel_generation": 1,
+        "duplicate_provider_submission": false,
+        "outbox_acknowledged": true
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_api_workers_databases_and_real_sandbox",
+      "executor": "evolution",
+      "required_features": [
+        "cross_database",
+        "cancellation",
+        "generation_fence",
+        "sigkill",
+        "provider_coverage"
       ],
       "provenance": "production-hardening-2026-11-27"
     }

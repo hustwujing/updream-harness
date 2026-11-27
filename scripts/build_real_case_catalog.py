@@ -321,6 +321,15 @@ EVOLUTION_CASES=[
     evolution("EVO13","浏览器阶段与权威状态一致",
         {"stages":["queued","sandbox_wait","harness","provider","collection","recovery","blocked"]},
         features=("browser","execution_stage","database_authority")),
+    evolution("EVO14","Gateway硬杀后模型预算预留恢复",
+        {"gateway_restarted":True,"second_request_succeeded":True,
+            "orphan_reservation_released":True,"token_reserved":0},
+        features=("gateway","sigkill","model_budget","real_provider")),
+    evolution("EVO15","Media接受后接管取消沿用原generation",
+        {"accepted_generation":1,"takeover_generation":2,"cancel_generation":1,
+            "duplicate_provider_submission":False,"outbox_acknowledged":True},
+        features=("cross_database","cancellation","generation_fence","sigkill",
+            "provider_coverage")),
 ]
 
 

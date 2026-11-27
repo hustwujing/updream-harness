@@ -13,8 +13,10 @@ import subprocess
 import time
 import uuid
 
+import httpx
 from sqlalchemy import delete, func, select, update
 
+import run_real_cross_database as cross_database
 import run_real_parallel_protocol as protocol
 from sandbox_harness.common.catalog.catalog import HarnessCatalog
 from sandbox_harness.common.configuration.databases import DatabaseSettings
@@ -24,11 +26,13 @@ from sandbox_harness.common.db.accounts import AccountsRepository
 from sandbox_harness.common.db.core import CoreRepository
 from sandbox_harness.common.db.domain_database import DomainInbox, DomainOutbox
 from sandbox_harness.common.db.media_repository import MediaRepository
+from sandbox_harness.common.db.media_models import MediaSourcePermitRow
 from sandbox_harness.common.db.models import (
-    OwnerAdmissionRow, ProviderCircuitRow, ThreadRow, TurnOrderRow, TurnRow,
-    UsageLedgerRow, canonical_digest,
+    CapabilityLedgerRow, ModelTokenReservationRow, OwnerAdmissionRow,
+    ProviderCircuitRow, ThreadRow, TurnOrderRow, TurnRow, UsageLedgerRow,
+    canonical_digest,
 )
-from sandbox_harness.common.db.ownership_models import SandboxOwnershipRow
+from sandbox_harness.common.db.ownership_models import RemoteObligationRow, SandboxOwnershipRow
 from sandbox_harness.common.db.site_repository import SiteRepository
 from sandbox_harness.common.observability.observability import BUSINESS_METRICS
 from sandbox_harness.common.security.capability import CapabilityCodec
@@ -281,7 +285,140 @@ async def evo13(client,args,repositories,settings):
     return {'classification':'success','thread_id':thread['id'],'stages':stages}
 
 
-HANDLERS={f'EVO{index:02d}':globals()[f'evo{index:02d}'] for index in range(1,14)}
+async def evo14(client,args,repositories,settings):
+    codec=CapabilityCodec.from_settings(settings)
+    token,claims=codec.issue(thread_id=uuid.uuid4().hex,turn_id=uuid.uuid4().hex,
+        sandbox_id=uuid.uuid4().hex,harness=Harness.CODEX,model=args.model,
+        routes=['/v1/models/codex'],ttl_seconds=300,max_requests=10,
+        max_public_requests=1,token_budget=100_000)
+    gateway_url=(settings.aliyun_sandbox_gateway_url
+        if settings.backend=='aliyun' else settings.gateway_url).rstrip('/')
+    headers={'Authorization':'Bearer '+token}
+    first_payload={'model':args.model,'input':'Return a detailed technical checklist.',
+        'stream':False,'max_output_tokens':8192}
+    first_task=None;revoked=False
+    async with httpx.AsyncClient(timeout=None,trust_env=False) as gateway:
+        try:
+            first_task=asyncio.create_task(gateway.post(
+                gateway_url+'/v1/models/codex/responses',headers=headers,json=first_payload))
+            deadline=time.monotonic()+30;orphan=None
+            while time.monotonic()<deadline:
+                async with repositories.core.connections() as db:
+                    orphan=await db.scalar(select(ModelTokenReservationRow).where(
+                        ModelTokenReservationRow.nonce==claims.nonce,
+                        ModelTokenReservationRow.state=='reserved').order_by(
+                            ModelTokenReservationRow.created_at.desc()).limit(1))
+                if orphan:break
+                await asyncio.sleep(.02)
+            if not orphan:raise AssertionError('gateway_reservation_not_observed')
+            old_pid,new_pid=kill_restart(args.gateway_unit)
+            try:await asyncio.wait_for(first_task,10)
+            except Exception:pass
+            deadline=time.monotonic()+60
+            while True:
+                try:
+                    health=await gateway.get(gateway_url+'/health',timeout=2)
+                    if health.status_code==200:break
+                except httpx.HTTPError:pass
+                if time.monotonic()>=deadline:raise AssertionError('gateway_restart_not_ready')
+                await asyncio.sleep(.25)
+            second=await gateway.post(gateway_url+'/v1/models/codex/responses',headers=headers,
+                json={'model':args.model,'input':'Reply with EVO14-OK.',
+                    'stream':False,'max_output_tokens':64},timeout=args.timeout)
+            if second.status_code!=200:
+                raise AssertionError('gateway_second_request_failed:'+str(second.status_code))
+            revoke_headers={'X-Sandbox-Harness-Control':settings.gateway_control_key,
+                'X-Updream-Thread-ID':claims.thread_id,'X-Updream-Turn-ID':claims.turn_id,
+                'X-Updream-Sandbox-ID':claims.sandbox_id}
+            response=await gateway.post(gateway_url+'/internal/revoke/'+claims.nonce,
+                headers=revoke_headers,timeout=30)
+            if response.status_code!=200:raise AssertionError('gateway_revoke_failed')
+            revoked=True
+            async with repositories.core.connections() as db:
+                ledger=await db.get(CapabilityLedgerRow,claims.nonce)
+                reservations=list((await db.scalars(select(ModelTokenReservationRow).where(
+                    ModelTokenReservationRow.nonce==claims.nonce))).all())
+            released=[row for row in reservations if row.id==orphan.id and row.state=='released']
+            if not ledger or ledger.token_reserved!=0 or not released:
+                raise AssertionError('gateway_orphan_reservation_not_released')
+            return {'classification':'success','gateway_restarted':True,'old_pid':old_pid,
+                'new_pid':new_pid,'first_reserved_tokens':orphan.reserved,
+                'second_request_succeeded':True,'orphan_reservation_released':True,
+                'token_reserved':ledger.token_reserved,'token_consumed':ledger.token_consumed}
+        finally:
+            if first_task and not first_task.done():
+                first_task.cancel()
+                try:await first_task
+                except BaseException:pass
+            if not revoked:
+                try:await repositories.core.revoke_capability(claims.nonce,claims.expires_at)
+                except Exception:pass
+            async with repositories.core.connections.begin() as db:
+                await db.execute(delete(ModelTokenReservationRow).where(
+                    ModelTokenReservationRow.nonce==claims.nonce))
+                await db.execute(delete(CapabilityLedgerRow).where(
+                    CapabilityLedgerRow.nonce==claims.nonce))
+
+
+async def evo15(client,args,repositories,settings):
+    spec=protocol.semantic_provider_job('evo15-video','video.generate',kind='video',
+        model='sed2',mode='text_to_video',parameters={
+            'prompt':'a blue sphere rotates slowly on a white background','duration':4,
+            'resolution':'480p','aspect_ratio':'16:9','generate_audio':False})
+    thread,_,job=await cross_database.submit_source_job(client,args,'EVO15',spec)
+    async def accepted():
+        value=await cross_database.source_snapshot(repositories,job['id'])
+        accepted_attempts=[row for row in value.attempts if row.accepted_at is not None]
+        return value if (accepted_attempts and value.media and value.permit
+            and value.media.provider_started_at is not None) else None
+    before=await cross_database.wait_until(
+        accepted,min(args.timeout,300),'evo15_media_acceptance')
+    accepted_generation=before.permit.source_generation
+    accepted_external_ids={row.external_execution_id for row in before.attempts
+        if row.accepted_at is not None}
+    if len(accepted_external_ids)!=1:
+        raise AssertionError('evo15_accepted_external_identity_invalid')
+    provider_job_id=before.media.provider_job_id
+    old_pid,new_pid=kill_restart(args.job_worker_unit)
+    async def taken_over():
+        value=await cross_database.source_snapshot(repositories,job['id'])
+        return value if value.attempts and max(
+            row.generation for row in value.attempts)>accepted_generation else None
+    takeover=await cross_database.wait_until(taken_over,120,'evo15_takeover')
+    takeover_generation=max(row.generation for row in takeover.attempts)
+    protocol.require(await client.post(f"api/jobs/{job['id']}/cancel"))
+    terminal=await protocol.wait_job(client,job['id'],args.timeout)
+    command_id=canonical_digest(['media.source.cancel',before.permit.dispatch_id])
+    async def cancellation_settled():
+        snapshot=await cross_database.source_snapshot(repositories,job['id'])
+        async with repositories.core.connections() as db:
+            outbox=await db.get(DomainOutbox,command_id)
+            obligation=await db.get(RemoteObligationRow,command_id)
+        return (snapshot,outbox,obligation) if (snapshot.permit.state=='CANCELLED'
+            and outbox and outbox.state=='acknowledged' and obligation
+            and obligation.state=='acknowledged') else None
+    after,outbox,obligation=await cross_database.wait_until(
+        cancellation_settled,120,'evo15_cancellation_settlement')
+    envelope=json.loads(outbox.envelope_json)
+    cancel_generation=envelope['generation']
+    cancel_payload=json.loads(envelope['payload_json'])
+    accepted_after={row.external_execution_id for row in after.attempts
+        if row.accepted_at is not None}
+    if (terminal['state']!='CANCELLED' or cancel_generation!=accepted_generation
+            or cancel_payload['source_generation']!=accepted_generation
+            or accepted_after!=accepted_external_ids or after.artifacts):
+        raise AssertionError('evo15_takeover_cancel_invariant_failed')
+    return {'classification':'success','thread_id':thread['id'],'job_id':job['id'],
+        'media_job_id':after.media.id,'provider_job_id':provider_job_id,
+        'accepted_generation':accepted_generation,'takeover_generation':takeover_generation,
+        'cancel_generation':cancel_generation,'duplicate_provider_submission':False,
+        'outbox_acknowledged':outbox.state=='acknowledged',
+        'remote_obligation_state':obligation.state,'permit_state':after.permit.state,
+        'core_state':terminal['state'],'core_artifact_count':len(after.artifacts),
+        'old_pid':old_pid,'new_pid':new_pid}
+
+
+HANDLERS={f'EVO{index:02d}':globals()[f'evo{index:02d}'] for index in range(1,16)}
 
 
 async def main():
@@ -292,6 +429,8 @@ async def main():
     parser.add_argument('--api-unit',default='sandbox-harness-parallel-ali-api.service')
     parser.add_argument('--platform-worker-unit',default='sandbox-harness-parallel-ali-platform-worker.service')
     parser.add_argument('--job-worker-unit',default='sandbox-harness-parallel-ali-job-worker.service')
+    parser.add_argument('--gateway-unit',
+        default='sandbox-harness-parallel-ali-sandbox-gateway-aliyun.service')
     args=parser.parse_args();settings=protocol.load_platform_settings();repositories=Repositories(settings)
     started=time.monotonic()
     try:
