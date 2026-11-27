@@ -99,7 +99,7 @@
   border-top: 1px solid #edf0ed;
 }
 
-.model-round {
+.harness-model-rounds article.model-round {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
