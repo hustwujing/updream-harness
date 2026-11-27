@@ -8,6 +8,7 @@ from tempfile import NamedTemporaryFile
 import uuid
 
 from sandbox_harness.common.observability.observability import (add_link, event, operation)
+from sandbox_harness.common.contracts.public_errors import (external_error_detail)
 from sandbox_harness.common.storage.directories import (ensure_private_directory)
 from sandbox_harness.common.sites.site_bundle import (MAX_SITE_ARCHIVE_BYTES, stage_site_archive)
 
@@ -142,18 +143,21 @@ class SiteWorker:
         except PermissionError:
             await self.store.fail_site_job(job["id"],self.owner,generation,
                 error_code="site_staging_unwritable",
-                error_detail="站点发布暂存目录不可写，请修复部署目录权属后继续发布。")
+                error_detail=external_error_detail("site_staging_unwritable",
+                    "站点发布暂存目录不可写，请修复部署目录权属后继续发布。"))
             event("site.job.staging_unwritable",level=40,job_id=job["id"],
                 error_code="site_staging_unwritable")
         except ValueError as exc:
             await self.store.fail_site_job(job["id"],self.owner,generation,
-                error_code=str(exc)[:100],error_detail="站点包内容无效，请修正文件后重新准备部署。")
+                error_code=str(exc)[:100],error_detail=external_error_detail(str(exc)[:100],
+                    "站点包内容无效，请修正文件后重新准备部署。"))
             event("site.job.invalid",level=30,job_id=job["id"],error_code=str(exc)[:100])
         except Exception as exc:
             delay=min(300,self.retry_base*(2**max(0,job.get("attempt_count",1)-1)))
             await self.store.defer_site_job(job["id"],self.owner,generation,
                 error_code="site_dependency_unavailable",
-                error_detail="发布依赖暂时不可用，系统已自动重试；若重试耗尽可手动继续。",
+                error_detail=external_error_detail("site_dependency_unavailable",
+                    "发布依赖暂时不可用，系统已自动重试；若重试耗尽可手动继续。"),
                 retry_after_seconds=delay,max_attempts=self.max_attempts)
             event("site.job.retry_scheduled",level=30,job_id=job["id"],
                 exc=exc,retry_seconds=delay)

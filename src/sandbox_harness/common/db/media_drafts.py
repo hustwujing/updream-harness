@@ -6,6 +6,7 @@ from sqlalchemy import (func, select, update)
 from sqlalchemy.ext.asyncio import (AsyncSession)
 from sandbox_harness.common.contracts.domain import (TurnState, TERMINAL, identifier, now, MediaDraftView, MediaJobView, MediaJobOutputView)
 from sandbox_harness.common.contracts.job_errors import (job_error_payload)
+from sandbox_harness.common.contracts.public_errors import (public_error_reason)
 from sandbox_harness.common.contracts.errors import error_reference
 from .models import (ArtifactRow, MediaBatchRow, MediaDraftRow, MediaJobOutputRow, MediaJobRow, ThreadRow, TurnRow, utc_datetime)
 
@@ -40,6 +41,7 @@ class MediaDraftsTransactions:
             cancellation_mode=row.cancellation_mode, status=row.status, phase=row.phase or "",
             progress=row.progress, error_code=row.error_code or "", error_detail=row.error_detail or "",
             error_message=error.get('error_message',''),
+            error_reason=public_error_reason(row.error_detail),
             error_guidance=error.get('error_guidance',''),failed_phase=error.get('failed_phase',''),
             troubleshooting_id=(error_reference("media-worker",row.id,row.error_code)
                 if row.error_code else ""),

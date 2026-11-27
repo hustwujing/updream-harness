@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.contracts.domain import (EventKind, Harness, ItemType, ThreadCreate, TurnCreate, TurnState, now)
+from sandbox_harness.common.contracts.public_errors import (external_error_detail)
 from sandbox_harness.services.api.execution_graph import (ExecutionGraphProjector,aggregate_model_activity)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobGroupDraftCreate, JobKind, JobRequest, JobState)
 from sandbox_harness.common.db.accounts import AccountsRepository
@@ -189,7 +190,8 @@ async def test_execution_graph_connects_job_group_to_internal_continuation_and_s
         group,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id=thread.id,
             origin_turn_id=origin.id,idempotency_key='continuation-group',jobs=[request]))
         await store.transition_job(jobs[0].id,JobState.FAILED,expected_generation=0,
-            result={'error_code':'audio_stream_missing','error_detail':'secret decoder stack',
+            result={'error_code':'audio_stream_missing','error_detail':external_error_detail(
+                'AudioStreamMissing','No audio stream was found; request id: secret-request'),
                 'error_message':'输入媒体没有可转写的音轨',
                 'error_guidance':'请提供含音轨的视频或独立音频文件后重新创建任务。',
                 'failed_phase':'input_validation','retryable':False,
@@ -207,9 +209,10 @@ async def test_execution_graph_connects_job_group_to_internal_continuation_and_s
         assert child['error_code']=='audio_stream_missing'
         assert child['error_summary']=='输入媒体没有可转写的音轨'
         assert child['error_guidance']=='请提供含音轨的视频或独立音频文件后重新创建任务。'
+        assert child['error_reason']=='No audio stream was found'
         assert child['failed_phase']=='input_validation' and child['retryable'] is False
         assert child['side_effect_state']=='none'
-        assert 'secret decoder stack' not in json.dumps(graph,ensure_ascii=False)
+        assert 'secret-request' not in json.dumps(graph,ensure_ascii=False)
         assert {'from':'wait_barrier:'+group.id,'to':f'turn:{continuation.id}:input','kind':'continued_by'} in graph['edges']
         continued=next(node for node in graph['nodes'] if node['id']==f'turn:{continuation.id}:input')
         assert continued['title']=='并行任务结果已返回'

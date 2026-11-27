@@ -592,6 +592,7 @@ export default function ExecutionGraph({ thread, items = [] }) {
         {selected.error_summary && (
           <p className="execution-node-error" role="alert">
             <b>{selected.error_summary}</b>
+            {selected.error_reason && <span>{selected.error_reason}</span>}
             {selected.error_guidance && <small>{selected.error_guidance}</small>}
           </p>
         )}

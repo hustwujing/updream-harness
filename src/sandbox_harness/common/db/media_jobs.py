@@ -7,6 +7,7 @@ from pathlib import (PurePosixPath)
 from sqlalchemy import (and_, case, or_, func, select, update)
 from sandbox_harness.common.contracts.domain import (ItemType, TERMINAL, identifier, now, MediaDraftView, MediaJobView, MediaJobOutputView)
 from sandbox_harness.common.contracts.media_errors import (media_error_guidance)
+from sandbox_harness.common.contracts.public_errors import (public_error_reason)
 from sandbox_harness.common.contracts.media_provider import (MediaCancellationRequested)
 from sandbox_harness.common.contracts.job_contracts import (JobState, JobRequest, TERMINAL_JOB_STATES)
 from .models import (ArtifactRow, ItemRow, JobAttemptRow, JobLeaseRow, JobRow, MediaBatchRow, MediaDraftRow, MediaExecutionRow, MediaJobOutputRow, MediaJobRow, MediaOutboxRow, ProjectFileRow, ThreadRow, TurnRow, canonical_digest, canonical_json, utc_datetime)
@@ -350,6 +351,7 @@ class MediaJobsTransactions:
                 "output_size": row.output_size if row else 0,
                 "error_code": row.error_code if row else "",
                 "error_detail": row.error_detail if row else "",
+                "error_reason": public_error_reason(row.error_detail) if row else "",
                 "error_guidance": media_error_guidance(row.error_code) if row and row.error_code else "",
                 "output_role": draft.output_role,
                 "project_path": (primary_paths.get(row.id) or self._media_project_path(row.id, row.output_mime))

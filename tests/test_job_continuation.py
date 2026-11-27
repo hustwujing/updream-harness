@@ -5,6 +5,7 @@ import pytest
 
 from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.contracts.domain import (Harness, ThreadCreate, TurnCreate, TurnInputCreate, TurnState)
+from sandbox_harness.common.contracts.public_errors import (external_error_detail)
 from sandbox_harness.services.platform_worker.job_continuation import (ContinuationDispatcher)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobKind, JobRequest, JobState)
 from test_support.legacy_store import (Store)
@@ -140,6 +141,26 @@ async def test_continuation_carries_authoritative_applied_user_inputs(tmp_path):
         assert '[authoritative_user_inputs]' in message
         assert '把最终尺寸改为256x128，并同时交付PNG和WebP。' in message
         assert 'These program-recorded inputs are authoritative' in message
+    finally:await store.close()
+
+
+async def test_failed_async_job_continuation_carries_safe_reason_and_guidance(tmp_path):
+    store,_,thread,origin=await setup(tmp_path)
+    try:
+        request=JobRequest(local_job_id='image',kind=JobKind.PROVIDER,
+            adapter='image.generate',descriptor_id='image.generate',descriptor_version='1',
+            descriptor_digest='a'*64,idempotency_key='failed-image-job')
+        _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id=thread.id,
+            origin_turn_id=origin.id,idempotency_key='failed-image-group',jobs=[request]))
+        await store.transition_job(jobs[0].id,JobState.FAILED,expected_generation=0,result={
+            'error_code':'provider_input_invalid','error_detail':external_error_detail(
+                'InvalidParameter','The parameter `size` must be WIDTHxHEIGHT; request id: hidden')})
+        broker=StoreBroker(store)
+        assert await ContinuationDispatcher(store,broker).run_once()==1
+        message=broker.submissions[-1][3]
+        assert 'The parameter `size` must be WIDTHxHEIGHT' in message
+        assert '请检查素材格式、参数范围和引用关系' in message
+        assert 'hidden' not in message
     finally:await store.close()
 
 

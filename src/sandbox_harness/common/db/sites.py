@@ -31,6 +31,7 @@ class SitesTransactions:
             status=row.status, phase=row.phase or "", progress=row.progress,
             error_code=row.error_code or "", error_detail=row.error_detail or "",
             error_message=error.get("error_message",""),
+            error_reason=error.get("error_reason",""),
             error_action=error.get("error_guidance",""),
             troubleshooting_id=error.get("troubleshooting_id",""),
             attempt_count=row.attempt_count, retryable=row.status=="retry_exhausted",

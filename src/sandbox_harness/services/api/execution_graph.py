@@ -10,6 +10,7 @@ from sqlalchemy import case,func,or_,select
 
 from sandbox_harness.common.contracts.domain import (TERMINAL, TurnState)
 from sandbox_harness.common.contracts.job_errors import (JOB_ERROR_CONTRACTS)
+from sandbox_harness.common.contracts.public_errors import (public_error_reason)
 from sandbox_harness.common.db.models import (InteractionRow, JobDisplayActivityRow, JobArtifactRow,
     JobAttemptRow, JobGroupDraftRow, ItemRow, JobGroupRow, JobOutboxRow, JobRow, MediaBatchRow,
     MediaDraftRow, MediaJobRow, ResourceReservationRow, ReviewGateRow, ThreadRow, TurnOrderRow,
@@ -402,6 +403,7 @@ class ExecutionGraphProjector:
                 'activity_count':activity_count.get(job.id,0),'job_id':job.id,'turn_id':job.origin_turn_id,
                 'error_code':error_code,
                 'error_summary':str(result.get('error_message') or public_error_summary(error_code)),
+                'error_reason':public_error_reason(result.get('error_detail')),
                 'error_guidance':str(result.get('error_guidance') or (
                     contract.guidance if contract else '')),
                 'failed_phase':str(result.get('failed_phase') or ''),
@@ -458,6 +460,7 @@ class ExecutionGraphProjector:
                 'retries':max(0,media.generation),'activity_count':0,'turn_id':media.turn_id,
                 'media_job_id':media.id,'progress':media.progress,'phase':media.phase,
                 'error_code':error_code,'error_summary':public_error_summary(error_code),
+                'error_reason':public_error_reason(media.error_detail),
                 'error_guidance':contract.guidance if contract else '',
                 'failed_phase':contract.phase if contract else '',
                 'retryable':contract.retryable if contract else False,

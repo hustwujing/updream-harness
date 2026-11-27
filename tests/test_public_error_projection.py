@@ -1,4 +1,6 @@
 from sandbox_harness.common.contracts.public_errors import (
+    external_error_detail,
+    public_error_reason,
     public_job_result,
     public_turn_failure,
 )
@@ -31,6 +33,22 @@ def test_public_job_result_removes_internal_diagnostics_and_has_stable_reference
     assert "private.invalid" not in encoded
     assert "credential" not in encoded
     assert "raw_error" not in first
+
+
+def test_public_job_result_exposes_only_structured_sanitized_external_reason():
+    detail=external_error_detail("InvalidParameter",
+        "The parameter `size` must be WIDTHxHEIGHT; request id: abc123; "
+        "see https://private.invalid/path?token=secret")
+    value=public_job_result({"error_code":"provider_input_invalid",
+        "error_detail":detail},identity="f"*32,origin="media-worker")
+    assert value["error_reason"]=="The parameter `size` must be WIDTHxHEIGHT"
+    assert public_error_reason(detail)==value["error_reason"]
+    assert "abc123" not in str(value) and "private.invalid" not in str(value)
+    assert "token" not in str(value)
+    untrusted=public_job_result({"error_code":"provider_input_invalid",
+        "error_detail":"The parameter `size` includes secret material"},
+        identity="e"*32,origin="media-worker")
+    assert "error_reason" not in untrusted
 
 
 def test_public_turn_failure_does_not_depend_on_raw_detail():

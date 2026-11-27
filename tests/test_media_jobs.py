@@ -7,6 +7,7 @@ import pytest
 
 from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.contracts.domain import (Harness, MediaDraftCreate, ThreadCreate, TurnCreate, TurnState, now)
+from sandbox_harness.common.contracts.public_errors import (external_error_detail)
 from sandbox_harness.services.media_worker.media_worker import (MediaWorker)
 from sandbox_harness.services.platform_worker.platform_service import (
     media_group_has_executed_job, media_group_needs_agent_continuation,
@@ -192,11 +193,13 @@ async def test_media_continuation_waits_for_every_image_and_video_job(tmp_path):
         assert await store.claim_media_batches("dispatcher") == []
         await store.update_media_job(jobs[-1].id, "worker", generations[jobs[-1].id],
             status="failed", phase="failed",
-            error_code="provider_processing_failed", error_detail="provider failed")
+            error_code="provider_processing_failed", error_detail=external_error_detail(
+                "InvalidParameter","The parameter `size` must be WIDTHxHEIGHT; request id: hidden"))
         ready, group = await store.media_continuation_group(turn.id)
         assert ready is True
         failed = next(item for item in group if item["status"] == "failed")
-        assert failed["error_detail"] == "provider failed" and failed["error_guidance"]
+        assert failed["error_reason"] == "The parameter `size` must be WIDTHxHEIGHT"
+        assert failed["error_guidance"] and "hidden" not in str(failed)
         assert [item["status"] for item in group].count("succeeded") == 3
         assert [item["status"] for item in group].count("failed") == 1
         assert await store.current_project_files(thread.id, owner) == []

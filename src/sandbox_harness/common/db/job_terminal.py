@@ -7,6 +7,7 @@ from sqlalchemy import (and_, or_, delete, select, update)
 from sqlalchemy.ext.asyncio import (AsyncSession)
 from sandbox_harness.common.contracts.domain import (ItemType, ThreadControlState, TurnState, TERMINAL, identifier, now)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupState, JobOutboxView, JobState, JobView, TERMINAL_JOB_STATES, OutputDisposition)
+from sandbox_harness.common.contracts.public_errors import (public_job_result)
 from sandbox_harness.common.observability.observability import business_metric, canonical_traceparent
 from .models import (BudgetAccountRow, BudgetLedgerRow, BudgetReservationRow, ItemRow, JobArtifactRow, JobAttemptRow, JobCleanupRow, JobGroupRow, JobLeaseRow, JobOutboxRow, JobRow, ResourceReservationRow, ThreadControlRow, ThreadRow, TurnRow, canonical_json, utc_datetime)
 
@@ -185,12 +186,16 @@ class JobTerminalTransactions:
                         terminal_payload = []
                         for member in jobs:
                             member_result=json.loads(member.result_json or "{}")
+                            public_failure=(public_job_result(member_result,identity=member.id,
+                                origin="job-worker") if member_result.get("error_code") else {})
                             terminal_payload.append({"job_id":member.id,
                                 "local_job_id":member.local_job_id,"state":member.state,
                                 "result_digest":member.result_digest,
                                 "result_available":bool(member_result),
-                                **({"error_code":str(member_result.get("error_code"))[:160]}
-                                    if member_result.get("error_code") else {}),
+                                **({key:public_failure[key] for key in (
+                                    "error_code","error_message","error_reason","error_guidance",
+                                    "failed_phase","retryable","retry_class","side_effect_state",
+                                    "troubleshooting_id") if key in public_failure}),
                                 **({"review_gate":member_result["review_gate"]}
                                     if isinstance(member_result.get("review_gate"),dict) else {})})
                         result_json = canonical_json(terminal_payload)

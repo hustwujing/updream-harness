@@ -75,7 +75,7 @@ export default function HarnessRunDetails({node,activities=[],progress=null,now=
    <div><i style={{width:`${Math.min(100,Math.round(progress.terminal/progress.total*100))}%`}}/></div>
    <small>{progress.succeeded||0} 成功 · {progress.failed||0} 失败 · {Math.max(0,progress.total-progress.terminal)} 进行中</small>
   </section>}
-  {node.error_summary&&<p className="execution-node-error" role="alert"><b>{node.error_summary}</b>{node.error_guidance&&<small>{node.error_guidance}</small>}</p>}
+  {node.error_summary&&<p className="execution-node-error" role="alert"><b>{node.error_summary}</b>{node.error_reason&&<span>{node.error_reason}</span>}{node.error_guidance&&<small>{node.error_guidance}</small>}</p>}
   {activityError&&<p className="interaction-error" role="alert">{activityError}</p>}
   <section className="harness-run-timeline"><h3>执行过程</h3>
    {timeline.length?timeline.map(stage=>stage.kind==='activity_group'?<details className="harness-timeline-group" key={stage.id}>

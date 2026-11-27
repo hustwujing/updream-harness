@@ -220,7 +220,9 @@ class PlatformWorker:
                 "output_role":item["output_role"],
                 "path":"/workspace/project/"+item["project_path"] if item["project_path"] else "",
                 "inspect_command":f"sandbox-media fetch --job-id {item['job_id']} --output /workspace/outputs/{item['job_id']}"
-                    if candidate else "","error":item["error_code"] or ""})
+                    if candidate else "","error":item["error_code"] or "",
+                "error_reason":item.get("error_reason") or "",
+                "error_guidance":item.get("error_guidance") or ""})
         expired_only=bool(results) and all(item["status"]=="expired" for item in results)
         if expired_only:
             message=("[media_group_expired] The media drafts expired before confirmation. "

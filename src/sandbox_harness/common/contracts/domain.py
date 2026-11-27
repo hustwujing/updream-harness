@@ -621,6 +621,7 @@ class MediaJobView(BaseModel):
     error_code: str = ""
     error_detail: str = Field(default="", exclude=True)
     error_message: str = ""
+    error_reason: str = ""
     error_guidance: str = ""
     troubleshooting_id: str = ""
     failed_phase: str = ""
@@ -666,6 +667,7 @@ class SiteDeployJobView(BaseModel):
     error_code: str = ""
     error_detail: str = Field(default="", exclude=True)
     error_message: str = ""
+    error_reason: str = ""
     error_action: str = ""
     troubleshooting_id: str = ""
     attempt_count: int = 0
