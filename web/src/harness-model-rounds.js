@@ -27,15 +27,17 @@ export function modelRoundPhaseLabel(round={}){
 export function modelRoundSummary(rounds=[],now=Date.now()){
  const values=Array.isArray(rounds)?rounds:[];
  const completed=values.filter(round=>round.status==='completed').length;
- const failed=values.filter(round=>round.status==='failed'||round.status==='interrupted').length;
+ const failed=values.filter(round=>round.status==='failed').length;
+ const interrupted=values.filter(round=>round.status==='interrupted').length;
  const active=[...values].reverse().find(round=>!terminalStatuses.has(round.status));
  const activeDurationMs=active?modelRoundDuration(active,now):0;
  const parts=[];
- if(!values.length)return {total:0,completed:0,failed:0,activeIndex:0,
+ if(!values.length)return {total:0,completed:0,failed:0,interrupted:0,activeIndex:0,
   activePhase:'',activeDurationMs:0,label:'暂无模型轮次'};
  if(completed)parts.push(`${completed} 轮已完成`);
  if(failed)parts.push(`${failed} 轮失败`);
+ if(interrupted)parts.push(`${interrupted} 轮已中断`);
  if(active)parts.push(`第 ${active.index} 轮${modelRoundPhaseLabel(active)}`,formatDuration(activeDurationMs));
- return {total:values.length,completed,failed,activeIndex:active?.index||0,
+ return {total:values.length,completed,failed,interrupted,activeIndex:active?.index||0,
   activePhase:active?.phase||'',activeDurationMs,label:parts.join(' · ')};
 }

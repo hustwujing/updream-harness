@@ -405,6 +405,11 @@ async def test_turn_completion_keeps_nonterminal_job_model_activity_live(tmp_pat
         await store.set_turn_state(turn.id,TurnState.COMPLETED)
         current=next(value for value in await store.items_after(thread.id) if value.id==item.id)
         assert current.status=='in_progress'
+        await store.transition_job(jobs[0].id,JobState.SUCCEEDED,expected_generation=0,
+            result={'ok':True})
+        current=next(value for value in await store.items_after(thread.id) if value.id==item.id)
+        assert current.status=='interrupted'
+        assert current.payload['phase']=='interrupted'
     finally:await store.close()
 
 

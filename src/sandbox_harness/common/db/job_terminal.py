@@ -12,6 +12,23 @@ from .models import (BudgetAccountRow, BudgetLedgerRow, BudgetReservationRow, It
 
 
 class JobTerminalTransactions:
+    async def _close_job_model_activities_locked(self,db:AsyncSession,job:JobRow,timestamp)->None:
+        rows=list((await db.execute(select(ItemRow).where(
+            ItemRow.turn_id==job.origin_turn_id,ItemRow.type==ItemType.PLAN.value,
+            ItemRow.status=='in_progress',ItemRow.payload_json.like('%"model_request_id"%'))
+            .with_for_update())).scalars().all())
+        for row in rows:
+            try:payload=json.loads(row.payload_json or '{}')
+            except (TypeError,ValueError):continue
+            if payload.get('job_id')!=job.id:continue
+            elapsed=max(0,int((utc_datetime(timestamp)-utc_datetime(row.created_at)).total_seconds()*1000))
+            current=payload.get('elapsed_ms')
+            if isinstance(current,(int,float)) and not isinstance(current,bool) and current>=0:
+                elapsed=max(elapsed,int(current))
+            row.status='interrupted';row.updated_at=timestamp
+            row.payload_json=json.dumps({**payload,'phase':'interrupted','elapsed_ms':elapsed},
+                ensure_ascii=False)
+
     async def _release_group_budgets_locked(self, db: AsyncSession, group_id: str) -> None:
         reservations=list((await db.execute(select(BudgetReservationRow).where(
             BudgetReservationRow.group_id==group_id).order_by(
@@ -86,6 +103,7 @@ class JobTerminalTransactions:
                     job.updated_at = now()
                     if state in TERMINAL_JOB_STATES:
                         job.terminal_at = now()
+                        await self._close_job_model_activities_locked(db,job,job.terminal_at)
                         attempt = (await db.execute(select(JobAttemptRow).where(
                             JobAttemptRow.job_id == job.id,
                             JobAttemptRow.generation == job.generation,

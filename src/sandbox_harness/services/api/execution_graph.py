@@ -107,7 +107,7 @@ def aggregate_model_activity(rows):
             value['token_usage'][field]+=counts[field]
         status=row.status if row.status in {'in_progress','completed','failed','interrupted'} else 'in_progress'
         phase=str(payload.get('phase') or '')
-        if phase not in {'waiting','streaming','completed','failed'}:
+        if phase not in {'waiting','streaming','completed','failed','interrupted'}:
             phase='completed' if status=='completed' else 'failed' if status in {'failed','interrupted'} else 'waiting'
         terminal=status in {'completed','failed','interrupted'}
         elapsed=payload.get('elapsed_ms')

@@ -11,7 +11,7 @@ describe('model round visibility',()=>{
    {index:2,status:'completed',phase:'completed',duration_ms:7000,cache_read_input_tokens:8,output_tokens:3},
    {index:3,status:'in_progress',phase:'streaming',started_at:'2026-11-27T12:00:00Z',duration_ms:1000},
   ];
-  expect(modelRoundSummary(rounds,now)).toEqual({total:3,completed:2,failed:0,
+  expect(modelRoundSummary(rounds,now)).toEqual({total:3,completed:2,failed:0,interrupted:0,
    activeIndex:3,activePhase:'streaming',activeDurationMs:12000,
    label:'2 轮已完成 · 第 3 轮正在生成 · 12 秒'});
  });
@@ -23,6 +23,9 @@ describe('model round visibility',()=>{
   expect(modelRoundSummary([{index:1,status:'completed',phase:'completed'},failed],now).label)
    .toBe('1 轮已完成 · 1 轮失败');
   expect(modelRoundPhaseLabel(failed)).toBe('失败');
+  const interrupted={index:3,status:'interrupted',phase:'interrupted',duration_ms:8000};
+  expect(modelRoundSummary([interrupted],now).label).toBe('1 轮已中断');
+  expect(modelRoundPhaseLabel(interrupted)).toBe('已中断');
  });
 
  it('handles empty and missing usage without invalid values',()=>{
