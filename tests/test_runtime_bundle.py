@@ -94,6 +94,8 @@ def test_runtime_bundle_build_is_deterministic_and_activation_is_atomic(tmp_path
     assert "Do not poll in a model loop" in RUNTIME_INSTRUCTIONS
     assert "`gpu_runtime_unavailable`" in RUNTIME_INSTRUCTIONS
     assert "Do not change parameters, create a replacement Job" in RUNTIME_INSTRUCTIONS
+    assert "after its confirmation expired" in RUNTIME_INSTRUCTIONS
+    assert "fresh idempotency keys" in RUNTIME_INSTRUCTIONS
     assert "follow the selected Skill's required workflow" in RUNTIME_INSTRUCTIONS
     assert bundle_root() == Path(activated["root"]) / "skills"
 

@@ -26,7 +26,7 @@ describe('API boundary',()=>{
   globalThis.fetch=vi.fn(async()=>new Response(JSON.stringify({detail:replies.shift()}),{status:409}));
   await expect(api('media/drafts/expired/confirm',{method:'POST'})).rejects.toMatchObject({
    code:'media_confirmation_expired',
-   message:'确认已过期，未提交任何生成任务。请让 Agent 重新生成确认单。'});
+   message:'确认已过期，未提交任何生成任务。发送“继续生成刚才的内容，参数不变”，Agent 会创建新的确认单。'});
   await expect(api('media/drafts/cancelled/confirm',{method:'POST'})).rejects.toMatchObject({
    code:'media_confirmation_state_changed',
    message:'确认状态已变化，未重复提交生成任务。请刷新后查看当前状态。'});
