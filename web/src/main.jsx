@@ -11,6 +11,7 @@ import claudeIcon from './assets/harness/claude.svg';
 import deepseekIcon from './assets/harness/deepseek.ico';
 import {activityTiming,formatDuration} from './activity-time';
 import {previewKind,previewable} from './file-preview';
+import {visibleNetworkAccess} from './network-access';
 import './styles.css';
 import './mobile.css';
 import './enhancements.css';
@@ -294,7 +295,7 @@ function App(){
  const [dismissedFailureTurn,setDismissedFailureTurn]=useState('');
  const [catalogRefresh,setCatalogRefresh]=useState({stale:false,error:'',lastSuccess:null});
  const activeTurn=turns.find(turn=>!terminalStates.has(turn.state));
- const currentNetworkAccess=turns.at(-1)?.network_access||(session?.authenticated?'public':'restricted');
+ const currentNetworkAccess=visibleNetworkAccess(activeTurn,session);
  useEffect(()=>setSandboxControlled(false),[thread?.id]);
  useEffect(()=>{document.body.dataset.networkAccess=currentNetworkAccess;return()=>{delete document.body.dataset.networkAccess}},[currentNetworkAccess]);
  useEffect(()=>{const url=accountAvatarUrl(session?.user);document.body.dataset.hasAvatar=url?'true':'false';if(url)document.body.style.setProperty('--account-avatar',`url(${JSON.stringify(url)})`);else document.body.style.removeProperty('--account-avatar');return()=>{delete document.body.dataset.hasAvatar;document.body.style.removeProperty('--account-avatar')}},[session?.user?.avatar_version]);
