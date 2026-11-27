@@ -696,6 +696,90 @@ async def case_k09(client,args):
         'one_group_confirmation':True,'parallel':True,'evidence':result['evidence']}
 
 
+async def case_k15(client,args):
+    thread,turn=await origin(client,args,'K15')
+    catalog=require(await client.get('api/catalog/media',params={'kind':'image'})).json()
+    model=next((row for row in catalog.get('models',[]) if row.get('model')=='seedream-5.0'),None)
+    if not model:raise AssertionError('seedream catalog model missing')
+    schema=model['parameter_schema'];sizes=schema['optional']['size'];limits=schema['limits']
+    expected_sizes=['2048x2048','2560x1440','2304x1728','explicit WIDTHxHEIGHT']
+    if sizes!=expected_sizes or limits.get('max_total_pixels')!=4_624_220:
+        raise AssertionError('deployed image contract mismatch:'+json.dumps(
+            {'sizes':sizes,'limits':limits},sort_keys=True))
+    invalid=semantic_provider_job('invalid-tier','image.generate',kind='image',
+        model='seedream-5.0',mode='text_to_image',
+        parameters={'prompt':'invalid size must remain local','size':'3K'})
+    rejected=await prepare(client,thread,turn,[invalid],'K15-invalid',suppress_continuation=True)
+    if rejected.status_code!=422:
+        raise AssertionError('invalid image size was not rejected before confirmation:'+str(
+            rejected.status_code))
+    if require(await client.get(f"api/threads/{thread['id']}/media/jobs")).json():
+        raise AssertionError('invalid image size created a Media Job')
+    poster=await register_case_asset(thread['id'],turn['id'],
+        ROOT/'tests/real_cases/assets/poster.png')
+    reference={'artifact_id':poster.id,'role':'reference_image','usage':'subject'}
+    jobs=[
+        semantic_provider_job('explicit-size','image.generate',kind='image',
+            model='seedream-5.0',mode='text_to_image',
+            parameters={'prompt':'clean blue square on white, no text','size':'2560x1440'}),
+        semantic_provider_job('isolated-reference','image.generate',kind='image',
+            model='seedream-5.0',mode='reference_image',
+            parameters={'prompt':'preserve the subject in a clean studio variation',
+                'size':'2560x1440'},references=[reference]),
+    ]
+    prepared=require(await prepare(client,thread,turn,jobs,'K15-valid',
+        suppress_continuation=True)).json()
+    if prepared.get('mode')!='draft':raise AssertionError('K15 valid group bypassed confirmation')
+    committed=require(await client.post(
+        f"api/job-group-drafts/{prepared['draft']['id']}/confirm")).json()
+    completed=await wait_jobs(client,committed['jobs'],args.timeout)
+    artifacts=await job_artifacts([row['id'] for row in completed])
+    if any(len(artifacts[row['id']])!=1 for row in completed):
+        raise AssertionError('K15 image artifact collection mismatch')
+    media=require(await client.get(f"api/threads/{thread['id']}/media/jobs")).json()
+    if len(media)!=2 or any(row['status']!='succeeded' for row in media):
+        raise AssertionError('K15 Media Jobs did not succeed:'+json.dumps(media,ensure_ascii=False))
+    return {'classification':'success','thread_id':thread['id'],
+        'group_id':committed['group']['id'],'catalog_sizes':sizes[:-1],
+        'max_total_pixels':limits['max_total_pixels'],'invalid_size':'3K',
+        'provider_submissions_for_invalid':0,'successful_jobs':len(completed),
+        'reference_prefix_isolated':True,
+        'artifact_ids':[artifacts[row['id']][0].artifact_id for row in completed]}
+
+
+async def case_k16(client,args):
+    thread,turn=await origin(client,args,'K16')
+    clip=await register_case_asset(thread['id'],turn['id'],
+        ROOT/'tests/real_cases/assets/video_edit_reference.mp4')
+    reference={'artifact_id':clip.id,'role':'reference_video','usage':'edit_source'}
+    definitions=[
+        ('happyhorse-prefix','happyhorse-video-edit','happyhorse_video_edit',
+            'preserve motion and audio, apply a subtle cool color grade'),
+        ('wan-prefix','wan-2.7-video-edit','wan27_video_edit',
+            'preserve motion and audio, apply a subtle clean line-art style'),
+    ]
+    jobs=[];expected={}
+    for local,model,adapter,prompt in definitions:
+        jobs.append(semantic_provider_job(local,'video.edit',kind='video',model=model,
+            mode='edit_video',parameters={'prompt':prompt,'duration':-1,
+                'resolution':'720p','aspect_ratio':'adaptive'},references=[reference]))
+        expected[local]={'capability':'video.edit','adapter':adapter,'model':model,
+            'mode':'edit_video'}
+    prepared=require(await prepare(client,thread,turn,jobs,'K16',
+        suppress_continuation=True)).json()
+    if prepared.get('mode')!='draft':raise AssertionError('K16 bypassed confirmation')
+    committed=require(await client.post(
+        f"api/job-group-drafts/{prepared['draft']['id']}/confirm")).json()
+    completed=await wait_provider_coverage(client,committed['jobs'],args.timeout)
+    result=await verify_provider_coverage(thread['id'],completed,expected)
+    if result['classification']!='success':return {**result,'thread_id':thread['id']}
+    return {'classification':'success','thread_id':thread['id'],
+        'group_id':committed['group']['id'],'provider_jobs':len(completed),
+        'adapters':sorted(item['adapter'] for item in expected.values()),
+        'one_group_confirmation':True,'reference_prefix_isolated':True,
+        'evidence':result['evidence']}
+
+
 async def case_k10(client,args):
     thread,turn=await origin(client,args,'K10')
     poster=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/poster.png')
@@ -1704,7 +1788,7 @@ HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case
     'P25':case_p25,'P26':case_p26,'P27':case_p27,
     'AS01':case_as01,
     'K07':case_k07,'K08':case_k08,'K09':case_k09,'K10':case_k10,'K11':case_k11,
-    'K12':case_k12,'K13':case_k13,'K14':case_k14,
+    'K12':case_k12,'K13':case_k13,'K14':case_k14,'K15':case_k15,'K16':case_k16,
     **{identity:(lambda client,args,identity=identity:case_skill_coverage(client,args,identity))
         for identity in SKILL_COVERAGE}}
 
@@ -1712,7 +1796,7 @@ HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case
 async def main():
     parser=argparse.ArgumentParser();parser.add_argument('--base-url',default='http://127.0.0.1:24767/')
     parser.add_argument('--case',required=True,choices=[
-        *(f'P{value:02d}' for value in range(1,28)),*(f'K{value:02d}' for value in range(1,15)),'AS01'])
+        *(f'P{value:02d}' for value in range(1,28)),*(f'K{value:02d}' for value in range(1,17)),'AS01'])
     parser.add_argument('--report',type=Path,required=True);parser.add_argument('--harness',default='codex')
     parser.add_argument('--model',default='gpt-5.6-sol');parser.add_argument('--reasoning',default='deep')
     parser.add_argument('--timeout',type=float,default=1200)

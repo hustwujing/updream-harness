@@ -15,10 +15,10 @@ def test_real_case_catalog_is_reproducible_complete_and_parallel_specific():
     assert catalog["source_snapshot"]["sha256"]==hashlib.sha256(source).hexdigest()
     assert catalog["source_snapshot"]["source_case_count"]==129
     assert catalog["business_case_count"]==78
-    assert catalog["parallel_case_count"]==40
+    assert catalog["parallel_case_count"]==42
     assert catalog["cross_database_case_count"]==6
     assert catalog["evolution_case_count"]==18
-    assert catalog["runnable_case_count"]==193
+    assert catalog["runnable_case_count"]==195
     assert len(catalog["cases"])==catalog["runnable_case_count"]
     assert len({row["id"] for row in catalog["cases"]})==len(catalog["cases"])
     assert catalog["superseded_cases"]==[]
@@ -32,6 +32,13 @@ def test_real_case_catalog_is_reproducible_complete_and_parallel_specific():
         f"XDB{value:02d}" for value in range(1,7)]
     assert [row["id"] for row in catalog["cases"] if row["id"].startswith("EVO")]==[
         f"EVO{value:02d}" for value in range(1,19)]
+    k15=next(row for row in catalog["cases"] if row["id"]=="K15")
+    assert k15["expect"]["provider_submissions_for_invalid"]==0
+    assert k15["expect"]["max_total_pixels"]==4_624_220
+    assert k15["coverage"]["providers"][0]["adapter"]=="ark_image"
+    k16=next(row for row in catalog["cases"] if row["id"]=="K16")
+    assert {row["adapter"] for row in k16["coverage"]["providers"]}=={
+        "happyhorse_video_edit","wan27_video_edit"}
     compact=next(row for row in catalog["cases"] if row["id"]=="P22")
     assert compact["executor"]=="parallel_protocol"
     assert compact["expect"]=={"compiled_jobs":2,"metadata_required":False,

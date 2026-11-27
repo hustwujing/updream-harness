@@ -139,6 +139,12 @@ must exercise durable Continuation plus final delivery. Skill coverage requires
 both structured evidence and a host-validated product archive; a Harness-authored
 list of commands or checks is not proof that a product existed.
 
+K15 is the focused Provider-contract gate. It proves that invalid image sizes
+are rejected before a Provider Job exists and that explicit dimensions plus an
+isolated deployment reference prefix both succeed against the real Provider.
+K16 applies the same isolated-prefix proof to the Happyhorse and Wan video-edit
+Adapters with one confirmed parallel group and real output collection.
+
 Campaign reports use `verification_scope=clean_run` only when every reported
 success was executed on the report revision. Retaining unaffected successes
 from older revisions produces `composite_verified`; summaries must preserve

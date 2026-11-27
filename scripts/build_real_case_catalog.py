@@ -244,6 +244,27 @@ COVERAGE_CASES=[
         coverage={"tier":"expensive","skills":[],"operations":[],"providers":[
             {"adapter":"ark_image","model":"seedream-5.0","capability":"image.generate",
                 "modes":["text_to_image","reference_image"]}]}),
+    protocol("K15","Provider合同与隔离引用前检",
+        "验证图片Provider只接受部署合同内的明确宽高；无效尺寸在外部提交前拒绝，文本图片与隔离对象前缀参考图均真实成功。",
+        {"catalog_sizes":["2048x2048","2560x1440","2304x1728"],
+            "max_total_pixels":4624220,"invalid_size":"3K","provider_submissions_for_invalid":0,
+            "successful_jobs":2,"reference_prefix_isolated":True},
+        assets=("poster.png",),
+        features=("provider_contract","preflight","reference_prefix","artifact_collection"),
+        coverage={"tier":"required","skills":[],"operations":[],"providers":[
+            {"adapter":"ark_image","model":"seedream-5.0","capability":"image.generate",
+                "modes":["text_to_image","reference_image"]}]}),
+    protocol("K16","视频Provider隔离引用前缀",
+        "以一次整组确认并行运行Happyhorse与Wan视频编辑，验证隔离对象前缀的参考视频能真实提交、轮询并收集成果。",
+        {"provider_jobs":2,"adapters":["happyhorse_video_edit","wan27_video_edit"],
+            "one_group_confirmation":True,"reference_prefix_isolated":True},
+        assets=("video_edit_reference.mp4",),
+        features=("provider_contract","reference_prefix","video_edit","artifact_collection"),
+        coverage={"tier":"required","skills":[],"operations":[],"providers":[
+            {"adapter":"happyhorse_video_edit","model":"happyhorse-video-edit",
+                "capability":"video.edit","modes":["edit_video"]},
+            {"adapter":"wan27_video_edit","model":"wan-2.7-video-edit",
+                "capability":"video.edit","modes":["edit_video"]}]}),
 ]
 
 
