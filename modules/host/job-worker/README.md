@@ -7,3 +7,7 @@ accepted-handle recovery, polling, collection and cleanup, but not allocation cr
 - Databases: core and media
 - Sandbox access: configured provider through durable allocation ownership
 - Verification: JobWorker/adapter/recovery tests and real parallel protocol cases
+
+Every Adapter receives a side-effect-free `preflight()` before submission and
+shares one lifecycle/error contract. Terminal Outbox facts expose stable codes,
+safe reasons and guidance to the Primary Harness without raw diagnostics.

@@ -28,7 +28,7 @@ retains the original split-database evidence.
 | Recovery, cancellation, cleanup, pool or checkpoint change | [State and data contracts](state-and-data-contracts.md), [Recovery and observability](recovery-and-observability.md), [Lifecycle changes](change-lifecycle.md) |
 | Sandbox allocation dispatcher, admission saturation or provider quota exhaustion | [Recovery and observability](recovery-and-observability.md), [Testing and real cases](testing-and-real-cases.md), [Real capacity gate](../test-evidence/sandbox-capacity-gate.md) |
 | Add or change a Harness | [Sandbox and Harness](sandbox-and-harness.md), [Adding a Harness](add-harness.md), [Skill and image lifecycle](skill-and-image-lifecycle.md) |
-| Add a model route or Provider | [Gateway, security and Providers](gateway-security-providers.md), [Adding a model Provider](add-model-provider.md) |
+| Add a model route or Provider | [Gateway, security and Providers](gateway-security-providers.md), [Adding a model Provider](add-model-provider.md), [External execution error contract](external-error-contracts.md) |
 | Add image/video/audio/3D generation | [Media Generation Design and Provider Integration Standard](media-generation.md) |
 | Add or change an Operation, Provider, Child Harness or external worker error | [External execution error contract](external-error-contracts.md), [Recovery and observability](recovery-and-observability.md) |
 | Change execution catalog readiness, Provider preflight, collection retry or Reviewer terminalization | [External execution error contract](external-error-contracts.md), [State and data contracts](state-and-data-contracts.md), [Testing and real cases](testing-and-real-cases.md) |

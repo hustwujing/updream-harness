@@ -19,10 +19,24 @@ Every `FAILED`, `BLOCKED` or `UNKNOWN` Job result must expose:
   may continue;
 - `side_effect_state`: `none`, `possible`, `accepted`, `completed`, or
   `unknown`.
+- optional `error_reason`: a bounded, sanitized external explanation created
+  only from the trusted public error envelope.
 
 `error_detail` is diagnostic evidence. UI surfaces must use `error_message` and
 `error_guidance`, never an upstream body, Python stack, credential, path or
 opaque Provider message.
+
+Every asynchronous `JobAdapter` is preflighted before `submit`. The concrete
+Adapter owns input validation; the generic Worker owns timing, leases,
+generation fencing and handling of `PreAcceptFailure`. Provider-specific
+contracts are registered by exact Adapter identity. Unregistered Adapters fail
+closed and may not inherit rules from another Provider or media kind.
+
+The safe public projection is identical for durable Operations, Providers,
+Child Harnesses, Media Jobs and Site Jobs. Job/Media Outbox continuation,
+browser API and execution graph must carry the same stable message, optional
+safe reason and guidance. Arbitrary `error_reason` fields from an executor are
+discarded; only a valid structured `external_error_detail` envelope is trusted.
 
 ## Phase And Retry Matrix
 

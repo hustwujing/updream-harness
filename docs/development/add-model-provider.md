@@ -6,6 +6,8 @@ Required when adding an upstream, changing model protocol, introducing an exact
 Harness/model route or changing discovery/probe behavior.
 
 Sandbox infrastructure providers use [Adding a Sandbox Provider](add-sandbox-provider.md).
+Image, video, audio and 3D Providers also require the registered contract in
+[Media Generation](media-generation.md).
 
 ## Existing route model
 
@@ -39,6 +41,12 @@ is incomplete.
 6. Classify explicit unsupported/auth responses separately from transient busy,
    timeout and transport failures.
 
+For an asynchronous external Provider, also implement its exact Adapter
+contract and full `JobAdapter` lifecycle. Put model schema, reference rules and
+request normalization in a new module under `common/providers/`; do not edit
+generic Catalog/Worker state machines to add Provider branches. Registering an
+Adapter without a contract is forbidden.
+
 ## Tests
 
 - Exact route selection and missing credential behavior.
@@ -47,6 +55,8 @@ is incomplete.
 - Start timeout, stream idle timeout, cancellation and revocation.
 - Token values preserve provider-reported zero and leave absent values absent.
 - A real minimal request using the deployed route and selected Harness.
+- Public errors prove stable code plus safe reason delivery to API, execution
+  graph and model continuation, and prove raw detail is absent.
 
 Do not declare a model available based only on `/models`; a real Turn is the
 final integration proof.

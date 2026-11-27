@@ -130,6 +130,14 @@ the Worker alone submits external Provider requests, persists external IDs,
 resumes polling after crashes and commits the Artifact, terminal state and
 Outbox transaction. API and Worker can restart independently.
 
+Every Media Provider has an exact registered contract under
+`src/sandbox_harness/common/providers/`. The contract owns model capabilities,
+public parameter metadata, reference validation and request normalization;
+`MediaCatalog` only resolves generic descriptors. Ark, MiniMax, Tripo,
+Happyhorse and Wan are isolated contracts. An unregistered Adapter fails
+startup, so adding Kling requires a Kling contract and executor rather than a
+branch in the shared Catalog or Worker state machine.
+
 `image.decompose` uses that same MediaWorker execution path. JobWorker performs
 only an atomic database handoff from the authorized Operation; MediaWorker owns
 the HTTP submit, poll, cancel and multi-file download. The independent
@@ -145,6 +153,14 @@ Operations and Providers. Submission identity is persisted before polling. A
 transient collection failure retries the same completed external execution and
 never resubmits business work. Deterministic Reviewer verdict/schema failures
 terminalize immediately and atomically update the Review Gate.
+
+All asynchronous Adapters run a side-effect-free `preflight()` before submit.
+Program decisions use stable error codes. A bounded external reason is exposed
+only when the Adapter creates the trusted sanitized error envelope; API task
+details, execution graph and Primary continuation then receive the same
+`error_reason` and guidance, while raw Provider bodies and internal diagnostic
+detail remain private. The same projection applies to Provider, Operation,
+Child Harness, Media and Site work.
 
 Capacity waits restore submission intent within the same fenced attempt before
 allocation. Temporary status HTTP failures keep polling the accepted handle.

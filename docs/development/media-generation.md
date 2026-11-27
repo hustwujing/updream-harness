@@ -21,6 +21,20 @@ The resolved provider, adapter, model, capabilities and config version are
 snapshotted on Job creation. Only models that pass a real minimal request and
 result validation may be enabled.
 
+`MediaCatalog` contains only generic model descriptors and resolves the
+registered contract by exact `adapter`. Provider-specific public schema,
+parameter/reference validation and request normalization live in
+`src/sandbox_harness/common/providers/`. Every enabled Adapter must register a
+contract; missing registration is a startup error and has no kind-based or
+legacy fallback. A new Kling integration therefore adds a Kling contract and
+executor without changing Ark, MiniMax, Tripo, JobWorker or the durable state
+machine.
+
+The Sandbox CLI, API confirmation path, durable Provider preflight and Media
+Worker use the same registered contract. Validation is side-effect free. A
+real minimal Provider request remains the release proof because local
+validation cannot execute proprietary Provider source code.
+
 Limits apply to one Provider Job, not to the final production. Seedance 2.0
 clips are 4-15 seconds. Longer videos are storyboarded into clips and assembled
 locally. MiniMax text must be shorter than 10,000 characters; this product also
@@ -118,9 +132,19 @@ all expose the same `error_code` and `error_guidance`:
 - terminal protocol/result defects: `provider_job_expired`,
   `provider_result_invalid`, `voice_clone_failed`.
 
-Adapters may retain a sanitized Provider code in `error_detail`, but prompts,
-browser logic and recovery decisions use only the stable category. New Provider
-codes require a classifier regression test before changing retry behavior.
+Adapters store internal diagnostics in `error_detail`. Only
+`external_error_detail()` may mark a bounded, URL/request-ID/credential-redacted
+reason as public. API views, execution graph, user task details and model
+continuations project the same `error_reason`; raw detail is never public.
+Recovery decisions still use only the stable category. New Provider codes
+require a classifier regression test before changing retry behavior.
+
+The deployed Ark image contract accepts explicit `WIDTHxHEIGHT` values. It
+rejects `2K`/`3K` aliases and enforces the real endpoint area ceiling of
+4,624,220 pixels before confirmation. MiniMax clone status `2039` is a
+deterministic voice-ID collision: after confirming the old identity is not
+visible, the Worker rotates the owner/reference revision once and retries the
+same frozen bytes. A second collision is terminal.
 
 Direct clients may use:
 

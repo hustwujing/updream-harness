@@ -77,6 +77,14 @@ claims made by documentation.
 - Fix shared contracts without case-, operation- or sandbox-provider-specific
   state-machine branches. Admission saturation must not block cleanup or
   observation of already accepted executions.
+- Every asynchronous Adapter implements the shared preflight, submit, status,
+  reconcile, cancel, collect and cleanup lifecycle. Provider/model validation
+  belongs to its registered contract under `common/providers/`; never add
+  Provider rules or an unregistered fallback to `MediaCatalog` or JobWorker.
+- Program decisions use stable error codes. A user- or model-visible external
+  reason must be created by the bounded public error envelope and projected
+  identically through API, execution graph and continuation. Raw diagnostic
+  detail remains internal.
 - Never log prompts, generated content, commands, file contents, credentials,
   arbitrary headers, raw exception messages or unfiltered URLs. New telemetry
   attributes require explicit allowlisting.
