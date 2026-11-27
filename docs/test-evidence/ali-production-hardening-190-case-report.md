@@ -91,3 +91,9 @@ successful records contain `job_failures=[]` and no hidden
   179 existing deprecation warnings; elapsed time 345.39 seconds.
 - Selected immutable releases: sandbox-gateway `bb42549d...`, JobWorker
   `5344a387...`; both recovered from SIGKILL and report healthy service state.
+- Local nginx and the configured FRP remote endpoint both returned HTTP 200 for
+  the page and `/api/health`. At final verification,
+  `updream-lab.bilibili.co` returned authoritative `NXDOMAIN` from the internal
+  resolver, Google DNS and Ali DNS. The application and FRP tunnel are healthy,
+  but that external DNS record must be restored by its DNS owner before the
+  named URL is usable.
