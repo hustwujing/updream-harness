@@ -28,7 +28,7 @@ from sandbox_harness.common.db.domain_database import DomainInbox, DomainOutbox
 from sandbox_harness.common.db.media_repository import MediaRepository
 from sandbox_harness.common.db.media_models import MediaSourcePermitRow
 from sandbox_harness.common.db.models import (
-    CapabilityLedgerRow, JobRow, MediaJobOutputRow, MediaJobRow,
+    CapabilityLedgerRow, JobRow, MediaBatchRow, MediaJobOutputRow, MediaJobRow,
     ModelTokenReservationRow, OwnerAdmissionRow, ProviderCircuitRow, ThreadRow,
     TurnOrderRow, TurnRow, UsageLedgerRow,
     canonical_digest,
@@ -593,14 +593,18 @@ async def evo18(client,args,repositories,settings):
     async with repositories.media.connections() as db:
         rows=list((await db.scalars(select(MediaJobRow).where(
             MediaJobRow.thread_id==thread['id']))).all())
+        batch=await db.get(MediaBatchRow,origin['id'])
     expected_path='/workspace/project/'+project.path
     if (continuation_final['state']!='COMPLETED' or expected_path not in continuation.message
-            or len(rows)!=1 or rows[0].id!=job['id'] or not rows[0].provider_job_id
-            or output.project_file_id!=project.id):
+            or len(rows)!=1 or rows[0].id!=job['id']
+            or output.project_file_id!=project.id or not batch
+            or batch.status!='continued' or batch.attempt_count!=1):
         raise AssertionError('evo18_media_continuation_contract_failed')
+    execution_identity=rows[0].provider_job_id or 'synchronous:'+rows[0].id
     return {'classification':'success','thread_id':thread['id'],'origin_turn_id':origin['id'],
         'continuation_turn_id':continuation.id,'media_job_id':job['id'],
-        'provider_job_id':rows[0].provider_job_id,'provider_submissions':1,
+        'provider_job_id':rows[0].provider_job_id,'provider_execution_identity':execution_identity,
+        'provider_submissions':1,'batch_attempt_count':batch.attempt_count,
         'project_file_id':project.id,'project_path':project.path,
         'project_file_promoted':True,'continuation_contains_path':True}
 
