@@ -163,11 +163,16 @@ def main()->None:
     if args.check_only:return
     target=DATA_ROOT/"config/platform.env"
     if target.exists() and not args.force:raise FileExistsError(target)
+    staging_paths=tuple(DATA_ROOT/"tmp"/name for name in (
+        "job-artifacts","child-job-artifacts","controlled-job-artifacts",
+        "operation-job-artifacts","provider-job-artifacts","provider-outputs",
+        "runtime-downloads","site-stages"))
     service_paths=(DATA_ROOT/"logs",DATA_ROOT/"cache",DATA_ROOT/"pip-cache",
         DATA_ROOT/"npm-cache",DATA_ROOT/"playwright-browsers",DATA_ROOT/"objects",
         DATA_ROOT/"service-logs",DATA_ROOT/"diagnostics",DATA_ROOT/"tmp",DATA_ROOT/"image-decompose",
         DATA_ROOT/"preview-cache",DATA_ROOT/"services",DATA_ROOT/"catalogs",
-        DATA_ROOT/"runtime-bundles",DATA_ROOT/"runtime-code-bundles")
+        DATA_ROOT/"runtime-bundles",DATA_ROOT/"runtime-code-bundles",
+        DATA_ROOT/"controlled-operations",*staging_paths)
     for path in (DATA_ROOT/"config",*service_paths,DATA_ROOT/"postgresql",DATA_ROOT/"postgresql/run"):
         path.mkdir(parents=True,exist_ok=True)
     service_uid=pwd.getpwnam("sandbox-harness").pw_uid

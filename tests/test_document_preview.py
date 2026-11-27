@@ -63,6 +63,10 @@ def test_api_preview_temporary_files_stay_under_project_data():
 def test_ali_start_reasserts_private_service_directory_ownership():
     start = (ROOT / "deploy/ali/start.sh").read_text()
     assert "writable_service_paths" in start
-    for path in ("logs", "service-logs", "diagnostics", "tmp", "cache", "preview-cache"):
+    for path in ("logs", "service-logs", "diagnostics", "tmp", "cache", "preview-cache",
+            "controlled-operations", "tmp/job-artifacts", "tmp/child-job-artifacts",
+            "tmp/controlled-job-artifacts", "tmp/operation-job-artifacts",
+            "tmp/provider-job-artifacts", "tmp/provider-outputs", "tmp/runtime-downloads",
+            "tmp/site-stages"):
         assert f'"$root/.data/{path}"' in start
     assert "install -d -o sandbox-harness -g sandbox-harness -m 0700" in start
