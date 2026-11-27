@@ -231,7 +231,8 @@ class MediaJobsTransactions:
             if outputs:
                 primary_path = ""
                 for output in outputs:
-                    path = f"artifacts/3d/{row.id}/{output.filename}"
+                    path = self._media_output_project_path(row.id, output.role,
+                        output.filename, output.mime)
                     value, _ = await self._register_project_file_locked(db, row.thread_id, path=path,
                         source_type="artifact", source_turn_id=row.turn_id, sha256=output.sha256,
                         size=output.size, mime=output.mime, object_ref=output.object_ref)
@@ -693,7 +694,8 @@ class MediaJobsTransactions:
                 project_file_id = ""
                 if row.output_role in {"workspace", "delivery"}:
                     project, _ = await self._register_project_file_locked(db, row.thread_id,
-                        path=f"artifacts/3d/{row.id}/{filename}", source_type="artifact",
+                        path=self._media_output_project_path(row.id, role, filename, mime),
+                        source_type="artifact",
                         source_turn_id=row.turn_id, sha256=digest, size=size, mime=mime,
                         object_ref=object_ref)
                     project_file_id = project.id

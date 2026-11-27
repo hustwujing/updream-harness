@@ -74,7 +74,7 @@ async def test_media_promotion_commits_core_file_then_acknowledges_media(tmp_pat
             outputs=[{"role":"primary","filename":"result.png","object_ref":"sha256:"+"c"*64,
                 "mime":"image/png","size":12}],generation=claimed["generation"])
         result=await commands.promote_media_job_for_thread(job.id,thread.id,"delivery")
-        assert result["project_path"]==f"artifacts/3d/{job.id}/result.png"
+        assert result["project_path"]==f"artifacts/media/{job.id}.png"
         assert (await core.current_project_files(thread.id,"owner"))[0].path==result["project_path"]
         refreshed=await media.get_media_job(job.id,"owner")
         assert refreshed.output_role=="delivery" and refreshed.outputs[0].project_file_id

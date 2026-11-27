@@ -85,11 +85,12 @@ class CrossDomainCommands:
             version=await self.core.lifecycle.admit(db,thread.owner_id,thread_id)
             promoted=[];primary_path=""
             for item in manifest["outputs"]:
-                path=f"artifacts/3d/{job_id}/{item['filename']}"
+                path=item["project_path"]
                 project,_=await self.core._register_project_file_locked(db,thread_id,path=path,
                     source_type="artifact",source_turn_id=manifest["turn_id"],sha256=item["sha256"],
                     size=item["size"],mime=item["mime"],object_ref=item["object_ref"])
-                promoted.append({**item,"project_file_id":project.id})
+                promoted.append({key:value for key,value in item.items()
+                    if key!="project_path"}|{"project_file_id":project.id})
                 if item["role"]=="primary":primary_path=project.path
             if not primary_path:raise RuntimeError("media_job_output_invalid")
             payload={"job_id":job_id,"thread_id":thread_id,"output_role":role,

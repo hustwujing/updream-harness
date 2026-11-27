@@ -59,6 +59,13 @@ class MediaDraftsTransactions:
             "audio/webm": "webm", "model/gltf-binary": "glb"}.get(mime, "bin")
         return f"artifacts/media/{job_id}.{extension}"
 
+    @classmethod
+    def _media_output_project_path(cls, job_id: str, role: str,
+                                   filename: str, mime: str) -> str:
+        if role == "primary":
+            return cls._media_project_path(job_id, mime)
+        return f"artifacts/media/{job_id}/{filename}"
+
 
     @staticmethod
     async def _media_job_outputs(db: AsyncSession, job_id: str) -> list[MediaJobOutputView]:

@@ -309,11 +309,11 @@ async def test_tripo_multi_output_commit_is_atomic_and_recoverable(tmp_path):
         assert await store.resolve_tripo_input_job(job.id, job.id) == "provider-task"
         files = await store.current_project_files(thread.id, owner)
         assert {item.path for item in files} == {
-            f"artifacts/3d/{job.id}/model.glb", f"artifacts/3d/{job.id}/preview.png"}
+            f"artifacts/media/{job.id}.glb", f"artifacts/media/{job.id}/preview.png"}
         _, group = await store.media_continuation_group(turn.id)
-        assert group[0]["project_path"] == f"artifacts/3d/{job.id}/model.glb"
+        assert group[0]["project_path"] == f"artifacts/media/{job.id}.glb"
         promoted = await store.promote_media_job_for_thread(job.id, thread.id, "delivery")
-        assert promoted["project_path"] == f"artifacts/3d/{job.id}/model.glb"
+        assert promoted["project_path"] == f"artifacts/media/{job.id}.glb"
         async with store.connections() as db:
             assert len((await db.execute(__import__('sqlalchemy').select(MediaJobOutputRow))).scalars().all()) == 2
             items = (await db.execute(__import__('sqlalchemy').select(ItemRow).where(

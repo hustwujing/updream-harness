@@ -381,7 +381,8 @@ class MediaRepository(DomainDatabase, MediaReferencesTransactions,
             return {"job_id":row.id,"thread_id":row.thread_id,"turn_id":row.turn_id,
                 "outputs":[{"id":item.id,"role":item.role,"filename":item.filename,
                     "object_ref":item.object_ref,"sha256":item.sha256,"size":item.size,
-                    "mime":item.mime} for item in outputs]}
+                    "mime":item.mime,"project_path":self._media_output_project_path(
+                        row.id,item.role,item.filename,item.mime)} for item in outputs]}
 
     async def _receive_promotion_ack(self, db, envelope):
         value=envelope.payload
