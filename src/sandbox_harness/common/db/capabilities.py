@@ -79,10 +79,29 @@ class CapabilitiesTransactions:
         async with self.connections.begin() as db:
             statement = (postgresql_insert(CapabilityLedgerRow) if self.engine.dialect.name == "postgresql"
                 else sqlite_insert(CapabilityLedgerRow)).values(**values).on_conflict_do_nothing(
-                    index_elements=[CapabilityLedgerRow.nonce])
+                index_elements=[CapabilityLedgerRow.nonce])
             await db.execute(statement)
             row = (await db.execute(select(CapabilityLedgerRow).where(
                 CapabilityLedgerRow.nonce == nonce).with_for_update())).scalar_one()
+            reservations = list((await db.scalars(select(ModelTokenReservationRow).where(
+                ModelTokenReservationRow.nonce == nonce,
+                ModelTokenReservationRow.state == "reserved").with_for_update())).all())
+            released = sum(value.reserved for value in reservations)
+            row.token_reserved = max(0, row.token_reserved - released)
+            parent_releases: dict[str, int] = {}
+            for reservation in reservations:
+                if reservation.parent_nonce:
+                    parent_releases[reservation.parent_nonce] = (
+                        parent_releases.get(reservation.parent_nonce, 0) + reservation.reserved)
+            for parent_nonce, amount in parent_releases.items():
+                parent = await db.get(CapabilityLedgerRow, parent_nonce, with_for_update=True)
+                if parent:
+                    parent.token_reserved = max(0, parent.token_reserved - amount)
+                    parent.updated_at = timestamp
+            for reservation in reservations:
+                reservation.state = "released"
+                reservation.charged = 0
+                reservation.updated_at = timestamp
             row.revoked = True; row.expires_at = max(row.expires_at, expires_at); row.updated_at = timestamp
 
 
@@ -104,14 +123,14 @@ class CapabilitiesTransactions:
                     parent.token_budget - parent.token_reserved - parent.token_consumed)
             if requested_output > available or available < 1:
                 raise ValueError("model_token_budget_exhausted")
-            row.token_reserved += available
-            if parent: parent.token_reserved += available
+            row.token_reserved += requested_output
+            if parent: parent.token_reserved += requested_output
             timestamp = now()
             db.add(ModelTokenReservationRow(id=request_id, nonce=claims.nonce,
                 parent_nonce=claims.parent_nonce, requested_output=requested_output,
-                reserved=available, charged=0, state="reserved",
+                reserved=requested_output, charged=0, state="reserved",
                 created_at=timestamp, updated_at=timestamp))
-            return {"reserved":available,"remaining":available-requested_output,"reused":False}
+            return {"reserved":requested_output,"remaining":available-requested_output,"reused":False}
 
 
     async def finalize_model_tokens(self, request_id: str, usage_tokens: int | None) -> dict:
@@ -132,4 +151,3 @@ class CapabilitiesTransactions:
                 parent.token_consumed += charge; parent.updated_at = now()
             reservation.charged = charge; reservation.state = "finalized"; reservation.updated_at = now()
             return {"charged":charge,"reused":False}
-

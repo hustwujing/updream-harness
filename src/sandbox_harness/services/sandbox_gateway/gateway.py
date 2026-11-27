@@ -269,13 +269,14 @@ def enforce_model_output_budget(payload: dict, suffix: str, remaining: int,
 def model_token_reservation(payload:dict,suffix:str,kind:str,remaining:int,
                             input_token_ceiling:int)->int:
     if kind=="token_count":return 0
-    if kind=="generation":
-        return enforce_model_output_budget(payload,suffix,remaining,input_token_ceiling)
     available=remaining-max(0,input_token_ceiling)
     if available<1:raise HTTPException(429,"model_token_budget_exhausted")
+    if kind=="generation":
+        output= enforce_model_output_budget(payload,suffix,available,input_token_ceiling)
+        return max(0,input_token_ceiling)+output
     # Standalone compaction does not accept a generation output limit. The
     # ledger still serializes the request and settles Provider-reported usage.
-    return min(8192,available)
+    return max(0,input_token_ceiling)+min(8192,available)
 
 
 async def send_with_start_timeout(client, request, timeout_seconds: float):

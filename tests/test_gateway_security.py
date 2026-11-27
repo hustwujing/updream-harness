@@ -9,7 +9,7 @@ from starlette.requests import Request
 from sandbox_harness.common.security.capability import (CapabilityCodec)
 from sandbox_harness.common.configuration.config import (Settings)
 from sandbox_harness.common.contracts.domain import (Harness)
-from sandbox_harness.services.sandbox_gateway.gateway import (bounded_request_body, enforce_model_output_budget, estimate_model_input_tokens, model_endpoint_kind)
+from sandbox_harness.services.sandbox_gateway.gateway import (bounded_request_body, enforce_model_output_budget, estimate_model_input_tokens, model_endpoint_kind, model_token_reservation)
 from test_support.legacy_store import (Store)
 
 
@@ -52,6 +52,14 @@ def test_model_input_estimate_counts_inline_images_by_dimensions_not_base64_byte
 def test_output_budget_does_not_precharge_unknown_cache_outcome():
     payload={'max_output_tokens':20}
     assert enforce_model_output_budget(payload,'/responses',100,95)==20
+
+
+def test_model_reservation_bounds_input_and_output_without_locking_remaining_budget():
+    payload={'max_output_tokens':20}
+    assert model_token_reservation(payload,'/responses','generation',100,50)==70
+    with pytest.raises(Exception) as captured:
+        model_token_reservation(payload,'/responses','generation',60,50)
+    assert captured.value.status_code==429
 
 
 def test_model_input_estimate_is_conservative_for_text_and_malformed_binary():
@@ -202,12 +210,9 @@ async def test_durable_capability_counts_revocation_and_token_reservations_survi
     store=Store(settings.database_url);await store.initialize()
     assert (await store.authorize_capability(value,"request"))["request_count"]==1
     first=await store.reserve_model_tokens(value,"request-one",6)
-    assert first["reserved"]==10
-    results=await asyncio.gather(
-        store.reserve_model_tokens(value,"request-two",1),
-        store.reserve_model_tokens(value,"request-three",1),return_exceptions=True)
-    assert all(isinstance(item,ValueError) and str(item)=="model_token_budget_exhausted"
-        for item in results)
+    assert first["reserved"]==6
+    with pytest.raises(ValueError,match="model_token_budget_exhausted"):
+        await store.reserve_model_tokens(value,"request-two",5)
     assert (await store.finalize_model_tokens("request-one",4))["charged"]==4
     assert (await store.finalize_model_tokens("request-one",9))=={"charged":4,"reused":True}
     second=await store.reserve_model_tokens(value,"request-two",6)
@@ -312,7 +317,27 @@ async def test_child_grants_share_parent_token_budget(tmp_path):
         with pytest.raises(ValueError,match="model_token_budget_exhausted"):
             await store.reserve_model_tokens(second,"child-request-two",3)
         await store.finalize_model_tokens("child-request-one",4)
-        assert (await store.reserve_model_tokens(second,"child-request-two",3))["reserved"]==6
+        assert (await store.reserve_model_tokens(second,"child-request-two",3))["reserved"]==3
+    finally:await store.close()
+
+
+async def test_capability_revoke_releases_orphaned_model_reservation(tmp_path):
+    from sqlalchemy import select
+    from test_support.legacy_store import (CapabilityLedgerRow,ModelTokenReservationRow)
+    settings=Settings(backend='fake',data_root=tmp_path,
+        database_url='sqlite+aiosqlite:///'+str(tmp_path/'orphan-reservation.db'))
+    value=claims(settings,token_budget=100,parent_nonce='parent-budget',
+        parent_token_budget=100);store=Store(settings.database_url);await store.initialize()
+    try:
+        assert (await store.reserve_model_tokens(value,'orphan-request',40))['reserved']==40
+        await store.revoke_capability(value.nonce,value.expires_at)
+        async with store.connections() as db:
+            ledger=await db.get(CapabilityLedgerRow,value.nonce)
+            parent=await db.get(CapabilityLedgerRow,value.parent_nonce)
+            reservation=await db.get(ModelTokenReservationRow,'orphan-request')
+        assert ledger.revoked and ledger.token_reserved==0 and ledger.token_consumed==0
+        assert parent.token_reserved==0 and parent.token_consumed==0
+        assert reservation.state=='released' and reservation.charged==0
     finally:await store.close()
 
 
