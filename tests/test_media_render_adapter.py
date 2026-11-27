@@ -15,6 +15,30 @@ from sandbox_harness.common.sandbox.runtime import (StagedRuntimeObject)
 from test_support.legacy_store import (Store)
 
 
+async def test_compose_sequence_preflight_accepts_multiple_sources_and_optional_subtitles(tmp_path):
+    artifacts=[SimpleNamespace(id=value) for value in ('a'*32,'b'*32,'c'*32,'d'*32)]
+    class ArtifactStore:
+        async def get_artifact(self,identity):return next(row for row in artifacts if row.id==identity)
+    request=JobRequest(local_job_id='compose',kind=JobKind.OPERATION,adapter='media.concat_sequence',
+        descriptor_id='media.concat_sequence',descriptor_version='1',descriptor_digest='e'*64,
+        idempotency_key='compose-preflight',parameters={'recipe':{
+            'operation':'media.concat_sequence','source_role':'source','music_role':'music',
+            'subtitle_role':'subtitles','segment_count':2,'segment_seconds':2,
+            'width':1920,'height':1080,'fps':24,'watermark_text':'UPDREAM',
+            'output_filename':'trailer.mp4'}},input_artifacts=(
+                JobArtifactInput(artifact_id='a'*32,artifact_role='source'),
+                JobArtifactInput(artifact_id='b'*32,artifact_role='source'),
+                JobArtifactInput(artifact_id='c'*32,artifact_role='music'),
+                JobArtifactInput(artifact_id='d'*32,artifact_role='subtitles')),
+        expected_outputs=(JobExpectedOutput(artifact_role='rendered_media'),))
+    request=request.model_copy(update={'child_profile_id':'operation-controlled',
+        'runtime_profile_id':'media-cpu','resource_requirements':{
+            'harness':'codex','image_digest':'f'*64}})
+    adapter=MediaRenderOperationAdapter(scheduler=None,pool=None,runtime=None,store=ArtifactStore(),
+        objects=None,settings=Settings(backend='fake',data_root=tmp_path),token_factory=None)
+    await adapter.preflight(SimpleNamespace(request=request))
+
+
 @pytest.mark.parametrize('phase',['allocating','preparing'])
 async def test_operation_unknown_create_survives_worker_replacement_without_runtime_replay(tmp_path,phase):
     import asyncio

@@ -246,6 +246,23 @@ def concat_sequence_job(source_id:str,music_id:str)->dict:
                 'min_items':1,'max_items':1,'mime_patterns':['application/json']}]}
 
 
+def compose_timeline_job(source_ids:list[str],music_id:str,subtitle_id:str)->dict:
+    return {'local_job_id':'compose-timeline','kind':'operation','adapter':'media.concat_sequence',
+        'descriptor_id':'media.concat_sequence','descriptor_version':'1','descriptor_digest':'e'*64,
+        'idempotency_key':'protocol-compose-'+uuid.uuid4().hex,
+        'parameters':{'recipe':{'operation':'media.concat_sequence','source_role':'source',
+            'music_role':'music','subtitle_role':'subtitles','watermark_text':'UPDREAM',
+            'segment_count':len(source_ids),'segment_seconds':2,'width':320,'height':180,
+            'fps':24,'output_filename':'composed-timeline.mp4'}},
+        'input_artifacts':[*( {'artifact_id':identity,'artifact_role':'source'} for identity in source_ids),
+            {'artifact_id':music_id,'artifact_role':'music'},
+            {'artifact_id':subtitle_id,'artifact_role':'subtitles'}],
+        'expected_outputs':[{'artifact_role':'rendered_media','output_disposition':'workspace',
+            'min_items':1,'max_items':1,'mime_patterns':['video/mp4']},
+            {'artifact_role':'compiler_report','output_disposition':'workspace',
+                'min_items':1,'max_items':1,'mime_patterns':['application/json']}]}
+
+
 def decompose_job(artifact_id:str)->dict:
     return {'local_job_id':'decompose-image','kind':'operation','adapter':'image.decompose',
         'descriptor_id':'image.decompose','descriptor_version':'1',
@@ -778,6 +795,22 @@ async def case_k16(client,args):
         'adapters':sorted(item['adapter'] for item in expected.values()),
         'one_group_confirmation':True,'reference_prefix_isolated':True,
         'evidence':result['evidence']}
+
+
+async def case_k17(client,args):
+    thread,turn=await origin(client,args,'K17')
+    first=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/clip_a.mp4')
+    second=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/clip_b.mp4')
+    music=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/music.wav')
+    subtitles=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/captions.srt')
+    prepared=require(await prepare(client,thread,turn,[compose_timeline_job(
+        [first.id,second.id],music.id,subtitles.id)],'K17',suppress_continuation=True)).json()
+    if prepared.get('mode')!='committed':raise AssertionError('compose Operation required confirmation')
+    completed=await wait_jobs(client,prepared['jobs'],args.timeout)
+    outputs=await job_artifacts([completed[0]['id']]);roles={row.artifact_role for row in outputs[completed[0]['id']]}
+    if roles!={'rendered_media','compiler_report'}:raise AssertionError('compose outputs mismatch')
+    return {'classification':'success','thread_id':thread['id'],'job_id':completed[0]['id'],
+        'source_count':2,'subtitles':True,'watermark':True,'artifact_roles':sorted(roles)}
 
 
 async def case_k10(client,args):
@@ -1788,7 +1821,7 @@ HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case
     'P25':case_p25,'P26':case_p26,'P27':case_p27,
     'AS01':case_as01,
     'K07':case_k07,'K08':case_k08,'K09':case_k09,'K10':case_k10,'K11':case_k11,
-    'K12':case_k12,'K13':case_k13,'K14':case_k14,'K15':case_k15,'K16':case_k16,
+    'K12':case_k12,'K13':case_k13,'K14':case_k14,'K15':case_k15,'K16':case_k16,'K17':case_k17,
     **{identity:(lambda client,args,identity=identity:case_skill_coverage(client,args,identity))
         for identity in SKILL_COVERAGE}}
 
@@ -1796,7 +1829,7 @@ HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case
 async def main():
     parser=argparse.ArgumentParser();parser.add_argument('--base-url',default='http://127.0.0.1:24767/')
     parser.add_argument('--case',required=True,choices=[
-        *(f'P{value:02d}' for value in range(1,28)),*(f'K{value:02d}' for value in range(1,17)),'AS01'])
+        *(f'P{value:02d}' for value in range(1,28)),*(f'K{value:02d}' for value in range(1,18)),'AS01'])
     parser.add_argument('--report',type=Path,required=True);parser.add_argument('--harness',default='codex')
     parser.add_argument('--model',default='gpt-5.6-sol');parser.add_argument('--reasoning',default='deep')
     parser.add_argument('--timeout',type=float,default=1200)

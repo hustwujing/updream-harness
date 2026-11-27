@@ -15,10 +15,10 @@ def test_real_case_catalog_is_reproducible_complete_and_parallel_specific():
     assert catalog["source_snapshot"]["sha256"]==hashlib.sha256(source).hexdigest()
     assert catalog["source_snapshot"]["source_case_count"]==129
     assert catalog["business_case_count"]==78
-    assert catalog["parallel_case_count"]==42
+    assert catalog["parallel_case_count"]==43
     assert catalog["cross_database_case_count"]==6
     assert catalog["evolution_case_count"]==18
-    assert catalog["runnable_case_count"]==195
+    assert catalog["runnable_case_count"]==196
     assert len(catalog["cases"])==catalog["runnable_case_count"]
     assert len({row["id"] for row in catalog["cases"]})==len(catalog["cases"])
     assert catalog["superseded_cases"]==[]
@@ -39,6 +39,8 @@ def test_real_case_catalog_is_reproducible_complete_and_parallel_specific():
     k16=next(row for row in catalog["cases"] if row["id"]=="K16")
     assert {row["adapter"] for row in k16["coverage"]["providers"]}=={
         "happyhorse_video_edit","wan27_video_edit"}
+    k17=next(row for row in catalog["cases"] if row["id"]=="K17")
+    assert k17["expect"]["artifact_roles"]==["compiler_report","rendered_media"]
     compact=next(row for row in catalog["cases"] if row["id"]=="P22")
     assert compact["executor"]=="parallel_protocol"
     assert compact["expect"]=={"compiled_jobs":2,"metadata_required":False,

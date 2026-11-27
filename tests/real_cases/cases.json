@@ -14,10 +14,10 @@
     "evidence_root": ".data/evidence/real-campaign",
     "forbid_case_specific_product_fixes": true
   },
-  "runnable_case_count": 195,
+  "runnable_case_count": 196,
   "business_case_count": 78,
   "inherited_protocol_case_count": 51,
-  "parallel_case_count": 42,
+  "parallel_case_count": 43,
   "cross_database_case_count": 6,
   "evolution_case_count": 18,
   "cases": [
@@ -7883,6 +7883,47 @@
             ]
           }
         ]
+      }
+    },
+    {
+      "id": "K17",
+      "title": "结构化最终媒体合成",
+      "complexity": "parallel_protocol",
+      "assets": [
+        "clip_a.mp4",
+        "clip_b.mp4",
+        "music.wav",
+        "captions.srt"
+      ],
+      "prompt": "将两段冻结视频、固定配乐和字幕通过media.concat_sequence统一合成并添加水印，禁止Harness手写FFmpeg filter graph。",
+      "expect": {
+        "source_count": 2,
+        "subtitles": true,
+        "watermark": true,
+        "artifact_roles": [
+          "compiler_report",
+          "rendered_media"
+        ]
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_browser_or_api",
+      "executor": "parallel_protocol",
+      "required_features": [
+        "operation",
+        "structured_media_compose",
+        "artifact_collection"
+      ],
+      "provenance": "parallel-design",
+      "coverage": {
+        "tier": "required",
+        "skills": [],
+        "operations": [
+          "media.concat_sequence"
+        ],
+        "providers": []
       }
     },
     {

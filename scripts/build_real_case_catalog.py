@@ -265,6 +265,13 @@ COVERAGE_CASES=[
                 "capability":"video.edit","modes":["edit_video"]},
             {"adapter":"wan27_video_edit","model":"wan-2.7-video-edit",
                 "capability":"video.edit","modes":["edit_video"]}]}),
+    protocol("K17","结构化最终媒体合成",
+        "将两段冻结视频、固定配乐和字幕通过media.concat_sequence统一合成并添加水印，禁止Harness手写FFmpeg filter graph。",
+        {"source_count":2,"subtitles":True,"watermark":True,
+            "artifact_roles":["compiler_report","rendered_media"]},
+        assets=("clip_a.mp4","clip_b.mp4","music.wav","captions.srt"),
+        features=("operation","structured_media_compose","artifact_collection"),
+        coverage={"tier":"required","skills":[],"operations":["media.concat_sequence"],"providers":[]}),
 ]
 
 

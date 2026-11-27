@@ -36,7 +36,8 @@ class MediaRenderOperationAdapter(SandboxAllocationOwner,BaseJobAdapter):
                 failed_phase='input_validation',retryable=False,
                 public_reason='The operation recipe is missing a registered operation')
         roles={item.artifact_role for item in context.request.input_artifacts}
-        required=({str(recipe.get('source_role')),str(recipe.get('music_role'))}
+        required=({str(recipe.get('source_role')),str(recipe.get('music_role')),
+            *([str(recipe.get('subtitle_role'))] if recipe.get('subtitle_role') else [])}
             if recipe.get('operation')=='media.concat_sequence' else {str(recipe.get('input_role'))})
         if '' in required or not required<=roles:
             raise PreAcceptFailure('operation_input_role_missing',error_code='provider_input_invalid',
@@ -117,17 +118,21 @@ class MediaRenderOperationAdapter(SandboxAllocationOwner,BaseJobAdapter):
                 path=f'assets/inputs/{item.artifact_role}-{artifact.id}{suffix}'
                 data=await asyncio.to_thread(self.objects.get,artifact.object_ref,
                     maximum=self.settings.max_artifact_bytes)
-                await self.runtime.put_project_file(sandbox,path,data,artifact.mime);inputs[item.artifact_role]=path
+                await self.runtime.put_project_file(sandbox,path,data,artifact.mime)
+                inputs.setdefault(item.artifact_role,[]).append(path)
             recipe=dict(context.request.parameters['recipe'])
             if recipe.get('operation')=='media.concat_sequence':
                 source_role=str(recipe.pop('source_role'));music_role=str(recipe.pop('music_role'))
                 if source_role not in inputs or music_role not in inputs:
                     raise ValueError('operation_input_role_missing')
-                runtime_value={**recipe,'source_path':inputs[source_role],'music_path':inputs[music_role]}
+                subtitle_role=str(recipe.pop('subtitle_role',''))
+                runtime_value={**recipe,'source_path':inputs[source_role][0],
+                    'source_paths':inputs[source_role],'music_path':inputs[music_role][0],
+                    **({'subtitle_path':inputs[subtitle_role][0]} if subtitle_role else {})}
             else:
                 role=str(recipe.pop('input_role'))
                 if role not in inputs:raise ValueError('operation_input_role_missing')
-                runtime_value={**recipe,'input_path':inputs[role]}
+                runtime_value={**recipe,'input_path':inputs[role][0]}
             async with self.scheduler.hold(reservation.id,reservation.node_id,reservation.node_generation):
                 await self._check_cancelled(context)
                 allocation['allocation_phase']='runtime_submission'

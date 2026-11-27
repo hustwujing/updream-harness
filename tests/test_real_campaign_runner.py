@@ -31,8 +31,8 @@ def test_real_case_catalog_includes_every_inherited_d_case_with_provenance():
             if case['id'].startswith('EVO') else case['id'][0])
         groups[prefix].append(case)
     assert {key:len(value) for key,value in groups.items()}=={
-        'S':31,'C':30,'R':17,'D':51,'P':26,'K':16,'XDB':6,'EVO':18}
-    assert len(catalog['cases'])==195 and catalog['runnable_case_count']==195
+        'S':31,'C':30,'R':17,'D':51,'P':26,'K':17,'XDB':6,'EVO':18}
+    assert len(catalog['cases'])==196 and catalog['runnable_case_count']==196
     assert not catalog['superseded_cases']
     assert [case['id'] for case in groups['XDB']]==[
         f'XDB{index:02d}' for index in range(1,7)]
@@ -70,7 +70,7 @@ def test_parallel_protocol_runner_never_fakes_unimplemented_success():
     assert "classification':'program_failure'" in source
     assert "in {'program_failure','optimizable_prompt'}:raise SystemExit(2)" in source
     assert source.count("_,continuations=await wait_continuations(client,thread['id'],maximum=1)")==5
-    assert all(f"'K{index:02d}'" in source for index in range(1,17))
+    assert all(f"'K{index:02d}'" in source for index in range(1,18))
     assert 'case_skill_coverage' in source and all(
         f'case_k{index:02d}' in source for index in range(7,12))
     assert "SERIAL_CASES={'P13','P19','P21','P27','K08','AS01'}" in source

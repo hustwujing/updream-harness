@@ -125,7 +125,7 @@ def test_example_job_catalog_is_parseable_and_digest_verified():
     assert all(exposed_capabilities[identity]['guidance']==capability_by_id[identity].guidance
         and exposed_capabilities[identity]['guidance'] for identity in capability_ids)
     concat=value.operation('media.concat_sequence','1','e'*64)
-    assert concat.input_roles==('source','music') and concat.output_roles==(
+    assert concat.input_roles==('source','music','subtitles') and concat.output_roles==(
         'rendered_media','compiler_report')
     assert 'original registered source video' in concat.guidance
     exposed_concat=next(row for row in public['operations'] if row['id']=='media.concat_sequence')

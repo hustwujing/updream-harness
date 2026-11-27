@@ -145,7 +145,10 @@ class MediaRenderOperation(BaseModel):
     operation: Literal["image.resize","video.transcode","audio.process","media.concat_sequence"]
     input_path: str = Field(default="",max_length=2000)
     source_path: str = Field(default="",max_length=2000)
+    source_paths: list[str] = Field(default_factory=list,min_length=0,max_length=100)
     music_path: str = Field(default="",max_length=2000)
+    subtitle_path: str = Field(default="",max_length=2000)
+    watermark_text: str = Field(default="",max_length=100)
     output_filename: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
     width: int = Field(default=0,ge=0,le=8192)
     height: int = Field(default=0,ge=0,le=8192)
@@ -1917,7 +1920,9 @@ def create_app() -> FastAPI:
             except (OSError,ValueError):raise HTTPException(404,"Operation input is unavailable")
             return source
         if value.operation=="media.concat_sequence":
-            source=frozen_input(value.source_path);music=frozen_input(value.music_path)
+            sources=[frozen_input(path) for path in (value.source_paths or [value.source_path])]
+            source=sources[0];music=frozen_input(value.music_path)
+            subtitle=frozen_input(value.subtitle_path) if value.subtitle_path else None
         else:source=frozen_input(value.input_path)
         target=OUTPUTS/value.output_filename;target.unlink(missing_ok=True)
         if value.operation in {"image.resize","video.transcode"} and (not value.width or not value.height):
@@ -1932,15 +1937,27 @@ def create_app() -> FastAPI:
                 if probe.returncode or source_duration<value.segment_seconds:
                     raise HTTPException(422,"Sequence source is shorter than one segment")
                 segments=[];font="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+                if len(sources)>1 and value.segment_count!=len(sources):
+                    raise HTTPException(422,"Sequence segment_count must match frozen source count")
                 for index in range(value.segment_count):
-                    segment=work/f"segment_{index+1:03d}.mp4";offset=(index*value.segment_seconds)%source_duration
+                    current=sources[index] if len(sources)>1 else source
+                    if len(sources)>1:
+                        probe=await asyncio.create_subprocess_exec("ffprobe","-v","error","-show_entries",
+                            "format=duration","-of","json",str(current),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                        current_probe,_=await probe.communicate();current_duration=float(
+                            json.loads(current_probe).get("format",{}).get("duration") or 0)
+                        if probe.returncode or current_duration<value.segment_seconds:
+                            raise HTTPException(422,"Sequence source is shorter than one segment")
+                        offset=0
+                    else:offset=(index*value.segment_seconds)%source_duration
+                    segment=work/f"segment_{index+1:03d}.mp4"
                     label=f"{index+1:02d}";filter_value=(
                         f"scale={value.width}:{value.height}:force_original_aspect_ratio=decrease,"
                         f"pad={value.width}:{value.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,"
                         f"drawbox=x=24:y=24:w=100:h=64:color=black@0.65:t=fill,"
                         f"drawtext=fontfile={font}:text='{label}':x=44:y=32:fontsize=42:fontcolor=white")
                     process=await asyncio.create_subprocess_exec("ffmpeg","-nostdin","-v","error","-y",
-                        "-ss",f"{offset:.6f}","-i",str(source),"-t",f"{value.segment_seconds:.6f}",
+                        "-ss",f"{offset:.6f}","-i",str(current),"-t",f"{value.segment_seconds:.6f}",
                         "-an","-vf",filter_value,"-r",str(value.fps),"-c:v","libx264","-pix_fmt","yuv420p",
                         str(segment),stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
                     output,_=await asyncio.wait_for(process.communicate(),timeout=1800)
@@ -1950,9 +1967,16 @@ def create_app() -> FastAPI:
                 concat=work/"concat.txt";concat.write_text("".join(
                     "file '"+path.name+"'\n" for path in segments))
                 total=value.segment_count*value.segment_seconds
+                video_args=[];filters=[]
+                if subtitle:filters.append("subtitles="+str(subtitle).replace("\\","\\\\").replace(":","\\:"))
+                if value.watermark_text:
+                    text=value.watermark_text.replace("'","\\'").replace(":","\\:")
+                    filters.append(f"drawtext=fontfile={font}:text='{text}':x=w-tw-24:y=h-th-24:fontsize=24:fontcolor=white@0.75")
+                if filters:video_args=["-vf",",".join(filters),"-c:v","libx264","-pix_fmt","yuv420p"]
+                else:video_args=["-c:v","copy"]
                 process=await asyncio.create_subprocess_exec("ffmpeg","-nostdin","-v","error","-y",
                     "-f","concat","-safe","0","-i",str(concat),"-stream_loop","-1","-i",str(music),
-                    "-t",f"{total:.6f}","-map","0:v:0","-map","1:a:0","-c:v","copy","-c:a","aac",
+                    "-t",f"{total:.6f}","-map","0:v:0","-map","1:a:0",*video_args,"-c:a","aac","-ar","48000","-ac","2",
                     "-shortest",str(target),stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
                 output,_=await asyncio.wait_for(process.communicate(),timeout=7200)
                 if process.returncode or not target.is_file():raise HTTPException(422,"Sequence concat failed")
