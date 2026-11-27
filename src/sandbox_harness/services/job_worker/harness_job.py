@@ -143,10 +143,12 @@ class HarnessJobAdapter(BaseJobAdapter):
             return (objective+'\n\nFrozen output contract: text-only. Return the complete result in your final '
                 'response. Do not create or copy files under /workspace/outputs and do not publish Artifacts.')
         return (objective+'\n\nFrozen output contract: '+json.dumps(contracts,sort_keys=True)+
-            '\nPut final files under /workspace/outputs. When more than one artifact role exists, also write '
+            '\nBuild scratch files under /workspace/project/work and put only intended final files under '
+            '/workspace/outputs. When more than one artifact role exists, also write '
             '/workspace/outputs/job-output-manifest.json as {"outputs":[{"path":"relative/file",'
             '"artifact_role":"role","item_key":"stable-key","position":0}]}. Every output file except the manifest '
-            'must appear exactly once. For a single artifact role the platform maps files in lexical order automatically.')
+            'should appear exactly once. The manifest is the publication allowlist; unlisted files remain private and are '
+            'not collected. For a single artifact role the platform maps files in lexical order automatically.')
 
     @staticmethod
     def _resources(context: JobExecutionContext) -> ResourceRequest:
@@ -641,7 +643,9 @@ class SandboxChildBackend(SandboxAllocationOwner):
             if len(contracts)!=1:raise ValueError('job_output_manifest_required')
             role=next(iter(contracts));manifest=[{'path':path,'artifact_role':role,
                 'item_key':path,'position':position} for position,path in enumerate(artifact_paths)]
-        if {str(row.get('path','')) for row in manifest}!=set(artifact_paths) or len(manifest)!=len(artifact_paths):
+        manifest_paths=[str(row.get('path','')) for row in manifest]
+        if (not all(manifest_paths) or len(set(manifest_paths))!=len(manifest_paths)
+                or not set(manifest_paths)<=set(artifact_paths)):
             raise ValueError('job_output_manifest_mismatch')
         emitted=[];roles=set()
         for row in manifest:

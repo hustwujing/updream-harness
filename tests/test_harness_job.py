@@ -345,6 +345,53 @@ async def test_opensandbox_child_collects_output_into_atomic_delivery(tmp_path):
     finally:await store.close()
 
 
+async def test_child_manifest_is_publication_allowlist_for_unlisted_sandbox_files(tmp_path):
+    import hashlib,json
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'manifest-allowlist.db'));await store.initialize()
+    profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
+    thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model='gpt-5.6',
+        reasoning_level='standard',title='Manifest allowlist'),profile,'owner')
+    turn,_,_=await store.create_turn(thread.id,TurnCreate(message='delegate',
+        idempotency_key='manifest-allowlist-turn'),profile,'owner')
+    outputs=(JobExpectedOutput(artifact_role='primary',output_disposition=OutputDisposition.DELIVERY,
+        min_items=1,max_items=1,mime_patterns=('text/plain',)),
+        JobExpectedOutput(artifact_role='report',output_disposition=OutputDisposition.DELIVERY,
+            min_items=1,max_items=1,mime_patterns=('text/plain',)))
+    _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id=thread.id,
+        origin_turn_id=turn.id,idempotency_key='manifest-allowlist-group',
+        jobs=[request(expected_outputs=outputs)]))
+    attempt=(await store.claim_available_jobs('worker','node',60,limit=1,
+        adapters={'child-harness'}))[0]
+    job=await store.get_job(jobs[0].id);frozen=await store.get_job_request(job.id)
+    manifest=json.dumps({'outputs':[
+        {'path':'final.txt','artifact_role':'primary','item_key':'final','position':0},
+        {'path':'report.txt','artifact_role':'report','item_key':'report','position':0},
+    ]}).encode()
+    values={'job-output-manifest.json':(manifest,'application/json'),
+        'final.txt':(b'final','text/plain'),'report.txt':(b'report','text/plain'),
+        'scratch.tmp':(b'private scratch','text/plain')}
+    class Runtime:
+        async def artifacts(self,*args):
+            return [{'path':path,'size':len(data),'mime':mime,
+                'sha256':hashlib.sha256(data).hexdigest()} for path,(data,mime) in values.items()]
+        async def artifact(self,sandbox,path,*,maximum):
+            data,_=values[path];target=tmp_path/('staged-'+path);target.write_bytes(data)
+            return StagedRuntimeObject(target,len(data),hashlib.sha256(data).hexdigest())
+    sandbox=Sandbox(id='sandbox-manifest',harness=Harness.CODEX,image='image',
+        runtime_url='http://runtime',metadata={})
+    backend=SandboxChildBackend(pool=SimpleNamespace(),runtime=Runtime(),store=store,
+        objects=ObjectStore(tmp_path/'objects'),settings=Settings(backend='fake',data_root=tmp_path),
+        token_factory=lambda *args:None);backend.sessions[job.id]=sandbox
+    try:
+        result=await backend.collect(JobExecutionContext(job=job,request=frozen,
+            generation=attempt.generation,previous_acceptance_receipt=sandbox_receipt(sandbox)),
+            'execution',AdapterStatus(True,JobState.SUCCEEDED,{}),sandbox_receipt(sandbox))
+        assert {row['artifact_role'] for row in result['collections']}=={'primary','report'}
+        artifacts=await store.list_job_artifacts(job.id)
+        assert {row.filename for row in artifacts}=={'final.txt','report.txt'}
+    finally:await store.close()
+
+
 async def test_opensandbox_child_cannot_succeed_without_required_artifact(tmp_path):
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'missing-output.db'));await store.initialize()
     expected=JobExpectedOutput(artifact_role='images',output_disposition=OutputDisposition.DELIVERY,
