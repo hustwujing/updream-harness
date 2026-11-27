@@ -124,6 +124,7 @@ class ExternalJobFailure(RuntimeError):
 
 
 class JobAdapter(Protocol):
+    async def preflight(self, context: JobExecutionContext) -> None: ...
     async def submit(self, context: JobExecutionContext) -> AdapterSubmission: ...
     async def status(self, context: JobExecutionContext, external_execution_id: str) -> AdapterStatus: ...
     async def cancel(self, context: JobExecutionContext, external_execution_id: str) -> AdapterStatus: ...
@@ -137,6 +138,9 @@ class JobAdapter(Protocol):
 
 
 class BaseJobAdapter:
+    async def preflight(self,context:JobExecutionContext)->None:
+        return None
+
     async def recover_submission(self,context:JobExecutionContext)->SubmissionRecovery:
         return SubmissionRecovery()
 

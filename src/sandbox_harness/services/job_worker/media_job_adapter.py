@@ -18,17 +18,25 @@ class MediaProviderJobAdapter(BaseJobAdapter):
         self.media=media or store;self.split_media=media is not None
         self.artifacts=ArtifactGateway(store,objects,settings.data_root/'tmp'/'provider-job-artifacts',
             maximum_bytes=settings.max_artifact_bytes)
-        self.preflight=ProviderPreflight(store,objects,catalog)
+        self.provider_preflight=ProviderPreflight(store,objects,catalog)
+        self._validated={}
 
-    async def submit(self,context:JobExecutionContext)->AdapterSubmission:
-        request=context.request
+    async def preflight(self,context:JobExecutionContext)->None:
         try:
-            validated=await self.preflight.inspect(request)
+            self._validated[(context.job.id,context.generation)]=await self.provider_preflight.inspect(
+                context.request)
         except ProviderPreflightError as exc:
             raise PreAcceptFailure('Media Provider input validation failed',
                 error_code='provider_input_invalid',failed_phase=(
                     'authorization' if exc.code=='capability_scope_invalid' else 'input_validation'),
                 retryable=False) from exc
+
+    async def submit(self,context:JobExecutionContext)->AdapterSubmission:
+        request=context.request
+        validated=self._validated.pop((context.job.id,context.generation),None)
+        if validated is None:
+            await self.preflight(context)
+            validated=self._validated.pop((context.job.id,context.generation))
         if hasattr(self.media,"submit"):
             media_job=await self.media.submit(context,validated)
         else:

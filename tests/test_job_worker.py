@@ -11,9 +11,12 @@ import pytest
 class FakeAdapter(BaseJobAdapter):
     def __init__(self, submissions, statuses=()):
         self.submissions=list(submissions);self.statuses=list(statuses)
-        self.submit_calls=0;self.status_calls=0;self.reconcile_calls=0;self.cleanup_calls=0
+        self.preflight_calls=0;self.submit_calls=0;self.status_calls=0;self.reconcile_calls=0;self.cleanup_calls=0
+        self.call_order=[]
+    async def preflight(self,context):
+        self.preflight_calls+=1;self.call_order.append('preflight')
     async def submit(self,context):
-        self.submit_calls+=1;value=self.submissions.pop(0)
+        self.submit_calls+=1;self.call_order.append('submit');value=self.submissions.pop(0)
         if isinstance(value,Exception):raise value
         return value
     async def status(self,context,external_execution_id):
@@ -202,6 +205,18 @@ async def setup(tmp_path,job_request,authorization_snapshot=None):
         origin_turn_id='c'*32,idempotency_key='group-'+identifier(),jobs=[job_request],
         authorization_snapshot=authorization_snapshot or {}))
     return store,group,jobs[0]
+
+
+async def test_every_async_adapter_preflights_before_submission(tmp_path):
+    store,_,job=await setup(tmp_path,request())
+    adapter=FakeAdapter([AdapterSubmission('external-1',{'accepted':True},completed=True,
+        result={'ok':True})])
+    worker=JobWorker(store,{'fake':adapter},node_id='node',concurrency=1,worker_id='worker')
+    try:
+        assert await worker.run_once()==1
+        assert (await store.get_job(job.id)).state==JobState.SUCCEEDED
+        assert adapter.preflight_calls==1 and adapter.call_order[:2]==['preflight','submit']
+    finally:await store.close()
 
 
 async def test_pre_accept_failure_retries_without_acceptance_or_budget(tmp_path):

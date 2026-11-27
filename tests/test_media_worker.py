@@ -7,6 +7,7 @@ import pytest
 from sandbox_harness.services.media_worker.media_worker import (MediaWorker)
 from sandbox_harness.services.media_worker.media_reference_publisher import (MediaReferencePreparationError)
 from sandbox_harness.common.contracts.media_provider import ProviderResult
+from sandbox_harness.common.contracts.public_errors import public_error_reason
 
 
 class Response:
@@ -259,18 +260,22 @@ async def test_audio_poll_authentication_failure_is_terminal(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_image_provider_failure_preserves_safe_http_and_business_code(monkeypatch):
-    value = worker(); client = Client([Response({"error":{"code":"InvalidParameter"}}, 400)])
+    value = worker(); client = Client([Response({"error":{"code":"InvalidParameter",
+        "message":"The parameter `size` must be WIDTHxHEIGHT; Request id: private-request"}}, 400)])
     async def client_factory(): return client
     monkeypatch.setattr(value, "_client", client_factory)
     result = await value._ark_image({"id":"job","generation":1, "model":"seedream-5.0",
         "parameters":{"prompt":"test", "size":"2560x1440"}})
-    assert result.status == "failed" and result.error == "image_http_400:InvalidParameter"
+    assert result.status == "failed"
     assert result.error_code == "provider_input_invalid"
+    assert public_error_reason(result.error)=="The parameter `size` must be WIDTHxHEIGHT"
+    assert "private-request" not in result.error
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(('requested','provider_size'),(
-    ('2560x1920','2K'),('3072x2048','3K'),('3K','3K')))
+    ('2048x2048','2048x2048'),('2560x1440','2560x1440'),
+    ('2304x1728','2304x1728')))
 async def test_seedream_direct_model_uses_supported_size_tiers(monkeypatch,requested,provider_size):
     value=worker();client=Client([Response({'data':[{'url':'https://result.test/image.png'}]})])
     async def client_factory():return client
@@ -285,12 +290,12 @@ async def test_seedream_direct_model_uses_supported_size_tiers(monkeypatch,reque
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('requested',('4K','3840x2160'))
+@pytest.mark.parametrize('requested',('2K','3K','4K','2560x1920','3072x2048','3840x2160'))
 async def test_seedream_rejects_size_outside_deployed_model_contract(monkeypatch,requested):
     value=worker();client=Client([Response({'data':[{'url':'https://result.test/image.png'}]})])
     async def client_factory():return client
     monkeypatch.setattr(value,'_client',client_factory)
-    with pytest.raises(ValueError,match='deployed model'):
+    with pytest.raises(ValueError,match='(?i)image size'):
         await value._ark_image({'id':'job','generation':1,'model':'seedream-5.0',
             'parameters':{'prompt':'test','size':requested}})
     assert client.posts==[]
@@ -302,7 +307,7 @@ async def test_image_rate_limit_is_deferred_with_stable_error(monkeypatch):
     async def client_factory():return client
     monkeypatch.setattr(value,"_client",client_factory)
     result=await value._ark_image({"id":"job","generation":1,"model":"seedream-5.0",
-        "parameters":{"prompt":"test","size":"2K"}})
+        "parameters":{"prompt":"test","size":"2560x1440"}})
     assert result.status=="pending" and result.error_code=="provider_rate_limited"
 
 
@@ -312,7 +317,7 @@ async def test_image_service_failure_without_result_is_ambiguous_not_retried(mon
     async def client_factory():return client
     monkeypatch.setattr(value,"_client",client_factory)
     result=await value._ark_image({"id":"job","generation":1,"model":"seedream-5.0",
-        "parameters":{"prompt":"test","size":"2K"}})
+        "parameters":{"prompt":"test","size":"2560x1440"}})
     assert result.status=="unknown"
     assert result.error_code=="provider_submission_outcome_unknown"
 
@@ -326,7 +331,7 @@ async def test_seedream_reference_payload_uses_frozen_object_urls(monkeypatch):
         {"object_ref":"sha256:"+"2"*64,"role":"reference_image","usage":"style","mime":"image/png","size":100,"public_url":"https://boss-shjd.biliapi.net/updream/aniforge/image/two.png"}]
     result=await value._ark_image({"id":"job","generation":1,"model":"seedream-5.0",
         "generation_mode":"reference_image","references":refs,
-        "parameters":{"prompt":"merge","size":"2K"}})
+        "parameters":{"prompt":"merge","size":"2560x1440"}})
     payload=client.posts[0][1]["json"]
     assert result.status=="success" and payload["image"]==[refs[0]["public_url"],refs[1]["public_url"]]
     assert "sequential_image_generation" not in payload

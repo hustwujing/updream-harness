@@ -7,6 +7,8 @@ from sandbox_harness.common.jobs.review import (ReviewTrigger, ReviewVerdictKind
 
 class ReviewerJobAdapter:
     def __init__(self,delegate,store=None):self.delegate=delegate;self.store=store
+    async def preflight(self,context:JobExecutionContext)->None:
+        await self.delegate.preflight(context)
     async def submit(self,context:JobExecutionContext)->AdapterSubmission:return await self.delegate.submit(context)
     async def recover_submission(self,context:JobExecutionContext):
         return await self.delegate.recover_submission(context)

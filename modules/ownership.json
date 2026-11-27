@@ -82,6 +82,30 @@
       "owner": "common/catalog",
       "target": "src/sandbox_harness/common/catalog/provider_preflight.py"
     },
+    "src/sandbox_harness/common/providers/__init__.py": {
+      "owner": "namespace initializer",
+      "target": "src/sandbox_harness/common/providers/__init__.py"
+    },
+    "src/sandbox_harness/common/providers/ark.py": {
+      "owner": "common/providers",
+      "target": "src/sandbox_harness/common/providers/ark.py"
+    },
+    "src/sandbox_harness/common/providers/contracts.py": {
+      "owner": "common/providers",
+      "target": "src/sandbox_harness/common/providers/contracts.py"
+    },
+    "src/sandbox_harness/common/providers/dashscope.py": {
+      "owner": "common/providers",
+      "target": "src/sandbox_harness/common/providers/dashscope.py"
+    },
+    "src/sandbox_harness/common/providers/minimax.py": {
+      "owner": "common/providers",
+      "target": "src/sandbox_harness/common/providers/minimax.py"
+    },
+    "src/sandbox_harness/common/providers/tripo.py": {
+      "owner": "common/providers",
+      "target": "src/sandbox_harness/common/providers/tripo.py"
+    },
     "src/sandbox_harness/common/configuration/__init__.py": {
       "owner": "namespace initializer",
       "target": "src/sandbox_harness/common/configuration/__init__.py"

@@ -21,9 +21,10 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 import av
 
-from sandbox_harness.common.catalog.media_catalog import (MediaCatalog, SEEDREAM_LITE_SIZE_TIERS)
+from sandbox_harness.common.catalog.media_catalog import (MediaCatalog)
 from sandbox_harness.common.artifacts.artifact_gateway import (MimeRegistry)
 from sandbox_harness.common.contracts.media_provider import (DownloadedMedia, ProviderResult, MediaCancellationRequested)
+from sandbox_harness.common.contracts.public_errors import (external_error_detail)
 from sandbox_harness.services.media_worker.image_decompose_provider import (ImageDecomposeProvider)
 from sandbox_harness.services.media_worker.media_errors import (classify_provider_error)
 from sandbox_harness.services.media_worker.media_reference_publisher import (MediaReferencePreparationError, MediaReferencePublisher)
@@ -434,26 +435,15 @@ class MediaWorker:
             return f"{direction}延长视频1。" + prompt
         return prompt
 
-    def _seedream_size(self,model:str,value: str) -> str:
-        spec=self.catalog.resolve("image",model)
-        if value in spec.image_size_tiers:
-            return value
-        match=re.fullmatch(r"(\d+)x(\d+)",value)
-        if not match or value in SEEDREAM_LITE_SIZE_TIERS:
-            raise ValueError("Image size is not supported by the deployed model")
-        longest=max(int(match.group(1)),int(match.group(2)))
-        if longest>spec.image_max_dimension:
-            raise ValueError("Image size exceeds the deployed model maximum dimension")
-        return "2K" if longest<=2560 else "3K"
-
     async def _ark_image(self, job: dict[str, Any]) -> ProviderResult:
         base = self.settings.upstream_image.rstrip("/")
         key = os.environ.get("SANDBOX_HARNESS_UPSTREAM_IMAGE_KEY", "")
-        p = job["parameters"]
+        p = self.catalog.provider_parameters("image",job["model"],job["parameters"],
+            generation_mode=job.get("generation_mode") or "text_to_image")
         model = {"seedream-5.0": os.environ.get("SANDBOX_HARNESS_ARK_IMAGE_MODEL_SEEDREAM_5_0",
             "doubao-seedream-5-0-pro-260628")}.get(job["model"], job["model"])
         payload = {"model": model, "prompt": p.get("prompt", ""), "response_format": "url",
-                   "size": self._seedream_size(job["model"],p.get("size", "2048x2048")), "watermark": False}
+                   "size": p.get("size", "2048x2048"), "watermark": False}
         references = self._ordered_references(job)
         if references:
             urls = [await self._reference_url(item) for item in references]
@@ -468,11 +458,11 @@ class MediaWorker:
         provider_error = raw.get("error") if isinstance(raw, dict) else None
         provider_code = (provider_error.get("code") if isinstance(provider_error, dict) else None) or (
             raw.get("code") if isinstance(raw, dict) else None)
-        error = "" if url else f"image_http_{response.status_code}"
-        if provider_code:
-            error += ":" + re.sub(r"[^A-Za-z0-9_.-]", "_", str(provider_code))[:100]
-        elif response.is_success:
-            error = "image_result_missing"
+        provider_reason=(provider_error.get("message") if isinstance(provider_error,dict) else "") or (
+            raw.get("message") if isinstance(raw,dict) else "")
+        error = "" if url else external_error_detail(provider_code or f"HTTP{response.status_code}",
+            provider_reason or ("Provider returned no image result" if response.is_success
+                else "Provider rejected the image request"))
         error_code = classify_provider_error(response.status_code, provider_code,
             "provider_result_invalid" if response.is_success else "provider_processing_failed")
         status = ("success" if response.is_success and url else "pending"
@@ -693,7 +683,7 @@ class MediaWorker:
                     "voice_clone_permission_denied", "provider_content_policy_rejected",
                     "provider_authentication_failed", "provider_permission_denied"}
                     else "voice_clone_failed")
-                return ProviderResult("failed", error=str(exc), error_code=code)
+                return ProviderResult("failed", error=exc.detail or str(exc), error_code=code)
         payload = {"model": job["model"], "text": p.get("text", ""),
                    "voice_setting": {"voice_id": voice_id, "speed": p.get("speed", 1), "vol": 1, "pitch": 0},
                    "audio_setting": {"format": p.get("audio_format", "mp3"), "audio_sample_rate": 32000, "bitrate": 128000, "channel": 2}}

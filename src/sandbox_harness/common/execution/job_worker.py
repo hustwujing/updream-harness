@@ -310,6 +310,7 @@ class JobWorker:
                     while True:
                         try:
                             submission_started=True
+                            await self._before_deadline(adapter.preflight(context),deadline)
                             submission=(submission or await self._before_deadline(
                                 adapter.submit(context),deadline))
                             break

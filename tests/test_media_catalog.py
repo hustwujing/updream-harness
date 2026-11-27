@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from sandbox_harness.common.catalog.media_catalog import (MediaCatalog, estimate_audio_duration_seconds)
+from sandbox_harness.common.catalog.media_catalog import (MediaCatalog)
+from sandbox_harness.common.providers.minimax import (estimate_audio_duration_seconds)
 from sandbox_harness.common.catalog.media_references import (inspect_reference)
 
 
@@ -51,6 +52,15 @@ def test_default_catalog_contains_only_real_probe_models():
     assert "target_format" not in text_mode["allowed_parameters"]
     assert text_mode["effects"]["quad=true"] == "output is FBX"
     assert schemas["model3d"]["limits"]["face_limit"]["smart_low_poly_triangle"] == 20_000
+
+
+def test_catalog_rejects_unregistered_provider_adapter_without_fallback():
+    raw=json.dumps([{"kind":"image","model":"future-image","provider":"future",
+        "adapter":"future_image","route":"/v1/image","execution":"sync",
+        "cancellation":"unsupported","progress":"none",
+        "credential_env":"FUTURE_IMAGE_KEY"}])
+    with pytest.raises(ValueError,match="media_provider_contract_not_registered:future_image"):
+        MediaCatalog(raw)
 
 
 def test_shared_video_edit_fixture_satisfies_every_enabled_edit_provider():
@@ -260,8 +270,8 @@ def test_explicit_catalog_inherits_builtin_model_guidance_and_modes():
 
 @pytest.mark.parametrize(("kind", "model", "parameters"), [
     ("image", "seedream-5.0", {"prompt": "test", "size": "2048x2048"}),
-    ("image", "seedream-5.0", {"prompt": "test", "size": "2K"}),
     ("image", "seedream-5.0", {"prompt": "test", "size": "2560x1440"}),
+    ("image", "seedream-5.0", {"prompt": "test", "size": "2304x1728"}),
     ("video", "sed2", {"prompt": "test", "duration": 5, "resolution": "480p",
         "aspect_ratio": "16:9", "generate_audio": False}),
     ("video", "sed2", {"prompt": "test", "duration": 15}),
@@ -275,8 +285,9 @@ def test_media_parameters_accept_only_enabled_model_contract(kind, model, parame
 def test_seedream_catalog_exposes_only_deployed_size_tiers():
     item=MediaCatalog().public('image')[0]
     assert item['parameter_schema']['optional']['size']==[
-        '2K','3K','explicit WIDTHxHEIGHT']
+        '2048x2048','2560x1440','2304x1728','explicit WIDTHxHEIGHT']
     assert item['parameter_schema']['limits']['max_dimension']==3584
+    assert item['parameter_schema']['limits']['max_total_pixels']==4_624_220
 
 
 @pytest.mark.parametrize(("kind", "model", "parameters"), [
@@ -284,7 +295,11 @@ def test_seedream_catalog_exposes_only_deployed_size_tiers():
     ("image", "seedream-5.0", {"prompt": "test", "provider_model": "bypass"}),
     ("image", "seedream-5.0", {"prompt": "test", "size": "1920x1080"}),
     ("image", "seedream-5.0", {"prompt": "test", "size": "1536x864"}),
+    ("image", "seedream-5.0", {"prompt": "test", "size": "2K"}),
+    ("image", "seedream-5.0", {"prompt": "test", "size": "3K"}),
     ("image", "seedream-5.0", {"prompt": "test", "size": "4K"}),
+    ("image", "seedream-5.0", {"prompt": "test", "size": "2560x1920"}),
+    ("image", "seedream-5.0", {"prompt": "test", "size": "3072x2048"}),
     ("image", "seedream-5.0", {"prompt": "test", "size": "3840x2160"}),
     ("video", "sed2", {"prompt": "test", "duration": 999}),
     ("video", "sed2", {"prompt": "test", "duration": 3}),
@@ -356,7 +371,7 @@ def test_domain_enums_and_public_media_catalog_cannot_drift():
 
 def test_parameter_shape_error_names_unknown_and_allowed_fields():
     with pytest.raises(ValueError,match=r"ratio.*allowed:.*aspect_ratio"):
-        MediaCatalog.validate_parameter_shape("video",{"prompt":"test","ratio":"16:9"})
+        MediaCatalog().validate_parameter_shape("video","sed2",{"prompt":"test","ratio":"16:9"})
     with pytest.raises(ValueError,match=r"language_boost, voice_setting.*allowed:.*voice_id"):
-        MediaCatalog.validate_parameter_shape("audio",{"text":"test","voice_setting":{},
-            "language_boost":"Chinese"})
+        MediaCatalog().validate_parameter_shape("audio","speech-2.8-turbo",{"text":"test",
+            "voice_setting":{},"language_boost":"Chinese"})

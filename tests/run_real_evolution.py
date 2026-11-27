@@ -559,7 +559,7 @@ async def evo18(client,args,repositories,settings):
     draft=protocol.require(await client.post(f"api/threads/{thread['id']}/media/drafts",json={
         'kind':'image','model':'seedream-5.0','generation_mode':'text_to_image',
         'parameters':{'prompt':'A simple blue circle centered on a white background, no text',
-            'size':'2K'},'references':[],
+            'size':'2560x1440'},'references':[],
         'idempotency_key':'evo18-media-'+uuid.uuid4().hex,
         'turn_id':origin['id'],'output_role':'workspace'})).json()
     job=protocol.require(await client.post(f"api/media/drafts/{draft['id']}/confirm")).json()

@@ -35,7 +35,7 @@ def audio_reference(*, duration=5):
 
 def test_media_catalog_enforces_discriminated_reference_modes():
     catalog = MediaCatalog()
-    catalog.validate_parameters("image", "seedream-5.0", {"prompt":"edit","size":"2K"},
+    catalog.validate_parameters("image", "seedream-5.0", {"prompt":"edit","size":"2560x1440"},
         generation_mode="reference_image", references=[image_reference()])
     catalog.validate_parameters("video", "sed2", {"prompt":"move","duration":5},
         generation_mode="first_frame", references=[image_reference("first_frame", "composition")])
@@ -64,10 +64,10 @@ def test_media_catalog_enforces_discriminated_reference_modes():
 def test_reference_count_and_media_metadata_boundaries_are_rejected_before_provider():
     catalog=MediaCatalog()
     images=[{**image_reference(identifier=f"{index:032x}"),"size":1000} for index in range(14)]
-    catalog.validate_parameters("image","seedream-5.0",{"prompt":"merge","size":"2K"},
+    catalog.validate_parameters("image","seedream-5.0",{"prompt":"merge","size":"2560x1440"},
         generation_mode="reference_image",references=images)
     with pytest.raises(ValueError,match="1..14"):
-        catalog.validate_parameters("image","seedream-5.0",{"prompt":"merge","size":"2K"},
+        catalog.validate_parameters("image","seedream-5.0",{"prompt":"merge","size":"2560x1440"},
             generation_mode="reference_image",references=images+[image_reference(identifier="f"*32)])
     nine=[image_reference(identifier=f"{index+20:032x}") for index in range(9)]
     catalog.validate_parameters("video","sed2",{"prompt":"move","duration":5},
