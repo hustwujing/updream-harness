@@ -14,12 +14,12 @@
     "evidence_root": ".data/evidence/real-campaign",
     "forbid_case_specific_product_fixes": true
   },
-  "runnable_case_count": 190,
+  "runnable_case_count": 193,
   "business_case_count": 78,
   "inherited_protocol_case_count": 51,
   "parallel_case_count": 40,
   "cross_database_case_count": 6,
-  "evolution_case_count": 15,
+  "evolution_case_count": 18,
   "cases": [
     {
       "id": "S01",
@@ -8306,6 +8306,82 @@
         "generation_fence",
         "sigkill",
         "provider_coverage"
+      ],
+      "provenance": "production-hardening-2026-11-27"
+    },
+    {
+      "id": "EVO16",
+      "title": "Runtime恢复响应丢失后完整重放checkpoint",
+      "complexity": "production_evolution",
+      "assets": [],
+      "prompt": "验证多副本生产加固合同：Runtime恢复响应丢失后完整重放checkpoint",
+      "expect": {
+        "restore_attempts": 2,
+        "request_body_replayed": true,
+        "checkpoint_restored": true
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_api_workers_databases_and_real_sandbox",
+      "executor": "evolution",
+      "required_features": [
+        "real_sandbox",
+        "checkpoint",
+        "transport_fault",
+        "idempotent_retry"
+      ],
+      "provenance": "production-hardening-2026-11-27"
+    },
+    {
+      "id": "EVO17",
+      "title": "未送达内部完成事实随下一用户消息精确投递",
+      "complexity": "production_evolution",
+      "assets": [],
+      "prompt": "验证多副本生产加固合同：未送达内部完成事实随下一用户消息精确投递",
+      "expect": {
+        "completion_context_seen": true,
+        "current_message_seen": true,
+        "delivered_exactly_once": true,
+        "duplicate_external_execution": false
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_api_workers_databases_and_real_sandbox",
+      "executor": "evolution",
+      "required_features": [
+        "real_sandbox",
+        "continuation",
+        "restore_failure",
+        "exactly_once"
+      ],
+      "provenance": "production-hardening-2026-11-27"
+    },
+    {
+      "id": "EVO18",
+      "title": "Media工作区产物提升后再续接Primary",
+      "complexity": "production_evolution",
+      "assets": [],
+      "prompt": "验证多副本生产加固合同：Media工作区产物提升后再续接Primary",
+      "expect": {
+        "provider_submissions": 1,
+        "project_file_promoted": true,
+        "continuation_contains_path": true
+      },
+      "content_checks": [],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_api_workers_databases_and_real_sandbox",
+      "executor": "evolution",
+      "required_features": [
+        "real_provider",
+        "cross_database",
+        "media_promotion",
+        "continuation"
       ],
       "provenance": "production-hardening-2026-11-27"
     }

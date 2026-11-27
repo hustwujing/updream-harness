@@ -330,6 +330,17 @@ EVOLUTION_CASES=[
             "duplicate_provider_submission":False,"outbox_acknowledged":True},
         features=("cross_database","cancellation","generation_fence","sigkill",
             "provider_coverage")),
+    evolution("EVO16","Runtime恢复响应丢失后完整重放checkpoint",
+        {"restore_attempts":2,"request_body_replayed":True,"checkpoint_restored":True},
+        features=("real_sandbox","checkpoint","transport_fault","idempotent_retry")),
+    evolution("EVO17","未送达内部完成事实随下一用户消息精确投递",
+        {"completion_context_seen":True,"current_message_seen":True,
+            "delivered_exactly_once":True,"duplicate_external_execution":False},
+        features=("real_sandbox","continuation","restore_failure","exactly_once")),
+    evolution("EVO18","Media工作区产物提升后再续接Primary",
+        {"provider_submissions":1,"project_file_promoted":True,
+            "continuation_contains_path":True},
+        features=("real_provider","cross_database","media_promotion","continuation")),
 ]
 
 

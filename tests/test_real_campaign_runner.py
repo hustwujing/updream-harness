@@ -31,8 +31,8 @@ def test_real_case_catalog_includes_every_inherited_d_case_with_provenance():
             if case['id'].startswith('EVO') else case['id'][0])
         groups[prefix].append(case)
     assert {key:len(value) for key,value in groups.items()}=={
-        'S':31,'C':30,'R':17,'D':51,'P':26,'K':14,'XDB':6,'EVO':15}
-    assert len(catalog['cases'])==190 and catalog['runnable_case_count']==190
+        'S':31,'C':30,'R':17,'D':51,'P':26,'K':14,'XDB':6,'EVO':18}
+    assert len(catalog['cases'])==193 and catalog['runnable_case_count']==193
     assert not catalog['superseded_cases']
     assert [case['id'] for case in groups['XDB']]==[
         f'XDB{index:02d}' for index in range(1,7)]
@@ -110,6 +110,15 @@ def test_evo03_kill_recovers_persisted_retained_sandbox_expiry():
     assert 'retained_until' in body
     assert 'kill_restart(args.platform_worker_unit)' in body
     assert 'retained_sandbox_released' in body
+
+
+def test_runtime_recovery_evolution_cases_have_real_handlers():
+    source=(ROOT/'tests/run_real_evolution.py').read_text();ast.parse(source)
+    assert all(f'async def evo{index:02d}' in source for index in range(16,19))
+    assert "range(1,19)" in source
+    assert 'LostRestoreResponseTransport' in source
+    assert 'sandbox_workspace_restore_unavailable' in source
+    assert 'speech-2.8-turbo' in source
 
 
 def test_k11_multiview_uses_four_views_of_one_subject():

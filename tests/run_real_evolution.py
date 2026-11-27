@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from datetime import timedelta
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -21,24 +22,27 @@ import run_real_parallel_protocol as protocol
 from sandbox_harness.common.catalog.catalog import HarnessCatalog
 from sandbox_harness.common.configuration.databases import DatabaseSettings
 from sandbox_harness.common.contracts.domain import Harness, ThreadCreate, TurnCreate, TurnState, now
-from sandbox_harness.common.contracts.sandbox_contracts import SandboxScope
+from sandbox_harness.common.contracts.sandbox_contracts import SandboxCreateRequest, SandboxScope
 from sandbox_harness.common.db.accounts import AccountsRepository
 from sandbox_harness.common.db.core import CoreRepository
 from sandbox_harness.common.db.domain_database import DomainInbox, DomainOutbox
 from sandbox_harness.common.db.media_repository import MediaRepository
 from sandbox_harness.common.db.media_models import MediaSourcePermitRow
 from sandbox_harness.common.db.models import (
-    CapabilityLedgerRow, ModelTokenReservationRow, OwnerAdmissionRow,
-    ProviderCircuitRow, ThreadRow, TurnOrderRow, TurnRow, UsageLedgerRow,
+    CapabilityLedgerRow, JobRow, MediaJobOutputRow, MediaJobRow,
+    ModelTokenReservationRow, OwnerAdmissionRow, ProviderCircuitRow, ThreadRow,
+    TurnOrderRow, TurnRow, UsageLedgerRow,
     canonical_digest,
 )
 from sandbox_harness.common.db.ownership_models import RemoteObligationRow, SandboxOwnershipRow
 from sandbox_harness.common.db.site_repository import SiteRepository
 from sandbox_harness.common.observability.observability import BUSINESS_METRICS
 from sandbox_harness.common.security.capability import CapabilityCodec
-from sandbox_harness.common.sandbox.sandbox_factory import build_sandbox_backend
+from sandbox_harness.common.sandbox.runtime import RuntimeClient
+from sandbox_harness.common.sandbox.sandbox_factory import (
+    build_profile_resolver, build_sandbox_backend, primary_provider_releases)
 from sandbox_harness.common.storage.object_gc import ObjectGarbageCollector
-from sandbox_harness.common.storage.objects import ObjectStore
+from sandbox_harness.common.storage.objects import ObjectStore, object_chunks
 
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -53,6 +57,36 @@ class Repositories:
         self.media=MediaRepository(values['media']);self.sites=SiteRepository(values['sites'])
     async def close(self):
         for value in (self.sites,self.media,self.core,self.accounts):await value.close()
+
+
+class LostRestoreResponseTransport(httpx.AsyncBaseTransport):
+    """Let the first checkpoint restore finish, then lose only its response."""
+    def __init__(self):
+        self.inner=httpx.AsyncHTTPTransport();self.restore_attempts=0;self.request_digests=[]
+
+    async def handle_async_request(self,request):
+        if request.method=='PUT' and request.url.path=='/v1/checkpoint':
+            body=await request.aread();self.restore_attempts+=1
+            self.request_digests.append(hashlib.sha256(body).hexdigest())
+            response=await self.inner.handle_async_request(request)
+            if self.restore_attempts==1:
+                await response.aread();await response.aclose()
+                raise httpx.ReadError('EVO16 controlled lost restore response',request=request)
+            return response
+        return await self.inner.handle_async_request(request)
+
+    async def aclose(self):
+        await self.inner.aclose()
+
+
+def evolution_sandbox_request(settings,backend,identity):
+    releases=primary_provider_releases(settings,'aliyun')
+    release=releases[Harness.CODEX]
+    profile=build_profile_resolver(settings,backend,releases).resolve(
+        Harness.CODEX,release.ref,profile_id='primary-full-cpu-codex',
+        revision=release.revision)
+    return SandboxCreateRequest(harness=Harness.CODEX,profile=profile,environment={},
+        ttl_seconds=min(600,settings.sandbox_timeout_seconds),allocation_id=identity)
 
 
 def restart(unit):
@@ -418,7 +452,161 @@ async def evo15(client,args,repositories,settings):
         'old_pid':old_pid,'new_pid':new_pid}
 
 
-HANDLERS={f'EVO{index:02d}':globals()[f'evo{index:02d}'] for index in range(1,16)}
+async def evo16(client,args,repositories,settings):
+    identity='evo16-'+uuid.uuid4().hex;root=settings.data_root/'real-cases'/identity
+    root.mkdir(parents=True,exist_ok=False);backend=build_sandbox_backend(settings);sandbox=None
+    staged=None
+    try:
+        sandbox=await backend.create(evolution_sandbox_request(settings,backend,identity))
+        runtime=RuntimeClient(backend=backend,bundle_dir=settings.runtime_bundle_dir,
+            default_bundle_digest=settings.runtime_bundle_digest,
+            code_bundle_dir=settings.runtime_code_bundle_dir,
+            default_code_bundle_digest=settings.runtime_code_bundle_digest,
+            staging_root=root/'downloads')
+        await runtime.prepare(sandbox)
+        await runtime.write_inspect_file(sandbox,'project/evo16.txt',b'EVO16-CHECKPOINT')
+        staged=await runtime.checkpoint(sandbox,maximum=settings.max_checkpoint_bytes)
+        objects=ObjectStore(root/'objects')
+        reference,_=await asyncio.to_thread(objects.put_file,staged.path,
+            digest=staged.sha256,size=staged.size)
+        await runtime.write_inspect_file(sandbox,'project/evo16.txt',b'EVO16-MUTATED')
+        transport=LostRestoreResponseTransport()
+        retrying=RuntimeClient(backend=backend,transport=transport,
+            request_retry_attempts=settings.runtime_request_retry_attempts,
+            request_retry_initial_delay_seconds=.1,
+            request_retry_backoff_multiplier=settings.runtime_request_retry_backoff_multiplier,
+            request_retry_max_delay_seconds=.1,staging_root=root/'retry-downloads')
+        await retrying.restore(sandbox,object_chunks(objects,reference,
+            maximum=settings.max_checkpoint_bytes),size=staged.size)
+        content,_=await runtime.inspect_file(sandbox,'project/evo16.txt')
+        if (content!=b'EVO16-CHECKPOINT' or transport.restore_attempts!=2
+                or len(set(transport.request_digests))!=1
+                or transport.request_digests[0]!=staged.sha256):
+            raise AssertionError('checkpoint_restore_replay_contract_failed')
+        return {'classification':'success','sandbox_id':sandbox.id,
+            'allocation_id':sandbox.handle.allocation_id,'restore_attempts':2,
+            'request_body_replayed':True,'checkpoint_restored':True,
+            'checkpoint_sha256':staged.sha256,'checkpoint_size':staged.size}
+    finally:
+        if staged is not None:staged.remove()
+        if sandbox is not None:await backend.delete(sandbox)
+        await backend.aclose();shutil.rmtree(root,ignore_errors=True)
+
+
+async def evo17(client,args,repositories,settings):
+    response=await client.post('api/threads',json={'harness':args.harness,'model':args.model,
+        'reasoning_level':args.reasoning,'title':'Protocol EVO17'})
+    thread=protocol.require(response).json();source_id=uuid.uuid4().hex;timestamp=now()
+    profile=HarnessCatalog().resolve(args.harness,args.model,args.reasoning)
+    async with repositories.core.connections.begin() as db:
+        thread_row=await db.get(ThreadRow,thread['id'],with_for_update=True)
+        sequence=thread_row.next_item_sequence+1;thread_row.next_item_sequence=sequence
+        db.add(TurnRow(id=source_id,thread_id=thread['id'],
+            idempotency_key='evo17-source-'+uuid.uuid4().hex,
+            message='EVO17-MEDIA-COMPLETE: prior media task finished successfully.',
+            public_message='Internal media completion',attachments_json='[]',
+            harness=profile.harness.value,model=profile.model,
+            reasoning_level=profile.reasoning_level,reasoning_effort=profile.reasoning_effort,
+            delivery_mode='queue',network_access='restricted',internal=True,
+            state=TurnState.FAILED.value,error_code='sandbox_workspace_restore_unavailable',
+            error_detail='EVO17 injected transient Primary restore failure',
+            created_at=timestamp,updated_at=timestamp))
+        db.add(TurnOrderRow(turn_id=source_id,thread_id=thread['id'],
+            sequence=sequence,created_at=timestamp))
+    async with repositories.media.connections() as db:
+        media_before=await db.scalar(select(func.count()).select_from(MediaJobRow).where(
+            MediaJobRow.thread_id==thread['id']))
+    first_message=('这是一个新的用户问题，当前请求标记是 EVO17-USER。若系统同时提供此前任务完成事实，'
+        '请在回复中同时原样保留其中的 EVO17-MEDIA-COMPLETE 标记。不得重新执行此前任务或调用生成工具。')
+    first=protocol.require(await client.post(f"api/threads/{thread['id']}/turns",json={
+        'message':first_message,'attachments':[],
+        'idempotency_key':'evo17-first-'+uuid.uuid4().hex,'delivery_mode':'start'})).json()
+    first_final,_=await wait_turn(client,first['id'],args.timeout)
+    if first_final['state']!='COMPLETED':raise AssertionError('evo17_first_turn_failed')
+    items=protocol.require(await client.get(f"api/threads/{thread['id']}/items",
+        params={'after':0,'limit':500})).json()
+    first_reply='\n'.join(str(row.get('summary') or '') for row in items
+        if row.get('turn_id')==first['id'] and row.get('type')=='agent_message')
+    second=protocol.require(await client.post(f"api/threads/{thread['id']}/turns",json={
+        'message':'只回复 EVO17-SECOND。','attachments':[],
+        'idempotency_key':'evo17-second-'+uuid.uuid4().hex,'delivery_mode':'start'})).json()
+    second_final,_=await wait_turn(client,second['id'],args.timeout)
+    if second_final['state']!='COMPLETED':raise AssertionError('evo17_second_turn_failed')
+    async with repositories.core.connections() as db:
+        source=await db.get(TurnRow,source_id);first_row=await db.get(TurnRow,first['id'])
+        second_row=await db.get(TurnRow,second['id'])
+        core_jobs=await db.scalar(select(func.count()).select_from(JobRow).where(
+            JobRow.thread_id==thread['id']))
+    async with repositories.media.connections() as db:
+        media_after=await db.scalar(select(func.count()).select_from(MediaJobRow).where(
+            MediaJobRow.thread_id==thread['id']))
+    completion_seen=('EVO17-MEDIA-COMPLETE' in first_row.message
+        and 'EVO17-MEDIA-COMPLETE' in first_reply)
+    if (not completion_seen or 'EVO17-USER' not in first_reply
+            or 'EVO17-MEDIA-COMPLETE' in second_row.message
+            or not source.error_detail.startswith('delivered:'+first['id']+'\n')
+            or media_before!=0 or media_after!=0 or core_jobs!=0):
+        raise AssertionError('evo17_internal_context_contract_failed')
+    return {'classification':'success','thread_id':thread['id'],'source_turn_id':source_id,
+        'first_turn_id':first['id'],'second_turn_id':second['id'],
+        'completion_context_seen':completion_seen,'current_message_seen':True,
+        'delivered_exactly_once':True,'duplicate_external_execution':False,
+        'core_job_count':core_jobs,'media_job_count':media_after}
+
+
+async def evo18(client,args,repositories,settings):
+    thread,origin=await protocol.origin(client,args,'EVO18',
+        '请在沙箱中执行 `sleep 20`，然后只回复 EVO18-ORIGIN-READY。必须实际等待命令完成。')
+    draft=protocol.require(await client.post(f"api/threads/{thread['id']}/media/drafts",json={
+        'kind':'audio','model':'speech-2.8-turbo','generation_mode':'text_to_audio',
+        'parameters':{'text':'媒体工作区提升真机验证。','voice_id':'male-qn-qingse',
+            'speed':1,'audio_format':'mp3'},'references':[],
+        'idempotency_key':'evo18-media-'+uuid.uuid4().hex,
+        'turn_id':origin['id'],'output_role':'workspace'})).json()
+    job=protocol.require(await client.post(f"api/media/drafts/{draft['id']}/confirm")).json()
+    deadline=time.monotonic()+args.timeout;job_view=None
+    while time.monotonic()<deadline:
+        job_view=protocol.require(await client.get(f"api/media/jobs/{job['id']}")).json()
+        if job_view['status'] in {'succeeded','failed','cancelled','unknown'}:break
+        await asyncio.sleep(1)
+    if not job_view or job_view['status']!='succeeded':
+        raise AssertionError('evo18_media_job_not_succeeded')
+    origin_final,_=await wait_turn(client,origin['id'],args.timeout)
+    if origin_final['state']!='COMPLETED':raise AssertionError('evo18_origin_not_completed')
+    owner=(await repositories.core.get_thread(thread['id'])).owner_id
+    deadline=time.monotonic()+180;continuation=None;project=None;output=None
+    while time.monotonic()<deadline:
+        async with repositories.core.connections() as db:
+            continuation=await db.scalar(select(TurnRow).join(TurnOrderRow,
+                TurnOrderRow.turn_id==TurnRow.id).where(TurnRow.thread_id==thread['id'],
+                TurnRow.internal.is_(True),TurnRow.id!=origin['id']).order_by(
+                    TurnOrderRow.sequence.desc()).limit(1))
+        projects=await repositories.core.current_project_files(thread['id'],owner)
+        project=projects[0] if len(projects)==1 else None
+        async with repositories.media.connections() as db:
+            output=await db.scalar(select(MediaJobOutputRow).where(
+                MediaJobOutputRow.job_id==job['id'],MediaJobOutputRow.role=='primary'))
+        if continuation and project and output and output.project_file_id==project.id:break
+        await asyncio.sleep(.5)
+    if not continuation or not project or not output:
+        raise AssertionError('evo18_media_promotion_not_observed')
+    continuation_final,_=await wait_turn(client,continuation.id,args.timeout)
+    async with repositories.media.connections() as db:
+        rows=list((await db.scalars(select(MediaJobRow).where(
+            MediaJobRow.thread_id==thread['id']))).all())
+    expected_path='/workspace/project/'+project.path
+    if (continuation_final['state']!='COMPLETED' or expected_path not in continuation.message
+            or len(rows)!=1 or rows[0].id!=job['id'] or not rows[0].provider_job_id
+            or output.project_file_id!=project.id):
+        raise AssertionError('evo18_media_continuation_contract_failed')
+    return {'classification':'success','thread_id':thread['id'],'origin_turn_id':origin['id'],
+        'continuation_turn_id':continuation.id,'media_job_id':job['id'],
+        'provider_job_id':rows[0].provider_job_id,'provider_submissions':1,
+        'project_file_id':project.id,'project_path':project.path,
+        'project_file_promoted':True,'continuation_contains_path':True}
+
+
+HANDLERS={f'EVO{index:02d}':globals()[f'evo{index:02d}'] for index in range(1,19)}
 
 
 async def main():
