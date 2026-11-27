@@ -312,6 +312,35 @@ class JobGroupClient:
         raise AssertionError(path)
 
 
+class MediaContinuationRaceClient:
+    def __init__(self):
+        self.confirmed=False;self.job_polls=0;self.graph_polls=0
+
+    async def get(self,path,params=None):
+        if path.endswith('/turns'):
+            turns=[{'id':'turn-1','state':'COMPLETED'}]
+            if self.confirmed:turns.append({'id':'unrelated-continuation','state':'COMPLETED'})
+            if self.graph_polls>=4:turns.append({'id':'media-continuation','state':'COMPLETED'})
+            return Response(turns)
+        if path.endswith('/media/drafts'):
+            return Response([{'id':'draft-1','status':
+                'confirmed' if self.confirmed else 'awaiting_confirmation'}])
+        if path.endswith('/media/jobs'):
+            self.job_polls+=1
+            return Response([{'id':'job-1','status':'succeeded' if self.job_polls>=2 else 'running',
+                'phase':'committed' if self.job_polls>=2 else 'provider_polling','error_code':''}])
+        if path.endswith('/job-group-drafts'):return Response([])
+        if path.endswith('/execution-graph'):
+            self.graph_polls+=1
+            state='CONTINUED' if self.graph_polls>=4 else 'WAITING_EXTERNAL'
+            return Response({'nodes':[{'id':'media-batch:turn-1','type':'media_batch','state':state}]})
+        raise AssertionError(path)
+
+    async def post(self,path):
+        assert path=='api/media/drafts/draft-1/confirm'
+        self.confirmed=True;return Response({'id':'job-1','status':'created'})
+
+
 class PaginatedItemClient:
     async def get(self,path,params=None):
         assert path.endswith('/items');after=int(params['after']);limit=int(params['limit'])
@@ -371,6 +400,19 @@ async def test_campaign_waits_for_job_group_continuation_and_quiescence(monkeypa
     final,jobs=await campaign.settle_media_workflow(client,'thread-1',
         {'id':'turn-1','state':'COMPLETED'},running,'C16',10,allow_external=True)
     assert client.graph_polls>=5 and final=={'id':'turn-2','state':'COMPLETED'} and jobs==[]
+
+
+@pytest.mark.asyncio
+async def test_campaign_does_not_mistake_unrelated_turn_for_media_continuation(monkeypatch):
+    campaign=campaign_module();client=MediaContinuationRaceClient()
+    async def no_sleep(_):pass
+    monkeypatch.setattr(campaign.asyncio,'sleep',no_sleep)
+    running={'C30':{'state':'RUNNING'}}
+    final,jobs=await campaign.settle_media_workflow(client,'thread-1',
+        {'id':'turn-1','state':'COMPLETED'},running,'C30',10,allow_external=True)
+    assert client.graph_polls>=4
+    assert final=={'id':'media-continuation','state':'COMPLETED'}
+    assert jobs==[{'id':'job-1','status':'succeeded','phase':'committed','error_code':''}]
 
 
 @pytest.mark.asyncio

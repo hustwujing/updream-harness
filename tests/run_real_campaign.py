@@ -414,8 +414,11 @@ async def settle_media_workflow(client,thread_id,initial_final,running,identity,
         active_groups=[row for row in groups if row.get("state") in {"COMMITTED","RUNNING"}]
         active_jobs=[row for row in graph.get("nodes",[]) if row.get("type")=="job"
             and row.get("state") in {"CREATED","QUEUED","RUNNING","WAITING_EXTERNAL","CANCELLING"}]
-        if active_groups or active_jobs:
-            running[identity]["state"]="JOB_GROUP_RUNNING";stable_count=0
+        active_media_batches=[row for row in graph.get("nodes",[])
+            if row.get("type")=="media_batch" and row.get("state") in {"RUNNING","WAITING_EXTERNAL"}]
+        if active_groups or active_jobs or active_media_batches:
+            running[identity]["state"]=("MEDIA_BATCH_WAITING" if active_media_batches
+                else "JOB_GROUP_RUNNING");stable_count=0
             await asyncio.sleep(1);continue
         signature=(tuple((turn["id"],turn["state"]) for turn in turns),
             tuple((row["id"],row["state"]) for row in groups),
