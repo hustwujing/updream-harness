@@ -292,6 +292,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/health")
     async def health():
+        if settings.model_catalog_discovery:
+            discovery.load_snapshot(trust_freshness=True)
         try:
             await asyncio.wait_for(store.healthcheck(),timeout=1)
             database={"available":True,"error":""}
@@ -314,6 +316,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/catalog/harnesses")
     async def harness_catalog():
+        if settings.model_catalog_discovery:
+            discovery.load_snapshot(trust_freshness=True)
         return catalog.public()
 
     @app.get("/api/catalog/media")

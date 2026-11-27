@@ -75,7 +75,7 @@ class ModelDiscovery:
             "error":"","last_success_at":None,"truncated":False,"discovered_count":0}
             for harness in Harness}
 
-    def load_snapshot(self) -> bool:
+    def load_snapshot(self, *, trust_freshness: bool = False) -> bool:
         previous=(copy.deepcopy(self.catalog.options),copy.deepcopy(self.catalog.known_models),
             copy.deepcopy(self.catalog.availability),copy.deepcopy(self.catalog.inventory_status),
             self.last_refresh_at,self.last_attempt_at,self.last_discovered,self.last_available,
@@ -116,7 +116,19 @@ class ModelDiscovery:
             restored={}
             for harness in Harness:
                 state=inventory.get(harness.value,{}) if isinstance(inventory,dict) else {}
-                restored[harness]={"status":state.get("status","snapshot"),"stale":True,
+                stale=True
+                if trust_freshness:
+                    last_success=state.get("last_success_at")
+                    try:
+                        succeeded_at=datetime.fromisoformat(str(last_success).replace('Z','+00:00'))
+                        if succeeded_at.tzinfo is None:succeeded_at=succeeded_at.replace(tzinfo=timezone.utc)
+                        expired=(datetime.now(timezone.utc)-succeeded_at).total_seconds() > max(
+                            300,self.settings.model_catalog_refresh_seconds*2)
+                    except (TypeError,ValueError):expired=True
+                    stale=bool(state.get("stale",True)) or expired
+                status=state.get("status","snapshot")
+                if stale and status=="fresh":status="stale"
+                restored[harness]={"status":status,"stale":stale,
                     "error":state.get("error",""),"last_success_at":state.get("last_success_at"),
                     "truncated":bool(state.get("truncated",False)),
                     "discovered_count":int(state.get("discovered_count",0))}

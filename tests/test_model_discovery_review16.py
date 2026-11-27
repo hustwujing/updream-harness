@@ -111,3 +111,20 @@ async def test_inventory_freshness_and_counts_survive_snapshot_restart(tmp_path)
     assert status["available"]==stale["available"]
     assert status["last_refresh_at"]==last_success and status["last_attempt_at"]
     assert status["stale"] is True
+
+
+async def test_shared_snapshot_reader_preserves_recent_authoritative_freshness(tmp_path):
+    def handle(request):
+        if request.method=='GET':
+            model={'codex.test':'gpt-5.6','claude.test':'claude-4.6-sonnet',
+                'deepseek.test':'deepseek-v4.1-flash'}[request.url.host]
+            return httpx.Response(200,json={'data':[{'id':model}]})
+        return httpx.Response(200,json={'ok':True})
+    settings=Settings(data_root=tmp_path,upstream_codex='https://codex.test/v1',
+        upstream_claude='https://claude.test/v1',upstream_deepseek='https://deepseek.test/v1')
+    writer=ModelDiscovery(settings,HarnessCatalog(),httpx.MockTransport(handle))
+    await writer.refresh()
+    reader=ModelDiscovery(settings,HarnessCatalog())
+    assert reader.load_snapshot(trust_freshness=True)
+    assert reader.status()['stale'] is False
+    assert all(not row['stale'] for row in reader.status()['inventory'].values())
