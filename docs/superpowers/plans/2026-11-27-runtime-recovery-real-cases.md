@@ -47,7 +47,7 @@
 
 - [x] Add the case-local lost-response transport and `evo16` checkpoint replay assertions.
 - [x] Add `evo17` durable setup, deployed user Turns, exact-once assertions and zero external-work audit.
-- [x] Add `evo18` real audio draft, Project File promotion, continuation and one-execution assertions.
+- [x] Add `evo18` real image draft, Project File promotion, continuation and one-execution assertions.
 - [x] Extend `HANDLERS` through EVO18 and run runner syntax/contract tests.
 
 ### Task 3: Deployed Evidence

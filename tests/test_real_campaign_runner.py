@@ -118,7 +118,7 @@ def test_runtime_recovery_evolution_cases_have_real_handlers():
     assert "range(1,19)" in source
     assert 'LostRestoreResponseTransport' in source
     assert 'sandbox_workspace_restore_unavailable' in source
-    assert 'speech-2.8-turbo' in source
+    assert 'seedream-5.0' in source
 
 
 def test_k11_multiview_uses_four_views_of_one_subject():

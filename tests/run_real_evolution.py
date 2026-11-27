@@ -557,9 +557,9 @@ async def evo18(client,args,repositories,settings):
     thread,origin=await protocol.origin(client,args,'EVO18',
         '请在沙箱中执行 `sleep 20`，然后只回复 EVO18-ORIGIN-READY。必须实际等待命令完成。')
     draft=protocol.require(await client.post(f"api/threads/{thread['id']}/media/drafts",json={
-        'kind':'audio','model':'speech-2.8-turbo','generation_mode':'text_to_audio',
-        'parameters':{'text':'媒体工作区提升真机验证。','voice_id':'male-qn-qingse',
-            'speed':1,'audio_format':'mp3'},'references':[],
+        'kind':'image','model':'seedream-5.0','generation_mode':'text_to_image',
+        'parameters':{'prompt':'A simple blue circle centered on a white background, no text',
+            'size':'2K'},'references':[],
         'idempotency_key':'evo18-media-'+uuid.uuid4().hex,
         'turn_id':origin['id'],'output_role':'workspace'})).json()
     job=protocol.require(await client.post(f"api/media/drafts/{draft['id']}/confirm")).json()

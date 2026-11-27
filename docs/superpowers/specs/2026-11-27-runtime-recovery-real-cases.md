@@ -27,7 +27,7 @@ delivery. The catalog therefore grows from 190 to 193 cases.
   deployed API and asserts that the real Harness sees both the factual completion
   marker and current request. It submits one further user Turn and asserts the marker
   is absent. No Media Job or external execution may be created.
-- `EVO18` submits one real `speech-2.8-turbo` workspace draft, waits for Provider
+- `EVO18` submits one real `seedream-5.0` workspace draft, waits for Provider
   success and PlatformWorker continuation, then asserts the output has one Project
   File path, the continuation contains that path, and only one Provider execution ID
   exists.
@@ -43,4 +43,3 @@ delivery. The catalog therefore grows from 190 to 193 cases.
   completed media task.
 - Evidence records sandbox, Turn, Media Job, Project File and external execution
   identities needed to audit duplicate work.
-
