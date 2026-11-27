@@ -505,6 +505,16 @@ class RuntimeClient:
             self._raise_for_status(sandbox,response)
             return response.json()
 
+    async def acknowledge_execution(self,sandbox:Sandbox,execution_id:str,sequence:int)->None:
+        if sequence<=0:return
+        await self._resolve_endpoint(sandbox)
+        async with observed_async_client('sandbox-runtime',base_url=sandbox.runtime_url,
+                headers={**sandbox.runtime_headers,**carrier()},timeout=20,trust_env=False,
+                transport=self.transport) as client:
+            response=await client.post(f'/v1/executions/{execution_id}/ack',
+                json={'committed_sequence':sequence})
+            self._raise_for_status(sandbox,response)
+
     @observed("runtime.interaction")
     async def respond_interaction(self, sandbox: Sandbox, interaction_id: str,
                                   response_value: dict) -> bool | None:

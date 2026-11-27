@@ -27,6 +27,7 @@ from sandbox_harness.common.sandbox.sandbox import (SandboxNotFound)
 from sandbox_harness.common.sandbox.sandbox_factory import (SandboxProfileResolver)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCreateOutcomeUnknown, SandboxHandle)
 from sandbox_harness.common.db.models import utc_datetime
+from sandbox_harness.common.events.runtime_stream import RuntimeStreamBuffer
 from sandbox_harness.common.sites.site_bundle import (build_site_archive_from_paths, normalize_site_slug)
 
 
@@ -704,6 +705,39 @@ class Broker:
                         lease_owner=self.instance_id if generation is not None else None,
                         recovery_generation=generation)
 
+    def _runtime_stream_buffer(self,thread_id:str,turn_id:str,execution_id:str,sandbox):
+        async def persist(value):
+            await self._record_runtime_event(thread_id,turn_id,value,execution_id)
+        async def publish(value):
+            if self.store.events:
+                await self.store.events.publish_live('turn',turn_id,value)
+        async def acknowledge(sequence):
+            await self.runtime.acknowledge_execution(sandbox,execution_id,sequence)
+        return RuntimeStreamBuffer(execution_id=execution_id,persist_event=persist,
+            persist_seconds=self.settings.stream_persist_seconds,
+            live_seconds=self.settings.stream_live_publish_seconds,
+            publish_live=publish,acknowledge=acknowledge)
+
+    async def _consume_runtime_stream(self,stream,*,thread_id:str,turn_id:str,
+                                      execution_id:str,sandbox):
+        buffer=self._runtime_stream_buffer(thread_id,turn_id,execution_id,sandbox)
+        try:
+            async for value in stream:
+                if isinstance(value,RuntimeResult):
+                    await buffer.flush()
+                    if value.runtime_sequence:
+                        generation=self.leases.get(turn_id)
+                        if generation is not None:
+                            await self.store.update_runtime_sequence(turn_id,value.runtime_sequence,
+                                self.instance_id,generation)
+                    return value
+                await buffer.add(value)
+            await buffer.flush();return None
+        except asyncio.CancelledError:
+            await buffer.abandon();raise
+        except BaseException:
+            await buffer.flush();raise
+
     @observed("input.materialize")
     async def _materialize_attachments(self, sandbox, attachments) -> None:
         for attachment in attachments:
@@ -887,6 +921,8 @@ class Broker:
         abandoned = False
         lost_lease = False
         cleanup_pending = False
+        result=None
+        execution_id=turn.runtime_execution_id or ''
         try:
             async with self.thread_lock(thread.id):
                 try:
@@ -953,17 +989,10 @@ class Broker:
                             "runtime_sequence": int(status.get("last_sequence") or 0),
                         })
                     else:
-                        async for value in self.runtime.resume(
-                            sandbox, turn.runtime_execution_id, turn.runtime_sequence,
-                        ):
-                            if isinstance(value, RuntimeResult):
-                                recovered_result = value
-                            else:
-                                await self._record_runtime_event(thread.id, turn.id, value, turn.runtime_execution_id)
-                            if value.runtime_sequence:
-                                await self.store.update_runtime_sequence(
-                                    turn.id, value.runtime_sequence, self.instance_id, generation,
-                                )
+                        recovered_result=await self._consume_runtime_stream(
+                            self.runtime.resume(sandbox,turn.runtime_execution_id,
+                                turn.runtime_sequence),thread_id=thread.id,turn_id=turn.id,
+                            execution_id=turn.runtime_execution_id,sandbox=sandbox)
                         if recovered_result is None:
                             raise RuntimeError("Runtime recovery stream ended without a result")
                 else:
@@ -1053,17 +1082,11 @@ class Broker:
                         await self.store.start_runtime_execution(
                             turn.id, execution_id, self.instance_id, generation, input_id=input_id,
                         )
-                        async for value in self.runtime.run(sandbox, message=message, attachments=attachments,
-                            native_thread_id=native_thread_id, reasoning_effort=turn.reasoning_effort,
-                            execution_id=execution_id, input_id=input_id, after_sequence=0):
-                            if isinstance(value, RuntimeResult):
-                                result = value
-                            else:
-                                await self._record_runtime_event(thread.id, turn.id, value, execution_id)
-                            if value.runtime_sequence:
-                                await self.store.update_runtime_sequence(
-                                    turn.id, value.runtime_sequence, self.instance_id, generation,
-                                )
+                        result=await self._consume_runtime_stream(self.runtime.run(sandbox,
+                            message=message,attachments=attachments,native_thread_id=native_thread_id,
+                            reasoning_effort=turn.reasoning_effort,execution_id=execution_id,
+                            input_id=input_id,after_sequence=0),thread_id=thread.id,
+                            turn_id=turn.id,execution_id=execution_id,sandbox=sandbox)
                     if result is None:
                         raise RuntimeStreamInterrupted("Runtime stream ended without a result")
                     if result.status in ("completed", "waiting_user"):
@@ -1224,6 +1247,13 @@ class Broker:
                     await self.store.complete_agent_item(turn.id,
                         "completed" if final_state in {TurnState.COMPLETED, TurnState.WAITING_USER} else "interrupted",
                         lease_owner=self.instance_id, recovery_generation=generation)
+                    if (sandbox and result is not None and result.runtime_sequence
+                            and execution_id):
+                        try:await self.runtime.acknowledge_execution(
+                            sandbox,execution_id,result.runtime_sequence)
+                        except Exception as exc:
+                            event('runtime.terminal_ack.failed',level=logging.WARNING,exc=exc,
+                                turn_id=turn.id,execution_id=execution_id)
                     await self.store.append_event(turn.id, EventKind.STATE, {"state": TurnState.CLEANING.value},
                         lease_owner=self.instance_id, recovery_generation=generation)
                     if sandbox:

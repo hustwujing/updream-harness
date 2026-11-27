@@ -89,7 +89,20 @@ waiting or failed outcome becomes `CANCELLED` unless cleanup itself failed.
 - Events are per-Turn replay records ordered by `(turn_id, sequence)`.
 - Runtime replay identity is `(source_execution_id, source_sequence)`.
 - Items are the durable, Thread-ordered transcript. Text deltas update an
-  existing agent Item instead of inserting one row per token.
+  existing agent Item instead of inserting one row per token. Native public
+  text and tool-output fragments are coalesced by `RuntimeStreamBuffer`: the
+  first public text establishes its Item, later fragments commit on the shared
+  `stream_persist_seconds` interval, and every control/terminal boundary first
+  flushes the preceding fragments. Child and Reviewer activity uses the same
+  mechanism rather than one `JobActivityRow` per native fragment.
+- JobActivity display sequence is Job-global, while replay coordinates are
+  scoped by `(job_id, runtime_execution_id, runtime_sequence)`. A nested Child
+  continuation may restart its Runtime sequence at one without colliding with
+  the preceding execution's display rows.
+- `TurnRow.runtime_sequence` and Child activity cursors are committed high-water
+  marks. Runtime ACK is sent only after the matching database transaction
+  succeeds. A failed or unknown transaction leaves the journal unacknowledged
+  so replacement Workers replay it; ACK must never precede commit.
 - Input status is `pending`, `delivered`, `unknown`, `applied` or `failed`.
   Transport loss after delivery becomes `unknown`; it is not permission to send
   the input again as new work.

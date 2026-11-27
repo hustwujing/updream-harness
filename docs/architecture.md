@@ -8,11 +8,20 @@ The platform does not plan tasks, create a DAG, review outputs, recover individu
 
 The broker authenticates users, serializes turns per session, restores and saves checkpoints, controls OpenSandbox lifecycle, forwards ordered events and exports output files. Deterministic resource and security checks are infrastructure controls rather than business logic.
 
-PostgreSQL is authoritative for every event. Redis Streams under the product key prefix wake connected clients and retain a bounded replay window; reconnects always reconcile against PostgreSQL, so Redis loss does not lose transcript state or cause continuous database polling.
+PostgreSQL is authoritative for transcript Items, control events and committed
+Runtime event batches. Redis Streams under the product key prefix carry bounded
+live public-text deltas and wake connected clients. Reconnects reconcile the
+PostgreSQL committed cursor before overlaying higher Redis sequences, so Redis
+loss can delay display until the next durable flush but cannot lose transcript
+state.
 
 ## Runtime Responsibilities
 
-The runtime daemon starts or resumes the selected Harness, sends the user message and attachments, normalizes native streaming events, maintains `/workspace`, and reports completion or a user question. Harness-specific behavior stays behind the adapter interface.
+The runtime daemon starts or resumes the selected Harness, sends the user message
+and attachments, normalizes native streaming events, maintains `/workspace`, and
+reports completion or a user question. It journals normalized events in a
+private bounded segmented store until the Host ACKs their committed sequence.
+Harness-specific behavior stays behind the adapter interface.
 
 ## Project Files
 
@@ -26,7 +35,15 @@ Every nonterminal Turn has a renewable owner lease and a monotonically increasin
 
 Sandbox creation is keyed by Turn ID. An unknown create result is reconciled by namespace and Turn metadata before another create is allowed. `RESTORING` and `STARTING` can restart from the last committed checkpoint because the Harness has not started. Once `RUNNING` begins, the broker never blindly resends the user message.
 
-The Sandbox Runtime owns the Harness subprocess reader. It continues draining stdout when the Browser or Broker HTTP stream disconnects, assigns a sequence to every normalized event and retains the terminal result. PostgreSQL stores the active Runtime execution ID and last committed Runtime sequence. A replacement Broker finds the exact Sandbox, resumes after that sequence and proceeds through checkpoint, artifact export and cleanup. Runtime-derived events carry their execution ID and source sequence so replay does not duplicate already committed events.
+The Sandbox Runtime owns the Harness subprocess reader. It continues draining
+stdout when the Browser or Broker HTTP stream disconnects, assigns a sequence to
+every normalized event and retains the terminal result. PostgreSQL stores the
+active Runtime execution ID and last committed Runtime sequence. Primary,
+Child and Reviewer consumers share one buffer: live text is coalesced to Redis,
+text/tool output is committed in bounded batches, and control events force a
+flush. A replacement Worker finds the exact Sandbox and resumes after the
+database cursor. Runtime-derived batches carry their execution ID and source
+sequence range so replay does not duplicate already committed events.
 
 If the Runtime execution cannot be found, the Turn fails with an explicit interruption instead of replaying unknown public or Provider side effects. Provider handles are ordinary Harness state under `/workspace/state`; the broker does not interpret or replay them.
 

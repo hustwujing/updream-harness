@@ -21,9 +21,13 @@ owning Turn and directory selected by an owner-scoped `index.html` Artifact.
 Path traversal and foreign Artifact IDs return 404. Generated HTML uses both a
 response CSP sandbox and an iframe sandbox without `allow-same-origin`.
 
-SSE reads durable events from PostgreSQL and uses Redis only to wake waiters.
-Honor `Last-Event-ID`, preserve event sequence and close only after a terminal
-Turn has no remaining rows. Do not make reconnect correctness depend on Redis.
+SSE reads authoritative transcript/event batches from PostgreSQL. During an
+active Turn it may also project bounded `live_text_delta` entries from the
+owner-scoped Redis Stream. Honor `Last-Event-ID`, preserve durable event
+sequence, filter live Runtime parts at or below the committed cursor, and close
+only after a terminal Turn has no remaining rows. Reconnect first reconciles
+the PostgreSQL Item and then overlays only higher Runtime sequences; correctness
+must not depend on Redis.
 
 ## Browser rules
 
@@ -47,6 +51,10 @@ Turn has no remaining rows. Do not make reconnect correctness depend on Redis.
   product controls and frozen Turn record.
 - Stream follow occurs only near the bottom. User scrolling must not be pulled
   back by new output.
+- Live transcript overlays deduplicate by execution and Runtime sequence. A
+  durable refresh may replace their base text but may not duplicate or regress
+  higher uncommitted fragments. Character progress counts Unicode code points
+  from received public text and animates only toward an observed value.
 - Only active Items animate. Terminal Items retain a fixed elapsed duration.
 - Domain-specific terminal sets drive elapsed timers. Site retry exhaustion is
   terminal even though the Job remains manually recoverable.

@@ -42,6 +42,7 @@ from .pty_service import PtyManager
 from .skills import clear_materialized_skills, materialize_skills
 from .state import runtime_state_dir
 from .project_uploads import ProjectUploads, CHUNK_BYTES
+from .event_journal import ExecutionEventJournal
 
 
 WORKSPACE = Path("/workspace")
@@ -225,6 +226,10 @@ class TurnRequest(BaseModel):
     after_sequence: int = Field(default=0, ge=0)
 
 
+class ExecutionAck(BaseModel):
+    committed_sequence:int=Field(ge=0)
+
+
 class ManagedPreserveRequest(BaseModel):
     paths: list[str] = Field(min_length=1, max_length=10_000)
     destination: str = Field(pattern=r"^work(?:/[^/]+)*$")
@@ -393,6 +398,7 @@ class Execution:
     stderr_reported: bool = False
     stderr_log_max_bytes: int = 1024
     stderr_tail: bytearray = field(default_factory=bytearray)
+    journal: ExecutionEventJournal | None = None
 
 
 def execution_input_ids(execution: Execution) -> list[str]:
@@ -463,6 +469,12 @@ def create_app() -> FastAPI:
     app.state.process_command = None
     app.state.pending_inputs = 0
     app.state.execution = None
+    journal_root=RUN/'execution-journals'
+    journal_root.mkdir(parents=True,mode=0o700,exist_ok=True)
+    app.state.archived_journals=ExecutionEventJournal.discover(journal_root)
+    for identity,journal in list(app.state.archived_journals.items()):
+        if journal.cleanup_after is not None and journal.cleanup_after<=time.time():
+            journal.remove();app.state.archived_journals.pop(identity,None)
     app.state.runtime_bundle_digest = ""
     app.state.background_jobs = {}
     app.state.interaction_waiters = {}
@@ -706,6 +718,8 @@ def create_app() -> FastAPI:
         size = len(json.dumps(row, ensure_ascii=False).encode()) + 1
         if execution.journal_bytes + size > RUNTIME_EVENT_JOURNAL_LIMIT and value.get("type") != "result":
             raise RuntimeError("Runtime event journal exceeded its byte limit")
+        if execution.journal:
+            execution.journal.append(row,terminal=value.get('type')=='result')
         execution.sequence += 1
         execution.journal_bytes += size
         execution.events.append(row)
@@ -972,6 +986,10 @@ def create_app() -> FastAPI:
                 yield json.dumps(row, ensure_ascii=False) + "\n"
                 if row.get("type") == "result":
                     return
+
+    async def stream_archived(journal:ExecutionEventJournal,after:int):
+        for row in journal.rows_after(after):
+            yield json.dumps(row,ensure_ascii=False)+'\n'
 
     def inspect_target(value: str, *, require_file: bool = False) -> tuple[str, Path]:
         path = PurePosixPath((value or "project").strip().replace("\\", "/"))
@@ -1590,6 +1608,8 @@ def create_app() -> FastAPI:
         created = execution is None or execution.id != value.execution_id
         harness = os.environ.get("HARNESS_KIND", "claude")
         if created:
+            if value.execution_id in app.state.archived_journals:
+                raise HTTPException(409,'Execution identity is already terminal')
             reset_outputs(value.execution_id.split(":", 1)[0])
             model = os.environ.get("HARNESS_MODEL", "default")
             os.environ["HARNESS_REASONING_EFFORT"] = value.reasoning_effort
@@ -1602,7 +1622,8 @@ def create_app() -> FastAPI:
             execution = Execution(id=value.execution_id, process=process, selected=selected,
                 native_thread_id=value.native_thread_id,
                 project_output_snapshot=project_output_snapshot(),
-                stderr_log_max_bytes=app.state.stderr_log_max_bytes)
+                stderr_log_max_bytes=app.state.stderr_log_max_bytes,
+                journal=ExecutionEventJournal(journal_root,value.execution_id))
             app.state.execution = execution
             app.state.process = process
             app.state.process_command = selected
@@ -1638,17 +1659,47 @@ def create_app() -> FastAPI:
     @app.get("/v1/executions/{execution_id}")
     async def execution_status(execution_id: str):
         execution = app.state.execution
-        if execution is None or execution.id != execution_id:
-            raise HTTPException(404, "Execution not found")
-        return {"execution_id": execution.id, "state": "completed" if execution.result else "running",
-            "last_sequence": execution.sequence, "result": execution.result}
+        if execution is not None and execution.id == execution_id:
+            return {"execution_id": execution.id, "state": "completed" if execution.result else "running",
+                "last_sequence": execution.sequence, "result": execution.result}
+        journal=app.state.archived_journals.get(execution_id)
+        if journal is None:raise HTTPException(404,"Execution not found")
+        journal.mark_interrupted()
+        return {"execution_id":execution_id,"state":"completed","last_sequence":journal.last_sequence,
+            "result":journal.result}
 
     @app.get("/v1/executions/{execution_id}/events")
     async def execution_events(execution_id: str, after: int = 0):
         execution = app.state.execution
-        if execution is None or execution.id != execution_id:
-            raise HTTPException(404, "Execution not found")
-        return StreamingResponse(stream_execution(execution, after), media_type="application/x-ndjson")
+        if execution is not None and execution.id == execution_id:
+            return StreamingResponse(stream_execution(execution,after),media_type="application/x-ndjson")
+        journal=app.state.archived_journals.get(execution_id)
+        if journal is None:raise HTTPException(404,"Execution not found")
+        journal.mark_interrupted()
+        return StreamingResponse(stream_archived(journal,after),media_type="application/x-ndjson")
+
+    @app.post('/v1/executions/{execution_id}/ack')
+    async def acknowledge_execution(execution_id:str,value:ExecutionAck):
+        execution=app.state.execution
+        journal=(execution.journal if execution and execution.id==execution_id
+            else app.state.archived_journals.get(execution_id))
+        if journal is None:raise HTTPException(404,'Execution not found')
+        try:committed=journal.acknowledge(value.committed_sequence)
+        except ValueError as exc:raise HTTPException(409,str(exc)) from exc
+        if execution and execution.id==execution_id:
+            execution.events[:]=[row for row in execution.events
+                if row['runtime_sequence']>committed]
+            execution.journal_bytes=sum(len(json.dumps(row,ensure_ascii=False).encode())+1
+                for row in execution.events)
+        cleanup_after=journal.cleanup_after
+        if cleanup_after is not None:
+            async def cleanup_terminal():
+                await asyncio.sleep(max(0,cleanup_after-time.time()))
+                journal.remove();app.state.archived_journals.pop(execution_id,None)
+                if app.state.execution and app.state.execution.id==execution_id:
+                    app.state.execution.journal=None
+            asyncio.create_task(cleanup_terminal(),name='runtime-journal-cleanup-'+execution_id)
+        return {'execution_id':execution_id,'committed_sequence':committed}
 
     @app.post("/v1/inputs")
     async def append_input(value: TurnRequest):

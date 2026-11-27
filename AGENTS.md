@@ -45,6 +45,11 @@ claims made by documentation.
   checkpoint writes remain lease-fenced and content-addressed.
 - Stream events are ordered by `(turn_id, sequence)` and Runtime receipts are
   idempotent by `(execution_id, source_sequence)`.
+- Public text and tool-output fragments use the shared Runtime stream buffer.
+  Redis may carry bounded live deltas, but PostgreSQL advances the committed
+  Runtime cursor only with the aggregated transcript/activity transaction.
+  ACK Runtime only after that transaction succeeds; control and terminal
+  boundaries flush pending fragments first.
 - Files leave a sandbox only through validated attachments, managed project
   files, checkpoints or `/workspace/outputs` artifacts.
 
@@ -74,6 +79,10 @@ claims made by documentation.
   closed.
 - Reuse the existing ownership, isolation, cancellation, recovery, event and
   observability mechanisms. A feature is incomplete if it bypasses them.
+- Never persist native Harness text or tool-output fragments one transaction per
+  chunk. Primary, Child, Reviewer and future Harness consumers must reuse
+  `common/events/runtime_stream.py`, with configurable live and durable flush
+  intervals and Runtime journal replay.
 - Fix shared contracts without case-, operation- or sandbox-provider-specific
   state-machine branches. Admission saturation must not block cleanup or
   observation of already accepted executions.

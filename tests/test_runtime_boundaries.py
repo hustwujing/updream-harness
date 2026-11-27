@@ -31,6 +31,25 @@ async def completed(app):
     return app.state.execution.result
 
 
+async def test_runtime_restart_replays_disk_journal_then_reports_controlled_interruption(tmp_path,monkeypatch):
+    monkeypatch.setattr(runtime_app,'RUN',tmp_path/'run')
+    monkeypatch.setattr(runtime_app,'WORKSPACE',tmp_path/'workspace')
+    monkeypatch.setattr(runtime_app,'OUTPUTS',tmp_path/'workspace/outputs')
+    from sandbox_runtime.event_journal import ExecutionEventJournal
+    journal=ExecutionEventJournal(runtime_app.RUN/'execution-journals','lost-execution')
+    journal.append({'kind':'text_delta','payload':{'text':'partial'},'runtime_sequence':1})
+    app=runtime_app.create_app()
+    status=await endpoint(app,'/v1/executions/{execution_id}')('lost-execution')
+    assert status['state']=='completed' and status['last_sequence']==2
+    assert status['result']['error_code']=='runtime_process_restarted'
+    response=await endpoint(app,'/v1/executions/{execution_id}/events')('lost-execution',0)
+    body=b''.join([chunk.encode() if isinstance(chunk,str) else chunk
+        async for chunk in response.body_iterator]).decode()
+    rows=[json.loads(line) for line in body.splitlines()]
+    assert rows[0]['payload']['text']=='partial'
+    assert rows[-1]['result']['error_code']=='runtime_process_restarted'
+
+
 async def test_overlapping_project_upload_retry_keeps_its_own_temporary_file(tmp_path,monkeypatch):
     from starlette.requests import ClientDisconnect
     app=runtime(tmp_path,monkeypatch,'')

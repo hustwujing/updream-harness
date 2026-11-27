@@ -111,6 +111,17 @@ submission do not use this policy because a lost response can hide an accepted
 external side effect. Those paths retain their accepted-handle reconciliation
 contracts instead.
 
+Runtime assigns every normalized event a monotonic sequence and appends it to a
+private segmented execution journal before publication. Primary and Child
+consumers retain only an in-memory aggregation window, publish bounded live text
+through Redis, and commit aggregates at `stream_persist_seconds` (five seconds
+by default). After commit they ACK the exact high-water mark; Runtime then
+compacts fully acknowledged nonterminal segments. Terminal ACK schedules the
+execution journal for delayed removal. A Runtime restart replays retained rows
+and explicitly terminates an execution that lost its Harness reader; it never
+starts the Harness again. Journal corruption, gaps or capacity exhaustion fail
+closed instead of discarding uncommitted events.
+
 - `QUEUED` may be scheduled normally.
 - `RESTORING` and `STARTING` delete/recreate before Harness execution.
 - `RUNNING`, `AWAITING_USER`, `DRAINING_INPUTS` and `CHECKPOINTING` reattach the

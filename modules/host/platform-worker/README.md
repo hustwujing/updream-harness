@@ -11,3 +11,7 @@ refresh, expiry and orphan cleanup.
 - Verification: leader fencing, API-independent restart, Turn recovery, Outbox and real Ali cases
 
 The API persists requests but does not run PlatformWorker loops.
+
+Primary Runtime streams use the shared event buffer. Public text is available
+through bounded Redis live deltas while PostgreSQL receives aggregated batches
+on the configured interval; Runtime ACK follows the lease-fenced commit.

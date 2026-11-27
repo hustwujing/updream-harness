@@ -99,6 +99,8 @@ class Settings(BaseSettings):
     auth_session_ttl_seconds: int = Field(default=30 * 86400, ge=300, le=365 * 86400)
     gateway_model_start_timeout_seconds: float = Field(default=120, ge=5, le=600)
     gateway_model_idle_timeout_seconds: float = Field(default=300, ge=10, le=1800)
+    stream_live_publish_seconds: float = Field(default=.3, ge=.05, le=5)
+    stream_persist_seconds: float = Field(default=5, ge=.5, le=60)
     runtime_model_start_timeout_seconds: float = Field(default=150, ge=10, le=900)
     runtime_event_idle_timeout_seconds: float = Field(default=900, ge=60, le=3600)
     runtime_metrics_enabled: bool = False

@@ -95,6 +95,16 @@ def test_model_body_budget_is_separately_configurable_and_bounded(monkeypatch):
         with pytest.raises(ValueError):Settings(_env_file=None,gateway_model_request_max_bytes=value)
 
 
+def test_stream_flush_intervals_are_shared_configurable_and_bounded():
+    settings=Settings(_env_file=None)
+    assert settings.stream_live_publish_seconds==.3
+    assert settings.stream_persist_seconds==5
+    assert Settings(_env_file=None,stream_live_publish_seconds=.5,
+        stream_persist_seconds=9).stream_persist_seconds==9
+    for field,value in (('stream_live_publish_seconds',.01),('stream_persist_seconds',.1)):
+        with pytest.raises(ValueError):Settings(_env_file=None,**{field:value})
+
+
 def test_runtime_stderr_log_budget_allows_disable_and_negative_maximum():
     from pydantic import ValidationError
     assert Settings(_env_file=None).runtime_stderr_log_max_bytes==1024

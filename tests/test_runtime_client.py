@@ -17,6 +17,19 @@ def test_runtime_client_does_not_create_staging_until_a_transfer(tmp_path):
     assert not staging.exists()
 
 
+async def test_runtime_client_acknowledges_only_the_committed_execution_sequence():
+    requests=[]
+    async def respond(request):
+        requests.append((request.method,request.url.path,json.loads(await request.aread())))
+        return httpx.Response(200,json={'committed_sequence':17})
+    runtime=RuntimeClient(transport=httpx.MockTransport(respond))
+    sandbox=Sandbox(id='sandbox',harness=Harness.CODEX,image='image',
+        runtime_url='http://runtime',metadata={})
+    await runtime.acknowledge_execution(sandbox,'execution',17)
+    await runtime.acknowledge_execution(sandbox,'execution',0)
+    assert requests==[('POST','/v1/executions/execution/ack',{'committed_sequence':17})]
+
+
 async def test_checkpoint_restore_replays_the_complete_object_after_read_error(tmp_path,monkeypatch):
     waits=[]
     async def no_wait(seconds):waits.append(seconds)

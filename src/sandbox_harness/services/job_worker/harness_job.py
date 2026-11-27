@@ -23,6 +23,7 @@ from sandbox_harness.common.sandbox.sandbox_factory import (SandboxProfileResolv
 from sandbox_harness.common.storage.objects import (object_chunks)
 from sandbox_harness.common.catalog.profiles import (ProviderRelease)
 from sandbox_harness.common.observability.http import (observed_async_client)
+from sandbox_harness.common.events.runtime_stream import RuntimeStreamBuffer
 
 
 
@@ -521,16 +522,31 @@ class SandboxChildBackend(SandboxAllocationOwner):
             self._collect(context,sandbox,execution_id),name='child-activities-'+context.job.id)
 
     async def _collect(self,context:JobExecutionContext,sandbox,execution_id:str)->None:
-        rows=await self.store.list_job_activities(context.job.id,0,1000)
-        cursor=rows[-1]['sequence'] if rows else 0
-        async for value in self.runtime.resume(sandbox,execution_id,cursor):
-            sequence=getattr(value,'runtime_sequence',0)
-            if not sequence:continue
-            if hasattr(value,'kind'):
-                kind=value.kind.value if hasattr(value.kind,'value') else str(value.kind)
-                status=('completed' if kind in {'step_finished','tool_finished'} else
-                    'failed' if kind=='error' else 'in_progress')
-                await self.store.append_job_activity(context.job.id,sequence,kind,value.payload,status=status)
+        cursor=await self.store.job_runtime_sequence(context.job.id,execution_id)
+        async def persist(value):
+            kind=value.kind.value if hasattr(value.kind,'value') else str(value.kind)
+            status=('completed' if kind in {'step_finished','tool_finished'} else
+                'failed' if kind=='error' else 'in_progress')
+            await self.store.append_job_runtime_activity(context.job.id,execution_id,
+                value.runtime_sequence,kind,value.payload,status=status)
+        async def publish(value):
+            if self.store.events:
+                await self.store.events.publish_live('job',context.job.id,value)
+        async def acknowledge(sequence):
+            await self.runtime.acknowledge_execution(sandbox,execution_id,sequence)
+        buffer=RuntimeStreamBuffer(execution_id=execution_id,persist_event=persist,
+            persist_seconds=self.settings.stream_persist_seconds,
+            live_seconds=self.settings.stream_live_publish_seconds,
+            publish_live=publish,acknowledge=acknowledge)
+        try:
+            async for value in self.runtime.resume(sandbox,execution_id,cursor):
+                if hasattr(value,'kind'):await buffer.add(value)
+                else:await buffer.flush()
+        except asyncio.CancelledError:
+            await buffer.abandon();raise
+        except BaseException:
+            await buffer.flush();raise
+        else:await buffer.flush()
 
     async def status(self,context:JobExecutionContext,external_execution_id:str,
                      receipt:dict[str,Any])->AdapterStatus:
@@ -702,6 +718,14 @@ class SandboxChildBackend(SandboxAllocationOwner):
             try:await asyncio.wait_for(asyncio.shield(collector),timeout=5)
             except (asyncio.TimeoutError,Exception):
                 collector.cancel();await asyncio.gather(collector,return_exceptions=True)
+        if sandbox and external_execution_id:
+            try:
+                status=await self.runtime.execution_status(sandbox,external_execution_id)
+                if status and status.get('result') and int(status.get('last_sequence') or 0)>0:
+                    await self.runtime.acknowledge_execution(sandbox,external_execution_id,
+                        int(status['last_sequence']))
+            except Exception:
+                pass
         nonce=str(receipt.get('capability_nonce',''))
         if nonce:
             async with observed_async_client('sandbox-gateway',timeout=10,trust_env=False) as client:

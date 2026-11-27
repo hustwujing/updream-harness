@@ -1,5 +1,6 @@
 """Job Activity persistence; transaction boundaries are preserved."""
 from __future__ import annotations
+import hashlib
 import json
 from datetime import (datetime)
 from sqlalchemy import (select)
@@ -67,6 +68,45 @@ class JobActivityTransactions:
             await self._project_job_activity(db,job_id,sequence,kind,payload,status,timestamp)
             await db.flush()
             return self.job_activity_view(row)
+
+
+    async def job_runtime_sequence(self,job_id:str,execution_id:str)->int:
+        async with self.connections() as db:
+            rows=(await db.execute(select(JobActivityRow.payload_json).where(
+                JobActivityRow.job_id==job_id))).scalars().all()
+        sequences=[]
+        for encoded in rows:
+            try:value=json.loads(encoded)
+            except (TypeError,ValueError):continue
+            if value.get('_execution_id')==execution_id:
+                sequence=value.get('_runtime_sequence')
+                if isinstance(sequence,int) and sequence>0:sequences.append(sequence)
+        return max(sequences,default=0)
+
+
+    async def append_job_runtime_activity(self,job_id:str,execution_id:str,
+            runtime_sequence:int,kind:str,payload:dict,*,status:str='in_progress')->dict:
+        identity=hashlib.sha256(f'job-runtime:{job_id}:{execution_id}:{runtime_sequence}'.encode()
+            ).hexdigest()[:32]
+        async with self.connections.begin() as db:
+            job=await db.get(JobRow,job_id,with_for_update=True)
+            if not job:raise KeyError('job_not_found')
+            existing=await db.get(JobActivityRow,identity)
+            encoded={**payload,'_execution_id':execution_id,
+                '_runtime_sequence':runtime_sequence}
+            if existing:
+                if existing.kind!=kind or json.loads(existing.payload_json)!=encoded:
+                    raise RuntimeError('job_activity_sequence_conflict')
+                return self.job_activity_view(existing)
+            last=(await db.execute(select(JobActivityRow.sequence).where(
+                JobActivityRow.job_id==job_id).order_by(
+                JobActivityRow.sequence.desc()).limit(1))).scalar_one_or_none() or 0
+            timestamp=now();summary=str(payload.get('name') or payload.get('text') or kind)[:1000]
+            row=JobActivityRow(id=identity,job_id=job_id,sequence=last+1,kind=kind,
+                status=status,summary=summary,payload_json=canonical_json(encoded),
+                created_at=timestamp,updated_at=timestamp);db.add(row)
+            await self._project_job_activity(db,job_id,row.sequence,kind,encoded,status,timestamp)
+            await db.flush();return self.job_activity_view(row)
 
 
     async def list_job_activities(self,job_id:str,after:int=0,limit:int=500)->list[dict]:

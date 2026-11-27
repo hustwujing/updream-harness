@@ -25,6 +25,23 @@ async def test_text_stream_remains_raw_without_becoming_display_steps(tmp_path):
     finally:await store.close()
 
 
+async def test_runtime_activity_cursor_is_scoped_per_child_execution(tmp_path):
+    store,job=await setup(tmp_path)
+    try:
+        first=await store.append_job_runtime_activity(job.id,'execution-one',1,
+            'text_delta',{'text':'first'})
+        second=await store.append_job_runtime_activity(job.id,'execution-two',1,
+            'text_delta',{'text':'second'})
+        replay=await store.append_job_runtime_activity(job.id,'execution-one',1,
+            'text_delta',{'text':'first'})
+        assert first['sequence']==1 and second['sequence']==2 and replay['id']==first['id']
+        assert await store.job_runtime_sequence(job.id,'execution-one')==1
+        assert await store.job_runtime_sequence(job.id,'execution-two')==1
+        assert [row['payload']['_execution_id'] for row in
+            await store.list_job_activities(job.id,0,10)]==['execution-one','execution-two']
+    finally:await store.close()
+
+
 async def test_tool_stream_projects_to_one_stable_bounded_activity(tmp_path):
     store,job=await setup(tmp_path)
     try:

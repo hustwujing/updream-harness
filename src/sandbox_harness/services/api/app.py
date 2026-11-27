@@ -1216,7 +1216,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError:
             raise HTTPException(422, "Invalid event cursor")
         async def stream():
-            cursor = after
+            cursor = after;live_cursor='0-0'
             while not await request.is_disconnected():
                 rows = await store.events_after(turn_id, cursor, 1000)
                 for event in rows:
@@ -1226,7 +1226,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if turn and turn.state.value in {"COMPLETED", "WAITING_USER", "FAILED", "CANCELLED", "PAUSED"} and not rows:
                     return
                 if store.events:
-                    await store.events.wait(turn_id, cursor)
+                    while not await request.is_disconnected():
+                        durable,live_cursor,live=await store.events.wait_turn_activity(
+                            turn_id,cursor,live_cursor)
+                        execution_id=str(getattr(turn,'runtime_execution_id','') or '')
+                        committed=int(getattr(turn,'runtime_sequence',0) or 0)
+                        for value in live:
+                            if value.get('execution_id')!=execution_id:continue
+                            parts=[part for part in value.get('parts',[]) if isinstance(part,dict)
+                                and isinstance(part.get('sequence'),int)
+                                and part['sequence']>committed and isinstance(part.get('text'),str)]
+                            if not parts:continue
+                            payload={'execution_id':execution_id,'sequence_start':parts[0]['sequence'],
+                                'sequence_end':parts[-1]['sequence'],
+                                'text':''.join(part['text'] for part in parts),'parts':parts}
+                            yield f"event: live_text_delta\ndata: {json.dumps(payload,ensure_ascii=False)}\n\n"
+                        if durable or not live or not store.events.available:break
                     if not store.events.available:
                         await asyncio.sleep(1)
                 else:

@@ -61,6 +61,10 @@ class EventsTransactions:
                         .order_by(ItemRow.sequence.desc()).limit(1))).scalar_one_or_none()
                     if item:
                         item.summary += str(payload.get("text", "")); item.updated_at = timestamp
+                        item_payload=json.loads(item.payload_json)
+                        item_payload.update({"_execution_id":execution_id,
+                            "_runtime_sequence":value.runtime_sequence})
+                        item.payload_json=json.dumps(item_payload,ensure_ascii=False)
                 elif value.kind == EventKind.TOOL_FINISHED and payload.get("tool_use_id"):
                     candidates = (await db.execute(select(ItemRow).where(ItemRow.turn_id == turn_id,
                         ItemRow.type == ItemType.TOOL.value).order_by(ItemRow.sequence.desc()))).scalars().all()
@@ -135,7 +139,8 @@ class EventsTransactions:
                     sequence = await self.next_item_sequence(db, thread_id)
                     item = ItemRow(id=identifier(), thread_id=thread_id, turn_id=turn_id, sequence=sequence,
                         type=item_type.value, status=status, summary=summary,
-                        payload_json=json.dumps({**payload, "_execution_id": execution_id}, ensure_ascii=False),
+                        payload_json=json.dumps({**payload,"_execution_id":execution_id,
+                            "_runtime_sequence":value.runtime_sequence},ensure_ascii=False),
                         created_at=timestamp, updated_at=timestamp)
                     db.add(item)
             if payload.get("input_completed"):
