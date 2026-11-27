@@ -307,12 +307,16 @@ async def test_execution_graph_projects_media_jobs_and_connects_media_continuati
             db.add(MediaJobRow(id=job_id,owner_id='owner',thread_id=thread.id,turn_id=origin.id,
                 draft_id=draft_id,kind='image',model='seedream-5.0',generation_mode='text_to_image',
                 provider='ark',adapter='ark_image',execution_mode='sync',cancellation_mode='unsupported',
-                status='running',phase='provider_running',progress=35,parameters_json='{}',references_json='[]',
+                status='running',phase='provider_running',progress=35,generation=140,
+                provider_job_id='provider-task-123',provider_started_at=timestamp,
+                parameters_json='{}',references_json='[]',
                 idempotency_key='media-job-test',created_at=timestamp,updated_at=timestamp))
         graph=await ExecutionGraphProjector(store).snapshot(thread.id,'owner')
         media=next(node for node in graph['nodes'] if node.get('media_job_id')==job_id)
         assert media['type']=='media_job' and media['state']=='RUNNING'
         assert media['progress']==35 and media['location']=='external_provider'
+        assert media['retries']==0 and media['submission_count']==1
+        assert media['status_check_count']==139 and media['provider_job_short_id']=='provider'
         assert {'from':f'media-batch:{origin.id}','to':f'turn:{continuation.id}:input',
             'kind':'continued_by'} in graph['edges']
     finally:await store.close()
@@ -327,16 +331,16 @@ async def test_primary_retry_count_excludes_first_claim_and_counts_takeover(tmp_
         turn,_,_=await store.create_turn(thread.id,TurnCreate(message='run',
             idempotency_key='retry-graph-turn'),profile,'owner')
         node=lambda graph:next(value for value in graph['nodes'] if value['type']=='primary_harness')
-        assert node(await ExecutionGraphProjector(store).snapshot(thread.id,'owner'))['retries']==0
+        assert node(await ExecutionGraphProjector(store).snapshot(thread.id,'owner'))['recovery_count']==0
         await store.claim_turn(turn.id,'worker-a',1)
-        assert node(await ExecutionGraphProjector(store).snapshot(thread.id,'owner'))['retries']==0
+        assert node(await ExecutionGraphProjector(store).snapshot(thread.id,'owner'))['recovery_count']==0
         await store.claim_turn(turn.id,'worker-a',1)
-        assert node(await ExecutionGraphProjector(store).snapshot(thread.id,'owner'))['retries']==0
+        assert node(await ExecutionGraphProjector(store).snapshot(thread.id,'owner'))['recovery_count']==0
         async with store.core.connections.begin() as db:
             await db.execute(update(TurnRow).where(TurnRow.id==turn.id).values(
                 lease_expires_at=now()-timedelta(seconds=1)))
         await store.claim_turn(turn.id,'worker-b',1)
-        assert node(await ExecutionGraphProjector(store).snapshot(thread.id,'owner'))['retries']==1
+        assert node(await ExecutionGraphProjector(store).snapshot(thread.id,'owner'))['recovery_count']==1
     finally:await store.close()
 
 

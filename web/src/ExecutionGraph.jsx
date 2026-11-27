@@ -562,8 +562,15 @@ export default function ExecutionGraph({ thread, items = [] }) {
           </dd>
           <dt>耗时</dt>
           <dd>{formatDuration(elapsed(selected, now))}</dd>
-          <dt>重试</dt>
-          <dd>{selected.retries || 0}</dd>
+          {selected.model_request_count!=null&&<><dt>模型请求</dt><dd>{selected.model_request_count} 轮</dd></>}
+          {selected.recovery_count>0&&<><dt>执行恢复</dt><dd>{selected.recovery_count} 次</dd></>}
+          {selected.attempt_count!=null&&<><dt>Job attempt</dt><dd>{selected.attempt_count} 次</dd></>}
+          {selected.external_execution_count!=null&&<><dt>外部执行</dt><dd>{selected.external_execution_count} 个</dd></>}
+          {selected.retry_count>0&&<><dt>策略重试</dt><dd>{selected.retry_count} 次</dd></>}
+          {selected.submission_count!=null&&<><dt>Provider 提交</dt><dd>{selected.submission_count} 次</dd></>}
+          {selected.status_check_count!=null&&<><dt>状态查询</dt><dd>{selected.status_check_count} 次</dd></>}
+          {selected.provider_job_short_id&&<><dt>外部任务</dt><dd>{selected.provider_job_short_id}{selected.provider_recovered?' · 已接管原任务':''}</dd></>}
+          {selected.delivery_attempt_count!=null&&<><dt>投递尝试</dt><dd>{selected.delivery_attempt_count} 次</dd></>}
           {selected.error_code && (
             <>
               <dt>错误代码</dt>
@@ -894,7 +901,9 @@ export default function ExecutionGraph({ thread, items = [] }) {
                           {stateLabels[node.state] || node.state} ·{" "}
                           <Clock3 size={10} />
                           {formatDuration(elapsed(node, now))}
-                          {node.retries ? ` · 重试 ${node.retries}` : ""}
+                          {node.type==='media_job'&&node.status_check_count?` · 查询 ${node.status_check_count}`:''}
+                          {node.type==='job'&&node.retry_count?` · 策略重试 ${node.retry_count}`:''}
+                          {node.type==='primary_harness'&&node.recovery_count?` · 恢复 ${node.recovery_count}`:''}
                           {node.harness_view&&node.model_rounds?.length?` · ${node.model_rounds.length} 轮`:""}
                           {node.harness_view&&tokenUsageTotal(node.token_usage)>0?` · ${formatCompactTokens(tokenUsageTotal(node.token_usage))} tokens${node.token_usage_truncated?' 部分':''}`:""}
                         </small>

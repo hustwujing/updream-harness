@@ -261,6 +261,9 @@ class ExecutionGraphProjector:
                 (JobAttemptRow.outcome=='PRE_ACCEPT_RETRY',1),
                 (JobAttemptRow.retry_kind.in_(['recovery','reconcile','collection']),1),else_=0))).where(
                     JobAttemptRow.job_id.in_(job_ids or {''})).group_by(JobAttemptRow.job_id))).all()
+            attempt_rows=(await db.execute(select(JobAttemptRow.job_id,func.count(),
+                func.count(func.distinct(func.nullif(JobAttemptRow.external_execution_id,'')))).where(
+                    JobAttemptRow.job_id.in_(job_ids or {''})).group_by(JobAttemptRow.job_id))).all()
             artifacts=list((await db.execute(select(JobArtifactRow).where(
                 JobArtifactRow.job_id.in_(job_ids or {''})).order_by(
                 JobArtifactRow.job_id,JobArtifactRow.artifact_role,JobArtifactRow.position)
@@ -298,6 +301,8 @@ class ExecutionGraphProjector:
         model_activity=aggregate_model_activity(model_usage_rows[:MAX_MODEL_USAGE_ROWS])
         activity_count={identity:int(count) for identity,count in activity_rows}
         retry_count={identity:int(count or 0) for identity,count in retry_rows}
+        attempt_counts={identity:(int(count or 0),int(external or 0))
+            for identity,count,external in attempt_rows}
         artifacts_by_job={identity:[] for identity in job_ids}
         for row in artifacts:artifacts_by_job[row.job_id].append({'artifact_id':row.artifact_id,
             'artifact_role':row.artifact_role,'filename':row.filename,'mime':row.mime,
@@ -335,7 +340,9 @@ class ExecutionGraphProjector:
                 'location_label':'Cloud Sandbox' if turn.sandbox_id else '等待调度',
                 'started_at':iso(turn.created_at),'ended_at':iso(turn.updated_at) if TurnState(turn.state) in TERMINAL else None,
                 'duration_ms':duration_ms(turn.created_at,turn.updated_at) if TurnState(turn.state) in TERMINAL else 0,
-                'retries':max(0,turn.recovery_generation-1),'activity_count':0,'turn_id':turn.id})
+                'retries':0,'recovery_count':max(0,turn.recovery_generation-1),
+                'model_request_count':len(activity['model_rounds']),
+                'activity_count':0,'turn_id':turn.id})
             edges.append({'from':user_id,'to':primary_id,'kind':'submitted_by'})
         for draft in drafts:
             identity='draft:'+draft.id
@@ -399,7 +406,9 @@ class ExecutionGraphProjector:
                 'location':location,'location_label':location_label,
                 'started_at':iso(job.created_at),'ended_at':iso(job.terminal_at),
                 'duration_ms':duration_ms(job.created_at,job.terminal_at) if job.terminal_at else 0,
-                'retries':retry_count.get(job.id,0),
+                'retries':0,'retry_count':retry_count.get(job.id,0),
+                'attempt_count':attempt_counts.get(job.id,(0,0))[0],
+                'external_execution_count':attempt_counts.get(job.id,(0,0))[1],
                 'activity_count':activity_count.get(job.id,0),'job_id':job.id,'turn_id':job.origin_turn_id,
                 'error_code':error_code,
                 'error_summary':str(result.get('error_message') or public_error_summary(error_code)),
@@ -432,7 +441,8 @@ class ExecutionGraphProjector:
                 'state':batch_state,'visual_role':'media_group','location':'control_plane','location_label':'协调器',
                 'started_at':iso(batch.created_at),'ended_at':iso(batch.continued_at),
                 'duration_ms':duration_ms(batch.created_at,batch.continued_at) if batch.continued_at else 0,
-                'retries':max(0,batch.attempt_count-1),'activity_count':0,'turn_id':batch.turn_id})
+                'retries':0,'delivery_attempt_count':max(0,batch.attempt_count),
+                'activity_count':0,'turn_id':batch.turn_id})
             edges.append({'from':f'turn:{batch.turn_id}:primary','to':batch_id,'kind':'submitted_by'})
             continuation_id=media_continuation_by_origin.get(batch.turn_id)
             if continuation_id:
@@ -457,7 +467,11 @@ class ExecutionGraphProjector:
                 'title':f'{media.kind} · {media.model}','state':state,'visual_role':'media_generation','location':'external_provider',
                 'location_label':'外部服务','started_at':iso(media.created_at),'ended_at':iso(media.finished_at),
                 'duration_ms':duration_ms(media.created_at,media.finished_at) if media.finished_at else 0,
-                'retries':max(0,media.generation),'activity_count':0,'turn_id':media.turn_id,
+                'retries':0,'submission_count':1 if media.provider_started_at else 0,
+                'status_check_count':max(0,int(media.generation or 0)-1),
+                'provider_job_short_id':media.provider_job_id[:8] if media.provider_job_id else '',
+                'provider_recovered':bool(media.provider_job_id and int(media.generation or 0)>1),
+                'activity_count':0,'turn_id':media.turn_id,
                 'media_job_id':media.id,'progress':media.progress,'phase':media.phase,
                 'error_code':error_code,'error_summary':public_error_summary(error_code),
                 'error_reason':public_error_reason(media.error_detail),
