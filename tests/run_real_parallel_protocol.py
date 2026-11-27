@@ -750,12 +750,13 @@ async def case_k11(client,args):
     left_path.parent.mkdir(parents=True,exist_ok=True)
     with Image.open(rocket_path) as source:
         source.convert('RGB').transpose(Image.Transpose.FLIP_LEFT_RIGHT).save(left_path)
+    poster=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/poster.png')
     rocket=await register_case_asset(thread['id'],turn['id'],rocket_path)
     rocket_left=await register_case_asset(thread['id'],turn['id'],left_path)
     ref=lambda artifact,role:{'artifact_id':artifact.id,'role':role,'usage':'subject'}
     phase_one_defs=[
         ('model-image','image_to_model',{'texture':False,'face_limit':1500},
-            [ref(rocket,'reference_image')]),
+            [ref(poster,'reference_image')]),
         ('model-multiview','multiview_to_model',{'texture':False,'face_limit':1500},
             [ref(rocket,'front_view'),ref(rocket_left,'left_view')]),
     ]
