@@ -125,6 +125,9 @@ class PausableAdapter(BaseJobAdapter):
     def __init__(self):
         self.submits = 0; self.pauses = 0; self.cleanups = 0
 
+    async def preflight(self, context):
+        return None
+
     async def submit(self, context):
         self.submits += 1
         return AdapterSubmission("execution-" + str(self.submits), {"accepted": True})

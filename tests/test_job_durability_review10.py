@@ -41,6 +41,7 @@ async def make_cleanup_due(store,job_id):
 class BlockingAdapter(BaseJobAdapter):
     def __init__(self):
         self.started=asyncio.Event();self.release=asyncio.Event();self.submit_calls=0;self.cleanup_calls=0
+    async def preflight(self,context):return None
     async def submit(self,context):
         self.submit_calls+=1;self.started.set();await self.release.wait()
         return AdapterSubmission("external",{"id":"external"},completed=True,result={"ok":True})
@@ -136,6 +137,7 @@ async def test_cooperative_lease_loss_cancels_stale_submit_and_replacement_does_
 
 class CleanupAdapter(BaseJobAdapter):
     def __init__(self):self.cleanup_calls=0;self.fail=True
+    async def preflight(self,context):return None
     async def submit(self,context):return AdapterSubmission("external",{"sandbox":"one"},
         completed=True,result={"ok":True})
     async def collect(self,context,external,status):return status.result
@@ -164,6 +166,7 @@ async def test_cleanup_failure_is_durable_and_retried_after_worker_restart(tmp_p
 
 class SoftCancelAdapter(BaseJobAdapter):
     def __init__(self):self.cancel_calls=0;self.status_calls=0
+    async def preflight(self,context):return None
     async def submit(self,context):return AdapterSubmission("external",{"id":"external"})
     async def status(self,context,external):
         self.status_calls+=1
@@ -344,6 +347,7 @@ async def test_thread_delete_blocks_generic_cleanup_then_removes_complete_job_hi
 
 class PhasedCleanupAdapter(BaseJobAdapter):
     def __init__(self):self.external_calls=0;self.release_calls=0;self.release_effects=0;self.released=False
+    async def preflight(self,context):return None
     async def cleanup_external(self,context,external):self.external_calls+=1
     async def release_capacity(self,context):
         self.release_calls+=1
@@ -352,6 +356,7 @@ class PhasedCleanupAdapter(BaseJobAdapter):
 
 class PreAcceptCleanupAdapter(BaseJobAdapter):
     def __init__(self):self.external_calls=0;self.release_calls=0
+    async def preflight(self,context):return None
     async def cleanup_external(self,context,external):
         self.external_calls+=1
         raise RuntimeError('external cleanup must not run before acceptance')

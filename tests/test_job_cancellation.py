@@ -7,6 +7,7 @@ from test_job_continuation import StoreBroker,setup,terminal_group
 
 
 class NeverSubmittedAdapter(BaseJobAdapter):
+    async def preflight(self,context):return None
     async def submit(self,context):raise AssertionError('cancelled Job must not submit')
 
 
