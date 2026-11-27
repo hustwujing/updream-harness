@@ -39,14 +39,13 @@ async def test_model_wait_stage_records_actual_model_and_updates_one_item(tmp_pa
     finally:await store.close()
 
 
-async def test_child_job_model_activity_keeps_observability_without_primary_items():
+async def test_child_job_model_activity_persists_round_with_job_identity():
     class Store:
-        def __init__(self):self.persisted=0;self.updated=0
+        def __init__(self):self.persisted=[];self.updated=[]
         async def persist_runtime_event(self,*args,**kwargs):
-            self.persisted+=1
-            return SimpleNamespace(item_id='primary-item')
-        async def update_model_activity(self,*args,**kwargs):
-            self.updated+=1
+            self.persisted.append((args,kwargs))
+            return SimpleNamespace(item_id='child-model-item')
+        async def update_model_activity(self,*args,**kwargs):self.updated.append((args,kwargs))
     store=Store()
     activity=ModelActivity(store,SimpleNamespace(thread_id='a'*32,turn_id='b'*32,
         job_id='c'*32,sandbox_id='sandbox-1',model='gpt-5.6'))
@@ -55,8 +54,12 @@ async def test_child_job_model_activity_keeps_observability_without_primary_item
     await activity.observe(b'data: {"type":"response.completed","response":{"usage":'
         b'{"input_tokens":9,"output_tokens":3}}}\n\n')
     await activity.finish(200)
-    assert activity.item_id is None and activity.finished
-    assert store.persisted==0 and store.updated==0
+    assert activity.item_id=='child-model-item' and activity.finished
+    assert len(store.persisted)==1 and len(store.updated)==2
+    event=store.persisted[0][0][2]
+    assert event.kind==EventKind.STEP_STARTED
+    assert event.payload['job_id']=='c'*32 and event.payload['phase']=='waiting'
+    assert all(call[1]['payload']['job_id']=='c'*32 for call in store.updated)
     assert activity.first_output_ms is not None
     assert activity.probe.input_tokens==9 and activity.probe.output_tokens==3
 
