@@ -7,10 +7,10 @@ initialization, Runtime images, environment changes and Git publication.
 
 ## Isolation
 
-Work only in `/data2/wujing03/sandbox-harness-platform-parallel-ali` on branch
+Work only in `/data/wujing02/sandbox-harness-platform-parallel-ali` on branch
 `sandbox-harness-platform-parallel-ali`. All generated data, dependencies,
 caches, logs, databases and temporary files stay below this checkout's `.data`
-tree or another explicit `/data2/wujing03` path.
+tree or another explicit `/data/wujing02` path.
 
 The deployment owns four PostgreSQL databases and roles. `run-service.sh`
 removes the cluster administrator credential and exposes only the databases

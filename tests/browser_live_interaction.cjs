@@ -13,7 +13,7 @@ const assert=require('node:assert/strict');
   await desktop.locator('.thread-list button').filter({hasText:title}).click();
   const card=desktop.locator('.interaction-card.pending');await card.waitFor({timeout:30000});
   await card.locator('select').selectOption('mp4');
-  await desktop.screenshot({path:'/data2/wujing03/sandbox-harness-platform-parallel-ali/.data/live-interaction-pending-desktop.png',fullPage:true});
+  await desktop.screenshot({path:'/data/wujing02/sandbox-harness-platform-parallel-ali/.data/live-interaction-pending-desktop.png',fullPage:true});
   await card.getByRole('button',{name:'提交回答'}).click();
   await desktop.locator('.interaction-card.resolved').waitFor({timeout:30000});
   assert.deepEqual(errors,[]);await desktop.close();
@@ -26,7 +26,7 @@ const assert=require('node:assert/strict');
   await mobile.locator('.interaction-card.resolved').waitFor({timeout:30000});
   const box=await mobile.locator('.interaction-card.resolved').boundingBox();
   assert.ok(box&&box.x>=0&&box.x+box.width<=390);assert.deepEqual(mobileErrors,[]);
-  await mobile.screenshot({path:'/data2/wujing03/sandbox-harness-platform-parallel-ali/.data/live-interaction-resolved-mobile.png',fullPage:true});
+  await mobile.screenshot({path:'/data/wujing02/sandbox-harness-platform-parallel-ali/.data/live-interaction-resolved-mobile.png',fullPage:true});
   console.log(JSON.stringify({passed:true,desktop_pending:true,mobile_reentry:true,page_errors:[]}));
  }finally{if(browser)await browser.close()}
 })().catch(error=>{console.error(error);process.exit(1)});

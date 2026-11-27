@@ -6,7 +6,7 @@ const fs=require('node:fs');
  const resolver=process.env.TEST_HOST_RESOLVER,browserArgs=['--no-sandbox',...(resolver?[`--host-resolver-rules=${resolver}`]:[])];
  browser=await chromium.launch({headless:true,args:browserArgs,ignoreDefaultArgs:['--disable-dev-shm-usage']});
  const page=await browser.newPage({viewport:{width:1280,height:900}}),errors=[];page.on('pageerror',error=>errors.push(error.message));
- const evidenceRoot=process.env.TEST_EVIDENCE_ROOT||'/data2/wujing03/sandbox-harness-platform-parallel-ali/.data/evidence/browser';fs.mkdirSync(evidenceRoot,{recursive:true});
+ const evidenceRoot=process.env.TEST_EVIDENCE_ROOT||'/data/wujing02/sandbox-harness-platform-parallel-ali/.data/evidence/browser';fs.mkdirSync(evidenceRoot,{recursive:true});
  const now=new Date().toISOString(),started=new Date(Date.now()-5000).toISOString();
  const thread={id:'graph-thread',title:'执行图测试',harness:'codex',model:'gpt-5.6',reasoning_level:'standard',updated_at:now,latest_turn_id:'turn',latest_turn_state:'COMPLETED',unread_completion:false};
  const turns=[{id:'turn',thread_id:thread.id,harness:'codex',model:'gpt-5.6',reasoning_level:'standard',state:'COMPLETED',updated_at:now}];

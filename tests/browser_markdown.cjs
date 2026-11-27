@@ -36,8 +36,8 @@ const assert=require('node:assert/strict');
   await link.click();await page.waitForSelector('.media-preview img');
   assert.match(await page.locator('.media-preview a').getAttribute('href'),/api\/artifacts\/photo$/);
   await page.getByRole('button',{name:'关闭预览'}).click();
-  await page.screenshot({path:'/data2/wujing03/sandbox-harness-platform-parallel-ali/.data/self-review2/markdown-desktop.png',fullPage:true});
-  await page.setViewportSize({width:390,height:844});await page.screenshot({path:'/data2/wujing03/sandbox-harness-platform-parallel-ali/.data/self-review2/markdown-mobile.png',fullPage:true});
+  await page.screenshot({path:'/data/wujing02/sandbox-harness-platform-parallel-ali/.data/self-review2/markdown-desktop.png',fullPage:true});
+  await page.setViewportSize({width:390,height:844});await page.screenshot({path:'/data/wujing02/sandbox-harness-platform-parallel-ali/.data/self-review2/markdown-mobile.png',fullPage:true});
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({passed:true,markdown:true,workspace_links:true,image_preview:true,download:true,raw_html_disabled:true}));
  }finally{await browser.close()}

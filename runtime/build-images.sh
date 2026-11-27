@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-[[ "$root" == /data2/wujing03/sandbox-harness-platform-parallel-ali ]]
+[[ "$root" == /data/wujing02/sandbox-harness-platform-parallel-ali ]]
 docker=/data2/wujing03/opensandbox-stack/tools/docker-29.9.3/docker
 python=${SANDBOX_HARNESS_BUILD_PYTHON:-$root/.venv/bin/python}
 test -x "$python"
@@ -38,7 +38,7 @@ if [[ -f "$profile_catalog_path" ]]; then
 fi
 output_root="$root/.data/image-build/$tag"
 mkdir -p "$output_root"
-[[ "$output_root" == /data2/wujing03/sandbox-harness-platform-parallel-ali/.data/* ]]
+[[ "$output_root" == /data/wujing02/sandbox-harness-platform-parallel-ali/.data/* ]]
 
 content_hash() {
   local parent=$1

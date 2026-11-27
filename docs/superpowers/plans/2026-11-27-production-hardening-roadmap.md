@@ -15,7 +15,7 @@
 - No case-, Provider- or operation-specific production branches.
 - PostgreSQL remains authoritative; notifications never replace durable state.
 - Unknown external side effects are never blindly replayed.
-- Generated state remains under `/data2/wujing03/sandbox-harness-platform-parallel-ali/.data`.
+- Generated state remains under `/data/wujing02/sandbox-harness-platform-parallel-ali/.data`.
 - Existing user work and unrelated changes are preserved.
 - No project-owned Helm, DBA workflow, SLO/alert policy or production capacity sizing.
 

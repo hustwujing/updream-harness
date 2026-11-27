@@ -311,7 +311,7 @@ async def main():
     if args.worker:return await worker_main(args.worker)
     if not args.report:parser.error('--report is required')
     args.report=args.report.resolve()
-    if not args.report.is_relative_to(Path('/data2/wujing03')):raise ValueError('test_output_root_invalid')
+    if not args.report.is_relative_to(Path('/data/wujing02')):raise ValueError('test_output_root_invalid')
     args.report.parent.mkdir(parents=True,exist_ok=True);args.case=args.case or list(CASES)
     campaign=Campaign(args);campaign.save()
     await asyncio.gather(*(campaign.case(identity) for identity in args.case))

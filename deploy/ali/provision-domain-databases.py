@@ -50,7 +50,7 @@ def _updated_environment(source, values):
 
 
 async def provision(env_file=ENV):
-    if ROOT != Path("/data2/wujing03/sandbox-harness-platform-parallel-ali"):
+    if ROOT != Path("/data/wujing02/sandbox-harness-platform-parallel-ali"):
         raise RuntimeError("unexpected_project_root")
     source=env_file.read_text();configured=dotenv_values(env_file)
     admin=_connection(configured.get("SANDBOX_HARNESS_ADMIN_DATABASE_URL", ""))

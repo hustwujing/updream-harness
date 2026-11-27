@@ -91,7 +91,7 @@ reject the backend before it serves a Primary Harness.
    and handle through worker replacement, cancellation and cleanup.
 7. **Deploy in isolation.** Use dedicated configuration, database identity,
    namespace, application data, units and ports. In this workspace all writes
-   stay under `/data2/wujing03`; the original sibling project stays read-only.
+   stay under `/data/wujing02`; the original sibling project stays read-only.
    Keep long-lived credentials on the host. Register provider routes in the
    selected launcher instead of assuming an OpenSandbox bridge address.
 8. **Verify and publish.** Run the checks below, record the exact revision and

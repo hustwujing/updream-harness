@@ -9,7 +9,7 @@ import pytest
 
 
 ROOT=Path(__file__).resolve().parents[1]
-ALI_ROOT=Path("/data2/wujing03/sandbox-harness-platform-parallel-ali")
+ALI_ROOT=Path("/data/wujing02/sandbox-harness-platform-parallel-ali")
 
 
 def load(name: str, path: Path):
@@ -26,10 +26,10 @@ def test_ali_identity_matrix_is_disjoint_from_parallel():
     assert identity.DATA_ROOT==ALI_ROOT/".data"
     assert identity.PORTS=={"api":24767,"postgres":28433,"gateway":29882,"proxy":29883}
     assert identity.POSTGRES_IDENTITY=="sandbox_harness_parallel_ali"
-    assert identity.NAMESPACE=="sandbox-harness-platform-parallel-ali"
-    assert identity.REDIS_PREFIX=="sandbox-harness-platform-parallel-ali:"
-    assert identity.OBJECT_PREFIX=="sandbox-harness-platform-parallel-ali/"
-    assert identity.REGISTRY_PREFIX=="127.0.0.1:25001/sandbox-harness-platform-parallel-ali"
+    assert identity.NAMESPACE=="sandbox-harness-platform-parallel-ali-wujing02"
+    assert identity.REDIS_PREFIX=="sandbox-harness-platform-parallel-ali-wujing02:"
+    assert identity.OBJECT_PREFIX=="sandbox-harness-platform-parallel-ali-wujing02/"
+    assert identity.REGISTRY_PREFIX=="127.0.0.1:25001/sandbox-harness-platform-parallel-ali-wujing02"
     assert not {24767,28433,29882,29883}&{24766,28432,29880,29881}
 
 
@@ -52,9 +52,9 @@ def test_ali_environment_regenerates_service_secrets_and_isolates_paths():
     values=configure.build_environment(source,token=lambda:next(tokens))
     assert values["SANDBOX_HARNESS_BACKEND"]=="opensandbox"
     assert values["SANDBOX_HARNESS_DATA_ROOT"]==str(ALI_ROOT/".data")
-    assert values["SANDBOX_HARNESS_NAMESPACE"]=="sandbox-harness-platform-parallel-ali"
-    assert values["SANDBOX_HARNESS_REDIS_PREFIX"]=="sandbox-harness-platform-parallel-ali:"
-    assert values["SANDBOX_HARNESS_OBJECT_PREFIX"]=="sandbox-harness-platform-parallel-ali/"
+    assert values["SANDBOX_HARNESS_NAMESPACE"]=="sandbox-harness-platform-parallel-ali-wujing02"
+    assert values["SANDBOX_HARNESS_REDIS_PREFIX"]=="sandbox-harness-platform-parallel-ali-wujing02:"
+    assert values["SANDBOX_HARNESS_OBJECT_PREFIX"]=="sandbox-harness-platform-parallel-ali-wujing02/"
     assert values["SANDBOX_HARNESS_MODEL_CATALOG_SNAPSHOT_PATH"]==str(
         ALI_ROOT/".data/catalogs/model-catalog.json")
     assert values["SANDBOX_HARNESS_LOG_DIR"]==str(ALI_ROOT/".data/logs")
@@ -76,7 +76,7 @@ def test_ali_environment_regenerates_service_secrets_and_isolates_paths():
 def test_ali_configurator_has_fail_closed_preflights():
     source=(ROOT/"deploy/ali/configure.py").read_text()
     for contract in ("unexpected_checkout","unexpected_branch","port_in_use",
-                     "path_outside_data2","digest_mismatch","--check-only","--force"):
+                     "path_outside_deployment_root","digest_mismatch","--check-only","--force"):
         assert contract in source
     assert "SHARED_KEYS" in source
     assert "source.items()" not in source
@@ -161,14 +161,14 @@ def test_ali_transient_service_graph_is_complete_and_root_partition_free():
     assert max(gateway_positions)<start.index("ali-job-worker")<start.index("ali-api")
     assert "/etc/systemd" not in combined
     assert "systemctl enable" not in combined
-    assert "/data2/wujing03/sandbox-harness-platform-parallel-ali" in combined
+    assert "/data/wujing02/sandbox-harness-platform-parallel-ali" in combined
     assert "stop_units" in stop and "network-rule.sh" in stop and " remove" in stop
 
 
 def test_ali_image_decompose_service_is_materialized_under_data2():
     source=(ROOT/"deploy/ali/materialize-image-decompose.sh").read_text()
     assert 'target="$root/.data/services/image-layered"' in source
-    assert "/data2/wujing03/sandbox-harness-platform-parallel-ali" in source
+    assert "/data/wujing02/sandbox-harness-platform-parallel-ali" in source
     assert "source_root=/data/wujing03/image-layered" in source
     assert 'model_source="$source_root/models"' in source
     assert "ln -s" in source and "models" in source
@@ -233,7 +233,7 @@ def test_ali_service_runner_limits_database_credentials_per_component():
 
 def test_ali_image_builder_uses_only_ali_checkout_and_namespaces():
     source=(ROOT/"runtime/build-images.sh").read_text()
-    assert "[[ \"$root\" == /data2/wujing03/sandbox-harness-platform-parallel-ali ]]" in source
+    assert "[[ \"$root\" == /data/wujing02/sandbox-harness-platform-parallel-ali ]]" in source
     assert "127.0.0.1:25001/sandbox-harness-platform-parallel-ali" in source
     assert "SANDBOX_HARNESS_LOCAL_IMAGE_PREFIX:-sandbox-harness-parallel-ali" in source
     assert 'output_root="$root/.data/image-build/$tag"' in source

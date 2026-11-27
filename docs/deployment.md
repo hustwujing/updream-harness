@@ -1,7 +1,7 @@
 # Deployment
 
 The only supported deployment root is
-`/data2/wujing03/sandbox-harness-platform-parallel-ali`. All mutable state is
+`/data/wujing02/sandbox-harness-platform-parallel-ali`. All mutable state is
 under its `.data` directory.
 
 | Resource | Current identity |
@@ -36,7 +36,7 @@ its role in `DatabaseSettings.SERVICE_DOMAINS`.
 ## Commands
 
 ```bash
-cd /data2/wujing03/sandbox-harness-platform-parallel-ali
+cd /data/wujing02/sandbox-harness-platform-parallel-ali
 deploy/ali/start.sh
 deploy/ali/status.sh
 deploy/ali/stop.sh

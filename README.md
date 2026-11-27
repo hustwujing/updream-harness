@@ -93,7 +93,7 @@ continuation work. One database-fenced leader owns warm-pool convergence,
 cross-domain relay, expiry, orphan cleanup, model discovery and object GC.
 
 The Ali checkout and branch are both `sandbox-harness-platform-parallel-ali`.
-Its working directory is `/data2/wujing03/sandbox-harness-platform-parallel-ali`,
+Its working directory is `/data/wujing02/sandbox-harness-platform-parallel-ali`,
 API is `127.0.0.1:24767`, PostgreSQL is `127.0.0.1:28433`, and ingress is
 `/sandbox-harness-platform-parallel-ali/`. Use `deploy/ali/` for this deployment.
 Database identity, Redis prefix, namespace, object prefix, ports and service

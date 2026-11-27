@@ -44,6 +44,6 @@ def isolate(service_root: Path) -> None:
 
 if __name__=='__main__':
     root=Path(__file__).resolve().parents[2]
-    if root!=Path('/data2/wujing03/sandbox-harness-platform-parallel-ali'):
+    if root!=Path('/data/wujing02/sandbox-harness-platform-parallel-ali'):
         raise RuntimeError('unexpected_project_root')
     isolate(root/'.data/services/image-layered')

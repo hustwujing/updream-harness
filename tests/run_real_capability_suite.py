@@ -178,7 +178,7 @@ async def main() -> None:
     parser.add_argument("--report", default=".data/first-capability-report.json")
     args = parser.parse_args()
     selected = CASES if args.case == "all" else {args.case: CASES[args.case]}
-    with tempfile.TemporaryDirectory(prefix="sandbox-harness-capability-", dir="/data2/wujing03") as directory:
+    with tempfile.TemporaryDirectory(prefix="sandbox-harness-capability-", dir="/data/wujing02") as directory:
         root = Path(directory)
         make_inputs(root)
         async with httpx.AsyncClient(base_url=args.base_url, timeout=None, trust_env=False) as client:

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
-[[ "$root" == /data2/wujing03/sandbox-harness-platform-parallel-ali ]] || {
+[[ "$root" == /data/wujing02/sandbox-harness-platform-parallel-ali ]] || {
   echo "unexpected_project_root:$root" >&2; exit 1; }
 stop_units=(
   sandbox-harness-parallel-ali-api

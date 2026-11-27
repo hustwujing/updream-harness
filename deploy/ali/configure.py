@@ -120,7 +120,7 @@ def build_environment(source:dict[str,str],*,token=lambda:secrets.token_urlsafe(
         "SANDBOX_HARNESS_PROFILE_CATALOG_PATH":str(DATA_ROOT/"catalogs/profile-catalog.json"),
         "SANDBOX_HARNESS_RUNTIME_BUNDLE_DIR":str(DATA_ROOT/"runtime-bundles"),
         "SANDBOX_HARNESS_RUNTIME_CODE_BUNDLE_DIR":str(DATA_ROOT/"runtime-code-bundles"),
-        "SANDBOX_HARNESS_CONTROLLED_RUNTIME_ROOT":str(DATA_ROOT/"provider-runtime"),
+        "SANDBOX_HARNESS_CONTROLLED_RUNTIME_ROOT":str(DATA_ROOT/"controlled-runtime"),
         "SANDBOX_HARNESS_MODEL_CATALOG_SNAPSHOT_PATH":str(DATA_ROOT/"catalogs/model-catalog.json"),
         "SANDBOX_HARNESS_SITE_PUBLIC_BASE_PATH":"/sandbox-harness-platform-parallel-ali/sites",
     })
@@ -129,8 +129,8 @@ def build_environment(source:dict[str,str],*,token=lambda:secrets.token_urlsafe(
 
 def ensure_checkout(root:Path=ROOT)->None:
     if root.resolve()!=ROOT:raise ValueError("unexpected_checkout")
-    if not root.resolve().is_relative_to(Path("/data2/wujing03")):
-        raise ValueError("path_outside_data2")
+    if not root.resolve().is_relative_to(Path("/data/wujing02")):
+        raise ValueError("path_outside_deployment_root")
     branch=subprocess.check_output(["git","-C",str(root),"branch","--show-current"],text=True).strip()
     if branch!=identity.BRANCH:raise ValueError("unexpected_branch")
 

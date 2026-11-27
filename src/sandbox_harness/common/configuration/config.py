@@ -163,7 +163,7 @@ class Settings(BaseSettings):
     job_recovery_concurrency: int = Field(default=1,ge=1,le=128)
     job_lease_seconds: int = Field(default=60,ge=15,le=600)
     controlled_runtime_root: Path = Path(
-        "/data2/wujing03/sandbox-harness-platform-plus/.data/provider-runtime")
+        "/data/wujing02/sandbox-harness-platform-parallel-ali/.data/controlled-runtime")
     controlled_runtime_digest: str = Field(default="",pattern=r"^$|^[0-9a-f]{64}$")
     controlled_node_id: str = Field(default="local-controlled",pattern=r"^[A-Za-z0-9._-]{1,160}$")
     controlled_worker_concurrency: int = Field(default=2,ge=1,le=16)

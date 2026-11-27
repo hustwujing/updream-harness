@@ -145,6 +145,6 @@ async def supervise(envfile,root):
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--worker',choices=['initial','recover'])
-    parser.add_argument('--env',default='/data2/wujing03/sandbox-harness-platform-parallel-ali/.data/config/platform.env');parser.add_argument('--root',required=True)
+    parser.add_argument('--env',default='/data/wujing02/sandbox-harness-platform-parallel-ali/.data/config/platform.env');parser.add_argument('--root',required=True)
     args=parser.parse_args();root=Path(args.root).resolve()
     asyncio.run(worker(args.worker,root,args.env) if args.worker else supervise(args.env,root))

@@ -32,7 +32,7 @@ function minimalGlb(){
  if(!webgl){const fallback=page.locator('.model3d-error');await fallback.waitFor();assert.match(await fallback.textContent(),/无法启动 3D 渲染/);assert.deepEqual(errors,[]);console.log(JSON.stringify({passed:true,prefetched:true,webgl:false,friendly_fallback:true}));return}
  const loading=page.locator('.model3d-loading');await loading.waitFor({state:'attached',timeout:12000}).catch(async error=>{throw new Error(`3D loading state did not appear: ${JSON.stringify({errors,text:(await page.locator('body').textContent()).slice(-500),previewLoading:await page.locator('.preview-loading').count(),modelRequests:requests.filter(value=>value.includes('Model3DPreview-'))})}`,{cause:error})});assert.match(await loading.textContent(),/正在下载 3D 模型.*正在建立连接/s);
  const canvas=page.locator('.model3d-preview canvas');await canvas.waitFor();await page.waitForSelector('.model3d-loading',{state:'detached',timeout:5000});await page.waitForTimeout(100);
- const shot='/data2/wujing03/sandbox-harness-platform-parallel-ali/.data/model3d-canvas.png';await canvas.screenshot({path:shot});
+ const shot='/data/wujing02/sandbox-harness-platform-parallel-ali/.data/model3d-canvas.png';await canvas.screenshot({path:shot});
  const unique=Number(execFileSync('python3',['-c','from PIL import Image\nimport sys\nim=Image.open(sys.argv[1]).convert("RGB").resize((80,80))\nprint(len(set(im.getdata())))',shot],{encoding:'utf8'}).trim());
  assert.ok(unique>20,`3D canvas appears blank: ${unique} colors`);assert.equal(await page.getByText('拖动旋转 · 滚轮缩放 · 右键平移').count(),1);
  await page.setViewportSize({width:390,height:844});await page.waitForTimeout(100);const box=await canvas.boundingBox();assert.ok(box.x>=0&&box.x+box.width<=390&&box.height>=400);

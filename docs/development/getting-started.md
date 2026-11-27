@@ -12,9 +12,9 @@ Read this before the first code change or when setting up a new checkout.
 - Dependencies and build output stay inside the project checkout on `/data2`;
   runtime state, caches, logs, databases and test temporaries belong under
   the selected checkout's `.data` directory. The isolated Ali checkout is
-  `/data2/wujing03/sandbox-harness-platform-parallel-ali`; its state must never
+  `/data/wujing02/sandbox-harness-platform-parallel-ali`; its state must never
   use the original checkout's `.data` tree. Other explicit writable paths for
-  this work must also stay under `/data2/wujing03`.
+  this work must also stay under `/data/wujing02`.
 - Reuse shared binaries and existing infrastructure services. The deployment
   owns its PostgreSQL cluster on port 28433 and never shares an application
   database or runtime directory.
@@ -63,7 +63,7 @@ module resolution needs the project dependency directory.
 
 1. Check `pwd`, `git worktree list`, `git branch --show-current` and
    `git status --short`; preserve unrelated work. Ali edits belong only in
-   `/data2/wujing03/sandbox-harness-platform-parallel-ali` on branch
+   `/data/wujing02/sandbox-harness-platform-parallel-ali` on branch
    `sandbox-harness-platform-parallel-ali`. The sibling original project is
    read-only for this work.
 2. Prefer CodeGraph when `.codegraph/` exists; otherwise locate the current

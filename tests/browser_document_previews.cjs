@@ -4,7 +4,7 @@ const {execFileSync}=require('node:child_process');
 const fs=require('node:fs');
 const path=require('node:path');
 
-const root='/data2/wujing03/sandbox-harness-platform-parallel-ali',fixtures=path.join(root,'.data/document-preview-fixtures');
+const root='/data/wujing02/sandbox-harness-platform-parallel-ali',fixtures=path.join(root,'.data/document-preview-fixtures');
 execFileSync(path.join(root,'.venv/bin/python'),[path.join(root,'tests/document_preview_fixtures.py')]);
 const files={pdf:fs.readFileSync(path.join(fixtures,'sample.pdf')),pptx:fs.readFileSync(path.join(fixtures,'sample.pptx')),docx:fs.readFileSync(path.join(fixtures,'sample.docx')),xlsx:fs.readFileSync(path.join(fixtures,'sample.xlsx'))};
 

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
-if [[ "$root" != /data2/wujing03/sandbox-harness-platform-parallel-ali ]]; then
+if [[ "$root" != /data/wujing02/sandbox-harness-platform-parallel-ali ]]; then
   echo "unexpected_project_root:$root" >&2
   exit 1
 fi

@@ -67,7 +67,7 @@ claims made by documentation.
   repositories, API routes, module manifests and tests as the source of truth.
   If documentation disagrees, verify behavior and fix it in the same change.
 - Keep generated data, dependencies, caches, logs, databases and temporary
-  files under `.data` or another explicit `/data2` path.
+  files under `.data` or another explicit `/data/wujing02` path.
 - Provision every long-lived writable directory for the service account and
   revalidate its boundary, type, owner and write access whenever work writes
   through it. Disposable staging may be recreated; ownership mismatch fails

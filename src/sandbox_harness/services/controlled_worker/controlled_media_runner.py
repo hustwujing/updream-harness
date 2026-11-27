@@ -179,7 +179,7 @@ def _transcribe(work:Path,source:Path,parameters:dict,runtime:Path)->dict:
 def run_controlled_operation(operation:str,work:Path,source:Path,parameters:dict,
                              gpu_ids:tuple[str,...],runtime_root:Path)->dict:
     runtime=runtime_root.resolve()
-    if not runtime.is_relative_to(Path('/data2/wujing03')) or not runtime.is_dir():
+    if not runtime.is_relative_to(Path('/data/wujing02')) or not runtime.is_dir():
         raise RuntimeError('controlled_runtime_root_invalid')
     if operation=='image.segment':return _segment(work,source,parameters,gpu_ids,runtime)
     if operation=='audio.transcribe':return _transcribe(work,source,parameters,runtime)

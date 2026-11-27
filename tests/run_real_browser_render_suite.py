@@ -106,7 +106,7 @@ def validate(name: str, paths: dict[str, Path]) -> dict:
 async def main() -> None:
     parser = argparse.ArgumentParser(); parser.add_argument("--base-url", default="http://127.0.0.1:24767/")
     parser.add_argument("--report", default=".data/browser-render-report.json"); args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix="sandbox-render-", dir="/data2/wujing03") as directory:
+    with tempfile.TemporaryDirectory(prefix="sandbox-render-", dir="/data/wujing02") as directory:
         async with httpx.AsyncClient(base_url=args.base_url, timeout=None, trust_env=False) as client:
             response = await client.get("api/session"); response.raise_for_status()
             results = await asyncio.gather(*(execute(client, Path(directory), name, spec) for name, spec in CASES.items()), return_exceptions=True)

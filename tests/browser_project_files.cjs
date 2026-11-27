@@ -31,13 +31,13 @@ const fs=require('node:fs');
     await asset.getByTitle('版本记录').click();await asset.locator('.project-file-history').waitFor();
     await asset.getByTitle('重命名').click();await asset.locator('input').fill('renamed-reference.txt');await asset.getByRole('button',{name:'保存'}).click();
     await page.getByText('renamed-reference.txt',{exact:true}).waitFor();
-    const upload='/data2/wujing03/sandbox-harness-platform-parallel-ali/.data/browser-upload.txt';fs.writeFileSync(upload,'browser-upload');
+    const upload='/data/wujing02/sandbox-harness-platform-parallel-ali/.data/browser-upload.txt';fs.writeFileSync(upload,'browser-upload');
     await page.locator('.inspector input[type=file]').setInputFiles(upload);await page.getByText('browser-upload.txt',{exact:true}).waitFor();
     const uploaded=page.locator('.project-file-wrap').filter({hasText:'browser-upload.txt'});await uploaded.getByTitle('删除').click();
     await page.getByText('browser-upload.txt',{exact:true}).waitFor({state:'detached'});
    }
    assert.deepEqual(errors,[]);
-   await page.screenshot({path:`/data2/wujing03/sandbox-harness-platform-parallel-ali/.data/project-files-${viewport.name}.png`,fullPage:true});
+   await page.screenshot({path:`/data/wujing02/sandbox-harness-platform-parallel-ali/.data/project-files-${viewport.name}.png`,fullPage:true});
    await page.close();
   }
   console.log(JSON.stringify({passed:true,project_files:3,viewports:['desktop','mobile']}));
