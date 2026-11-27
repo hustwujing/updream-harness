@@ -101,6 +101,8 @@
 
 .model-round {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
   gap: 3px;
   padding: 7px 1px;
   border-bottom: 1px solid #edf0ed;
@@ -123,6 +125,11 @@
 
 .model-round header span {
   color: #557560;
+  white-space: nowrap;
+}
+
+.model-round time {
+  white-space: nowrap;
 }
 
 .model-round.failed header span,
