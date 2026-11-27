@@ -589,6 +589,38 @@ async def test_child_resumes_same_native_session_with_nested_group_results(tmp_p
     assert store.marked[0][1]=='j'*32+':1:group:'+'g'*32
 
 
+async def test_child_rechecks_continuation_after_execution_finishes(tmp_path):
+    sandbox=Sandbox(id='sandbox-race',harness=Harness.CODEX,image='image',
+        runtime_url='http://runtime',metadata={})
+    class Store:
+        reads=0;marked=[]
+        async def child_continuation(self,job_id):
+            self.reads+=1
+            if self.reads==1:return None
+            return {'id':'continuation','group_id':'g'*32,'outbox_id':'o'*32,'state':'ready',
+                'result':{'results':[{'state':'SUCCEEDED'}]},'resume_execution_id':''}
+        async def child_has_open_group(self,*args):return False
+        async def child_continuation_artifacts(self,*args):return []
+        async def mark_child_continuation_resumed(self,*args):self.marked.append(args)
+        async def list_job_activities(self,*args):return []
+    class Runtime:
+        started=[]
+        async def execution_status(self,*args):
+            return {'result':{'status':'completed','native_thread_id':'native-child'}}
+        async def start_execution(self,*args,**kwargs):self.started.append(kwargs);return {'accepted':True}
+        async def resume(self,*args,**kwargs):
+            if False:yield None
+    store=Store();runtime=Runtime();backend=SandboxChildBackend(pool=SimpleNamespace(),runtime=runtime,
+        store=store,objects=SimpleNamespace(),settings=Settings(backend='fake',data_root=tmp_path),
+        token_factory=lambda *args:None);backend.sessions['j'*32]=sandbox
+    context=SimpleNamespace(job=SimpleNamespace(id='j'*32),generation=1,
+        request=request(parameters={'objective':'continue','harness':'codex','reasoning_effort':'high'}))
+    first=await backend.status(context,'initial-execution',sandbox_receipt(sandbox))
+    assert not first.terminal and runtime.started==[]
+    second=await backend.status(context,'initial-execution',sandbox_receipt(sandbox))
+    assert not second.terminal and len(runtime.started)==1 and store.marked
+
+
 async def test_child_inputs_stream_without_object_get_and_enforce_reserved_disk(tmp_path):
     digest="a"*64;image="template-reviewer"
     sandbox=Sandbox(id="sandbox-stream",harness=Harness.CODEX,image=image,

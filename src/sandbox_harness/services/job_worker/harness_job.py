@@ -580,6 +580,9 @@ class SandboxChildBackend(SandboxAllocationOwner):
             return AdapterStatus(False)
         has_open=getattr(self.store,'child_has_open_group',None)
         if has_open and await has_open(context.job.id):return AdapterStatus(False)
+        if continuation_method:
+            continuation=await continuation_method(context.job.id)
+            if continuation and continuation['state']=='ready':return AdapterStatus(False)
         status=result.get('status')
         state={'completed':JobState.SUCCEEDED,'failed':JobState.FAILED,
             'cancelled':JobState.CANCELLED,'blocked':JobState.BLOCKED,
