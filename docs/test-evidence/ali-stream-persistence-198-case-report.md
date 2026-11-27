@@ -22,7 +22,9 @@ Evidence: `.data/evidence/real-campaign/final-198-composite-b111a08.json`.
 
 ## Deterministic Gates
 
-- Full Python gate before release: `1633 passed, 23 skipped` at `1956821`.
+- Final full Python gate: `1634 passed, 23 skipped` at `35b592b`.
+- Pre-release full gate before the P29 collector fix: `1633 passed, 23 skipped`
+  at `1956821`.
 - Focused Child collection fix gate: `109 passed` at `b111a08`.
 - Frontend: `39/39` Vitest and production Vite build.
 - Real-case catalog generation and contract tests: `43 passed`, 198 cases.
