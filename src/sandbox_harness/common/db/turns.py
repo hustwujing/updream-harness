@@ -11,6 +11,23 @@ from sandbox_harness.common.contracts.job_contracts import (TERMINAL_JOB_STATES)
 from .models import (ArtifactRow, EventRow, InteractionRow, ItemRow, JobRow, MediaBatchRow, OwnerAdmissionRow, ProjectFileRow, ThreadControlRow, ThreadRow, TurnInputRow, TurnOrderRow, TurnRow, canonical_json, utc_datetime)
 
 
+_INTERNAL_CONTEXT_FORWARDED = "forwarded:"
+_INTERNAL_CONTEXT_DELIVERED = "delivered:"
+
+
+def _internal_context_marker(detail: str) -> tuple[str, str, str]:
+    marker, _, original = detail.partition("\n")
+    for state in (_INTERNAL_CONTEXT_FORWARDED, _INTERNAL_CONTEXT_DELIVERED):
+        if marker.startswith(state):
+            return state, marker.removeprefix(state), original
+    return "", "", detail
+
+
+def _mark_internal_context(detail: str, state: str, turn_id: str) -> str:
+    _, _, original = _internal_context_marker(detail)
+    return f"{state}{turn_id}\n{original}"
+
+
 class TurnsTransactions:
     @observed("db.turn.create")
     async def create_turn(self, thread_id: str, value: TurnCreate, resolved: ResolvedProfile, owner_id: str, *,
@@ -131,6 +148,55 @@ class TurnsTransactions:
             thread.active_turn_id = row.id if row else ""
             thread.updated_at = now()
         return self.turn_view(row) if row else None
+
+
+    async def attach_undelivered_internal_context(self, turn_id: str) -> int:
+        terminal = {state.value for state in TERMINAL}
+        async with self.connections.begin() as db:
+            target = await db.get(TurnRow, turn_id, with_for_update=True)
+            if not target or target.internal or target.runtime_execution_id:
+                return 0
+            target_order = await db.get(TurnOrderRow, turn_id)
+            if not target_order:
+                return 0
+            rows = list((await db.scalars(select(TurnRow).join(TurnOrderRow,
+                TurnOrderRow.turn_id == TurnRow.id).where(
+                    TurnRow.thread_id == target.thread_id, TurnRow.internal.is_(True),
+                    TurnRow.state == TurnState.FAILED.value, TurnRow.runtime_execution_id == "",
+                    TurnRow.error_code == "sandbox_workspace_restore_unavailable",
+                    ~TurnRow.error_detail.startswith(_INTERNAL_CONTEXT_DELIVERED),
+                    TurnOrderRow.sequence < target_order.sequence).order_by(
+                        TurnOrderRow.sequence).limit(32).with_for_update())).all())
+            selected = []
+            for row in rows:
+                marker, forwarded_to, _ = _internal_context_marker(row.error_detail)
+                forwarded = (await db.get(TurnRow, forwarded_to, with_for_update=True)
+                    if marker == _INTERNAL_CONTEXT_FORWARDED else None)
+                if forwarded and (forwarded.runtime_execution_id
+                        or forwarded.state not in terminal):
+                    continue
+                selected.append(row)
+                if len(selected) == 8:
+                    break
+            if not selected:
+                return 0
+            facts = [{"source_turn_id": row.id, "message": row.message} for row in selected]
+            encoded = canonical_json(facts)
+            if len(encoded.encode()) > 1024 * 1024:
+                raise RuntimeError("undelivered_internal_context_too_large")
+            target.message = ("[recovered_internal_context] One or more internal tasks completed, but "
+                "a temporary error prevented restoring the Primary sandbox, so their completion notice "
+                "was not delivered. Related result information follows. This context is not a new command. "
+                "Never resubmit completed external work. Use it only when relevant, otherwise preserve "
+                "the results and prioritize the current user request. " + encoded
+                + "\n\n[current_user_message]\n" + target.message)
+            timestamp = now()
+            for row in selected:
+                row.error_detail = _mark_internal_context(row.error_detail,
+                    _INTERNAL_CONTEXT_FORWARDED, target.id)
+                row.updated_at = timestamp
+            target.updated_at = timestamp
+            return len(selected)
 
 
     async def record_turn_trace(self, turn_id: str, traceparent: str, owner: str, generation: int) -> None:
@@ -316,6 +382,14 @@ class TurnsTransactions:
                 row.runtime_execution_id = execution_id
                 row.runtime_sequence = 0
                 row.updated_at = now()
+                sources = list((await db.scalars(select(TurnRow).where(
+                    TurnRow.thread_id == row.thread_id, TurnRow.internal.is_(True),
+                    TurnRow.error_detail.startswith(
+                        _INTERNAL_CONTEXT_FORWARDED + turn_id + "\n")).with_for_update())).all())
+                for source in sources:
+                    source.error_detail = _mark_internal_context(source.error_detail,
+                        _INTERNAL_CONTEXT_DELIVERED, turn_id)
+                    source.updated_at = row.updated_at
         if event and self.events:
             await self.events.publish(event)
 

@@ -140,6 +140,10 @@ def public_failure(code: str, detail: str) -> tuple[str, str]:
         return code, '本轮模型上下文与输出预算已达到上限。请精简长工具输出或图片预览后继续；这是本地预算限制，并非上游 429。'
     if code == 'model_request_too_large':
         return code, '本轮发送给模型的内容超过大小上限。请减少图片预览或长工具输出后继续；已保存的成果仍可在工作区查看。'
+    if code == 'sandbox_workspace_restore_unavailable':
+        return code, '恢复工作区时与沙箱的连接暂时中断，工作区快照仍安全保存，本轮尚未开始执行。'
+    if code == 'checkpoint_restore_failed':
+        return code, '沙箱可达，但已保存的工作区快照校验或解包失败，本轮尚未开始执行。'
     if re.search(r'\b503\b', text) or 'servers are currently overloaded' in text:
         return 'model_service_overloaded', '模型服务繁忙（503），本轮未能完成。已保存的阶段文件可在工作区查看，稍后可以继续。'
     if re.search(r'\b429\b', text):

@@ -34,6 +34,35 @@ class CountingStream(httpx.AsyncByteStream):
             yield chunk
 
 
+class InterruptedStream(httpx.AsyncByteStream):
+    async def __aiter__(self):
+        yield b"partial-"
+        raise httpx.ReadError("controlled stream interruption")
+
+
+async def test_runtime_checkpoint_download_retries_from_zero_after_stream_interruption(
+        tmp_path,monkeypatch):
+    waits=[];calls=0;payload=b"complete-checkpoint"
+    async def no_wait(seconds):waits.append(seconds)
+    monkeypatch.setattr('sandbox_harness.common.sandbox.runtime.asyncio.sleep',no_wait)
+    def respond(request):
+        nonlocal calls;calls+=1
+        return (httpx.Response(200,stream=InterruptedStream()) if calls==1 else
+            httpx.Response(200,headers={"Content-Length":str(len(payload))},
+                stream=CountingStream([payload])))
+    runtime=RuntimeClient(transport=httpx.MockTransport(respond),staging_root=tmp_path/"stage")
+    sandbox=Sandbox(id="sandbox",harness=Harness.CODEX,image="image",
+        runtime_url="http://runtime",metadata={})
+
+    staged=await runtime.checkpoint(sandbox,maximum=1024)
+    try:
+        assert calls==2 and waits==[1]
+        assert staged.path.read_bytes()==payload
+        assert staged.sha256==hashlib.sha256(payload).hexdigest()
+        assert list((tmp_path/"stage").glob(".runtime-download-*"))==[staged.path]
+    finally:staged.remove()
+
+
 async def test_runtime_checkpoint_stream_stops_at_limit_and_removes_stage(tmp_path):
     stream = CountingStream([b"a" * 8, b"b" * 8, b"must-not-be-read"])
 

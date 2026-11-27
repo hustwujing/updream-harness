@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+import pytest
 
 import sandbox_harness.services.sandbox_gateway.gateway as gateway_module
 from sandbox_harness.services.api.app import (create_app, web_distribution_digest)
@@ -81,7 +82,8 @@ async def test_media_continuation_dispatch_links_durable_origin_trace(tmp_path,m
     async def origin(*args,**kwargs):
         return SimpleNamespace(network_access="restricted",last_traceparent=expected,
             submit_traceparent="")
-    async def submit(*args,**kwargs):return SimpleNamespace(id="e"*32)
+    async def submit(*args,**kwargs):return SimpleNamespace(id="e"*32,state="RUNNING",
+        runtime_execution_id="execution",error_code="")
     store.media_continuation_group=group;store.get_turn=origin
     worker=platform_worker(settings(tmp_path,"media-linked"),store,
         SimpleNamespace(submit=submit))
@@ -97,6 +99,38 @@ async def test_media_continuation_dispatch_links_durable_origin_trace(tmp_path,m
             "trace_id":expected.split("-")[1],"span_id":expected.split("-")[2]}]
     finally:
         root.removeHandler(telemetry.handler);root.setLevel(old_level);telemetry.close()
+
+
+@pytest.mark.parametrize(("kind","extension"),[
+    ("image","png"),("video","mp4"),("audio","wav"),("model3d","glb")])
+@pytest.mark.parametrize("output_role",["workspace","delivery"])
+async def test_media_continuation_promotes_workspace_output_before_dispatch(
+        tmp_path,kind,extension,output_role):
+    store=SimpleNamespace();promoted=[];submitted=[];reads=0
+    project_path=f"artifacts/3d/audio.{extension}"
+    async def group(*args,**kwargs):
+        nonlocal reads;reads+=1
+        return True,[{"status":"succeeded","output_role":output_role,"job_id":"c"*32,
+            "draft_id":"d"*32,"kind":kind,"model":"provider-model","project_path":(
+                project_path if promoted else ""),"error_code":""}]
+    async def promote(job_id,thread_id,role):
+        promoted.append((job_id,thread_id,role));return {"project_path":project_path}
+    async def origin(*args,**kwargs):
+        return SimpleNamespace(network_access="restricted",last_traceparent="",
+            submit_traceparent="")
+    async def submit(thread_id,value,**kwargs):
+        submitted.append((thread_id,value));return SimpleNamespace(id="e"*32,state="RUNNING",
+            runtime_execution_id="execution",error_code="")
+    store.media_continuation_group=group;store.promote_media_job_for_thread=promote
+    store.get_turn=origin
+    worker=platform_worker(settings(tmp_path,"media-promote"),store,
+        SimpleNamespace(submit=submit))
+
+    await worker._continue_media({"turn_id":"a"*32,"thread_id":"b"*32,"owner_id":"owner"})
+
+    assert promoted==[("c"*32,"b"*32,output_role)]
+    assert reads==2 and len(submitted)==1
+    assert "/workspace/project/"+project_path in submitted[0][1].message
 
 
 async def test_sandbox_expiry_scan_failure_recovers_and_releases():

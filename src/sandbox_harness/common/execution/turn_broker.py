@@ -57,7 +57,21 @@ async def reconcile_native_model_error(store,turn_id:str,error_code:str,error_de
 
 
 class CheckpointRestoreError(RuntimeError):
-    pass
+    error_code="checkpoint_restore_failed"
+
+
+class CheckpointRestoreUnavailable(CheckpointRestoreError):
+    error_code="sandbox_workspace_restore_unavailable"
+
+
+def checkpoint_restore_error(exc:httpx.HTTPError)->CheckpointRestoreError:
+    transient=isinstance(exc,(httpx.TimeoutException,httpx.TransportError))
+    if isinstance(exc,httpx.HTTPStatusError):
+        transient=exc.response.status_code in {408,429,500,502,503,504}
+    if transient:
+        return CheckpointRestoreUnavailable(
+            "Sandbox connection was unavailable while restoring the saved workspace")
+    return CheckpointRestoreError("Runtime rejected the saved workspace checkpoint")
 
 
 class Broker:
@@ -522,7 +536,9 @@ class Broker:
             runtime_code_bundle_digest=self.settings.runtime_code_bundle_digest,
             runtime_bundle_digest=self.settings.runtime_bundle_digest)
         if created and not internal:
-            if await self.store.attach_suppressed_job_context(turn.id):
+            attached=await self.store.attach_suppressed_job_context(turn.id)
+            attached+=await self.store.attach_undelivered_internal_context(turn.id)
+            if attached:
                 turn = await self.store.get_turn(turn.id)
         event("turn.accepted",thread_id=thread_id,turn_id=turn.id,harness=turn.harness,model=turn.model,reasoning_effort=turn.reasoning_effort,reused=not created,state=turn.state)
         if created and start_now:
@@ -1011,8 +1027,8 @@ class Broker:
                             await self.runtime.restore(sandbox, object_chunks(self.objects,
                                 thread.checkpoint_ref, maximum=self.settings.max_checkpoint_bytes),
                                 size=archive_size)
-                        except httpx.HTTPStatusError as exc:
-                            raise CheckpointRestoreError("Runtime rejected the saved workspace checkpoint") from exc
+                        except httpx.HTTPError as exc:
+                            raise checkpoint_restore_error(exc) from exc
                     await self._register_project_attachments(thread.id, turn.id, turn.attachments)
                     project_files = await self.store.freeze_turn_project_files(turn.id, thread.id,
                         lease_owner=self.instance_id, recovery_generation=generation)

@@ -8,12 +8,109 @@ from sandbox_harness.common.contracts.domain import (Harness)
 from sandbox_harness.common.sandbox.runtime import (RuntimeClient)
 from sandbox_harness.common.sandbox.sandbox import (Sandbox)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxEndpoint)
+from sandbox_harness.common.storage.objects import (ObjectStore, object_chunks)
 
 
 def test_runtime_client_does_not_create_staging_until_a_transfer(tmp_path):
     staging=tmp_path/"runtime-downloads"
     RuntimeClient(staging_root=staging)
     assert not staging.exists()
+
+
+async def test_checkpoint_restore_replays_the_complete_object_after_read_error(tmp_path,monkeypatch):
+    waits=[]
+    async def no_wait(seconds):waits.append(seconds)
+    monkeypatch.setattr('sandbox_harness.common.sandbox.runtime.asyncio.sleep',no_wait)
+    store=ObjectStore(tmp_path/'objects');payload=b'a'*(1024*1024)+b'second-chunk'
+    reference,_=store.put(payload);requests=[]
+    async def respond(request):
+        body=await request.aread();requests.append(body)
+        if len(requests)==1:raise httpx.ReadError('checkpoint reply lost',request=request)
+        return httpx.Response(200,json={'restored':True})
+    runtime=RuntimeClient(transport=httpx.MockTransport(respond))
+    sandbox=Sandbox(id='sandbox',harness=Harness.CODEX,image='image',
+        runtime_url='http://runtime',metadata={})
+
+    await runtime.restore(sandbox,object_chunks(store,reference,maximum=len(payload)),
+        size=len(payload))
+
+    assert requests==[payload,payload]
+    assert waits==[1]
+
+
+async def test_checkpoint_restore_does_not_retry_deterministic_rejection(tmp_path):
+    store=ObjectStore(tmp_path/'objects');reference,_=store.put(b'invalid-checkpoint');calls=[]
+    async def respond(request):
+        calls.append(await request.aread())
+        return httpx.Response(400,json={'detail':'checkpoint_archive_invalid'})
+    runtime=RuntimeClient(transport=httpx.MockTransport(respond))
+    sandbox=Sandbox(id='sandbox',harness=Harness.CODEX,image='image',
+        runtime_url='http://runtime',metadata={})
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await runtime.restore(sandbox,object_chunks(store,reference,maximum=1024),
+            size=len(b'invalid-checkpoint'))
+
+    assert calls==[b'invalid-checkpoint']
+
+
+async def test_checkpoint_restore_uses_configured_bounded_backoff(tmp_path,monkeypatch):
+    waits=[]
+    async def no_wait(seconds):waits.append(seconds)
+    monkeypatch.setattr('sandbox_harness.common.sandbox.runtime.asyncio.sleep',no_wait)
+    store=ObjectStore(tmp_path/'objects');reference,_=store.put(b'checkpoint');calls=[]
+    async def respond(request):
+        calls.append(await request.aread())
+        raise httpx.ReadError('controlled disconnect',request=request)
+    runtime=RuntimeClient(transport=httpx.MockTransport(respond),request_retry_attempts=3,
+        request_retry_initial_delay_seconds=2,request_retry_backoff_multiplier=3,
+        request_retry_max_delay_seconds=5)
+    sandbox=Sandbox(id='sandbox',harness=Harness.CODEX,image='image',
+        runtime_url='http://runtime',metadata={})
+
+    with pytest.raises(httpx.ReadError):
+        await runtime.restore(sandbox,object_chunks(store,reference,maximum=1024),size=10)
+
+    assert calls==[b'checkpoint']*3
+    assert waits==[2,5]
+
+
+async def test_runtime_idempotent_preparation_calls_retry_transport_failures(tmp_path,monkeypatch):
+    waits=[]
+    async def no_wait(seconds):waits.append(seconds)
+    monkeypatch.setattr('sandbox_harness.common.sandbox.runtime.asyncio.sleep',no_wait)
+    store=ObjectStore(tmp_path/'objects');payload=b'project-data';reference,_=store.put(payload)
+    calls={}
+    async def respond(request):
+        body=await request.aread();key=(request.method,request.url.path)
+        calls.setdefault(key,[]).append(body)
+        if len(calls[key])==1:raise httpx.ReadError('controlled disconnect',request=request)
+        values={
+            ('PUT','/v1/attachments/file'):{'bytes':len(body)},
+            ('PUT','/v1/project-files/file'):{'bytes':len(body),'sha256':'digest'},
+            ('POST','/v1/project-files/reset'):{'reset':True},
+            ('GET','/v1/project-files/manifest'):{'items':[]},
+            ('POST','/v1/project-files/preserve'):{'items':[]},
+        }
+        return httpx.Response(200,json=values[key])
+    runtime=RuntimeClient(transport=httpx.MockTransport(respond))
+    sandbox=Sandbox(id='sandbox',harness=Harness.CODEX,image='image',
+        runtime_url='http://runtime',metadata={})
+
+    await runtime.put_attachment(sandbox,'input.bin',b'attachment','application/octet-stream')
+    result=await runtime.put_project_file_stream(sandbox,'assets/input.bin',
+        object_chunks(store,reference,maximum=len(payload)),size=len(payload),
+        mime='application/octet-stream')
+    await runtime.reset_project_files(sandbox)
+    assert await runtime.project_file_manifest(sandbox)=={'items':[]}
+    assert await runtime.preserve_project_files(sandbox,['assets/input.bin'],'work/saved')=={
+        'items':[]}
+
+    assert result=={'bytes':len(payload),'sha256':'digest'}
+    assert calls[('PUT','/v1/attachments/file')]==[b'attachment',b'attachment']
+    assert calls[('PUT','/v1/project-files/file')]==[payload,payload]
+    assert all(len(values)==2 for values in calls.values())
+    assert waits==[1]*len(calls)
 
 
 async def test_runtime_client_rejects_outputs_from_another_turn_batch():
@@ -89,7 +186,7 @@ async def test_project_file_upload_retry_exhaustion_keeps_identical_body():
     sandbox=Sandbox(id='sandbox',harness=Harness.CODEX,image='image',runtime_url='http://runtime',metadata={})
     with pytest.raises(httpx.ReadError):
         await runtime.put_project_file(sandbox,'artifacts/file.bin',b'content','application/octet-stream')
-    assert len(requests)==8
+    assert len(requests)==4
     assert all(r.method=='PUT' and r.url.path=='/v1/project-files/file' and
         r.content==b'content' for r in requests)
 
@@ -254,10 +351,10 @@ async def test_runtime_bundle_status_reads_retry_before_configuration(tmp_path,m
         proxy_url='http://proxy',harness='codex',model='gpt')
     assert calls=={('GET','/bootstrap/code-bundle'):2,('PUT','/bootstrap/code-bundle'):1,
         ('GET','/v1/runtime-bundle'):2,('PUT','/v1/runtime-bundle'):1,('POST','/v1/configure'):1}
-    assert waits==[.25,.25]
+    assert waits==[1,1]
 
 
-@pytest.mark.parametrize('status,expected_calls',[(403,1),(503,8)])
+@pytest.mark.parametrize('status,expected_calls',[(403,1),(503,4)])
 async def test_runtime_bundle_status_retry_is_bounded_and_rejects_permanent_errors(tmp_path,monkeypatch,status,expected_calls):
     import hashlib
     waits=[];calls=[]
@@ -300,8 +397,27 @@ async def test_runtime_configuration_retries_transient_code_bundle_upload(tmp_pa
     await runtime.inject(sandbox,capability_token='x'*32,gateway_url='http://gateway:28600',
         proxy_url='http://proxy:28601',harness='codex',model='gpt')
 
-    assert puts==2 and waits==[.25]
+    assert puts==2 and waits==[1]
     assert requests[-1]==('POST','/v1/configure')
+
+
+async def test_runtime_configure_uses_bounded_configured_backoff(monkeypatch):
+    waits=[];calls=0
+    async def no_wait(seconds):waits.append(seconds)
+    monkeypatch.setattr('sandbox_harness.common.sandbox.runtime.asyncio.sleep',no_wait)
+    def respond(request):
+        nonlocal calls;calls+=1
+        return (httpx.Response(503,text='runtime is starting') if calls<3 else
+            httpx.Response(200,json={'configured':True}))
+    runtime=RuntimeClient(request_retry_attempts=3,request_retry_initial_delay_seconds=2,
+        request_retry_backoff_multiplier=3,request_retry_max_delay_seconds=5,
+        transport=httpx.MockTransport(respond))
+    sandbox=Sandbox(id='s',harness=Harness.CODEX,image='i',runtime_url='http://runtime',metadata={})
+
+    await runtime.inject(sandbox,capability_token='x'*32,gateway_url='http://gateway:28600',
+        proxy_url='http://proxy:28601',harness='codex',model='gpt')
+
+    assert calls==3 and waits==[2,5]
 
 
 async def test_runtime_configuration_does_not_retry_deterministic_bundle_rejection(tmp_path,monkeypatch):

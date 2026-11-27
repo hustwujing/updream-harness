@@ -7,7 +7,8 @@ import httpx
 import pytest
 from types import SimpleNamespace
 
-from sandbox_harness.common.execution.turn_broker import (Broker, reconcile_native_model_error)
+from sandbox_harness.common.execution.turn_broker import (Broker, checkpoint_restore_error,
+    reconcile_native_model_error)
 from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.configuration.config import (Settings)
 from sandbox_harness.common.contracts.domain import (EventKind, Harness, InteractionResponse, RuntimeEvent, RuntimeResult, ThreadCreate, TurnCreate, TurnInputCreate, TurnState, now)
@@ -42,6 +43,16 @@ class Runtime:
         "size":6,"sha256":hashlib.sha256(b"result").hexdigest()}]
     async def artifact(self, sandbox, path, *, maximum): return self.stage(b"result")
     async def cancel(self, sandbox): return {"cancelled": True, "native_thread_id": "native-1"}
+
+
+def test_checkpoint_restore_error_classifies_transient_transport_without_private_detail():
+    request=httpx.Request('PUT','https://private.runtime/v1/checkpoint')
+    transient=checkpoint_restore_error(httpx.ReadError('private detail',request=request))
+    rejected=checkpoint_restore_error(httpx.HTTPStatusError('private detail',request=request,
+        response=httpx.Response(400,request=request)))
+    assert transient.error_code=='sandbox_workspace_restore_unavailable'
+    assert rejected.error_code=='checkpoint_restore_failed'
+    assert 'private' not in str(transient) and 'private' not in str(rejected)
 
 
 def sandbox_handle_json(sandbox):

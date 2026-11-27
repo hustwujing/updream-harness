@@ -31,9 +31,14 @@ def public_turn_failure(*, code: str, detail: str, turn_id: str) -> dict:
         return {"error_code": "", "error_message": "", "error_action": "",
             "troubleshooting_id": ""}
     public_code, message = public_failure(code, "")
+    action = ({
+        "sandbox_workspace_restore_unavailable": (
+            "请稍后重新发送本轮消息；系统会从上一个已保存的工作区继续。"),
+        "checkpoint_restore_failed": "请提供查询编号联系管理员，不要删除已有工作区数据。",
+    }.get(public_code) or "请按提示处理；若问题持续，请提供查询编号联系管理员。")
     return {
         "error_code": public_code,
         "error_message": message,
-        "error_action": "请按提示处理；若问题持续，请提供查询编号联系管理员。",
+        "error_action": action,
         "troubleshooting_id": error_reference("broker", turn_id, public_code),
     }

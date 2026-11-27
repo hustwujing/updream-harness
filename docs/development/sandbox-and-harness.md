@@ -29,6 +29,16 @@ HTTP through to it. The Content Bundle is then injected through Runtime and
 provides instructions and Skills. Both are excluded from checkpoints and
 reapplied by digest after sandbox creation or restore.
 
+Idempotent Runtime preparation requests use bounded configurable retry:
+`runtime_request_retry_attempts` is the total attempt count, with exponential
+delay controlled by `runtime_request_retry_initial_delay_seconds`,
+`runtime_request_retry_backoff_multiplier` and
+`runtime_request_retry_max_delay_seconds`. The defaults are four total attempts
+with 1, 2 and 4 second waits. Checkpoint and object uploads reopen the immutable
+content for every attempt. Harness execution, Provider creation and other
+unknown-side-effect submissions never use this retry path; they retain their
+durable reconciliation contracts.
+
 Bootstrap refuses a Code Bundle switch while the child reports an active
 execution. It supervises unexpected child exit and restarts the same digest.
 Only signed `sandbox_runtime`, its required shared modules and declared CLI

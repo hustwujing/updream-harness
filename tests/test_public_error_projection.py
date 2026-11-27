@@ -53,6 +53,16 @@ def test_public_turn_failure_does_not_depend_on_raw_detail():
     assert "secret-one" not in str(first)
 
 
+def test_public_turn_failure_explains_workspace_restore_unavailability():
+    value=public_turn_failure(code='sandbox_workspace_restore_unavailable',
+        detail='ReadError: https://private.runtime',turn_id='e'*32)
+    assert value['error_code']=='sandbox_workspace_restore_unavailable'
+    assert '恢复工作区' in value['error_message'] and '连接' in value['error_message']
+    assert '稍后重新发送' in value['error_action']
+    assert len(value['troubleshooting_id'])==32
+    assert 'private.runtime' not in str(value) and 'ReadError' not in str(value)
+
+
 def test_public_view_serialization_excludes_internal_error_detail():
     for view in (
         TurnView.model_construct(error_code="failed",error_detail="turn secret",

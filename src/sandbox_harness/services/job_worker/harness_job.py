@@ -409,16 +409,10 @@ class SandboxChildBackend(SandboxAllocationOwner):
                 await self.runtime.restore(sandbox,object_chunks(self.objects,paused.checkpoint_ref,
                     maximum=self.settings.max_checkpoint_bytes),size=archive_size)
             for item,artifact in inputs:
-                iterator=self.objects.iter_bytes(artifact.object_ref,
-                    maximum=self.settings.max_artifact_bytes)
-                sentinel=object()
-                async def chunks(iterator=iterator,sentinel=sentinel):
-                    while True:
-                        value=await asyncio.to_thread(next,iterator,sentinel)
-                        if value is sentinel:return
-                        yield value
                 await self.runtime.put_project_file_stream(sandbox,
-                    HarnessJobAdapter._materialized_input_path(item,artifact),chunks(),
+                    HarnessJobAdapter._materialized_input_path(item,artifact),
+                    object_chunks(self.objects,artifact.object_ref,
+                        maximum=self.settings.max_artifact_bytes),
                     size=artifact.size,mime=artifact.mime)
             message=HarnessJobAdapter.execution_prompt(context.request,inputs)
             if restoring:
@@ -557,14 +551,9 @@ class SandboxChildBackend(SandboxAllocationOwner):
             materialized=[]
             for artifact in await self.store.child_continuation_artifacts(continuation['group_id']):
                 path=f"artifacts/subjobs/{artifact['job_id']}/{artifact['filename']}"
-                iterator=self.objects.iter_bytes(artifact['object_ref'],maximum=self.settings.max_artifact_bytes)
-                sentinel=object()
-                async def chunks(iterator=iterator,sentinel=sentinel):
-                    while True:
-                        chunk=await asyncio.to_thread(next,iterator,sentinel)
-                        if chunk is sentinel:return
-                        yield chunk
-                await self.runtime.put_project_file_stream(sandbox,path,chunks(),
+                await self.runtime.put_project_file_stream(sandbox,path,
+                    object_chunks(self.objects,artifact['object_ref'],
+                        maximum=self.settings.max_artifact_bytes),
                     size=artifact['size'],mime=artifact['mime'])
                 materialized.append({**artifact,'materialized_path':path})
             message=("[subordinate_job_group_completed] Factual durable tool results. Inspect the "

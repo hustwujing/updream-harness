@@ -37,6 +37,22 @@ are not substitutes for database state.
   message, attachments, profile or delivery mode is a conflict.
 - A worker may claim only the Turn referenced by its Thread's active pointer.
 
+An internal continuation that failed with
+`sandbox_workspace_restore_unavailable` before a Runtime execution ID was
+assigned still owns factual completion context. The next non-internal Turn in
+the same Thread prepends that context to its Runtime message while preserving
+the user's public message verbatim. The context forbids replaying completed
+external work. Forwarding remains eligible if the recipient also fails before
+Runtime execution starts; `start_runtime_execution` marks it delivered, after
+which it is never attached again.
+
+Direct Media output is authoritative in the Media database until promotion. A
+successful `workspace` or `delivery` output must cross the typed
+`media.promote` command and receive a Core Project File identity before
+PlatformWorker creates the Primary continuation. This rule is shared by image,
+video, audio and model3d output; `candidate` output remains inspectable without
+Project File promotion.
+
 ## Implemented states
 
 `TurnState` defines:

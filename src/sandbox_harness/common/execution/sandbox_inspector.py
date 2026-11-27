@@ -186,14 +186,9 @@ class SandboxInspector:
                 maximum=self.settings.max_artifact_bytes)
             if size!=value.size:
                 raise ValueError("Project file does not match its immutable record")
-            iterator=self.objects.iter_bytes(value.object_ref,maximum=self.settings.max_artifact_bytes,chunk_size=1024*1024)
-            sentinel=object()
-            async def chunks(iterator=iterator,sentinel=sentinel):
-                while True:
-                    chunk=await asyncio.to_thread(next,iterator,sentinel)
-                    if chunk is sentinel:return
-                    yield chunk
-            result=await self.runtime.put_project_file_stream(sandbox,value.path,chunks(),
+            result=await self.runtime.put_project_file_stream(sandbox,value.path,
+                object_chunks(self.objects,value.object_ref,
+                    maximum=self.settings.max_artifact_bytes),
                 size=value.size,mime=value.mime)
             if result.get("bytes")!=value.size or result.get("sha256")!=value.sha256:
                 raise ValueError("Project file does not match its immutable record")

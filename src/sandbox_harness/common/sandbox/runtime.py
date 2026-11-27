@@ -24,6 +24,7 @@ from sandbox_harness.common.contracts.domain import (Attachment, RuntimeEvent, R
 from sandbox_harness.common.sandbox.sandbox import (Sandbox)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxBackend)
 from sandbox_harness.common.storage.directories import (ensure_private_directory)
+from sandbox_harness.common.storage.objects import (ReplayableObjectChunks)
 
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,10 @@ def _reap_stale_downloads(root: Path) -> None:
 class RuntimeClient:
     def __init__(self, *, timeout_seconds: int = 3600, reattach_attempts: int = 8,
                  reattach_max_delay_seconds: float = 4,
+                 request_retry_attempts: int = 4,
+                 request_retry_initial_delay_seconds: float = 1,
+                 request_retry_backoff_multiplier: float = 2,
+                 request_retry_max_delay_seconds: float = 10,
                  bundle_dir: Path | None = None, default_bundle_digest: str = "",
                  code_bundle_dir: Path | None = None, default_code_bundle_digest: str = "",
                  transport: httpx.AsyncBaseTransport | None = None,
@@ -77,6 +82,11 @@ class RuntimeClient:
         self.timeout = httpx.Timeout(timeout_seconds, connect=20)
         self.reattach_attempts = reattach_attempts
         self.reattach_max_delay_seconds = reattach_max_delay_seconds
+        self.request_retry_attempts=max(1,int(request_retry_attempts))
+        self.request_retry_initial_delay_seconds=max(0.1,float(
+            request_retry_initial_delay_seconds))
+        self.request_retry_backoff_multiplier=max(1,float(request_retry_backoff_multiplier))
+        self.request_retry_max_delay_seconds=max(0.1,float(request_retry_max_delay_seconds))
         self.bundle_dir = bundle_dir
         self.default_bundle_digest = default_bundle_digest
         self.code_bundle_dir = code_bundle_dir
@@ -99,17 +109,23 @@ class RuntimeClient:
             self._endpoint_refresh.add(sandbox.id)
         response.raise_for_status()
 
+    def _request_retry_delay(self,attempt:int)->float:
+        return min(self.request_retry_max_delay_seconds,
+            self.request_retry_initial_delay_seconds*(
+                self.request_retry_backoff_multiplier**attempt))
+
     async def _request_with_startup_retry(self,client:httpx.AsyncClient,method:str,
                                           path:str,**kwargs)->httpx.Response:
         """Retry idempotent Runtime reads/uploads, never execution submission."""
         retryable={429,502,503,504}
-        for attempt in range(8):
+        for attempt in range(self.request_retry_attempts):
             try:
                 response=await client.request(method,path,**kwargs)
-                if response.status_code not in retryable or attempt==7:return response
+                if (response.status_code not in retryable
+                        or attempt==self.request_retry_attempts-1):return response
             except (httpx.TimeoutException,httpx.TransportError):
-                if attempt==7:raise
-            await asyncio.sleep(.25*(attempt+1))
+                if attempt==self.request_retry_attempts-1:raise
+            await asyncio.sleep(self._request_retry_delay(attempt))
         raise RuntimeError("unreachable")
 
     async def _download(self, sandbox: Sandbox, path: str, *, maximum: int,
@@ -118,42 +134,42 @@ class RuntimeClient:
         if maximum < 0:
             raise RuntimeTransferError(error_code)
         _reap_stale_downloads(self.staging_root)
-        temporary: Path | None = None
-        try:
-            async with observed_async_client('sandbox-runtime',base_url=sandbox.runtime_url,
-                    headers={**sandbox.runtime_headers, **carrier()}, timeout=300,
-                    trust_env=False, transport=self.transport) as client:
-                async with client.stream("GET", path, params=params) as response:
-                    self._raise_for_status(sandbox,response)
-                    raw_length = response.headers.get("content-length")
-                    declared = None
-                    if raw_length is not None:
-                        try:
-                            declared = int(raw_length)
-                        except ValueError as exc:
-                            raise RuntimeTransferError("runtime_content_length_invalid") from exc
-                        if declared < 0:
-                            raise RuntimeTransferError("runtime_content_length_invalid")
-                        if declared > maximum:
-                            raise RuntimeTransferError(error_code)
-                    with NamedTemporaryFile(dir=self.staging_root,
-                            prefix=f".runtime-download-{os.getpid()}-{self.process_start}-",
-                            delete=False) as stream:
-                        temporary = Path(stream.name); size = 0; digest = hashlib.sha256()
-                        async for chunk in response.aiter_raw():
-                            if size + len(chunk) > maximum:
-                                raise RuntimeTransferError(error_code)
-                            stream.write(chunk); digest.update(chunk); size += len(chunk)
-                        if declared is not None and size != declared:
-                            raise RuntimeTransferError("runtime_transfer_size_mismatch")
-                        stream.flush(); os.fsync(stream.fileno())
-                    return StagedRuntimeObject(path=temporary, size=size,
-                        sha256=digest.hexdigest(),
-                        content_type=response.headers.get("content-type", "application/octet-stream"))
-        except BaseException:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
-            raise
+        for attempt in range(self.request_retry_attempts):
+            temporary:Path|None=None
+            try:
+                async with observed_async_client('sandbox-runtime',base_url=sandbox.runtime_url,
+                        headers={**sandbox.runtime_headers, **carrier()}, timeout=300,
+                        trust_env=False, transport=self.transport) as client:
+                    async with client.stream("GET", path, params=params) as response:
+                        self._raise_for_status(sandbox,response)
+                        raw_length=response.headers.get("content-length");declared=None
+                        if raw_length is not None:
+                            try:declared=int(raw_length)
+                            except ValueError as exc:
+                                raise RuntimeTransferError("runtime_content_length_invalid") from exc
+                            if declared<0:raise RuntimeTransferError("runtime_content_length_invalid")
+                            if declared>maximum:raise RuntimeTransferError(error_code)
+                        with NamedTemporaryFile(dir=self.staging_root,
+                                prefix=f".runtime-download-{os.getpid()}-{self.process_start}-",
+                                delete=False) as stream:
+                            temporary=Path(stream.name);size=0;digest=hashlib.sha256()
+                            async for chunk in response.aiter_raw():
+                                if size+len(chunk)>maximum:raise RuntimeTransferError(error_code)
+                                stream.write(chunk);digest.update(chunk);size+=len(chunk)
+                            if declared is not None and size!=declared:
+                                raise RuntimeTransferError("runtime_transfer_size_mismatch")
+                            stream.flush();os.fsync(stream.fileno())
+                        return StagedRuntimeObject(path=temporary,size=size,
+                            sha256=digest.hexdigest(),content_type=response.headers.get(
+                                "content-type","application/octet-stream"))
+            except (httpx.TimeoutException,httpx.TransportError):
+                if temporary is not None:temporary.unlink(missing_ok=True)
+                if attempt==self.request_retry_attempts-1:raise
+                await asyncio.sleep(self._request_retry_delay(attempt))
+            except BaseException:
+                if temporary is not None:temporary.unlink(missing_ok=True)
+                raise
+        raise RuntimeError("unreachable")
 
     async def _install_bundles(self, sandbox: Sandbox, client: httpx.AsyncClient, *,
                                code_digest: str, bundle_digest: str) -> None:
@@ -237,18 +253,9 @@ class RuntimeClient:
             trust_env=False, transport=self.transport) as client:
             await self._install_bundles(sandbox, client,
                 code_digest=code_digest, bundle_digest=bundle_digest)
-            for attempt in range(8):
-                try:
-                    response = await client.post("/v1/configure", json=payload)
-                    if response.status_code not in {502, 503, 504}:
-                        self._raise_for_status(sandbox,response)
-                        return
-                    if attempt == 7:
-                        self._raise_for_status(sandbox,response)
-                except (httpx.TimeoutException, httpx.TransportError):
-                    if attempt == 7:
-                        raise
-                await asyncio.sleep(0.25 * (attempt + 1))
+            response = await self._request_with_startup_retry(
+                client,"POST","/v1/configure",json=payload)
+            self._raise_for_status(sandbox,response)
 
     @observed("workspace.restore")
     async def restore(self, sandbox: Sandbox, archive, *, size: int) -> None:
@@ -256,14 +263,16 @@ class RuntimeClient:
         async with observed_async_client('sandbox-runtime',base_url=sandbox.runtime_url,
                 headers={**sandbox.runtime_headers,**carrier()}, timeout=120,
                 trust_env=False, transport=self.transport) as client:
-            response = await client.put("/v1/checkpoint", content=archive,
+            response = await self._request_with_startup_retry(client,"PUT","/v1/checkpoint",
+                content=archive,
                 headers={"Content-Type": "application/x-tar", "Content-Length": str(size)})
             self._raise_for_status(sandbox,response)
 
     async def put_attachment(self, sandbox: Sandbox, name: str, data: bytes, mime: str) -> None:
         await self._resolve_endpoint(sandbox)
-        async with observed_async_client('sandbox-runtime',base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()}, timeout=300, trust_env=False) as client:
-            response = await client.put("/v1/attachments/file", params={"name": name}, content=data,
+        async with observed_async_client('sandbox-runtime',base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()}, timeout=300, trust_env=False,transport=self.transport) as client:
+            response = await self._request_with_startup_retry(client,"PUT","/v1/attachments/file",
+                params={"name": name}, content=data,
                 headers={"Content-Type": mime})
             self._raise_for_status(sandbox,response)
 
@@ -288,8 +297,13 @@ class RuntimeClient:
         async with observed_async_client('sandbox-runtime',base_url=sandbox.runtime_url,
                 headers={**sandbox.runtime_headers,**carrier()},timeout=300,
                 trust_env=False,transport=self.transport) as client:
-            response=await client.put("/v1/project-files/file",params={"path":path,"size":size},content=content,
+            request=(self._request_with_startup_retry(client,"PUT","/v1/project-files/file",
+                params={"path":path,"size":size},content=content,
                 headers={"Content-Type":mime,"Content-Length":str(size)})
+                if isinstance(content,ReplayableObjectChunks) else
+                client.put("/v1/project-files/file",params={"path":path,"size":size},content=content,
+                    headers={"Content-Type":mime,"Content-Length":str(size)}))
+            response=await request
             self._raise_for_status(sandbox,response)
             return response.json()
 
@@ -356,8 +370,9 @@ class RuntimeClient:
     async def reset_project_files(self, sandbox: Sandbox) -> None:
         await self._resolve_endpoint(sandbox)
         async with observed_async_client('sandbox-runtime',base_url=sandbox.runtime_url, headers={**sandbox.runtime_headers,**carrier()},
-            timeout=60, trust_env=False) as client:
-            response = await client.post("/v1/project-files/reset")
+            timeout=60, trust_env=False,transport=self.transport) as client:
+            response = await self._request_with_startup_retry(
+                client,"POST","/v1/project-files/reset")
             self._raise_for_status(sandbox,response)
 
     async def project_file_manifest(self, sandbox: Sandbox) -> dict:
@@ -365,7 +380,8 @@ class RuntimeClient:
         async with observed_async_client('sandbox-runtime',base_url=sandbox.runtime_url,
             headers={**sandbox.runtime_headers, **carrier()}, timeout=300,
             trust_env=False, transport=self.transport) as client:
-            response = await client.get("/v1/project-files/manifest")
+            response = await self._request_with_startup_retry(
+                client,"GET","/v1/project-files/manifest")
             self._raise_for_status(sandbox,response)
             return response.json()
 
@@ -377,8 +393,10 @@ class RuntimeClient:
     async def preserve_project_files(self, sandbox: Sandbox, paths: list[str], destination: str) -> dict:
         await self._resolve_endpoint(sandbox)
         async with observed_async_client('sandbox-runtime',base_url=sandbox.runtime_url,
-            headers={**sandbox.runtime_headers, **carrier()}, timeout=300, trust_env=False) as client:
-            response = await client.post("/v1/project-files/preserve",
+            headers={**sandbox.runtime_headers, **carrier()}, timeout=300, trust_env=False,
+            transport=self.transport) as client:
+            response = await self._request_with_startup_retry(client,"POST",
+                "/v1/project-files/preserve",
                 json={"paths": paths, "destination": destination})
             self._raise_for_status(sandbox,response)
             return response.json()

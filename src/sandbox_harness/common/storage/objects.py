@@ -375,15 +375,25 @@ class S3ObjectStore:
         return "sha256:" + digest
 
 
-async def object_chunks(store, reference: str, *, maximum: int,
-                        chunk_size: int = 1024 * 1024):
-    iterator = iter(store.iter_bytes(reference, maximum=maximum, chunk_size=chunk_size))
-    sentinel = object()
-    while True:
-        chunk = await asyncio.to_thread(next, iterator, sentinel)
-        if chunk is sentinel:
-            return
-        yield chunk
+class ReplayableObjectChunks:
+    def __init__(self,store,reference:str,maximum:int,chunk_size:int):
+        self.store=store;self.reference=reference;self.maximum=maximum;self.chunk_size=chunk_size
+
+    def __aiter__(self):
+        return self._iterate()
+
+    async def _iterate(self):
+        iterator=iter(self.store.iter_bytes(self.reference,maximum=self.maximum,
+            chunk_size=self.chunk_size));sentinel=object()
+        while True:
+            chunk=await asyncio.to_thread(next,iterator,sentinel)
+            if chunk is sentinel:return
+            yield chunk
+
+
+def object_chunks(store, reference: str, *, maximum: int,
+                  chunk_size: int = 1024 * 1024):
+    return ReplayableObjectChunks(store,reference,maximum,chunk_size)
 
 
 def object_store(settings):

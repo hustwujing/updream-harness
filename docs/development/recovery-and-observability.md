@@ -97,6 +97,20 @@ frozen SandboxHandles are the recovery anchors. Startup repairs stale Thread
 heads and claims expired work. Provider inventory can locate an allocation but
 does not own lifecycle transitions or replace persisted execution identity.
 
+Runtime preparation requests that are idempotent use the configured bounded
+request policy: checkpoint restore, Runtime configure/bundle activation,
+attachment and replayable Project File upload, Project File
+reset/manifest/preserve and bounded checkpoint/artifact downloads. Defaults are
+four total attempts with 1, 2 and 4 second waits. A streaming download discards
+its partial staging file and restarts at byte zero; an object-backed upload
+reopens the immutable object for every attempt. Deterministic 4xx rejection is
+not retried.
+
+Harness execution start, Provider submission, PTY creation and media-render
+submission do not use this policy because a lost response can hide an accepted
+external side effect. Those paths retain their accepted-handle reconciliation
+contracts instead.
+
 - `QUEUED` may be scheduled normally.
 - `RESTORING` and `STARTING` delete/recreate before Harness execution.
 - `RUNNING`, `AWAITING_USER`, `DRAINING_INPUTS` and `CHECKPOINTING` reattach the

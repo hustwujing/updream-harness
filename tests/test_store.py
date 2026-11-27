@@ -8,6 +8,45 @@ from test_support.legacy_store import (MediaJobRow, Store, ThreadRow, TurnRow, v
 import pytest
 
 
+async def test_user_turn_adopts_undelivered_internal_context_exactly_once(tmp_path):
+    store=Store('sqlite+aiosqlite:///'+str(tmp_path/'internal-forward.db'));await store.initialize()
+    try:
+        profile=HarnessCatalog().resolve('codex','gpt-5.6','standard');owner='owner'
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            title='Internal forwarding'),profile,owner)
+        source,_,_=await store.create_turn(thread.id,TurnCreate(message='media completed',
+            idempotency_key='internal-source',delivery_mode='queue'),profile,owner,internal=True)
+        await store.set_turn_state(source.id,TurnState.FAILED,
+            error_code='sandbox_workspace_restore_unavailable',error_detail='safe detail')
+        await store.claim_next_turn(thread.id,source.id)
+        first,_,_=await store.create_turn(thread.id,TurnCreate(message='continue',
+            idempotency_key='user-first'),profile,owner)
+
+        assert await store.attach_undelivered_internal_context(first.id)==1
+        attached=await store.get_turn(first.id);forwarded=await store.get_turn(source.id)
+        assert attached.message=='continue'
+        assert 'media completed' in attached.runtime_message
+        assert '[current_user_message]\ncontinue' in attached.runtime_message
+        assert forwarded.error_detail=='forwarded:'+first.id+'\nsafe detail'
+        assert await store.attach_undelivered_internal_context(first.id)==0
+
+        await store.set_turn_state(first.id,TurnState.FAILED,
+            error_code='sandbox_workspace_restore_unavailable')
+        await store.claim_next_turn(thread.id,first.id)
+        second,_,_=await store.create_turn(thread.id,TurnCreate(message='continue again',
+            idempotency_key='user-second'),profile,owner)
+        assert await store.attach_undelivered_internal_context(second.id)==1
+        assert 'media completed' in (await store.get_turn(second.id)).runtime_message
+        assert (await store.get_turn(source.id)).error_detail=='forwarded:'+second.id+'\nsafe detail'
+        lease=await store.claim_turn(second.id,'worker',60)
+        await store.start_runtime_execution(second.id,'execution','worker',lease.recovery_generation)
+        assert (await store.get_turn(source.id)).error_detail=='delivered:'+second.id+'\nsafe detail'
+        third,_,_=await store.create_turn(thread.id,TurnCreate(message='new topic',
+            idempotency_key='user-third',delivery_mode='queue'),profile,owner)
+        assert await store.attach_undelivered_internal_context(third.id)==0
+    finally:await store.close()
+
+
 async def test_prepared_input_artifacts_survive_replay_and_aliases_follow_input_sequence(tmp_path):
     from sqlalchemy import select,update
     from test_support.legacy_store import (ArtifactRow)

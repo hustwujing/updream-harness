@@ -198,6 +198,18 @@ class PlatformWorker:
         if not turn_id:return
         ready,jobs=await self.store.media_continuation_group(turn_id)
         if not ready:raise RuntimeError("media_group_pending")
+        promote=[item for item in jobs if item["status"]=="succeeded"
+            and item["output_role"] in {"workspace","delivery"}
+            and item["job_id"] and not item["project_path"]]
+        for item in promote:
+            await self.store.promote_media_job_for_thread(item["job_id"],batch["thread_id"],
+                item["output_role"])
+        if promote:
+            ready,jobs=await self.store.media_continuation_group(turn_id)
+            if (not ready or any(item["status"]=="succeeded"
+                    and item["output_role"] in {"workspace","delivery"}
+                    and not item["project_path"] for item in jobs)):
+                raise RuntimeError("media_promotion_pending")
         if not media_group_needs_agent_continuation(jobs):return
         results=[]
         for item in jobs:
