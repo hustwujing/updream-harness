@@ -15,7 +15,9 @@ Every code change requires:
 
 For the isolated Ali checkout, first verify the directory and branch described
 in [Getting started](getting-started.md). The current release baseline is the
-[196-case report](../test-evidence/ali-async-execution-196-case-report.md);
+[198-case report](../test-evidence/ali-stream-persistence-198-case-report.md);
+the [196-case report](../test-evidence/ali-async-execution-196-case-report.md)
+retains the preceding asynchronous execution evidence;
 the [193-case report](../test-evidence/ali-runtime-recovery-193-case-report.md)
 retains the preceding Runtime recovery evidence, and
 the [175-case report](../test-evidence/ali-cross-database-175-case-report.md)

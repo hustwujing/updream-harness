@@ -20,12 +20,14 @@ To add another sandbox backend, follow
 The public repository is [hustwujing/updream-harness](https://github.com/hustwujing/updream-harness)
 on branch `sandbox-harness-platform-parallel-ali`.
 
-The current modular Ali baseline contains 196 cases and is
-`composite_verified` at `293cff7`: 196 successes, zero program failures and zero
+The current modular Ali baseline contains 198 cases and is
+`composite_verified` through `b111a08`: 198 successes, zero program failures and zero
 non-program failures, with each retained result preserving its actual tested
 revision. See the
-[196-case asynchronous execution report](docs/test-evidence/ali-async-execution-196-case-report.md).
+[198-case stream persistence report](docs/test-evidence/ali-stream-persistence-198-case-report.md).
 The prior
+[196-case asynchronous execution report](docs/test-evidence/ali-async-execution-196-case-report.md)
+remains the asynchronous execution predecessor. The prior
 [193-case runtime-recovery report](docs/test-evidence/ali-runtime-recovery-193-case-report.md)
 remains the predecessor baseline.
 The earlier [175-case cross-database report](docs/test-evidence/ali-cross-database-175-case-report.md)
@@ -345,7 +347,7 @@ affected lifecycle, Gateway, Runtime, image, Skill, API or deployment boundary.
 See [architecture.md](docs/architecture.md), [client API](docs/api.md), [data model](docs/data-model.md), [product interface](docs/product-interface.md), [gateway.md](docs/gateway.md), [Runtime Skill Bundle](docs/skills.md) and [deployment.md](docs/deployment.md).
 
 Current deployment, cross-database, recovery and case evidence is consolidated
-in the [196-case Ali report](docs/test-evidence/ali-async-execution-196-case-report.md).
+in the [198-case Ali report](docs/test-evidence/ali-stream-persistence-198-case-report.md).
 
 ## Runtime Toolchain
 

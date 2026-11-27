@@ -53,7 +53,7 @@ boundary, rerun that case and the affected previously-passing cases, then resume
 the remaining matrix. Do not add case-name branches or prompt keywords to make a
 real case green. For the Ali campaign, the user-authorized workflow preserves
 unaffected successes and reruns only failed/affected cases plus unrun cases.
-Record that assessment before resuming. Complete all 175 catalog cases and any
+Record that assessment before resuming. Complete all 198 catalog cases and any
 separately requested resource cases, with each result's actual revision. This is
 `composite_verified`; run the whole matrix on one revision only when a
 `clean_run` claim or a newly agreed release requirement needs it.
