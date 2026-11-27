@@ -40,6 +40,22 @@ class ControlledMediaOperationAdapter(BaseJobAdapter):
             raise ValueError('invalid_controlled_job_id')
         return self.root/job_id
 
+    async def preflight(self,context:JobExecutionContext)->None:
+        if context.request.adapter not in self.ADAPTERS:
+            raise PreAcceptFailure('controlled_adapter_invalid',error_code='provider_input_invalid',
+                failed_phase='input_validation',retryable=False,
+                public_reason='The controlled operation adapter is not registered')
+        self._resources(context,str(self.settings.controlled_runtime_digest))
+        bindings=[value for value in context.request.input_artifacts if value.artifact_role=='source']
+        if len(bindings)!=1:
+            raise PreAcceptFailure('controlled_source_binding_invalid',
+                error_code='provider_input_invalid',failed_phase='input_validation',retryable=False,
+                public_reason='The controlled operation requires exactly one source binding')
+        if not await self.store.get_artifact(bindings[0].artifact_id):
+            raise PreAcceptFailure('controlled_source_artifact_missing',
+                error_code='provider_input_invalid',failed_phase='input_validation',retryable=False,
+                public_reason='The bound source artifact is unavailable')
+
     @staticmethod
     def _resources(context:JobExecutionContext,digest:str)->ResourceRequest:
         values=context.request.resource_requirements
@@ -88,7 +104,6 @@ class ControlledMediaOperationAdapter(BaseJobAdapter):
             'operation_completed':True,'result':result}
 
     async def submit(self,context:JobExecutionContext)->AdapterSubmission:
-        if context.request.adapter not in self.ADAPTERS:raise PreAcceptFailure('controlled_adapter_invalid')
         digest=str(self.settings.controlled_runtime_digest)
         try:reservation=await self.scheduler.reserve(context.job.id,context.generation,
             self._resources(context,digest))
@@ -110,7 +125,8 @@ class ControlledMediaOperationAdapter(BaseJobAdapter):
                         if str(exc)=='no_selection':
                             raise PreAcceptFailure('No target matched the frozen selector',
                                 error_code='no_target_found',failed_phase='execution',
-                                retryable=False) from exc
+                                retryable=False,
+                                public_reason='No target matched the frozen selector') from exc
                         from sandbox_harness.services.controlled_worker.controlled_media_runner import (ControlledOperationError)
                         if isinstance(exc,ControlledOperationError):
                             if exc.retry_class=='node_health_change' and self.gpu_health:

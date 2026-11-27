@@ -190,6 +190,7 @@ async def test_review_rejects_missing_validation_and_changed_digest(tmp_path):
 async def test_preaccept_failure_finalizes_required_and_optional_gates(tmp_path):
     store,thread,turn,reviewer,objects=await environment(tmp_path)
     class Delegate:
+        async def preflight(self,*args):return None
         async def submit(self,*args):raise PreAcceptFailure("review backend unavailable")
     try:
         for policy,expected in (("required","required_unavailable"),("optional","optional_warning")):
@@ -238,6 +239,7 @@ async def test_late_required_gate_rejected_but_mixed_advisory_review_allowed(tmp
 async def test_malformed_verdict_terminalizes_job_and_gate_atomically_without_worker_escape(tmp_path):
     store,thread,turn,reviewer,objects=await environment(tmp_path)
     class Malformed:
+        async def preflight(self,*args):return None
         async def submit(self,*args):return AdapterSubmission("review-execution",{},completed=True)
         async def collect(self,*args):return {"review":{"verdict":"PASS"}}
     try:

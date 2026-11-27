@@ -31,6 +31,13 @@ class OpenSandboxBackend:
             raise SandboxProfileUnavailable("OpenSandbox requires a digest-pinned image",
                 provider=self.provider)
 
+    def preflight_create(self,request:SandboxCreateRequest)->None:
+        if request.profile.provider!=self.provider:
+            raise SandboxProfileUnavailable("OpenSandbox requires an immutable image profile",
+                provider=self.provider)
+        digest=request.profile.provider_ref.rsplit("@sha256:",1)[-1]
+        self.validate_release(request.profile.provider_ref,digest)
+
     def __init__(self,base_url:str,api_key:str,timeout_seconds:int,namespace:str,
                  gateway_url:str="http://172.31.0.1:29882",proxy_port:int=29883,
                  *,transport:httpx.AsyncBaseTransport|None=None):
@@ -169,11 +176,7 @@ class OpenSandboxBackend:
                      environment:Mapping[str,str]|None=None)->Sandbox:
         if isinstance(request,Harness):
             request=self._legacy_request(request,image or "",metadata or {},environment or {})
-        if request.profile.provider!=self.provider:
-            raise SandboxProfileUnavailable("OpenSandbox requires an immutable image profile",
-                provider=self.provider)
-        digest=request.profile.provider_ref.rsplit("@sha256:",1)[-1]
-        self.validate_release(request.profile.provider_ref,digest)
+        self.preflight_create(request)
         metadata={**self._profile_metadata(request.profile),
             "sandbox-harness.io/namespace":self.namespace,
             "sandbox-harness.io/idempotency-key":request.allocation_id,

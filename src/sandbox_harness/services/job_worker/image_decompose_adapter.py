@@ -22,6 +22,19 @@ class ImageDecomposeAdapter(MediaProviderJobAdapter):
         self.artifacts=ArtifactGateway(store,objects,settings.data_root/'tmp'/'provider-job-artifacts',
             maximum_bytes=settings.max_artifact_bytes)
 
+    async def preflight(self,context:JobExecutionContext)->None:
+        if (len(context.request.input_artifacts)!=1
+                or context.request.input_artifacts[0].artifact_role!='source'
+                or len(context.request.expected_outputs)!=1):
+            raise PreAcceptFailure('decompose_contract_invalid',
+                error_code='provider_input_invalid',failed_phase='input_validation',retryable=False,
+                public_reason='Image decomposition requires one source and one output contract')
+        try:self._parameters(context.request.parameters)
+        except (ValueError,TypeError) as exc:
+            raise PreAcceptFailure('decompose_parameters_invalid',
+                error_code='provider_input_invalid',failed_phase='input_validation',retryable=False,
+                public_reason='Image decomposition parameters are outside the registered contract') from exc
+
     @staticmethod
     def _parameters(value:dict)->dict[str,str]:
         layer_count=int(value.get('layer_count',4));resolution=int(value.get('resolution',640))

@@ -557,6 +557,7 @@ async def test_terminal_model_step_is_saved_before_last_frame_is_forwarded(tmp_p
     import httpx,json
     from starlette.requests import Request
     import sandbox_harness.services.sandbox_gateway.gateway as gateway
+    monkeypatch.setenv('SANDBOX_HARNESS_UPSTREAM_CODEX_KEY','test-key')
     from sandbox_harness.common.models.model_activity import (OutputProbe)
     from sandbox_harness.common.configuration.config import (Settings)
     from sandbox_harness.common.contracts.domain import (Harness)

@@ -6,6 +6,7 @@ from typing import Any, Protocol
 
 from sandbox_harness.common.contracts.job_contracts import (JobRequest, JobState, JobView)
 from sandbox_harness.common.contracts.job_errors import (job_error_payload)
+from sandbox_harness.common.contracts.public_errors import (external_error_detail)
 
 
 @dataclass(frozen=True)
@@ -70,7 +71,7 @@ class PreAcceptFailure(RuntimeError):
     def __init__(self,message:str,*,infrastructure:bool=False,retry_after_seconds:float=0,
                  error_code:str='pre_accept_failure',failed_phase:str='',
                  retry_class:str='none',retryable:bool|None=None,node_health_generation:int=0,
-                 retain_capacity:bool=False):
+                 retain_capacity:bool=False,public_reason:str=''):
         super().__init__(message);self.infrastructure=infrastructure
         self.retry_after_seconds=max(0,float(retry_after_seconds))
         self.error_code=error_code
@@ -79,6 +80,8 @@ class PreAcceptFailure(RuntimeError):
         self.retryable=True if retryable is None else retryable
         self.node_health_generation=max(0,int(node_health_generation))
         self.retain_capacity=retain_capacity
+        self.error_detail=(external_error_detail(error_code,public_reason)
+            if public_reason else '')
 
 
 class PreAcceptCancelled(RuntimeError):
@@ -117,9 +120,11 @@ class SubmissionInterrupted(asyncio.CancelledError):
 class ExternalJobFailure(RuntimeError):
     def __init__(self,message:str,*,error_code:str,failed_phase:str,
                  terminal_state:JobState=JobState.FAILED,retryable:bool|None=None,
-                 retry_class:str|None=None,side_effect_state:str|None=None):
+                 retry_class:str|None=None,side_effect_state:str|None=None,
+                 public_reason:str=''):
         super().__init__(message);self.terminal_state=terminal_state
-        self.result=job_error_payload(error_code,detail=message,phase=failed_phase,
+        self.result=job_error_payload(error_code,detail=(external_error_detail(error_code,public_reason)
+            if public_reason else message),phase=failed_phase,
             retryable=retryable,retry_class=retry_class,side_effect_state=side_effect_state)
 
 
@@ -139,7 +144,7 @@ class JobAdapter(Protocol):
 
 class BaseJobAdapter:
     async def preflight(self,context:JobExecutionContext)->None:
-        return None
+        raise NotImplementedError("adapter_preflight_not_implemented")
 
     async def recover_submission(self,context:JobExecutionContext)->SubmissionRecovery:
         return SubmissionRecovery()

@@ -62,6 +62,14 @@ class ModelRoutes:
         harness = Harness(harness)
         return self.overrides.get((harness, model), self.default(harness))
 
+    def preflight(self,harness:Harness|str,model:str)->ModelRoute:
+        if not isinstance(model,str) or not model or len(model)>160:
+            raise ValueError("model_route_identity_invalid")
+        route=self.resolve(harness,model)
+        if not route.base_url:raise ValueError("model_route_endpoint_missing")
+        if not route.credential:raise ValueError("model_route_credential_missing")
+        return route
+
     def configured_models(self, harness: Harness | str) -> list[str]:
         harness = Harness(harness)
         return sorted(model for (candidate, model) in self.overrides if candidate == harness)

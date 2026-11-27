@@ -29,7 +29,7 @@ class MediaProviderJobAdapter(BaseJobAdapter):
             raise PreAcceptFailure('Media Provider input validation failed',
                 error_code='provider_input_invalid',failed_phase=(
                     'authorization' if exc.code=='capability_scope_invalid' else 'input_validation'),
-                retryable=False) from exc
+                retryable=False,public_reason=exc.code.replace('_',' ')) from exc
 
     async def submit(self,context:JobExecutionContext)->AdapterSubmission:
         request=context.request

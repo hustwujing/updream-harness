@@ -28,6 +28,25 @@ class MediaRenderOperationAdapter(SandboxAllocationOwner,BaseJobAdapter):
         self.artifacts=ArtifactGateway(store,objects,settings.data_root/'tmp'/'operation-job-artifacts',
             maximum_bytes=settings.max_artifact_bytes)
 
+    async def preflight(self,context:JobExecutionContext)->None:
+        HarnessJobAdapter._resources(context)
+        recipe=context.request.parameters.get('recipe')
+        if not isinstance(recipe,dict) or not isinstance(recipe.get('operation'),str):
+            raise PreAcceptFailure('operation_recipe_invalid',error_code='provider_input_invalid',
+                failed_phase='input_validation',retryable=False,
+                public_reason='The operation recipe is missing a registered operation')
+        roles={item.artifact_role for item in context.request.input_artifacts}
+        required=({str(recipe.get('source_role')),str(recipe.get('music_role'))}
+            if recipe.get('operation')=='media.concat_sequence' else {str(recipe.get('input_role'))})
+        if '' in required or not required<=roles:
+            raise PreAcceptFailure('operation_input_role_missing',error_code='provider_input_invalid',
+                failed_phase='input_validation',retryable=False,
+                public_reason='The operation recipe references an input role that was not bound')
+        if not context.request.expected_outputs:
+            raise PreAcceptFailure('operation_output_contract_missing',error_code='provider_input_invalid',
+                failed_phase='input_validation',retryable=False,
+                public_reason='The operation has no frozen output contract')
+
     @staticmethod
     def _thread_id(job_id):return 'operation-job-'+job_id
 

@@ -82,6 +82,7 @@ class AllocationService:
             with operation('sandbox.allocation.claim',new_trace=True,
                     allocation_id=identity,generation=value['job_generation']):
                 add_link(value.get('traceparent',''))
+                self.backend.preflight_create(request)
                 sandbox=await self.backend.create(request)
             if (sandbox.handle.provider!=request.profile.provider
                     or sandbox.handle.allocation_id!=request.allocation_id

@@ -97,6 +97,14 @@ class HarnessJobAdapter(BaseJobAdapter):
     def __init__(self, scheduler: Scheduler, backend: ChildExecutionBackend):
         self.scheduler=scheduler;self.backend=backend
 
+    async def preflight(self,context:JobExecutionContext)->None:
+        try:
+            self._resources(context);self.execution_prompt(context.request)
+        except (KeyError,TypeError,ValueError) as exc:
+            raise PreAcceptFailure('Child Harness contract validation failed',
+                error_code='child_preparation_failed',failed_phase='input_validation',
+                retryable=False,public_reason=str(exc)) from exc
+
     @staticmethod
     def _materialized_input_path(item,artifact)->str:
         filename=PurePosixPath(artifact.path).name

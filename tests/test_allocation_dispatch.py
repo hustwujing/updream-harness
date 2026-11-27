@@ -143,6 +143,8 @@ async def test_late_response_cleans_cancelled_waiter_and_original_reservation(tm
     from sandbox_harness.common.execution.job_adapters import (SubmissionInterrupted)
     from sandbox_harness.common.contracts.job_contracts import (JobState)
     from sandbox_harness.common.execution.job_worker import (JobWorker)
+    class AllocationTestMediaRenderAdapter(MediaRenderOperationAdapter):
+        async def preflight(self,context):return None
     class Provider(FakeSandboxBackend):
         entered=asyncio.Event();finish=asyncio.Event();calls=0
         async def create(self,request):
@@ -152,7 +154,7 @@ async def test_late_response_cleans_cancelled_waiter_and_original_reservation(tm
     store,context,request=await fixture(tmp_path);backend=Provider();scheduler=Scheduler(store)
     client=AllocationClient(store,backend,poll_seconds=.01)
     pool=SandboxPool(backend,{Harness.CODEX:'image'},{Harness.CODEX:0},max_sandboxes=1)
-    adapter=MediaRenderOperationAdapter(scheduler=scheduler,pool=pool,runtime=None,store=store,
+    adapter=AllocationTestMediaRenderAdapter(scheduler=scheduler,pool=pool,runtime=None,store=store,
         objects=ObjectStore(tmp_path/'objects'),settings=Settings(backend='fake',data_root=tmp_path,
             runtime_image_codex='image',job_allocation_dispatcher_enabled=True),token_factory=None,
         allocation_client=client)

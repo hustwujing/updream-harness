@@ -953,7 +953,8 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
         base_url, credential = upstreams[prefix]
         if prefix.startswith("/v1/models/"):
             harness = Harness(prefix.rsplit("/", 1)[-1])
-            selected_route = model_routes.resolve(harness, claims.model)
+            try:selected_route = model_routes.preflight(harness,claims.model)
+            except ValueError as exc:raise HTTPException(503,str(exc)) from exc
             base_url, credential = selected_route.base_url, selected_route.credential
         if not base_url:
             raise HTTPException(503, "Gateway upstream is not configured")

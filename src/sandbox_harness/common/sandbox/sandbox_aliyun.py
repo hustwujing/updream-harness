@@ -86,6 +86,12 @@ class AliyunSandboxBackend:
             raise SandboxProfileUnavailable("Aliyun requires a template profile",
                 provider=self.provider)
 
+    def preflight_create(self,request:SandboxCreateRequest)->None:
+        if request.profile.provider!=self.provider:
+            raise SandboxProfileUnavailable("Aliyun requires an Aliyun template profile",
+                provider=self.provider)
+        self.validate_release(request.profile.provider_ref,request.profile.compatibility_key)
+
     def __init__(self, *, api_key: str, api_url: str, domain: str,
                  timeout_seconds: int, namespace: str,
                  request_timeout_seconds: float = 60,
@@ -367,6 +373,7 @@ class AliyunSandboxBackend:
         return None
 
     async def _create_once(self, request: SandboxCreateRequest) -> Sandbox:
+        self.preflight_create(request)
         metadata = {
             **self._profile_metadata(request.profile),
             "sandbox-harness.io/namespace": self.namespace,

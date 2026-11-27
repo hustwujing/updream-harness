@@ -327,7 +327,7 @@ class JobWorker:
                             if (exc.infrastructure and exc.retryable and continuous
                                     and exc.retry_class=='capacity_wait'):
                                 await self.store.mark_infrastructure_wait(job.id,self.worker_id,
-                                    attempt.generation,error_detail=str(exc))
+                                    attempt.generation,error_detail=exc.error_detail or str(exc))
                                 event('job.submission.capacity_wait',level=30,job_id=job.id,
                                     worker_id=self.worker_id,generation=attempt.generation,
                                     state_after='infrastructure_wait',error_code=exc.error_code,
@@ -353,7 +353,7 @@ class JobWorker:
                                 attempt.generation,retry=retry,error_code=(
                                     "infrastructure_capacity_wait" if exc.infrastructure
                                         and exc.error_code=='pre_accept_failure' else exc.error_code),
-                                error_detail=str(exc)[:2000],error_metadata={
+                                error_detail=(exc.error_detail or str(exc)[:2000]),error_metadata={
                                     'failed_phase':exc.failed_phase,'retry_class':exc.retry_class,
                                     'retryable':exc.retryable,
                                     'node_health_generation':exc.node_health_generation})

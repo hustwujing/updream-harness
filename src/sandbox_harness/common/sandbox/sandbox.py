@@ -19,6 +19,10 @@ class FakeSandboxBackend:
 
     def validate_release(self,provider_ref:str,artifact_digest:str)->None:return None
 
+    def preflight_create(self,request:SandboxCreateRequest)->None:
+        if request.profile.provider!=self.provider:
+            raise SandboxProfileUnavailable("Fake sandbox provider mismatch",provider=self.provider)
+
     def __init__(self,runtime_url:str="http://fake-runtime",namespace:str="sandbox-harness",
                  gateway_url:str="http://127.0.0.1:29882",proxy_url:str="http://127.0.0.1:29883"):
         self.runtime_url=runtime_url;self.namespace=namespace
@@ -41,6 +45,7 @@ class FakeSandboxBackend:
                 "sandbox-harness.io/idempotency-key") or identifier())[:160]
             request=SandboxCreateRequest(harness=request,profile=self.legacy_profile(request,image or ""),
                 environment=environment or {},ttl_seconds=3600,allocation_id=key)
+        self.preflight_create(request)
         existing=await self.reconcile_create(SandboxScope(self.namespace),request.allocation_id)
         if existing is not None:
             if (existing.harness!=request.harness

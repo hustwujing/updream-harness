@@ -113,9 +113,21 @@ class SiteWorker:
                 expected["object_ref"],maximum=value.size))
             if size!=value.size:raise ValueError("site_file_identity_mismatch")
 
+    @staticmethod
+    def preflight(job:dict)->None:
+        files=job.get("files")
+        if (not isinstance(files,list) or not isinstance(job.get("archive_object_ref"),str)
+                or not job["archive_object_ref"].startswith("sha256:")
+                or not isinstance(job.get("archive_size"),int) or job["archive_size"]<=0
+                or not isinstance(job.get("file_count"),int) or job["file_count"]<1
+                or not isinstance(job.get("total_size"),int) or job["total_size"]<1
+                or len(files)!=job["file_count"]
+                or len({item.get("path") for item in files if isinstance(item,dict)})!=len(files)):
+            raise ValueError("site_job_contract_invalid")
     async def _process_claimed(self, job: dict) -> None:
         archive_path=None;package=None;generation=job["generation"]
         try:
+            self.preflight(job)
             archive_path=await asyncio.to_thread(self._copy_archive,job)
             package=await asyncio.to_thread(stage_site_archive,archive_path,self.staging_root)
             files=package.files
