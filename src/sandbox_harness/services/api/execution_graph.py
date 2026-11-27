@@ -3,6 +3,7 @@ from sandbox_harness.common.contracts.domain import now
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy import case,func,or_,select
@@ -78,18 +79,50 @@ def remaining_jobs(rows):
         if row.state in RUNNING_JOB_STATES]
 
 
-def aggregate_model_usage(rows):
-    values={};seen=set()
+def aggregate_model_activity(rows):
+    latest={}
     for row in rows:
         try:payload=json.loads(row.payload_json or '{}')
         except (TypeError,ValueError):continue
         request_id=str(payload.get('model_request_id') or '')
-        if not request_id or request_id in seen:continue
-        seen.add(request_id);key=(row.turn_id,str(payload.get('job_id') or ''))
-        usage=values.setdefault(key,{field:0 for field in TOKEN_USAGE_FIELDS})
+        if not request_id:continue
+        existing=latest.get(request_id)
+        started_at=(min(utc_datetime(existing[2]),utc_datetime(row.created_at))
+            if existing else utc_datetime(row.created_at))
+        if (not existing or (utc_datetime(row.updated_at),row.sequence)>
+                (utc_datetime(existing[0].updated_at),existing[0].sequence)):
+            latest[request_id]=(row,payload,started_at)
+        else:latest[request_id]=(existing[0],existing[1],started_at)
+    values={}
+    selected=sorted(latest.items(),key=lambda item:(
+        item[1][2],item[1][0].sequence))
+    for request_id,(row,payload,started_at) in selected:
+        key=(row.turn_id,str(payload.get('job_id') or ''))
+        value=values.setdefault(key,{'token_usage':{field:0 for field in TOKEN_USAGE_FIELDS},
+            'model_rounds':[]})
+        counts={}
         for field in TOKEN_USAGE_FIELDS:
             count=payload.get(field)
-            if isinstance(count,int) and not isinstance(count,bool) and count>=0:usage[field]+=count
+            counts[field]=(count if isinstance(count,int) and not isinstance(count,bool) and count>=0 else 0)
+            value['token_usage'][field]+=counts[field]
+        status=row.status if row.status in {'in_progress','completed','failed','interrupted'} else 'in_progress'
+        phase=str(payload.get('phase') or '')
+        if phase not in {'waiting','streaming','completed','failed'}:
+            phase='completed' if status=='completed' else 'failed' if status in {'failed','interrupted'} else 'waiting'
+        terminal=status in {'completed','failed','interrupted'}
+        elapsed=payload.get('elapsed_ms')
+        if not isinstance(elapsed,(int,float)) or isinstance(elapsed,bool) or elapsed<0:
+            elapsed=duration_ms(row.created_at,row.updated_at if terminal else None)
+        first_output=payload.get('first_output_ms')
+        if not isinstance(first_output,(int,float)) or isinstance(first_output,bool) or first_output<0:
+            first_output=None
+        error_code=str(payload.get('error_code') or '')
+        if not re.fullmatch(r'[a-z][a-z0-9_.-]{0,159}',error_code):error_code=''
+        value['model_rounds'].append({'index':len(value['model_rounds'])+1,
+            'request_id':request_id,'model':str(payload.get('model') or ''),'phase':phase,
+            'status':status,'started_at':iso(started_at),'ended_at':iso(row.updated_at) if terminal else None,
+            'duration_ms':int(elapsed),'first_output_ms':int(first_output) if first_output is not None else None,
+            **counts,'error_code':error_code})
     return values
 
 
@@ -261,7 +294,7 @@ class ExecutionGraphProjector:
             turn_ids={row.id for row in turns}
         reservation_by_job={row.job_id:row for row in reservations}
         usage_truncated=len(model_usage_rows)>MAX_MODEL_USAGE_ROWS
-        model_usage=aggregate_model_usage(model_usage_rows[:MAX_MODEL_USAGE_ROWS])
+        model_activity=aggregate_model_activity(model_usage_rows[:MAX_MODEL_USAGE_ROWS])
         activity_count={identity:int(count) for identity,count in activity_rows}
         retry_count={identity:int(count or 0) for identity,count in retry_rows}
         artifacts_by_job={identity:[] for identity in job_ids}
@@ -279,6 +312,8 @@ class ExecutionGraphProjector:
         progress_by_group=group_progress(groups,job_state_rows)
         for turn in turns:
             user_id=f'turn:{turn.id}:input';primary_id=f'turn:{turn.id}:primary'
+            activity=model_activity.get((turn.id,''),{
+                'token_usage':{field:0 for field in TOKEN_USAGE_FIELDS},'model_rounds':[]})
             continuation_title=('并行任务结果已返回' if turn.id in outbox_by_continuation else
                 '媒体任务结果已返回' if turn.internal and turn.idempotency_key.startswith('media-continuation-')
                 else '后台结果已返回')
@@ -292,7 +327,8 @@ class ExecutionGraphProjector:
                 'title':f'{turn.harness} · {turn.model}','state':turn.state,'visual_role':'primary_harness',
                 'harness_view':True,'objective':turn.public_message or turn.message,
                 'harness':turn.harness,'model':turn.model,
-                'token_usage':model_usage.get((turn.id,''),{field:0 for field in TOKEN_USAGE_FIELDS}),
+                'token_usage':activity['token_usage'],'model_rounds':activity['model_rounds'],
+                'model_rounds_truncated':usage_truncated,
                 'token_usage_truncated':usage_truncated,
                 'location':'sandbox' if turn.sandbox_id else 'scheduler',
                 'location_label':'Cloud Sandbox' if turn.sandbox_id else '等待调度',
@@ -346,6 +382,8 @@ class ExecutionGraphProjector:
             error_code=(str(result.get('error_code') or '')
                 if job.state in {'FAILED','BLOCKED','UNKNOWN'} else '')
             contract=JOB_ERROR_CONTRACTS.get(error_code)
+            activity=model_activity.get((job.origin_turn_id,job.id),{
+                'token_usage':{field:0 for field in TOKEN_USAGE_FIELDS},'model_rounds':[]})
             nodes.append({'id':'job:'+job.id,'type':'job','role':role,
                 'title':f'{job.local_job_id} · {job.descriptor_id}','state':job.state,
                 'visual_role':visual_role,
@@ -353,8 +391,9 @@ class ExecutionGraphProjector:
                 'objective':str(parameters.get('objective') or job.local_job_id),
                 'harness':str(requirements.get('harness') or parameters.get('harness') or ''),
                 'model':str(parameters.get('model') or ''),
-                'token_usage':model_usage.get((job.origin_turn_id,job.id),
-                    {field:0 for field in TOKEN_USAGE_FIELDS}) if job.kind=='harness' else None,
+                'token_usage':activity['token_usage'] if job.kind=='harness' else None,
+                'model_rounds':activity['model_rounds'] if job.kind=='harness' else [],
+                'model_rounds_truncated':usage_truncated if job.kind=='harness' else False,
                 'token_usage_truncated':usage_truncated if job.kind=='harness' else False,
                 'location':location,'location_label':location_label,
                 'started_at':iso(job.created_at),'ended_at':iso(job.terminal_at),

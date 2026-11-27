@@ -1,16 +1,17 @@
 from datetime import timedelta
 import json
+from types import SimpleNamespace
 
 from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.contracts.domain import (EventKind, Harness, ItemType, ThreadCreate, TurnCreate, TurnState, now)
-from sandbox_harness.services.api.execution_graph import (ExecutionGraphProjector)
+from sandbox_harness.services.api.execution_graph import (ExecutionGraphProjector,aggregate_model_activity)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobGroupDraftCreate, JobKind, JobRequest, JobState)
 from sandbox_harness.common.db.accounts import AccountsRepository
 from sandbox_harness.common.db.api_repositories import ApiRepositories
 from sandbox_harness.common.db.core import CoreRepository
 from sandbox_harness.common.db.media_repository import MediaRepository
 from sandbox_harness.common.db.site_repository import SiteRepository
-from sandbox_harness.common.db.models import (JobActivityRow, JobArtifactRow, JobOutboxRow,
+from sandbox_harness.common.db.models import (ItemRow,JobActivityRow, JobArtifactRow, JobOutboxRow,
     JobRow, MediaBatchRow, MediaDraftRow, MediaJobRow, ReviewGateRow, TurnRow)
 from sqlalchemy import select,update
 
@@ -23,6 +24,23 @@ async def graph_store(tmp_path, name):
         SiteRepository("sqlite+aiosqlite:///"+str(tmp_path/(name+"-sites.db"))))
     await store.initialize()
     return store
+
+
+def test_model_round_aggregation_deduplicates_latest_state_without_reordering():
+    started=now()
+    def row(sequence,request_id,phase,status,tokens,offset):
+        return SimpleNamespace(turn_id='a'*32,sequence=sequence,status=status,
+            created_at=started+timedelta(seconds=offset),updated_at=started+timedelta(seconds=offset+1),
+            payload_json=json.dumps({'model_request_id':request_id,'job_id':'','model':'gpt-5.6',
+                'phase':phase,'elapsed_ms':1000,'ordinary_input_tokens':tokens}))
+    values=aggregate_model_activity([
+        row(3,'round-1','completed','completed',11,4),
+        row(2,'round-2','completed','completed',2,2),
+        row(1,'round-1','waiting','in_progress',0,0),
+    ])[('a'*32,'')]
+    assert [value['request_id'] for value in values['model_rounds']]==['round-1','round-2']
+    assert values['model_rounds'][0]['status']=='completed'
+    assert values['token_usage']['ordinary_input_tokens']==13
 
 
 async def test_execution_graph_contains_only_factual_boundaries_and_truthful_locations(tmp_path):
@@ -49,16 +67,19 @@ async def test_execution_graph_contains_only_factual_boundaries_and_truthful_loc
         group,jobs=await store.confirm_job_group_draft(draft.id,'owner')
         attempt=await store.claim_job(jobs[1].id,'worker','node',30)
         await store.append_job_activity(jobs[1].id,1,'tool_started',{'name':'读取候选图片'})
-        for index,usage in enumerate((
-                {'ordinary_input_tokens':100,'cache_read_input_tokens':200,
-                    'cache_write_input_tokens':300,'output_tokens':400},
-                {'ordinary_input_tokens':1,'cache_read_input_tokens':2,
-                    'cache_write_input_tokens':3,'output_tokens':4}),1):
-            await store.append_item(thread.id,turn.id,ItemType.PLAN,status='completed',
+        for index,(status,phase,usage) in enumerate((
+                ('completed','completed',{'ordinary_input_tokens':100,'cache_read_input_tokens':200,
+                    'cache_write_input_tokens':300,'output_tokens':400}),
+                ('in_progress','streaming',{'ordinary_input_tokens':1,'cache_read_input_tokens':2,
+                    'cache_write_input_tokens':3,'output_tokens':4})),1):
+            await store.append_item(thread.id,turn.id,ItemType.PLAN,status=status,
                 summary='model usage',payload={'model_request_id':f'primary-{index}',
-                    'phase':'completed','job_id':'',**usage})
-        await store.append_item(thread.id,turn.id,ItemType.PLAN,status='completed',
-            summary='child model usage',payload={'model_request_id':'child-1','phase':'completed',
+                    'model':'gpt-5.6','phase':phase,'job_id':'','first_output_ms':900,
+                    'elapsed_ms':5000 if status=='completed' else 2000,**usage})
+        await store.append_item(thread.id,turn.id,ItemType.PLAN,status='failed',
+            summary='child model usage',payload={'model_request_id':'child-1','phase':'failed',
+                'model':'gpt-5.6','first_output_ms':1200,'elapsed_ms':7000,
+                'error_code':'provider_timeout',
                 'job_id':jobs[1].id,'ordinary_input_tokens':10,'cache_read_input_tokens':20,
                 'cache_write_input_tokens':30,'output_tokens':40})
         await store.upsert_interaction(thread.id,turn.id,'execution','question-1','question',
@@ -83,11 +104,24 @@ async def test_execution_graph_contains_only_factual_boundaries_and_truthful_loc
         assert child_node['harness']=='codex' and child_node['model']=='gpt-5.6'
         assert child_node['token_usage']=={'ordinary_input_tokens':10,
             'cache_read_input_tokens':20,'cache_write_input_tokens':30,'output_tokens':40}
+        assert child_node['model_rounds'][0]=={
+            'index':1,'request_id':'child-1','model':'gpt-5.6','phase':'failed',
+            'status':'failed','started_at':child_node['model_rounds'][0]['started_at'],
+            'ended_at':child_node['model_rounds'][0]['ended_at'],'duration_ms':7000,
+            'first_output_ms':1200,'ordinary_input_tokens':10,'cache_read_input_tokens':20,
+            'cache_write_input_tokens':30,'output_tokens':40,'error_code':'provider_timeout'}
         primary_node=next(node for node in graph['nodes'] if node['type']=='primary_harness')
         assert primary_node['harness_view'] is True and primary_node['objective']=='parallel work'
         assert primary_node['harness']=='codex' and primary_node['model']=='gpt-5.6'
         assert primary_node['token_usage']=={'ordinary_input_tokens':101,
             'cache_read_input_tokens':202,'cache_write_input_tokens':303,'output_tokens':404}
+        assert [row['request_id'] for row in primary_node['model_rounds']]==['primary-1','primary-2']
+        assert primary_node['model_rounds'][0]['status']=='completed'
+        assert primary_node['model_rounds'][0]['ended_at'] is not None
+        assert primary_node['model_rounds'][1]['phase']=='streaming'
+        assert primary_node['model_rounds'][1]['status']=='in_progress'
+        assert primary_node['model_rounds'][1]['ended_at'] is None
+        assert primary_node['model_rounds_truncated'] is False
         assert {node['visual_role'] for node in graph['nodes']} >= {
             'user','primary_harness','job_confirmation','job_group','wait_barrier',
             'external_capability','child_harness','user_decision'}
@@ -112,6 +146,30 @@ async def test_execution_graph_default_window_and_historical_expansion(tmp_path)
         assert len([node for node in recent['nodes'] if node['type']=='primary_harness'])==5
         assert recent['historical_available'] is True
         assert len([node for node in complete['nodes'] if node['type']=='primary_harness'])==7
+    finally:await store.close()
+
+
+async def test_execution_graph_marks_bounded_model_rounds_as_partial(tmp_path):
+    store=await graph_store(tmp_path,'model-round-limit')
+    try:
+        profile=HarnessCatalog().resolve('codex','gpt-5.6','standard')
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level='standard',title='Round limit'),profile,'owner')
+        turn,_,_=await store.create_turn(thread.id,TurnCreate(message='long execution',
+            idempotency_key='round-limit'),profile,'owner')
+        timestamp=now()
+        async with store.core.connections.begin() as db:
+            db.add_all([ItemRow(id=f'{index+1:032x}',thread_id=thread.id,turn_id=turn.id,
+                sequence=index+100,type=ItemType.PLAN.value,status='completed',summary='model usage',
+                payload_json=json.dumps({'model_request_id':f'round-{index:05d}','job_id':'',
+                    'model':'gpt-5.6','phase':'completed','ordinary_input_tokens':1}),
+                created_at=timestamp+timedelta(microseconds=index),
+                updated_at=timestamp+timedelta(microseconds=index)) for index in range(5001)])
+        graph=await ExecutionGraphProjector(store).snapshot(thread.id,'owner')
+        primary=next(node for node in graph['nodes'] if node['type']=='primary_harness')
+        assert primary['model_rounds_truncated'] is True
+        assert primary['token_usage_truncated'] is True
+        assert len(primary['model_rounds'])==5000
     finally:await store.close()
 
 
