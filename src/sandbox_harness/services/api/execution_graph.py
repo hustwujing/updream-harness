@@ -119,11 +119,13 @@ def aggregate_model_activity(rows):
             first_output=None
         error_code=str(payload.get('error_code') or '')
         if not re.fullmatch(r'[a-z][a-z0-9_.-]{0,159}',error_code):error_code=''
+        characters=payload.get('output_characters')
+        if not isinstance(characters,int) or isinstance(characters,bool) or characters<0:characters=0
         value['model_rounds'].append({'index':len(value['model_rounds'])+1,
             'request_id':request_id,'model':str(payload.get('model') or ''),'phase':phase,
             'status':status,'started_at':iso(started_at),'ended_at':iso(row.updated_at) if terminal else None,
             'duration_ms':int(elapsed),'first_output_ms':int(first_output) if first_output is not None else None,
-            **counts,'error_code':error_code})
+            **counts,'output_characters':characters,'error_code':error_code})
     return values
 
 

@@ -38,6 +38,7 @@ class OutputProbe:
         self.input_tokens = None
         self.output_tokens = None
         self.token_usage=ModelTokenUsage()
+        self.output_characters=0
 
     @staticmethod
     def _count(value):
@@ -94,6 +95,17 @@ class OutputProbe:
                 continue
             self.failed |= kind in {'error', 'response.failed', 'response.incomplete'}
             self.completed |= kind in {'response.completed', 'message_stop'}
+            text=''
+            if kind=='response.output_text.delta' and isinstance(value.get('delta'),str):
+                text=value['delta']
+            elif kind=='content_block_delta':
+                delta=value.get('delta') if isinstance(value.get('delta'),dict) else {}
+                if isinstance(delta.get('text'),str):text=delta['text']
+            elif isinstance(value.get('choices'),list):
+                contents=[choice['delta'].get('content') for choice in value['choices']
+                    if isinstance(choice,dict) and isinstance(choice.get('delta'),dict)]
+                text=''.join(content for content in contents if isinstance(content,str))
+            self.output_characters+=len(text)
             if kind in {'response.output_text.delta', 'response.reasoning_summary_text.delta',
                         'response.reasoning_text.delta', 'response.function_call_arguments.delta'}:
                 output |= bool(value.get('delta'))
@@ -124,7 +136,7 @@ class OutputProbe:
             self._usage(usage)
 
 class ModelActivity:
-    def __init__(self, store, claims):
+    def __init__(self, store, claims, progress_persist_seconds:float=5):
         self.store = store
         self.claims = claims
         self.request_id = uuid.uuid4().hex
@@ -135,6 +147,9 @@ class ModelActivity:
         self.probe = OutputProbe()
         self.finished = False
         self.span = None
+        self.progress_persist_seconds=progress_persist_seconds
+        self.last_character_update=0
+        self.last_character_update_at=self.started
 
     async def _observe(self, awaitable):
         try:
@@ -155,6 +170,7 @@ class ModelActivity:
         if event:
             self.item_id = event.item_id
         self.started = time.monotonic()
+        self.last_character_update_at = self.started
         self.span=obs._PROVIDER.get_tracer('updream-harness').start_span('model.request',kind=SpanKind.CLIENT,
             attributes=obs.sanitize({'turn_id':self.claims.turn_id,'thread_id':self.claims.thread_id,
                 'sandbox_id':getattr(self.claims,'sandbox_id',''),'model':self.claims.model,'model_request_id':self.request_id}))
@@ -162,16 +178,28 @@ class ModelActivity:
             obs.event('model.request.started',turn_id=self.claims.turn_id,model=self.claims.model,model_request_id=self.request_id)
 
     async def observe(self, chunk):
+        before=self.probe.output_characters
         has_output = self.probe.feed(chunk)
+        observed_at=time.monotonic()
         if self.first_output_ms is None and has_output:
-            self.first_output_ms = round((time.monotonic() - self.started) * 1000)
+            self.first_output_ms = round((observed_at - self.started) * 1000)
             if self.span:
                 with trace.use_span(self.span,end_on_exit=False):
                     obs.event('model.first_output',turn_id=self.claims.turn_id,model=self.claims.model,model_request_id=self.request_id,first_output_ms=self.first_output_ms)
                     harness=getattr(self.claims,'harness','unknown')
                     obs.business_metric('updream.turn.first_output.duration',self.first_output_ms,
                         harness=getattr(harness,'value',harness) or 'unknown')
-            await self.update('streaming', 'in_progress')
+            self.last_character_update=self.probe.output_characters
+            self.last_character_update_at=observed_at
+            await self.update('streaming', 'in_progress',
+                output_characters=self.probe.output_characters)
+            return
+        changed=self.probe.output_characters>before
+        if changed and observed_at-self.last_character_update_at>=self.progress_persist_seconds:
+            self.last_character_update=self.probe.output_characters
+            self.last_character_update_at=observed_at
+            await self.update('streaming','in_progress',
+                output_characters=self.probe.output_characters)
 
     async def update(self, phase, status, **extra):
         if not self.item_id:
@@ -201,4 +229,5 @@ class ModelActivity:
                           input_tokens=self.probe.input_tokens,ordinary_input_tokens=usage.ordinary_input_tokens,
                           cache_read_input_tokens=usage.cache_read_input_tokens,
                           cache_write_input_tokens=usage.cache_write_input_tokens,
-                          output_tokens=self.probe.output_tokens)
+                          output_tokens=self.probe.output_tokens,
+                          output_characters=self.probe.output_characters)

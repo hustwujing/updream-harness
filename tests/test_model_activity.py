@@ -18,6 +18,16 @@ def test_probe_ignores_headers_and_metadata_until_effective_model_output():
     assert not claude.feed(b'data: {"type":"error","error":{"type":"overloaded_error"}}\n\n')
     assert claude.failed
 
+
+def test_probe_counts_only_public_text_across_supported_stream_protocols():
+    probe=OutputProbe()
+    probe.feed('data: {"type":"response.output_text.delta","delta":"你😀"}\n\n'.encode())
+    probe.feed(b'data: {"type":"response.reasoning_text.delta","delta":"hidden"}\n\n')
+    probe.feed('data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"好"}}\n\n'.encode())
+    probe.feed(b'data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"hidden"}}\n\n')
+    probe.feed('data: {"choices":[{"delta":{"content":"é"}},{"delta":{"tool_calls":[{}]}}]}\n\n'.encode())
+    assert probe.output_characters==4
+
 async def test_model_wait_stage_records_actual_model_and_updates_one_item(tmp_path):
     store=Store('sqlite+aiosqlite:///'+str(tmp_path/'models.db'));await store.initialize()
     try:
@@ -62,6 +72,7 @@ async def test_child_job_model_activity_persists_round_with_job_identity():
     assert all(call[1]['payload']['job_id']=='c'*32 for call in store.updated)
     assert activity.first_output_ms is not None
     assert activity.probe.input_tokens==9 and activity.probe.output_tokens==3
+    assert store.updated[-1][1]['payload']['output_characters']==2
 
 
 async def test_latest_model_activity_error_returns_only_stable_failed_model_step(tmp_path):

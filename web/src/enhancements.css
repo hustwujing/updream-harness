@@ -428,6 +428,7 @@ body[data-network-access="restricted"] .topbar>div:nth-child(2)>span::after{cont
 .thread-status .harness-icon {width:14px;height:14px}
 
 .model-health-note {padding:8px 14px 0;color:#796544;font-size:11px;line-height:1.5}
+.agent-character-progress{display:block;min-height:18px;margin-top:4px;color:#858680;font-size:9px;font-variant-numeric:tabular-nums;white-space:nowrap}
 
 /* Shared brand mark: browser icon, navigation and empty conversation. */
 .brand-mark{display:block;width:27px;height:27px;flex:none}

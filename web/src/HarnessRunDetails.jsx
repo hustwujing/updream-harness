@@ -1,10 +1,11 @@
-import React,{useEffect,useRef,useState} from 'react';
+import React from 'react';
 import {CircleAlert,CircleCheck,Clock3,LoaderCircle,MapPin,MessagesSquare} from 'lucide-react';
 import {apiUrl} from './api';
 import {formatDuration} from './activity-time';
 import {buildHarnessTimeline,currentHarnessStage} from './harness-activity';
 import {modelRoundDuration,modelRoundPhaseLabel,modelRoundSummary,modelRoundTokenTotal} from './harness-model-rounds';
 import {executionActivityCategory,executionActivityCategoryLabel,executionActivityDetail,executionActivityHasFullDetail} from './execution-activities';
+import {useAnimatedNumber} from './animated-number';
 import './harness-run-details.css';
 import './harness-token-usage.css';
 
@@ -13,16 +14,7 @@ const tokenMetrics=[['ordinary','普通输入','ordinary_input_tokens'],['cache-
  ['cache-write','缓存写入','cache_write_input_tokens'],['output','输出','output_tokens']];
 export function tokenUsageTotal(usage={}){return tokenMetrics.reduce((total,value)=>total+Math.max(0,Number(usage[value[2]]||0)),0)}
 export function formatCompactTokens(value){const amount=Math.max(0,Number(value||0));if(amount>=1_000_000)return `${Number((amount/1_000_000).toFixed(amount>=10_000_000?0:1))}M`;if(amount>=1000)return `${Number((amount/1000).toFixed(amount>=100_000?0:1))}k`;return Math.round(amount).toLocaleString()}
-function useAnimatedToken(nodeId,target){
- const value=Math.max(0,Number(target||0)),[display,setDisplay]=useState(value),current=useRef(value),identity=useRef(nodeId);
- useEffect(()=>{const reduced=globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-  if(identity.current!==nodeId||reduced){identity.current=nodeId;current.current=value;setDisplay(value);return}
-  const start=current.current,change=value-start;if(!change)return;const began=performance.now();let frame=0;
-  const step=now=>{const progress=Math.min(1,(now-began)/600),eased=1-Math.pow(1-progress,3),next=start+change*eased;current.current=next;setDisplay(next);if(progress<1)frame=requestAnimationFrame(step)};
-  frame=requestAnimationFrame(step);return()=>cancelAnimationFrame(frame)
- },[nodeId,value]);return display
-}
-function AnimatedToken({nodeId,kind,value}){const display=useAnimatedToken(nodeId,value);return <strong data-token-kind={kind} data-token-value={Math.round(display)} title={`${Math.round(Number(value||0)).toLocaleString()} tokens`}>{formatCompactTokens(display)}</strong>}
+function AnimatedToken({nodeId,kind,value}){const display=useAnimatedNumber(nodeId,value,kind==='characters'?350:600);return <strong data-token-kind={kind} data-token-value={Math.round(display)} title={`${Math.round(Number(value||0)).toLocaleString()} ${kind==='characters'?'字符':'tokens'}`}>{formatCompactTokens(display)}</strong>}
 function ActivityDetail({activity}){const value=executionActivityDetail(activity,{limit:120});
  return executionActivityHasFullDetail(value)?<details className="execution-activity-detail">
   <summary>{value.preview}</summary><pre>{value.full}</pre></details>:<small title={value.full||value.preview}>{value.preview}</small>}
@@ -47,7 +39,8 @@ function ModelRounds({node,now}){
      <header><b>第 {round.index} 轮</b><span>{phase}</span><time>{formatDuration(modelRoundDuration(round,now))}</time></header>
      <small>{round.model||node.model||'模型'}
       {round.first_output_ms!=null?` · 首输出 ${formatDuration(Number(round.first_output_ms))}`:''}
-      {tokens>0?` · ${formatCompactTokens(tokens)} tokens`:' · 用量待返回'}</small>
+      {tokens>0?` · ${formatCompactTokens(tokens)} tokens`:' · 用量待返回'}
+      {round.output_characters>0&&<> · <AnimatedToken nodeId={`${node.id}:${round.request_id}`} kind="characters" value={round.output_characters}/> 字符</>}</small>
     </article>})}</div>
   </details></>;
 }

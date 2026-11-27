@@ -110,7 +110,8 @@ async def test_execution_graph_contains_only_factual_boundaries_and_truthful_loc
             'status':'failed','started_at':child_node['model_rounds'][0]['started_at'],
             'ended_at':child_node['model_rounds'][0]['ended_at'],'duration_ms':7000,
             'first_output_ms':1200,'ordinary_input_tokens':10,'cache_read_input_tokens':20,
-            'cache_write_input_tokens':30,'output_tokens':40,'error_code':'provider_timeout'}
+            'cache_write_input_tokens':30,'output_tokens':40,'output_characters':0,
+            'error_code':'provider_timeout'}
         primary_node=next(node for node in graph['nodes'] if node['type']=='primary_harness')
         assert primary_node['harness_view'] is True and primary_node['objective']=='parallel work'
         assert primary_node['harness']=='codex' and primary_node['model']=='gpt-5.6'
