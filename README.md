@@ -20,15 +20,15 @@ To add another sandbox backend, follow
 The public repository is [hustwujing/updream-harness](https://github.com/hustwujing/updream-harness)
 on branch `sandbox-harness-platform-parallel-ali`.
 
-The previous modular Ali baseline is verified at `a59df96`. Its product catalog
-contains 175 cases: the previous 169 cases plus XDB01-XDB06 for the split
-Accounts, Core, Media and Sites protocols. That composite gate is 175/175 with
-zero program or external failures and a mean duration of 283.920 seconds.
-Python verification passed 1469 tests with 21 environment-dependent skips;
-frontend verification passed 28 tests and the production build. See the
-[175-case cross-database report](docs/test-evidence/ali-cross-database-175-case-report.md).
+The current modular Ali baseline contains 188 cases and is
+`composite_verified` at `c346638`: 188 successes, zero program failures and zero
+non-program failures, with each retained result preserving its actual tested
+revision. See the
+[188-case production-hardening report](docs/test-evidence/ali-production-hardening-188-case-report.md).
+The earlier [175-case cross-database report](docs/test-evidence/ali-cross-database-175-case-report.md)
+remains the split-database baseline.
 
-The current catalog contains 188 cases. `EVO01`-`EVO13` cover API/PlatformWorker
+`EVO01`-`EVO13` cover API/PlatformWorker
 restart separation, leader failover, multi-replica claims, bounded Outbox delivery,
 metrics, Trace links, key rotation, fair admission, Provider circuits, object GC,
 usage replay, public errors and authoritative browser stages.
@@ -312,8 +312,7 @@ affected lifecycle, Gateway, Runtime, image, Skill, API or deployment boundary.
 See [architecture.md](docs/architecture.md), [client API](docs/api.md), [data model](docs/data-model.md), [product interface](docs/product-interface.md), [gateway.md](docs/gateway.md), [Runtime Skill Bundle](docs/skills.md) and [deployment.md](docs/deployment.md).
 
 Current deployment, cross-database, recovery and case evidence is consolidated
-in the [175-case Ali report](docs/test-evidence/ali-cross-database-175-case-report.md).
-The current 188-case report is generated only after the final clean campaign.
+in the [188-case Ali report](docs/test-evidence/ali-production-hardening-188-case-report.md).
 
 ## Runtime Toolchain
 

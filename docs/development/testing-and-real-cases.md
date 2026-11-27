@@ -140,11 +140,12 @@ both structured evidence and a host-validated product archive; a Harness-authore
 list of commands or checks is not proof that a product existed.
 
 Campaign reports use `verification_scope=clean_run` only when every reported
-success was executed on the report revision. Resuming passed cases from an older
-revision produces `composite_verified`; summaries must not describe that as one
-clean run on the final revision. After a generic fix, rerun the failed member
-and affected passed members first, then run the complete matrix once before release when the
-claim requires a clean full pass.
+success was executed on the report revision. Retaining unaffected successes
+from older revisions produces `composite_verified`; summaries must preserve
+each result's revision and impact assessment. After a generic fix, rerun the
+failed member and every case that crosses the changed contract. Do not repeat
+unrelated real cases unless a separately agreed release claim explicitly
+requires a clean single-revision matrix.
 
 ## Resource exhaustion evidence
 

@@ -160,6 +160,18 @@ replacement. The collection retry count is persisted and bounded. Deterministic
 validation and Reviewer contract failures are terminal, because another read of
 the same immutable result cannot repair them.
 
+Structured output contracts are publication allowlists. Child manifests and
+Operation role maps publish only explicitly authorized paths or roles; private
+scratch and auxiliary outputs remain inside the sandbox. Every authorized role
+must still be present exactly once, and missing, duplicate or identity-mismatched
+outputs fail before publication.
+
+Child completion and nested continuation delivery are concurrent durable
+boundaries. After observing the original Runtime execution complete and no open
+subordinate group, JobWorker must re-read the Child continuation before
+terminalizing or collecting. A newly ready continuation keeps the parent Job
+nonterminal and resumes the same native session on the next fenced observation.
+
 Thread archival is a durable barrier: active Jobs/Groups and ready or claimed
 continuation outboxes prevent archive. The final Job transaction locks the
 Thread while creating its outbox, closing the archive race. Legacy blocked

@@ -73,6 +73,9 @@ claims made by documentation.
 - Use focused tests while iterating. Before release, run the broader checks
   required by the change's blast radius. Report fake, real OpenSandbox, real
   Provider and browser evidence separately.
+- After a defect, rerun the failed case and cases that cross the changed
+  contract. Preserve unaffected successes with their actual revision; do not
+  repeat unrelated real cases solely to manufacture a single-revision report.
 - A local edit is not a deployment. A previous test report is not evidence for
   the current revision.
 
