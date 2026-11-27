@@ -139,6 +139,12 @@ class SiteWorker:
                 raise RuntimeError("stale_site_job_lease")
             event("site.job.succeeded",job_id=job["id"],project_id=job["project_id"],
                 files=len(uploaded),bytes=sum(value["size"] for value in uploaded))
+        except PermissionError:
+            await self.store.fail_site_job(job["id"],self.owner,generation,
+                error_code="site_staging_unwritable",
+                error_detail="站点发布暂存目录不可写，请修复部署目录权属后继续发布。")
+            event("site.job.staging_unwritable",level=40,job_id=job["id"],
+                error_code="site_staging_unwritable")
         except ValueError as exc:
             await self.store.fail_site_job(job["id"],self.owner,generation,
                 error_code=str(exc)[:100],error_detail="站点包内容无效，请修正文件后重新准备部署。")

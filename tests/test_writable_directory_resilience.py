@@ -29,6 +29,14 @@ def test_disposable_directory_recreates_privately_and_rejects_escape_and_symlink
         ensure_private_directory(tmp_path/'outside',boundary=boundary)
 
 
+def test_disposable_directory_rejects_foreign_owner(tmp_path,monkeypatch):
+    target=tmp_path/'state'/'staging';ensure_private_directory(target,boundary=tmp_path/'state')
+    monkeypatch.setattr('sandbox_harness.common.storage.directories.os.geteuid',
+        lambda:target.stat().st_uid+1)
+    with pytest.raises(PermissionError,match='owner_mismatch'):
+        ensure_private_directory(target,boundary=tmp_path/'state')
+
+
 def test_runtime_media_diagnostic_and_local_object_writers_recover_deleted_roots(tmp_path):
     runtime=tmp_path/'runtime-downloads';_reap_stale_downloads(runtime)
     shutil.rmtree(runtime);_reap_stale_downloads(runtime);assert runtime.is_dir()

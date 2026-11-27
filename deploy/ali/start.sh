@@ -13,7 +13,7 @@ set +a
 
 writable_service_paths=(
   "$root/.data/logs" "$root/.data/service-logs" "$root/.data/diagnostics"
-  "$root/.data/tmp" "$root/.data/cache" "$root/.data/pip-cache"
+  "$root/.data/tmp" "$root/.data/tmp/site-stages" "$root/.data/cache" "$root/.data/pip-cache"
   "$root/.data/uv-cache" "$root/.data/npm-cache" "$root/.data/playwright-browsers"
   "$root/.data/objects" "$root/.data/preview-cache" "$root/.data/image-decompose"
 )

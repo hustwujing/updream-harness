@@ -25,4 +25,8 @@ def ensure_private_directory(path: Path, *, boundary: Path | None = None) -> boo
     if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
         raise ValueError('writable_directory_invalid')
     if missing:os.chmod(target,0o700)
+    if metadata.st_uid!=os.geteuid():
+        raise PermissionError('writable_directory_owner_mismatch')
+    if not os.access(target,os.W_OK|os.X_OK):
+        raise PermissionError('writable_directory_not_writable')
     return missing

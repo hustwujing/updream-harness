@@ -72,6 +72,20 @@ async def test_transient_object_failure_retries_same_job_and_version(tmp_path,mo
     finally:await store.close()
 
 
+async def test_staging_permission_failure_is_terminal_without_retry(tmp_path,monkeypatch):
+    settings,store,objects,owner,thread,draft,job=await prepared(tmp_path,"permissions")
+    worker=SiteWorker(settings,store,objects)
+    def denied(*args,**kwargs):raise PermissionError("injected")
+    monkeypatch.setattr("sandbox_harness.services.site_worker.site_worker.ensure_private_directory",denied)
+    try:
+        claimed=(await store.claim_site_jobs(worker.owner,1,lease_seconds=10))[0]
+        await worker.process(claimed)
+        failed=await store.get_site_job(job.id,owner)
+        assert failed.status=="failed" and failed.error_code=="site_staging_unwritable"
+        assert failed.attempt_count==1 and not failed.retryable
+    finally:await store.close()
+
+
 async def test_activation_failure_retries_without_duplicate_version(tmp_path,monkeypatch):
     settings,store,objects,owner,thread,draft,job=await prepared(tmp_path,"activation")
     worker=SiteWorker(settings,store,objects);complete=store.complete_site_job;calls=0
