@@ -67,13 +67,20 @@ Turn has no remaining rows. Do not make reconnect correctness depend on Redis.
   translated display label.
 - Every Harness node appends a compact aggregate token count to its status line.
   Its selected details expose ordinary input, cache-read input, cache-write
-  input and output separately. Updates to the same selected Harness animate
+  input and output separately. The same panel shows one ordered round per
+  unique `model_request_id`, including waiting, streaming, completed, failed
+  and restart-interrupted states. A Child round is owned by its persisted
+  `job_id`; product state never reads logs or OTLP. Updates to the same selected Harness animate
   from the currently rendered values; switching Harness identity and reduced
   motion update immediately. Animation is presentation-only and never changes
   persisted accounting.
 - A terminal Turn with pending media Drafts is displayed as `等待确认 N 项媒体生成`,
   not as completed. Drafts sharing the same origin Turn use one batch decision;
   pending confirmation does not animate the execution graph as active work.
+  Expired confirmation returns `media_confirmation_expired`; a cancelled,
+  already-handled or otherwise changed confirmation returns
+  `media_confirmation_state_changed`. Neither code permits a Provider submit.
+  Natural-language continuation may prepare a new Draft but never authorizes it.
 - Markdown renders no raw HTML. Sandbox paths become links only after resolving
   to owner-checked artifact/project-file APIs.
 - Preview and download use API URLs, never object-store URLs.

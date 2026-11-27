@@ -106,6 +106,11 @@ The Capability Gateway is an infrastructure proxy. It injects model and Provider
 Model accounting is protocol-aware across Codex, Claude and DeepSeek. The
 Gateway records ordinary input, cache-read input, cache-write input and output
 separately, then settles the durable Turn budget with configured cache weights.
+The execution graph also projects each payload-free model request as an ordered
+round for its Primary or Child Harness. Selected Harness details show completed,
+active, failed and restart-interrupted rounds with first-output latency, elapsed
+time and per-round token usage; prompts and generated content never enter this
+projection.
 Logical input remains visible for context and throughput analysis. Codex uses
 an explicit native local-compaction threshold; Claude Code and DeepSeek Harness
 retain their native Session compaction. A local budget exhaustion is reported
@@ -113,6 +118,12 @@ as such and is never relabeled as upstream rate limiting.
 Native model requests use a separate bounded 64 MiB ingress budget for inline
 image history; other capability requests retain the 16 MiB default. Local
 oversize failures have a durable model activity and an actionable public reason.
+
+Media confirmation expires after the configured Draft TTL (24 hours by
+default). Expiry never creates a Provider Job or billable side effect. A later
+natural-language request starts a new Turn and may prepare a replacement Draft,
+but it cannot confirm the expired Draft and does not replace the new explicit
+confirmation card.
 
 The Media Worker is a separate systemd service. API creates and queries Jobs;
 the Worker alone submits external Provider requests, persists external IDs,
