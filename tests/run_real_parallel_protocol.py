@@ -744,14 +744,20 @@ async def case_k10(client,args):
 
 async def case_k11(client,args):
     thread,turn=await origin(client,args,'K11')
-    poster=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/poster.png')
-    rocket=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/rocket.png')
+    from PIL import Image
+    rocket_path=ROOT/'tests/real_cases/assets/rocket.png'
+    left_path=ROOT/'.data/tmp/real-campaign/k11-rocket-left.png'
+    left_path.parent.mkdir(parents=True,exist_ok=True)
+    with Image.open(rocket_path) as source:
+        source.convert('RGB').transpose(Image.Transpose.FLIP_LEFT_RIGHT).save(left_path)
+    rocket=await register_case_asset(thread['id'],turn['id'],rocket_path)
+    rocket_left=await register_case_asset(thread['id'],turn['id'],left_path)
     ref=lambda artifact,role:{'artifact_id':artifact.id,'role':role,'usage':'subject'}
     phase_one_defs=[
         ('model-image','image_to_model',{'texture':False,'face_limit':1500},
-            [ref(poster,'reference_image')]),
+            [ref(rocket,'reference_image')]),
         ('model-multiview','multiview_to_model',{'texture':False,'face_limit':1500},
-            [ref(poster,'front_view'),ref(rocket,'left_view')]),
+            [ref(rocket,'front_view'),ref(rocket_left,'left_view')]),
     ]
     expected={};jobs=[]
     for local,mode,parameters,references in phase_one_defs:
