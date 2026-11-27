@@ -27,6 +27,8 @@ def test_recovery_case_kills_only_after_media_acceptance_and_checks_identity():
     assert 'provider_job_id' in source
     assert 'kill_service_main(' in source
     assert 'SIGKILL' in source
+    assert "old_pid=await main_pid()" in source
+    assert "wait_until(replaced,10,'job_worker_auto_restart'" in source
     assert 'same_generation' in source
     assert 'same_external_execution' in source
 

@@ -155,18 +155,25 @@ async def run_command(command:list[str],label:str):
 
 
 async def kill_service_main(unit:str,start_command:str):
+    async def main_pid():
+        result=await asyncio.to_thread(subprocess.run,
+            ['systemctl','show','-p','MainPID','--value',unit],
+            cwd=ROOT,text=True,capture_output=True)
+        return int(result.stdout.strip() or 0) if result.returncode==0 else 0
+    old_pid=await main_pid()
+    if old_pid<=0:raise AssertionError('job_worker_main_pid_missing')
     await run_command(['systemctl','kill','--kill-who=main','--signal='+signal.Signals.SIGKILL.name,
         unit],'job_worker_sigkill')
-    async def stopped():
+    async def replaced():
         result=await asyncio.to_thread(subprocess.run,['systemctl','is-active','--quiet',unit])
-        return result.returncode!=0
-    await wait_until(stopped,30,'job_worker_stop')
-    command=shlex.split(start_command) if start_command else ['systemctl','start',unit]
-    await run_command(command,'job_worker_start')
-    async def active():
-        result=await asyncio.to_thread(subprocess.run,['systemctl','is-active','--quiet',unit])
-        return result.returncode==0
-    await wait_until(active,120,'job_worker_active',1)
+        current=await main_pid()
+        return current if result.returncode==0 and current>0 and current!=old_pid else None
+    try:
+        await wait_until(replaced,10,'job_worker_auto_restart',.25)
+    except TimeoutError:
+        command=shlex.split(start_command) if start_command else ['systemctl','start',unit]
+        await run_command(command,'job_worker_start')
+        await wait_until(replaced,120,'job_worker_active',1)
 
 
 async def case_xdb02(client,args,repositories,settings):
