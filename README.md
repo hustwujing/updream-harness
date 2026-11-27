@@ -99,7 +99,7 @@ API is `127.0.0.1:24767`, PostgreSQL is `127.0.0.1:28433`, and ingress is
 Database identity, Redis prefix, namespace, object prefix, ports and service
 units are isolated. Shared executables may be reused; writable state, caches,
 logs and temporary files stay in this checkout's `.data` or another explicit
-`/data2/wujing03` path.
+`/data/wujing02` path.
 
 The Capability Gateway is an infrastructure proxy. It injects model and Provider credentials after validating a Turn-scoped token. It does not understand prompts, plans or media quality.
 

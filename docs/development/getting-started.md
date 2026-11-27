@@ -9,7 +9,7 @@ Read this before the first code change or when setting up a new checkout.
 - Python requirement: CPython 3.13 (`pyproject.toml` and Runtime ABI contract).
 - Frontend: Node.js with the lockfile in `web/package-lock.json`.
 - Python package and console entry points are defined in `pyproject.toml`.
-- Dependencies and build output stay inside the project checkout on `/data2`;
+- Dependencies and build output stay inside the project checkout on `/data/wujing02`;
   runtime state, caches, logs, databases and test temporaries belong under
   the selected checkout's `.data` directory. The isolated Ali checkout is
   `/data/wujing02/sandbox-harness-platform-parallel-ali`; its state must never

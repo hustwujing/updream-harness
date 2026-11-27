@@ -61,7 +61,7 @@ the resulting final image.
 Images run as UID/GID 10001 without root. Verify executable/read permissions,
 writable paths and gVisor compatibility. Browser/3D work uses software rendering
 unless a separately designed GPU path exists. Cache, build context and registry
-storage stay on `/data2`.
+storage stay on `/data/wujing02`.
 
 Review image size and cold-start effect. A dependency used by one optional tool
 may belong in a Harness/tool-specific layer rather than the common base.
