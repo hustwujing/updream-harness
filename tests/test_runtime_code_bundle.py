@@ -179,12 +179,17 @@ def test_code_bundle_is_signed_content_addressed_and_contains_cli_modules(tmp_pa
     assert (root / "site-packages/sandbox_runtime/app.py").is_file()
     assert (root / "site-packages/sandbox_harness/common/observability/schema.py").is_file()
     assert (root / "site-packages/sandbox_harness/common/observability/diagnostics.py").is_file()
+    assert (root / "site-packages/sandbox_harness/common/providers/ark.py").is_file()
     assert (root / "site-packages/editppt/cli.py").is_file()
     assert (root / "bin/sandbox-media").stat().st_mode & 0o111
     assert (root / "bin/sandbox-job").stat().st_mode & 0o111
     assert (root / "bin/sandbox-artifact").stat().st_mode & 0o111
     assert (root / "bin/sandbox-review").stat().st_mode & 0o111
     assert (tmp_path / "run/code-releases/current").resolve() == root
+    imported=subprocess.run([sys.executable,"-c",
+        "from sandbox_harness.common.catalog.media_catalog import MediaCatalog; print(len(MediaCatalog().public()))"],
+        capture_output=True,text=True,env={**os.environ,"PYTHONPATH":str(root/"site-packages")})
+    assert imported.returncode==0 and imported.stdout.strip()=="6",imported.stderr
 
 
 def test_bootstrap_rejects_bad_signature_then_starts_and_proxies_runtime(tmp_path, monkeypatch):

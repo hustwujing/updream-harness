@@ -14,7 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SHARED_MODULES = ("common/contracts/domain.py", "common/contracts/job_contracts.py",
     "common/catalog/media_catalog.py", "common/observability/observability.py",
     "common/observability/diagnostics.py", "common/observability/schema.py",
-    "common/sites/site_bundle.py")
+    "common/sites/site_bundle.py","common/providers/contracts.py",
+    "common/providers/ark.py","common/providers/dashscope.py",
+    "common/providers/minimax.py","common/providers/tripo.py")
 
 
 def add_file(archive: tarfile.TarFile, path: str, data: bytes) -> None:
