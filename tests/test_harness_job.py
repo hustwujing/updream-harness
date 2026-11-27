@@ -440,13 +440,23 @@ async def test_text_only_child_result_returns_persisted_summary(tmp_path):
         objects=ObjectStore(tmp_path/'objects'),settings=Settings(backend='fake',data_root=tmp_path),
         token_factory=lambda *args:None);backend.sessions[job.id]=sandbox
     try:
-        await store.append_job_activity(job.id,1,'text_delta',{'text':'第一条结论。'})
+        first='第一条结论。'+'长文本'*600
+        await store.append_job_activity(job.id,1,'text_delta',{'text':first})
         await store.append_job_activity(job.id,2,'text_delta',{'text':'第二条结论。'})
         result=await backend.collect(JobExecutionContext(job=job,request=frozen,generation=0,
             previous_acceptance_receipt=sandbox_receipt(sandbox)),'execution',
             AdapterStatus(True,JobState.SUCCEEDED,{'status':'completed'}),sandbox_receipt(sandbox))
-        assert result['child_summary']=='第一条结论。第二条结论。'
+        assert result['child_summary']==first+'第二条结论。'
     finally:await store.close()
+
+
+async def test_terminal_status_waits_for_the_activity_collector_to_settle():
+    backend=SandboxChildBackend.__new__(SandboxChildBackend);released=asyncio.Event()
+    async def collector():await released.wait()
+    task=asyncio.create_task(collector());backend.collectors={'job':task}
+    assert not await backend._settle_collector('job',timeout=.01)
+    released.set()
+    assert await backend._settle_collector('job',timeout=1)
 
 
 async def test_missing_child_sandbox_is_terminal_not_an_infinite_pending_status(tmp_path):
@@ -583,6 +593,7 @@ async def test_child_resumes_same_native_session_with_nested_group_results(tmp_p
         async def child_continuation_artifacts(self,*args):return []
         async def child_has_open_group(self,*args):return False
         async def list_job_activities(self,*args):return []
+        async def job_runtime_sequence(self,*args):return 0
     class Runtime:
         started=[]
         async def execution_status(self,*args):return {'result':{'status':'completed','native_thread_id':'native-child'}}
@@ -613,6 +624,7 @@ async def test_child_rechecks_continuation_after_execution_finishes(tmp_path):
         async def child_continuation_artifacts(self,*args):return []
         async def mark_child_continuation_resumed(self,*args):self.marked.append(args)
         async def list_job_activities(self,*args):return []
+        async def job_runtime_sequence(self,*args):return 0
     class Runtime:
         started=[]
         async def execution_status(self,*args):

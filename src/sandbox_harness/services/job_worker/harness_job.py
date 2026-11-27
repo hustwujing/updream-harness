@@ -548,6 +548,13 @@ class SandboxChildBackend(SandboxAllocationOwner):
             await buffer.flush();raise
         else:await buffer.flush()
 
+    async def _settle_collector(self,job_id:str,timeout:float=5)->bool:
+        collector=self.collectors.get(job_id)
+        if collector is None:return True
+        try:await asyncio.wait_for(asyncio.shield(collector),timeout=timeout)
+        except asyncio.TimeoutError:return False
+        return True
+
     async def status(self,context:JobExecutionContext,external_execution_id:str,
                      receipt:dict[str,Any])->AdapterStatus:
         try:sandbox=await self._sandbox(context,receipt)
@@ -570,6 +577,7 @@ class SandboxChildBackend(SandboxAllocationOwner):
         self._ensure_collector(context,sandbox,current_execution_id)
         result=value.get('result')
         if result is None:return AdapterStatus(False)
+        if not await self._settle_collector(context.job.id):return AdapterStatus(False)
         if continuation and continuation['state']=='ready':
             resumed_id=f"{context.job.id}:{context.generation}:group:{continuation['group_id']}"
             materialized=[]
@@ -625,7 +633,7 @@ class SandboxChildBackend(SandboxAllocationOwner):
         list_activities=getattr(self.store,'list_job_activities',None)
         activities=(await list_activities(context.job.id,0,1000)
             if list_activities and getattr(context,'job',None) else [])
-        child_summary=''.join(str(row.get('summary') or '') for row in activities
+        child_summary=''.join(str((row.get('payload') or {}).get('text') or '') for row in activities
             if row.get('kind')=='text_delta')[-65536:]
         if status.state!=JobState.SUCCEEDED:return {**status.result,
             **({'child_summary':child_summary} if child_summary else {})}
