@@ -19,7 +19,6 @@ from sqlalchemy import delete, func, select, update
 
 import run_real_cross_database as cross_database
 import run_real_parallel_protocol as protocol
-from sandbox_harness.common.catalog.catalog import HarnessCatalog
 from sandbox_harness.common.configuration.databases import DatabaseSettings
 from sandbox_harness.common.contracts.domain import Harness, ThreadCreate, TurnCreate, TurnState, now
 from sandbox_harness.common.contracts.sandbox_contracts import SandboxCreateRequest, SandboxScope
@@ -497,7 +496,6 @@ async def evo17(client,args,repositories,settings):
     response=await client.post('api/threads',json={'harness':args.harness,'model':args.model,
         'reasoning_level':args.reasoning,'title':'Protocol EVO17'})
     thread=protocol.require(response).json();source_id=uuid.uuid4().hex;timestamp=now()
-    profile=HarnessCatalog().resolve(args.harness,args.model,args.reasoning)
     async with repositories.core.connections.begin() as db:
         thread_row=await db.get(ThreadRow,thread['id'],with_for_update=True)
         sequence=thread_row.next_item_sequence+1;thread_row.next_item_sequence=sequence
@@ -505,8 +503,9 @@ async def evo17(client,args,repositories,settings):
             idempotency_key='evo17-source-'+uuid.uuid4().hex,
             message='EVO17-MEDIA-COMPLETE: prior media task finished successfully.',
             public_message='Internal media completion',attachments_json='[]',
-            harness=profile.harness.value,model=profile.model,
-            reasoning_level=profile.reasoning_level,reasoning_effort=profile.reasoning_effort,
+            harness=thread_row.harness,model=thread_row.model,
+            reasoning_level=thread_row.reasoning_level,
+            reasoning_effort=thread_row.reasoning_effort,
             delivery_mode='queue',network_access='restricted',internal=True,
             state=TurnState.FAILED.value,error_code='sandbox_workspace_restore_unavailable',
             error_detail='EVO17 injected transient Primary restore failure',
