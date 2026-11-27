@@ -61,7 +61,8 @@ def test_gateway_does_not_rewrite_legacy_or_non_claude_thinking():
 def test_gateway_rejects_invalid_public_proxy_policy_at_startup(tmp_path):
     from sandbox_harness.common.configuration.config import (Settings)
     from sandbox_harness.services.sandbox_gateway.gateway import (create_gateway)
-    settings=Settings(backend='fake',database_url='sqlite+aiosqlite:///'+str(tmp_path/'gateway.db'),
+    settings=Settings(backend='fake',data_root=tmp_path,
+        database_url='sqlite+aiosqlite:///'+str(tmp_path/'gateway.db'),
         public_proxy_allowlist=['https://example.com'])
     with pytest.raises(ValueError,match='Invalid public proxy destination rule'):
         create_gateway(settings)
@@ -106,7 +107,8 @@ async def test_gateway_media_status_is_capability_and_thread_scoped(tmp_path, mo
             calls.append((job_id, thread_id)); return {"id": job_id, "status": "running"}
     monkeypatch.setattr(gateway.Redis, "from_url", lambda *args, **kwargs: Redis())
     monkeypatch.setattr(gateway, "gateway_repositories", Store)
-    settings = Settings(backend="fake", database_url="sqlite+aiosqlite:///" + str(tmp_path / "gateway.db"))
+    settings = Settings(backend="fake", data_root=tmp_path,
+        database_url="sqlite+aiosqlite:///" + str(tmp_path / "gateway.db"))
     app = gateway.create_gateway(settings)
     token, _ = CapabilityCodec(settings.gateway_signing_key).issue(thread_id="thread-1", turn_id="turn-1",
         sandbox_id="sandbox-1", harness=Harness.CODEX, model="gpt-5.6", routes=["/v1/media"],
@@ -148,7 +150,8 @@ async def test_gateway_job_artifact_fetch_is_turn_scoped_and_redacted(tmp_path,m
     monkeypatch.setattr(gateway.Redis,'from_url',lambda *args,**kwargs:Redis())
     monkeypatch.setattr(gateway,'gateway_repositories',Store)
     monkeypatch.setattr(gateway,'object_store',lambda settings:Objects())
-    settings=Settings(backend='fake',database_url='sqlite+aiosqlite:///'+str(tmp_path/'fetch.db'))
+    settings=Settings(backend='fake',data_root=tmp_path,
+        database_url='sqlite+aiosqlite:///'+str(tmp_path/'fetch.db'))
     app=gateway.create_gateway(settings);codec=CapabilityCodec(settings.gateway_signing_key)
     endpoint=next(route.endpoint for route in app.routes
         if getattr(route,'path',None)=='/v1/job-artifacts/{artifact_id}/content')
@@ -213,7 +216,8 @@ async def test_gateway_continuously_validates_job_grant_headers_and_parameters(t
             return {"id":job_id,"thread_id":thread_id,"status":"running"}
     monkeypatch.setattr(gateway.Redis,'from_url',lambda *args,**kwargs:Redis())
     monkeypatch.setattr(gateway,'gateway_repositories',Store)
-    settings=Settings(backend='fake',database_url='sqlite+aiosqlite:///'+str(tmp_path/'job-grant.db'))
+    settings=Settings(backend='fake',data_root=tmp_path,
+        database_url='sqlite+aiosqlite:///'+str(tmp_path/'job-grant.db'))
     app=gateway.create_gateway(settings)
     parameter_digest=hashlib.sha256(json.dumps({'query':[],'body':None},sort_keys=True,
         separators=(',',':'),ensure_ascii=True).encode()).hexdigest()
@@ -280,7 +284,8 @@ async def test_job_execution_catalog_is_filtered_to_the_signed_grant(tmp_path,mo
         lambda self,availability=None:metadata)
     monkeypatch.setattr(gateway.ExecutionReadiness,'snapshot',snapshot)
     monkeypatch.setattr(gateway.MediaCatalog,'public',lambda self: [{'id':'private-media'}])
-    settings=Settings(backend='fake',database_url='sqlite+aiosqlite:///'+str(tmp_path/'catalog.db'))
+    settings=Settings(backend='fake',data_root=tmp_path,
+        database_url='sqlite+aiosqlite:///'+str(tmp_path/'catalog.db'))
     app=gateway.create_gateway(settings);codec=CapabilityCodec(settings.gateway_signing_key)
     token,_=codec.issue(thread_id='a'*32,turn_id='b'*32,sandbox_id='sandbox-1',
         harness=Harness.CODEX,model='gpt-5.6',routes=['/v1/execution/catalog'],ttl_seconds=60,
@@ -344,7 +349,8 @@ async def test_inline_artifact_inspect_is_fenced_by_job_operation_and_artifact_g
                 size=123,mime='image/png') if identity==artifact_id else None)
     monkeypatch.setattr(gateway.Redis,'from_url',lambda *args,**kwargs:Redis())
     monkeypatch.setattr(gateway,'gateway_repositories',Store)
-    settings=Settings(backend='fake',database_url='sqlite+aiosqlite:///'+str(tmp_path/'inspect.db'))
+    settings=Settings(backend='fake',data_root=tmp_path,
+        database_url='sqlite+aiosqlite:///'+str(tmp_path/'inspect.db'))
     app=gateway.create_gateway(settings);codec=CapabilityCodec(settings.gateway_signing_key)
     token,_=codec.issue(thread_id='a'*32,turn_id='b'*32,sandbox_id='sandbox-1',
         harness=Harness.CODEX,model='gpt-5.6',routes=['/v1/operations'],ttl_seconds=60,
@@ -404,7 +410,8 @@ async def test_gateway_site_prepare_is_capability_scoped_and_turn_bound(tmp_path
     monkeypatch.setattr(gateway.Redis, "from_url", lambda *args, **kwargs: Redis())
     monkeypatch.setattr(gateway, "gateway_repositories", Store)
     monkeypatch.setattr(gateway, "object_store", lambda settings: Objects())
-    settings = Settings(backend="fake", database_url="sqlite+aiosqlite:///" + str(tmp_path / "gateway.db"))
+    settings = Settings(backend="fake", data_root=tmp_path,
+        database_url="sqlite+aiosqlite:///" + str(tmp_path / "gateway.db"))
     app = gateway.create_gateway(settings)
     token, _ = CapabilityCodec(settings.gateway_signing_key).issue(thread_id="thread-1", turn_id="turn-1",
         sandbox_id="sandbox-1", harness=Harness.CODEX, model="gpt-5.6", routes=["/v1/sites"],
@@ -466,7 +473,8 @@ async def test_gateway_media_prepare_creates_turn_bound_draft(tmp_path, monkeypa
             return {"turn_id": turn_id, "status": "sealed", "draft_count": 1}
     monkeypatch.setattr(gateway.Redis, "from_url", lambda *args, **kwargs: Redis())
     monkeypatch.setattr(gateway, "gateway_repositories", Store)
-    settings = Settings(backend="fake", database_url="sqlite+aiosqlite:///" + str(tmp_path / "gateway.db"))
+    settings = Settings(backend="fake", data_root=tmp_path,
+        database_url="sqlite+aiosqlite:///" + str(tmp_path / "gateway.db"))
     app = gateway.create_gateway(settings)
     turn_id = "a" * 32
     token, _ = CapabilityCodec(settings.gateway_signing_key).issue(thread_id="thread-1", turn_id=turn_id,
@@ -523,7 +531,8 @@ async def test_gateway_media_candidate_content_and_promotion_are_thread_scoped(t
     monkeypatch.setattr(gateway.Redis, "from_url", lambda *args, **kwargs: Redis())
     monkeypatch.setattr(gateway, "gateway_repositories", Store)
     monkeypatch.setattr(gateway, "object_store", lambda settings: Objects())
-    settings = Settings(backend="fake", database_url="sqlite+aiosqlite:///" + str(tmp_path / "gateway-output.db"))
+    settings = Settings(backend="fake", data_root=tmp_path,
+        database_url="sqlite+aiosqlite:///" + str(tmp_path / "gateway-output.db"))
     app = gateway.create_gateway(settings)
     token, _ = CapabilityCodec(settings.gateway_signing_key).issue(thread_id="thread-1", turn_id="a" * 32,
         sandbox_id="sandbox-1", harness=Harness.CODEX, model="gpt-5.6", routes=["/v1/media"],
@@ -570,7 +579,8 @@ async def test_terminal_model_step_is_saved_before_last_frame_is_forwarded(tmp_p
             yield b'data: {"type":"response.completed"}\n\n'
     async def respond(*args):return httpx.Response(200,headers={'content-type':'text/event-stream'},stream=Stream())
     monkeypatch.setattr(gateway,'send_with_start_timeout',respond)
-    settings=Settings(backend='fake',database_url='sqlite+aiosqlite:///'+str(tmp_path/'gateway.db'),upstream_codex='http://upstream')
+    settings=Settings(backend='fake',data_root=tmp_path,
+        database_url='sqlite+aiosqlite:///'+str(tmp_path/'gateway.db'),upstream_codex='http://upstream')
     app=gateway.create_gateway(settings)
     token,_=CapabilityCodec(settings.gateway_signing_key).issue(thread_id='thread',turn_id='turn',sandbox_id='sandbox',
         harness=Harness.CODEX,model='gpt-5.6',routes=['/v1/models/codex'],ttl_seconds=60,max_requests=10,max_public_requests=1,token_budget=1000)
