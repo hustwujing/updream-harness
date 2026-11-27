@@ -142,3 +142,27 @@ async def test_expired_active_clone_rotates_voice_id_before_recreation(monkeypat
         "references":[ref]})
     assert result=="updream_rotated_voice" and store.record["revision"]==2
     assert clone.posts[0][1]["json"]["voice_id"]=="updream_rotated_voice"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_voice_id_rotates_once_and_retries_with_same_frozen_audio(monkeypatch):
+    data=b"synthetic speech bytes";store=Store();ref=reference(data)
+    value=MiniMaxVoiceClones(SimpleNamespace(upstream_audio="https://audio.test/v1"),
+        store,Objects(data),"worker")
+    async def missing(_):return False
+    monkeypatch.setattr(value,"voice_exists",missing)
+    upload_one=Client([Response({"file":{"file_id":123},"base_resp":{"status_code":0}})])
+    duplicate=Client([Response({"demo_audio":"","base_resp":{"status_code":2039,
+        "status_msg":"voice clone voice id duplicate"}})])
+    upload_two=Client([Response({"file":{"file_id":456},"base_resp":{"status_code":0}})])
+    clone_two=Client([Response({"demo_audio":"https://result.test/demo.mp3",
+        "base_resp":{"status_code":0}})])
+    clients=[upload_one,duplicate,upload_two,clone_two]
+    async def factory():return clients.pop(0)
+    monkeypatch.setattr(value,"_client",factory)
+    result=await value.prepare({"id":"job","generation":1,"owner_id":"a"*64,
+        "model":"speech-2.8-turbo","references":[ref]})
+    assert result=="updream_rotated_voice"
+    assert store.record["revision"]==2 and store.record["status"]=="active"
+    assert duplicate.posts[0][1]["json"]["voice_id"]=="updream_test_voice"
+    assert clone_two.posts[0][1]["json"]["voice_id"]=="updream_rotated_voice"

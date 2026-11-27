@@ -10,11 +10,18 @@ import httpx
 
 from sandbox_harness.common.contracts.domain import (now)
 from sandbox_harness.services.media_worker.media_errors import (classify_provider_error)
+from sandbox_harness.common.contracts.public_errors import (external_error_detail)
 from sandbox_harness.common.observability.observability import (event)
 from sandbox_harness.common.observability.http import (observed_async_client)
 
 
 class MiniMaxVoiceCloneError(RuntimeError):
+    def __init__(self,code:str,detail:str=""):
+        self.code=code;self.detail=detail
+        super().__init__(code)
+
+
+class MiniMaxVoiceCloneDuplicate(MiniMaxVoiceCloneError):
     pass
 
 
@@ -113,9 +120,13 @@ class MiniMaxVoiceClones:
         if exists is None or failure in {"provider_rate_limited", "provider_service_unavailable"}:
             raise MiniMaxVoiceClonePending("voice_clone_rate_limited" if failure == "provider_rate_limited"
                 else "voice_clone_provider_transient")
+        detail=external_error_detail(code or failure,
+            body.get("base_resp",{}).get("status_msg") or "Provider voice cloning failed")
+        if code==2039:
+            raise MiniMaxVoiceCloneDuplicate("voice_clone_id_duplicate",detail)
         raise MiniMaxVoiceCloneError("voice_clone_permission_denied" if code == 2038
             else "voice_clone_input_invalid" if failure == "provider_input_invalid"
-            else failure if failure != "provider_processing_failed" else "voice_clone_failed")
+            else failure if failure != "provider_processing_failed" else "voice_clone_failed",detail)
 
     async def prepare(self, job: dict) -> str:
         references = job.get("references") or []
@@ -126,6 +137,7 @@ class MiniMaxVoiceClones:
         if (record["status"] == "active" and record["last_used_at"]
                 and record["last_used_at"] >= now() - self.fresh_for):
             return record["voice_id"]
+        duplicate_rotations=0
         for _ in range(120):
             record, claimed = await self.store.claim_media_voice_clone(job["owner_id"],
                 reference["sha256"], self.worker_owner)
@@ -181,6 +193,17 @@ class MiniMaxVoiceClones:
                 event("media.voice_clone.ready", job_id=job["id"],
                     reference_sha256=reference["sha256"][:12])
                 return record["voice_id"]
+            except MiniMaxVoiceCloneDuplicate as exc:
+                if duplicate_rotations>=1:
+                    await self.store.update_media_voice_clone(job["owner_id"], reference["sha256"],
+                        self.worker_owner,status="failed",error_code="voice_clone_failed",release=True)
+                    raise MiniMaxVoiceCloneError("voice_clone_failed",exc.detail) from exc
+                record=await self.store.rotate_media_voice_clone(job["owner_id"],
+                    reference["sha256"],self.worker_owner)
+                duplicate_rotations+=1
+                event("media.voice_clone.identity_rotated",level=30,job_id=job["id"],
+                    revision=record["revision"])
+                continue
             except MiniMaxVoiceClonePending as exc:
                 await self.store.update_media_voice_clone(job["owner_id"], reference["sha256"],
                     self.worker_owner, status="uncertain", error_code=str(exc), release=True)
