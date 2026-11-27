@@ -89,6 +89,19 @@ claims made by documentation.
 - A local edit is not a deployment. A previous test report is not evidence for
   the current revision.
 
+## Domestic Mirrors And Caches
+
+- On this host, use an available domestic mirror for package, browser and other
+  large dependency downloads. Keep every download cache under this checkout's
+  `.data` directory; never fall back to a root-partition cache.
+- Install Playwright browsers with
+  `PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright` and
+  `PLAYWRIGHT_BROWSERS_PATH=$PWD/.data/playwright-browsers`. Do not download
+  Playwright browsers from the default international CDN when the domestic
+  mirror is available.
+- Configure npm and Python package tools with a domestic registry or index for
+  downloads while preserving the repository lockfile and hash checks.
+
 ## Documentation
 
 Development instructions live under `docs/development/`. Keep this file as the
