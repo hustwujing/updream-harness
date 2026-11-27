@@ -110,6 +110,9 @@ def freeze_environment(source: Path, output_root: Path) -> Path:
     output_root.mkdir(parents=True, exist_ok=True)
     output_root.chmod(0o755)
     rows = _tree_rows(source)
+    for row in rows:
+        if row["kind"] == "file":
+            row["mode"] = 0o755 if row["mode"] & 0o111 else 0o644
     payload = {"schema_version":1,"kind":"python-environment","files":rows}
     digest = hashlib.sha256(_encode(payload)).hexdigest()
     payload["digest"] = digest
@@ -131,6 +134,12 @@ def freeze_environment(source: Path, output_root: Path) -> Path:
             path.unlink()
         for path in list(staging.rglob("sandbox_harness_platform_parallel-*.dist-info")):
             shutil.rmtree(path)
+        for path in staging.rglob("*"):
+            if path.is_dir():
+                path.chmod(0o755)
+        for row in rows:
+            if row["kind"] == "file":
+                (staging / row["path"]).chmod(row["mode"])
         (staging / "manifest.json").write_bytes(_encode(payload))
         (staging / "manifest.json").chmod(0o444);staging.chmod(0o555)
         staging.rename(target)

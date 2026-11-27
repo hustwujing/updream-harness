@@ -73,6 +73,16 @@ def test_service_release_selects_verified_source_and_environment_atomically(tmp_
     assert json.loads(descriptor.read_text())["manifest"]==str(manifest.resolve())
 
 
+def test_frozen_environment_normalizes_files_for_unprivileged_service_reads(tmp_path):
+    tool=release_tool();_,environment=project(tmp_path)
+    python=environment/"bin/python";python.chmod(0o751)
+    package=environment/"lib/python3.13/site-packages/value.py";package.chmod(0o640)
+    manifest=tool.freeze_environment(environment,tmp_path/"dependency-environments")
+    frozen=manifest.parent
+    assert (frozen/"bin/python").stat().st_mode&0o777==0o755
+    assert (frozen/"lib/python3.13/site-packages/value.py").stat().st_mode&0o777==0o644
+
+
 def test_service_release_rejects_source_and_environment_tampering(tmp_path):
     tool,data,manifest,env=built(tmp_path)
     value=json.loads(manifest.read_text())
