@@ -46,6 +46,6 @@ circuits, object garbage collection, Usage Ledger or execution-stage projection.
 
 Run focused SQLite tests, disposable PostgreSQL concurrency tests and the
 affected EVO real cases. A release requires the full Python/frontend/module
-gates, an impact-assessed 195-case composite with current evidence for every
+gates, an impact-assessed 196-case composite with current evidence for every
 changed contract, immutable release compatibility evidence, service restart
 recovery and cleanup of test resources.
