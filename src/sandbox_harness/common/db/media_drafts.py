@@ -44,8 +44,8 @@ class MediaDraftsTransactions:
             progress=row.progress,provider_started_at=(utc_datetime(row.provider_started_at)
                 if row.provider_started_at else None),provider_last_checked_at=last_checked,
             provider_next_check_at=(last_checked+timedelta(seconds=15) if last_checked else None),
-            provider_poll_attempts=max(0,row.generation),
-            provider_recovered=bool(row.provider_job_id and row.generation>1),
+            provider_poll_attempts=max(0,int(row.generation or 0)),
+            provider_recovered=bool(row.provider_job_id and int(row.generation or 0)>1),
             provider_job_short_id=(row.provider_job_id[:8] if row.provider_job_id else ""),
             error_code=row.error_code or "", error_detail=row.error_detail or "",
             error_message=error.get('error_message',''),
