@@ -202,7 +202,7 @@ class MiniMaxVoiceClones:
                     reference["sha256"],self.worker_owner)
                 duplicate_rotations+=1
                 event("media.voice_clone.identity_rotated",level=30,job_id=job["id"],
-                    revision=record["revision"])
+                    generation=record["revision"])
                 continue
             except MiniMaxVoiceClonePending as exc:
                 await self.store.update_media_voice_clone(job["owner_id"], reference["sha256"],
