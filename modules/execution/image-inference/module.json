@@ -5,7 +5,8 @@
   "location": "host",
   "sources": [
     "deploy/ali/isolate-image-service.py",
-    "deploy/ali/materialize-image-decompose.sh"
+    "deploy/ali/materialize-image-decompose.sh",
+    "deploy/ali/image-inference-overlay-requirements.txt"
   ],
   "source_roots": [],
   "entry_points": {

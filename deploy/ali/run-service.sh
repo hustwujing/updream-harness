@@ -117,7 +117,7 @@ case "$component" in
     export SANDBOX_HARNESS_RELEASE=${image_release[2]}
     [[ -f "$service_root/service/app.py" ]] || { echo "image decompose service is not materialized" >&2; exit 1; }
     "$root/.venv/bin/python" "$root/deploy/ali/isolate-image-service.py"
-    export PYTHONPATH="$service_root:${PYTHONPATH:-}"
+    export PYTHONPATH="$service_root/python-packages:$service_root"
     command=("$image_python" -m uvicorn
       service.app:app --host 127.0.0.1 --port 8912 --no-access-log)
     ;;

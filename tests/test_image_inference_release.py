@@ -29,3 +29,15 @@ def test_external_image_release_build_resolve_and_tamper(tmp_path):
     (root/"service/app.py").write_text("APP=2\n")
     with pytest.raises(ValueError,match="image_inference_code_changed"):
         module.resolve(data)
+
+
+def test_external_image_release_tracks_private_dependency_overlay(tmp_path):
+    module=tool();root,python=fixture(tmp_path);data=tmp_path/"data"
+    dependency=root/"python-packages/itsdangerous/__init__.py"
+    dependency.parent.mkdir(parents=True);dependency.write_text("VERSION='2.2.0'\n")
+    manifest=module.build(root,python,data)
+    value=__import__("json").loads(manifest.read_text())
+    assert any(row["path"]=="python-packages/itsdangerous/__init__.py" for row in value["code"])
+    dependency.write_text("VERSION='tampered'\n")
+    with pytest.raises(ValueError,match="image_inference_code_changed"):
+        module.resolve(data)

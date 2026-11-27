@@ -29,7 +29,9 @@ def _sha(path):
 
 def _code_paths(root):
     values=[]
-    for directory in ("service","media_core","web"):
+    for directory in ("service","media_core","web","python-packages"):
+        if not (root/directory).is_dir():
+            continue
         values.extend(path for path in (root/directory).rglob("*")
                       if path.is_file() and "__pycache__" not in path.parts
                       and path.suffix!=".pyc")
