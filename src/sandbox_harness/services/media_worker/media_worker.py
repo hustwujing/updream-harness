@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
 import av
@@ -410,8 +410,13 @@ class MediaWorker:
                 raise MediaReferencePreparationError("invalid_ark_asset_uri")
             return value
         parsed = urlsplit(value)
-        prefix = "/updream/aniforge/" + reference.get("kind", "image") + "/"
-        if (parsed.scheme != "https" or parsed.netloc != "boss-shjd.biliapi.net"
+        public=urlsplit(str(self.settings.object_public_endpoint).rstrip("/"))
+        media_prefix=str(self.settings.media_reference_prefix).strip("/")
+        kind=str(reference.get("kind") or "image")
+        prefix=(public.path.rstrip("/")+"/"+quote(str(self.settings.object_bucket),safe="")+
+            "/"+quote(media_prefix,safe="/")+"/"+quote(kind,safe="")+"/")
+        if (public.scheme!="https" or public.query or public.fragment
+                or parsed.scheme != public.scheme or parsed.netloc != public.netloc
                 or not parsed.path.startswith(prefix) or parsed.query or parsed.fragment):
             raise MediaReferencePreparationError("unstable_or_internal_media_reference_url")
         return value

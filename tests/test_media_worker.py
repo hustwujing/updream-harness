@@ -81,6 +81,8 @@ class Objects:
 def worker(store=None, objects=None):
     settings = SimpleNamespace(upstream_image="http://image.test", upstream_video="http://video.test",
         upstream_audio="http://audio.test", ark_control_endpoint="https://ark.test",
+        object_public_endpoint="https://boss-shjd.biliapi.net",object_bucket="updream",
+        media_reference_prefix="aniforge",
         ark_access_key="", ark_secret_key="", ark_project_name="default",
         ark_asset_group_id="", ark_asset_group_type="AIGC",
         tripo_base_url="https://tripo.test/v3", tripo_api_key="test-key",
@@ -553,6 +555,13 @@ async def test_provider_reference_rejects_internal_or_presigned_urls(url):
     value=worker()
     with pytest.raises(MediaReferencePreparationError,match="unstable_or_internal"):
         await value._reference_url({"public_url":url})
+
+
+@pytest.mark.asyncio
+async def test_provider_reference_accepts_configured_isolated_prefix():
+    value=worker();value.settings.media_reference_prefix="aniforge/wujing02"
+    url="https://boss-shjd.biliapi.net/updream/aniforge/wujing02/image/ref.png"
+    assert await value._reference_url({"public_url":url,"kind":"image"})==url
 
 
 @pytest.mark.asyncio
