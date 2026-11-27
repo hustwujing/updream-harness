@@ -24,6 +24,26 @@ export function modelRoundPhaseLabel(round={}){
  return '等待响应';
 }
 
+export function indexModelActivityRounds(items=[]){
+ const counters=new Map(),result=new Map();
+ for(const item of Array.isArray(items)?items:[]){
+  if(!item?.payload?.model_request_id)continue;
+  const key=String(item.payload.job_id||''),index=(counters.get(key)||0)+1;
+  counters.set(key,index);result.set(item.id,{index,scope:key?'子任务':'主任务'});
+ }
+ return result;
+}
+
+export function modelActivityTitle(item={},round={}){
+ if(!item?.payload?.model_request_id)return '';
+ const model=item.payload.model||'模型',prefix=`${round.scope||'主任务'} · 第 ${round.index||1} 轮 · `;
+ if(item.status==='failed')return `${prefix}${model} 请求失败`;
+ if(item.status==='interrupted')return `${prefix}${model} 请求已结束`;
+ if(item.status==='completed'||item.payload.phase==='completed')return `${prefix}${model} 响应完成`;
+ if(item.payload.phase==='streaming')return `${prefix}${model} 正在输出`;
+ return `${prefix}等待 ${model} 响应`;
+}
+
 export function modelRoundSummary(rounds=[],now=Date.now()){
  const values=Array.isArray(rounds)?rounds:[];
  const completed=values.filter(round=>round.status==='completed').length;

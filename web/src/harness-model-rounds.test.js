@@ -1,6 +1,7 @@
 import {describe,expect,it} from 'vitest';
 
-import {modelRoundDuration,modelRoundPhaseLabel,modelRoundSummary,modelRoundTokenTotal} from './harness-model-rounds';
+import {indexModelActivityRounds,modelActivityTitle,modelRoundDuration,modelRoundPhaseLabel,
+ modelRoundSummary,modelRoundTokenTotal} from './harness-model-rounds';
 
 const now=Date.parse('2026-11-27T12:00:12Z');
 
@@ -33,5 +34,19 @@ describe('model round visibility',()=>{
   expect(modelRoundTokenTotal({ordinary_input_tokens:10,cache_read_input_tokens:null,
    cache_write_input_tokens:undefined,output_tokens:'bad'})).toBe(10);
   expect(modelRoundPhaseLabel({status:'in_progress',phase:'waiting'})).toBe('等待响应');
+ });
+
+ it('numbers primary and each child harness independently for chat activity',()=>{
+  const items=[
+   {id:'p1',payload:{model_request_id:'p1',job_id:'',model:'gpt-5.6',phase:'completed'},status:'completed'},
+   {id:'c1',payload:{model_request_id:'c1',job_id:'job-a',model:'gpt-5.6',phase:'completed'},status:'completed'},
+   {id:'p2',payload:{model_request_id:'p2',job_id:'',model:'gpt-5.6',phase:'streaming'},status:'in_progress'},
+   {id:'c2',payload:{model_request_id:'c2',job_id:'job-a',model:'gpt-5.6',phase:'waiting'},status:'in_progress'},
+   {id:'d1',payload:{model_request_id:'d1',job_id:'job-b',model:'gpt-5.6',phase:'failed'},status:'failed'},
+  ],rounds=indexModelActivityRounds(items);
+  expect([...rounds.values()].map(value=>[value.scope,value.index])).toEqual([
+   ['主任务',1],['子任务',1],['主任务',2],['子任务',2],['子任务',1]]);
+  expect(modelActivityTitle(items[2],rounds.get('p2'))).toBe('主任务 · 第 2 轮 · gpt-5.6 正在输出');
+  expect(modelActivityTitle(items[3],rounds.get('c2'))).toBe('子任务 · 第 2 轮 · 等待 gpt-5.6 响应');
  });
 });

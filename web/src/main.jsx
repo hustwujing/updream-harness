@@ -10,6 +10,7 @@ import codexIcon from './assets/harness/codex.png';
 import claudeIcon from './assets/harness/claude.svg';
 import deepseekIcon from './assets/harness/deepseek.ico';
 import {activityTiming,formatDuration} from './activity-time';
+import {indexModelActivityRounds,modelActivityTitle} from './harness-model-rounds';
 import {previewKind,previewable} from './file-preview';
 import {visibleNetworkAccess} from './network-access';
 import './styles.css';
@@ -66,7 +67,7 @@ function displayItem(item,turn){
  return item;
 }
 
-function activityName(item){if(item.payload?.model_request_id&&item.status==='interrupted')return `${item.payload.model} 请求已结束`;if(item.type==='plan')return ({'Codex response':'Codex 本轮响应','Claude response':'Claude 本轮响应','Input completed':'输入处理结果'}[item.summary]||item.summary||'执行阶段');if(item.type==='warning')return item.payload?.code||'警告';if(item.type==='error')return '执行错误';const name=String(item.summary||item.payload?.name||'').toLowerCase(),labels={bash:'执行命令',commandexecution:'执行命令',read:'读取文件',write:'写入文件',edit:'修改文件',filechange:'修改文件',read_image:'查看图片',imageview:'查看图片',job_output:'等待后台任务',todo_write:'更新任务计划'};return labels[name]||(!name||name==='tool'||name==='tool_output'?'工具调用':item.summary||item.payload?.name)}
+function activityName(item,round){if(item.payload?.model_request_id)return modelActivityTitle(item,round);if(item.type==='plan')return ({'Codex response':'Codex 本轮响应','Claude response':'Claude 本轮响应','Input completed':'输入处理结果'}[item.summary]||item.summary||'执行阶段');if(item.type==='warning')return item.payload?.code||'警告';if(item.type==='error')return '执行错误';const name=String(item.summary||item.payload?.name||'').toLowerCase(),labels={bash:'执行命令',commandexecution:'执行命令',read:'读取文件',write:'写入文件',edit:'修改文件',filechange:'修改文件',read_image:'查看图片',imageview:'查看图片',job_output:'等待后台任务',todo_write:'更新任务计划'};return labels[name]||(!name||name==='tool'||name==='tool_output'?'工具调用':item.summary||item.payload?.name)}
 function activityDetail(item){if(item.payload?.model_request_id){const p=item.payload;return [p.phase==='waiting'?'正在等待模型生成内容':p.first_output_ms!=null?`等待首次输出 ${formatDuration(p.first_output_ms)}`:'未收到有效输出',p.http_status?`HTTP ${p.http_status}`:'',p.error_code||''].filter(Boolean).join(' · ')}if(item.type==='error'||item.type==='warning')return item.summary||compactValue(item.payload?.detail)||item.status;const detail=parsedToolDetail(item),command=detail?.command||detail?.cmd,description=detail?.description,resource=detail?.file_path||detail?.filePath||detail?.path,query=detail?.query;const useful=description||resource||query||(typeof command==='string'?command.split('\n').find(Boolean):'');const result=item.status==='failed'&&compactValue(item.payload?.result);return result||useful||compactValue(item.payload?.text)||({in_progress:'执行中',completed:'已完成',failed:'失败',interrupted:'已中断'}[item.status]||item.status)}
 function ActivityStatus({status,active}){if(status==='in_progress'&&active)return <LoaderCircle className="activity-status running" size={14} aria-label="执行中"/>;if(status==='completed')return <CircleCheck className="activity-status completed" size={14} aria-label="执行完成"/>;return <CircleX className="activity-status failed" size={14} aria-label={status==='interrupted'||status==='in_progress'?'执行中断':'执行错误'}/>}
 
@@ -92,9 +93,10 @@ function Activity({items,active,endedAt}){
  const timing=active&&items.some(item=>item.status==='in_progress');
  useEffect(()=>{if(!timing)return;setNow(Date.now());const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer)},[timing]);
  if(!items.length)return null;
- const running=items.filter(item=>item.status==='in_progress'),history=items.filter(item=>item.status!=='in_progress');
- const summary=active?`正在执行 ${running.length} · 已记录 ${history.length}`:`${history.length} 个执行步骤`;
- const row=item=>{const elapsed=activityTiming(item,active,now,endedAt);return <div className={`activity-row ${item.status}`} key={item.id}><ActivityStatus status={item.status} active={active}/><span><b>{activityName(item)}</b><small title={activityDetail(item)}>{activityDetail(item)}</small></span><time className={`activity-duration ${elapsed.running?'running':''}`} aria-label={elapsed.label}>{elapsed.label}</time></div>};
+ const running=items.filter(item=>item.status==='in_progress'),history=items.filter(item=>item.status!=='in_progress'),modelRounds=indexModelActivityRounds(items);
+ const progress=active?`正在执行 ${running.length} · 已记录 ${history.length}`:`${history.length} 个执行步骤`;
+ const summary=`${modelRounds.size?`模型 ${modelRounds.size} 轮 · `:''}${progress}`;
+ const row=item=>{const elapsed=activityTiming(item,active,now,endedAt);return <div className={`activity-row ${item.status}`} key={item.id}><ActivityStatus status={item.status} active={active}/><span><b>{activityName(item,modelRounds.get(item.id))}</b><small title={activityDetail(item)}>{activityDetail(item)}</small></span><time className={`activity-duration ${elapsed.running?'running':''}`} aria-label={elapsed.label}>{elapsed.label}</time></div>};
  const runningMiddle=running.length>5?running.slice(2,-3):[],runningStart=runningMiddle.length?running.slice(0,2):running,runningEnd=runningMiddle.length?running.slice(-3):[];
  const olderHistory=history.length>8?history.slice(0,-8):[],recentHistory=olderHistory.length?history.slice(-8):history;
  return <details className="activity" open={active}><summary><span className={running.length?'activity-pulse':''}></span><b>{summary}</b><ChevronDown size={14}/></summary><div>
