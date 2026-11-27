@@ -53,8 +53,103 @@
   color: #4f735e;
 }
 
+.harness-model-round-summary {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+  margin: 9px 0 0;
+  color: #526b5b;
+  font-size: 9px;
+}
+
+.harness-model-round-summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.harness-model-round-summary small {
+  color: #8a7164;
+  font-size: 8px;
+}
+
+.harness-model-rounds {
+  margin-top: 7px;
+  border-top: 1px solid #e4e9e4;
+}
+
+.harness-model-rounds > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 31px;
+  color: #6d766f;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.harness-model-rounds > summary strong {
+  color: #4f5d53;
+  font-weight: 600;
+}
+
+.harness-model-rounds > div {
+  max-height: 260px;
+  overflow-y: auto;
+  border-top: 1px solid #edf0ed;
+}
+
+.model-round {
+  display: grid;
+  gap: 3px;
+  padding: 7px 1px;
+  border-bottom: 1px solid #edf0ed;
+}
+
+.model-round header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  font-size: 9px;
+}
+
+.model-round header b {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-round header span {
+  color: #557560;
+}
+
+.model-round.failed header span,
+.model-round.interrupted header span {
+  color: #ae5d4e;
+}
+
+.model-round time,
+.model-round small {
+  color: #7d857f;
+  font-size: 8px;
+}
+
+.model-round small {
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 700px) {
   .harness-token-usage > div {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .model-round header {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .model-round time {
+    grid-column: 1 / -1;
   }
 }

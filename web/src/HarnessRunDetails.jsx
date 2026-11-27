@@ -1,8 +1,9 @@
 import React,{useEffect,useRef,useState} from 'react';
-import {CircleAlert,CircleCheck,Clock3,LoaderCircle,MapPin} from 'lucide-react';
+import {CircleAlert,CircleCheck,Clock3,LoaderCircle,MapPin,MessagesSquare} from 'lucide-react';
 import {apiUrl} from './api';
 import {formatDuration} from './activity-time';
 import {buildHarnessTimeline,currentHarnessStage} from './harness-activity';
+import {modelRoundDuration,modelRoundPhaseLabel,modelRoundSummary,modelRoundTokenTotal} from './harness-model-rounds';
 import {executionActivityCategory,executionActivityCategoryLabel,executionActivityDetail,executionActivityHasFullDetail} from './execution-activities';
 import './harness-run-details.css';
 import './harness-token-usage.css';
@@ -34,6 +35,22 @@ function StageIcon({status,active}){
  if(status==='completed')return <CircleCheck size={14}/>;
  return active?<LoaderCircle className="harness-stage-spinner" size={14}/>:<Clock3 size={14}/>;
 }
+function ModelRounds({node,now}){
+ const rounds=Array.isArray(node.model_rounds)?node.model_rounds:[],summary=modelRoundSummary(rounds,now);
+ if(!rounds.length)return null;
+ return <><p className="harness-model-round-summary"><MessagesSquare size={12}/><span>{summary.label}</span>
+  {node.model_rounds_truncated&&<small>部分数据</small>}</p>
+  <details className="harness-model-rounds">
+   <summary><span>模型轮次明细</span><strong>{summary.total} 轮</strong></summary>
+   <div>{rounds.map(round=>{const tokens=modelRoundTokenTotal(round),phase=modelRoundPhaseLabel(round);
+    return <article className={`model-round ${round.status||'in_progress'}`} key={round.request_id||round.index}>
+     <header><b>第 {round.index} 轮</b><span>{phase}</span><time>{formatDuration(modelRoundDuration(round,now))}</time></header>
+     <small>{round.model||node.model||'模型'}
+      {round.first_output_ms!=null?` · 首输出 ${formatDuration(Number(round.first_output_ms))}`:''}
+      {tokens>0?` · ${formatCompactTokens(tokens)} tokens`:' · 用量待返回'}</small>
+    </article>})}</div>
+  </details></>;
+}
 
 export default function HarnessRunDetails({node,activities=[],progress=null,now=Date.now(),activityError=''}){
  const timeline=buildHarnessTimeline(activities,node,now),current=currentHarnessStage(timeline,node);
@@ -51,6 +68,7 @@ export default function HarnessRunDetails({node,activities=[],progress=null,now=
    <div>{tokenMetrics.map(([kind,label,field])=><div className="harness-token-metric" key={`${node.id}:${kind}`}>
     <small>{label}</small><AnimatedToken nodeId={node.id} kind={kind} value={node.token_usage?.[field]}/>
    </div>)}</div>
+   <ModelRounds node={node} now={now}/>
   </section>
   {progress&&progress.total>0&&<section className="harness-child-progress">
    <header><b>子任务进度</b><span>{progress.terminal}/{progress.total}</span></header>

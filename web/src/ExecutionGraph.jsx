@@ -894,6 +894,7 @@ export default function ExecutionGraph({ thread, items = [] }) {
                           <Clock3 size={10} />
                           {formatDuration(elapsed(node, now))}
                           {node.retries ? ` · 重试 ${node.retries}` : ""}
+                          {node.harness_view&&node.model_rounds?.length?` · ${node.model_rounds.length} 轮`:""}
                           {node.harness_view&&tokenUsageTotal(node.token_usage)>0?` · ${formatCompactTokens(tokenUsageTotal(node.token_usage))} tokens${node.token_usage_truncated?' 部分':''}`:""}
                         </small>
                         {node.type === "job_group" && (
