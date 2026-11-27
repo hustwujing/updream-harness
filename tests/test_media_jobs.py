@@ -187,6 +187,7 @@ async def test_media_continuation_waits_for_every_image_and_video_job(tmp_path):
                 output_mime="image/png" if job.kind == "image" else "video/mp4", output_size=10)
         ready, group = await store.media_continuation_group(turn.id)
         assert ready is False and len(group) == 4
+        assert await store.claim_media_batches("dispatcher") == []
         await store.update_media_job(jobs[-1].id, "worker", generations[jobs[-1].id],
             status="failed", phase="failed",
             error_code="provider_processing_failed", error_detail="provider failed")

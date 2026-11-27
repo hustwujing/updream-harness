@@ -13,7 +13,7 @@ from sandbox_harness.common.contracts.media_provider import MediaCancellationReq
 from .domain_database import DomainDatabase
 from .lifecycle import LifecycleParticipant
 from .media_drafts import MediaDraftsTransactions
-from .media_jobs import MediaJobsTransactions
+from .media_jobs import MediaJobsTransactions, media_batch_ready_predicates
 from .media_models import MediaSourcePermitRow
 from .media_references import MediaReferencesTransactions
 from .models import (MediaBatchRow, MediaDraftRow, MediaExecutionRow, MediaJobOutputRow,
@@ -353,18 +353,20 @@ class MediaRepository(DomainDatabase, MediaReferencesTransactions,
         return ready, group
 
     async def claim_media_batches(self, owner, limit=20):
+        timestamp=now()
         async with self.transaction() as db:
             rows = list((await db.scalars(select(MediaBatchRow).where(
                 MediaBatchRow.origin_finished.is_(True),
                 MediaBatchRow.status.in_(["sealed", "delivering"]),
                 or_(MediaBatchRow.lease_expires_at.is_(None),
-                    MediaBatchRow.lease_expires_at < now())).order_by(
+                    MediaBatchRow.lease_expires_at < timestamp),
+                *media_batch_ready_predicates(timestamp)).order_by(
                         MediaBatchRow.created_at).limit(limit).with_for_update())).all())
             result = []
             for row in rows:
                 row.status = "delivering"; row.lease_owner = owner
-                row.lease_expires_at = now() + timedelta(seconds=60)
-                row.attempt_count += 1; row.updated_at = now()
+                row.lease_expires_at = timestamp + timedelta(seconds=60)
+                row.attempt_count += 1; row.updated_at = timestamp
                 result.append({"turn_id":row.turn_id,"thread_id":row.thread_id,
                                "owner_id":row.owner_id})
             return result

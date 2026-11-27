@@ -38,6 +38,7 @@ async def test_media_draft_and_terminal_seal_cross_databases(tmp_path):
         await core.set_turn_state(turn.id,TurnState.COMPLETED)
         await commands.relay_pending()
         assert (await media.media_batch_status(turn.id,"owner"))["status"]=="sealed"
+        assert await media.claim_media_batches("dispatcher")==[]
     finally:
         for repository in (core,media,sites):await repository.close()
 

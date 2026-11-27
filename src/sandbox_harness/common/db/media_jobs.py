@@ -4,12 +4,32 @@ import json
 import re
 from datetime import (timedelta)
 from pathlib import (PurePosixPath)
-from sqlalchemy import (case, or_, func, select, update)
+from sqlalchemy import (and_, case, or_, func, select, update)
 from sandbox_harness.common.contracts.domain import (ItemType, TERMINAL, identifier, now, MediaDraftView, MediaJobView, MediaJobOutputView)
 from sandbox_harness.common.contracts.media_errors import (media_error_guidance)
 from sandbox_harness.common.contracts.media_provider import (MediaCancellationRequested)
 from sandbox_harness.common.contracts.job_contracts import (JobState, JobRequest, TERMINAL_JOB_STATES)
 from .models import (ArtifactRow, ItemRow, JobAttemptRow, JobLeaseRow, JobRow, MediaBatchRow, MediaDraftRow, MediaExecutionRow, MediaJobOutputRow, MediaJobRow, MediaOutboxRow, ProjectFileRow, ThreadRow, TurnRow, canonical_digest, canonical_json, utc_datetime)
+
+
+def media_batch_ready_predicates(timestamp):
+    terminal_job = select(MediaJobRow.id).where(
+        MediaJobRow.draft_id == MediaDraftRow.id,
+        MediaJobRow.status.in_({"succeeded", "failed", "cancelled", "unknown"}),
+    ).exists()
+    draft_present = select(MediaDraftRow.id).where(
+        MediaDraftRow.turn_id == MediaBatchRow.turn_id).exists()
+    incomplete_draft = select(MediaDraftRow.id).where(
+        MediaDraftRow.turn_id == MediaBatchRow.turn_id,
+        or_(
+            and_(MediaDraftRow.status == "awaiting_confirmation",
+                MediaDraftRow.expires_at > timestamp),
+            and_(MediaDraftRow.status == "confirmed", ~terminal_job),
+            MediaDraftRow.status.not_in({"awaiting_confirmation", "confirmed",
+                "cancelled", "expired"}),
+        ),
+    ).exists()
+    return draft_present, ~incomplete_draft
 
 
 class MediaJobsTransactions:
@@ -335,17 +355,24 @@ class MediaJobsTransactions:
 
 
     async def claim_media_batches(self, owner: str, limit: int = 20) -> list[dict]:
+        timestamp = now()
+        origin_finished = select(TurnRow.id).where(
+            TurnRow.id == MediaBatchRow.turn_id,
+            TurnRow.state.in_({state.value for state in TERMINAL})).exists()
         async with self.connections.begin() as db:
             rows = (await db.execute(select(MediaBatchRow).join(ThreadRow,
                 ThreadRow.id==MediaBatchRow.thread_id).where(ThreadRow.archived_at.is_(None),
                 MediaBatchRow.status.in_(["sealed", "delivering"]),
-                or_(MediaBatchRow.lease_expires_at.is_(None), MediaBatchRow.lease_expires_at < now()),
+                or_(MediaBatchRow.lease_expires_at.is_(None),
+                    MediaBatchRow.lease_expires_at < timestamp),
+                origin_finished,
+                *media_batch_ready_predicates(timestamp),
             ).order_by(MediaBatchRow.created_at).limit(limit).with_for_update())).scalars().all()
             result = []
             for row in rows:
                 row.status = "delivering"; row.lease_owner = owner
-                row.lease_expires_at = now() + timedelta(seconds=60)
-                row.attempt_count += 1; row.updated_at = now()
+                row.lease_expires_at = timestamp + timedelta(seconds=60)
+                row.attempt_count += 1; row.updated_at = timestamp
                 result.append({"turn_id": row.turn_id, "thread_id": row.thread_id,
                     "owner_id": row.owner_id})
             return result
