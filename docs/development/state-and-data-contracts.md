@@ -149,7 +149,10 @@ The business Job outcome and cleanup are separate durable facts.
 `job_cleanups` retains the immutable adapter/external acceptance receipt,
 claim lease, retry count and last error. A successful Job remains successful
 while cleanup is pending; workers retry idempotent revoke/Sandbox/resource
-release across restart until completed. Group terminalization releases unused
+release across restart until completed. Failed cleanup claims persist an
+exponential retry delay in `claim_expires_at` (two seconds through a five-minute
+ceiling); pending cleanup is not immediately reclaimable, while unknown
+ownership and capacity remain retained. Group terminalization releases unused
 budget and creates its continuation outbox in the same transaction.
 Resource reservations remain capacity-authoritative while their state is
 `reserved` or `running`; TTL expiry alone never makes an exclusive GPU reusable.

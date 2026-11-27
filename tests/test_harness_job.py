@@ -18,6 +18,16 @@ from sandbox_harness.common.sandbox.runtime import (StagedRuntimeObject)
 from test_support.legacy_store import (Store)
 
 
+async def make_cleanup_due(store,job_id):
+    from sqlalchemy import select
+    from sandbox_harness.common.contracts.domain import now
+    from test_support.legacy_store import JobCleanupRow
+    async with store.connections.begin() as db:
+        row=await db.scalar(select(JobCleanupRow).where(
+            JobCleanupRow.job_id==job_id).with_for_update())
+        row.claim_expires_at=now()
+
+
 def sandbox_receipt(sandbox,**extra):
     return {"sandbox_id":sandbox.id,"sandbox_handle":sandbox.handle.to_mapping(),**extra}
 
@@ -905,7 +915,9 @@ async def test_cancelled_allocation_retains_durable_cleanup_and_recovery(
                 assert runtime.starts==0 and await store.latest_job_acceptance(job.id) is None
                 assert await store.pending_job_cleanup_ids()=={job.id}
                 assert await adapter.scheduler.active_reservation(job.id) is not None
-                provider.visible=True;await worker.run_cleanup_once()
+                provider.visible=True
+                assert await worker.run_cleanup_once()==0
+                await make_cleanup_due(store,job.id);await worker.run_cleanup_once()
                 assert not provider.items and await adapter.scheduler.active_reservation(job.id) is None
                 return
             provider.visible=True
@@ -936,7 +948,9 @@ async def test_cancelled_allocation_retains_durable_cleanup_and_recovery(
             await worker.run_cleanup_once()
             assert await store.pending_job_cleanup_ids()=={job.id}
             assert await adapter.scheduler.active_reservation(job.id) is not None
-            provider.visible=True;await worker.run_cleanup_once()
+            provider.visible=True
+            assert await worker.run_cleanup_once()==0
+            await make_cleanup_due(store,job.id);await worker.run_cleanup_once()
             assert await store.pending_job_cleanup_ids()==set() and not provider.items
             assert await adapter.scheduler.active_reservation(job.id) is None
     finally:

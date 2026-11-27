@@ -104,6 +104,24 @@ async def test_active_child_sandbox_is_preserved_only_while_job_is_nonterminal(t
     finally:await store.close()
 
 
+async def test_failed_job_cleanup_waits_before_another_claim(tmp_path):
+    store=await make_store(tmp_path)
+    try:
+        _,jobs=await store.create_job_group('owner',JobGroupCreate(thread_id='a'*32,
+            origin_turn_id='b'*32,idempotency_key='cleanup-backoff-group',
+            jobs=[request('cleanup-backoff')]))
+        attempt=await store.claim_job(jobs[0].id,'worker','node',30)
+        await store.record_job_acceptance(jobs[0].id,'worker',attempt.generation,
+            external_execution_id='execution',receipt={'accepted':True})
+        await store.transition_job(jobs[0].id,JobState.SUCCEEDED,
+            expected_generation=attempt.generation,result={'ok':True})
+        cleanup=(await store.claim_job_cleanups('cleaner',30))[0]
+        await store.finish_job_cleanup(cleanup['cleanup_id'],'cleaner',succeeded=False,
+            error='still unknown',retry_after_seconds=60)
+        assert await store.claim_job_cleanups('other-cleaner',30)==[]
+    finally:await store.close()
+
+
 async def test_child_sandbox_allocation_is_durable_before_runtime_acceptance(tmp_path):
     store=await make_store(tmp_path)
     try:

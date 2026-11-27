@@ -630,7 +630,8 @@ class JobWorker:
                 event("job.worker.cleanup_failed",level=30,job_id=row["job_id"],
                     exc=exc)
                 await self.store.finish_job_cleanup(row["cleanup_id"],self.worker_id,
-                    succeeded=False,error=type(exc).__name__+": "+str(exc))
+                    succeeded=False,error=type(exc).__name__+": "+str(exc),
+                    retry_after_seconds=min(300,2**min(row["attempt_count"],9)))
             finally:
                 heartbeat_task.cancel();await asyncio.gather(heartbeat_task,return_exceptions=True)
                 claim_trace.__exit__(None,None,None)

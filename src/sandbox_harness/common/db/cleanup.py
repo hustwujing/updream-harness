@@ -47,7 +47,10 @@ class CleanupTransactions:
         if adapters is not None and not adapters:return []
         async with self.connections.begin() as db:
             query=select(JobCleanupRow).where(or_(
-                JobCleanupRow.state=="pending",and_(JobCleanupRow.state=="running",
+                and_(JobCleanupRow.state=="pending",or_(
+                    JobCleanupRow.claim_expires_at.is_(None),
+                    JobCleanupRow.claim_expires_at < now())),
+                and_(JobCleanupRow.state=="running",
                     JobCleanupRow.claim_expires_at < now())))
             if adapters is not None:query=query.where(JobCleanupRow.adapter.in_(adapters))
             rows=list((await db.execute(query.order_by(
@@ -106,7 +109,10 @@ class CleanupTransactions:
 
 
     async def finish_job_cleanup(self, cleanup_id: str, owner: str, *,
-                                 succeeded: bool, error: str = "") -> None:
+                                 succeeded: bool, error: str = "",
+                                 retry_after_seconds: float = 0) -> None:
+        if retry_after_seconds < 0 or retry_after_seconds > 300:
+            raise ValueError("job_cleanup_retry_delay_invalid")
         async with self.connections.begin() as db:
             row=await db.get(JobCleanupRow,cleanup_id,with_for_update=True)
             if not row or row.claim_owner!=owner or row.state!="running":
@@ -114,7 +120,10 @@ class CleanupTransactions:
             row.state="completed" if succeeded else "pending"
             if succeeded:row.phase="completed"
             row.last_error="" if succeeded else error[:2000]
-            row.claim_owner="";row.claim_expires_at=None;row.updated_at=now()
+            row.claim_owner=""
+            row.claim_expires_at=(None if succeeded or not retry_after_seconds else
+                now()+timedelta(seconds=retry_after_seconds))
+            row.updated_at=now()
 
 
     async def renew_job_cleanup(self, cleanup_id: str, owner: str,

@@ -28,6 +28,16 @@ async def setup(tmp_path,value=None,snapshot=None):
     return store,group,jobs[0]
 
 
+async def make_cleanup_due(store,job_id):
+    from sqlalchemy import select
+    from sandbox_harness.common.contracts.domain import now
+    from test_support.legacy_store import JobCleanupRow
+    async with store.connections.begin() as db:
+        row=await db.scalar(select(JobCleanupRow).where(
+            JobCleanupRow.job_id==job_id).with_for_update())
+        row.claim_expires_at=now()
+
+
 class BlockingAdapter(BaseJobAdapter):
     def __init__(self):
         self.started=asyncio.Event();self.release=asyncio.Event();self.submit_calls=0;self.cleanup_calls=0
@@ -143,6 +153,8 @@ async def test_cleanup_failure_is_durable_and_retried_after_worker_restart(tmp_p
         assert cleanup["state"]=="pending" and cleanup["attempt_count"]==1
         adapter.fail=False
         restarted=JobWorker(store,{"provider":adapter},node_id="node",worker_id="restarted")
+        assert await restarted.run_once()==0
+        await make_cleanup_due(store,job.id)
         assert await restarted.run_once()>=1
         cleanup=await store.get_job_cleanup(job.id)
         assert cleanup["state"]=="completed" and cleanup["attempt_count"]==2
