@@ -86,8 +86,8 @@
 **Files:**
 - Modify: provider documentation and deployment config only if verified behavior changed.
 
-- [ ] Run focused Python and frontend gates.
-- [ ] Build and deploy affected services, then deliberately restart workers.
-- [ ] Run one real Ark image and one MiniMax reference-voice case.
-- [ ] Verify public UI, model continuation and logs contain safe actionable reasons.
-- [ ] Commit documentation, push GitHub and record evidence paths.
+- [x] Run focused Python and frontend gates.
+- [x] Build and deploy affected services, then deliberately restart workers.
+- [x] Run real Ark image, MiniMax reference-voice and reference-video cases.
+- [x] Verify public UI, model continuation and logs contain safe actionable reasons.
+- [x] Commit documentation and record evidence paths. GitHub push is the final publication step.

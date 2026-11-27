@@ -76,7 +76,7 @@ Evidence:
 
 ## Release And Verification
 
-- Full Python gate: `1613 passed, 23 skipped` in 331.08 seconds.
+- Full Python gate: `1614 passed, 23 skipped` in 347.33 seconds.
 - Focused post-fix media/reference gate: `85 passed`.
 - Catalog and campaign gate after K15/K16: `43 passed`.
 - Frontend unit gate: `37/37`; production Vite build passed.
