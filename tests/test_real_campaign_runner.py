@@ -112,11 +112,14 @@ def test_evo03_kill_recovers_persisted_retained_sandbox_expiry():
     assert 'retained_sandbox_released' in body
 
 
-def test_k11_multiview_uses_two_views_of_one_subject():
+def test_k11_multiview_uses_four_views_of_one_subject():
     source=(ROOT/'tests/run_real_parallel_protocol.py').read_text()
     body=source[source.index('async def case_k11'):source.index('async def thread_artifact_names')]
-    assert 'Image.Transpose.FLIP_LEFT_RIGHT' in body
-    assert "ref(rocket,'front_view'),ref(rocket_left,'left_view')" in body
+    assert "k11-multiview" in body and "def render(name,yaw)" in body
+    assert "ref(views['front'],'front_view')" in body
+    assert "ref(views['left'],'left_view')" in body
+    assert "ref(views['back'],'back_view')" in body
+    assert "ref(views['right'],'right_view')" in body
     assert "ref(poster,'front_view'),ref(rocket,'left_view')" not in body
 
 

@@ -744,21 +744,44 @@ async def case_k10(client,args):
 
 async def case_k11(client,args):
     thread,turn=await origin(client,args,'K11')
-    from PIL import Image
-    rocket_path=ROOT/'tests/real_cases/assets/rocket.png'
-    left_path=ROOT/'.data/tmp/real-campaign/k11-rocket-left.png'
-    left_path.parent.mkdir(parents=True,exist_ok=True)
-    with Image.open(rocket_path) as source:
-        source.convert('RGB').transpose(Image.Transpose.FLIP_LEFT_RIGHT).save(left_path)
     poster=await register_case_asset(thread['id'],turn['id'],ROOT/'tests/real_cases/assets/poster.png')
-    rocket=await register_case_asset(thread['id'],turn['id'],rocket_path)
-    rocket_left=await register_case_asset(thread['id'],turn['id'],left_path)
+    from PIL import Image,ImageDraw
+    view_root=ROOT/'.data/tmp/real-campaign/k11-multiview'
+    view_root.mkdir(parents=True,exist_ok=True)
+    cuboids=[((-1.0,-.65,-.55),(1.0,.65,.55),(48,132,210)),
+        ((-.42,-.38,.55),(.42,.38,1.1),(82,180,225)),
+        ((.65,-.35,-.2),(1.3,.35,.2),(235,92,65))]
+    faces=((0,1,2,3),(4,7,6,5),(0,4,5,1),(1,5,6,2),(2,6,7,3),(4,0,3,7))
+    def render(name,yaw):
+        import math
+        image=Image.new('RGB',(256,256),(245,247,250));draw=ImageDraw.Draw(image)
+        polygons=[];cosine,sine=math.cos(yaw),math.sin(yaw)
+        for lower,upper,color in cuboids:
+            x0,y0,z0=lower;x1,y1,z1=upper
+            points=[(x0,y0,z0),(x1,y0,z0),(x1,y1,z0),(x0,y1,z0),
+                (x0,y0,z1),(x1,y0,z1),(x1,y1,z1),(x0,y1,z1)]
+            rotated=[(x*cosine-y*sine,x*sine+y*cosine,z) for x,y,z in points]
+            for index,face in enumerate(faces):
+                values=[rotated[item] for item in face]
+                depth=sum(value[1] for value in values)/4
+                shade=(.72,.94,.82,1,.88,.78)[index]
+                fill=tuple(max(0,min(255,round(channel*shade))) for channel in color)
+                polygon=[(128+round(value[0]*72),142-round(value[2]*72)) for value in values]
+                polygons.append((depth,polygon,fill))
+        for _,polygon,fill in sorted(polygons):
+            draw.polygon(polygon,fill=fill,outline=(28,45,62),width=2)
+        path=view_root/(name+'.png');image.save(path);return path
+    paths={name:render(name,index*__import__('math').pi/2)
+        for index,name in enumerate(('front','left','back','right'))}
+    views={name:await register_case_asset(thread['id'],turn['id'],path)
+        for name,path in paths.items()}
     ref=lambda artifact,role:{'artifact_id':artifact.id,'role':role,'usage':'subject'}
     phase_one_defs=[
         ('model-image','image_to_model',{'texture':False,'face_limit':1500},
             [ref(poster,'reference_image')]),
         ('model-multiview','multiview_to_model',{'texture':False,'face_limit':1500},
-            [ref(rocket,'front_view'),ref(rocket_left,'left_view')]),
+            [ref(views['front'],'front_view'),ref(views['left'],'left_view'),
+                ref(views['back'],'back_view'),ref(views['right'],'right_view')]),
     ]
     expected={};jobs=[]
     for local,mode,parameters,references in phase_one_defs:
