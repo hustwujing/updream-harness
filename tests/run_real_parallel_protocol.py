@@ -29,7 +29,7 @@ from sandbox_harness.common.db.media_repository import MediaRepository
 ROOT=Path(__file__).resolve().parents[1]
 TERMINAL_JOBS={'SUCCEEDED','FAILED','CANCELLED','BLOCKED','UNKNOWN'}
 PROTOCOL_LOCK=ROOT/'.data/tmp/real-protocol.lock'
-SERIAL_CASES={'P13','P19','P21','P27','K08','AS01'}
+SERIAL_CASES={'P13','P19','P21','P27','P28','P29','K08','AS01'}
 
 
 def core_repository(settings):
@@ -52,6 +52,28 @@ def service_unit(args,role:str)->str:
 def service_command(args,role:str,action:str)->list[str]:
     configured=getattr(args,f'{role}_{action}_command','')
     return shlex.split(configured) if configured else ['systemctl',action,service_unit(args,role)]
+
+
+async def hard_restart_service(args,role:str)->tuple[int,int]:
+    unit=service_unit(args,role)
+    def pid():
+        value=subprocess.check_output(['systemctl','show','-p','MainPID','--value',unit],text=True).strip()
+        return int(value or 0)
+    before=await asyncio.to_thread(pid)
+    if before<=0:raise RuntimeError('service_not_running:'+unit)
+    await asyncio.to_thread(subprocess.run,['systemctl','kill','--kill-who=main',
+        '--signal=SIGKILL',unit],check=True)
+    deadline=time.monotonic()+30;after=0
+    while time.monotonic()<deadline:
+        try:after=await asyncio.to_thread(pid)
+        except subprocess.CalledProcessError:after=0
+        if after>0 and after!=before:break
+        await asyncio.sleep(.25)
+    if after<=0 or after==before:
+        await asyncio.to_thread(subprocess.run,['systemctl','start',unit],check=True)
+        after=await asyncio.to_thread(pid)
+    if after<=0 or after==before:raise RuntimeError('service_sigkill_restart_failed:'+unit)
+    return before,after
 
 
 def validate_skill_product_archive(data:bytes)->dict:
@@ -1813,12 +1835,132 @@ async def case_p27(client,args):
         'one_primary_continuation':True,'continuation_id':continuations[0]['id']}
 
 
+async def case_p28(client,args):
+    from sqlalchemy import select
+    from sandbox_harness.common.db.models import EventRow
+    from sandbox_harness.common.sandbox.runtime import RuntimeClient
+    from sandbox_harness.common.contracts.sandbox_contracts import SandboxHandle
+    import sandbox_harness.common.sandbox.sandbox_factory as sandbox_factory
+    prompt=('只输出一篇较长的编号清单，不调用任何工具。第一行必须严格为 STREAM-BEGIN，'
+        '随后输出 180 行，每行格式“第NNN项：流式持久化恢复验证内容”，编号不得重复；'
+        '最后一行必须严格为 STREAM-END。不要省略、合并或解释。')
+    thread,turn=await origin(client,args,'P28',prompt)
+    settings=load_platform_settings();store=core_repository(settings)
+    backend=sandbox_factory.build_sandbox_registry(settings);runtime=RuntimeClient(backend=backend)
+    gap=None;execution_id='';before_pid=after_pid=0
+    try:
+        deadline=time.monotonic()+min(args.timeout,300);sandbox=None
+        while time.monotonic()<deadline:
+            current=await store.get_turn(turn['id'])
+            if current and current.runtime_execution_id and current.sandbox_handle_json:
+                execution_id=current.runtime_execution_id
+                if sandbox is None:
+                    sandbox=await backend.get(SandboxHandle.from_mapping(
+                        json.loads(current.sandbox_handle_json)))
+                status=await runtime.execution_status(sandbox,execution_id)
+                if status and status.get('state')=='running':
+                    pending=int(status.get('last_sequence') or 0)-current.runtime_sequence
+                    if pending>=2:
+                        gap={'runtime_sequence':int(status['last_sequence']),
+                            'committed_sequence':current.runtime_sequence,'pending':pending}
+                        before_pid,after_pid=await hard_restart_service(args,'platform_worker');break
+            await asyncio.sleep(.05)
+        if gap is None:raise AssertionError('primary_uncommitted_stream_window_not_observed')
+        final=await wait_turn(client,turn['id'],args.timeout)
+        if final['state']!='COMPLETED':raise AssertionError('primary_recovery_failed:'+json.dumps(final))
+        current=await store.get_turn(turn['id'])
+        if current.runtime_execution_id!=execution_id:raise AssertionError('primary_execution_identity_changed')
+        messages=[item for item in await store.items_after(thread['id'])
+            if item.turn_id==turn['id'] and item.type.value=='agent_message']
+        text=''.join(item.summary for item in messages)
+        if text.count('STREAM-BEGIN')!=1 or text.count('STREAM-END')!=1:
+            raise AssertionError('primary_stream_markers_missing_or_duplicated')
+        async with store.connections() as db:
+            rows=list((await db.execute(select(EventRow).where(EventRow.turn_id==turn['id'],
+                EventRow.kind=='text_delta').order_by(EventRow.sequence))).scalars().all())
+        spans=[json.loads(row.payload_json) for row in rows]
+        if not any(int(value.get('sequence_end') or 0)>int(value.get('sequence_start') or 0)
+                for value in spans):raise AssertionError('primary_text_was_not_batched')
+        return {'classification':'success','thread_id':thread['id'],'turn_id':turn['id'],
+            'execution_id':execution_id,'sigkill_pid':before_pid,'recovered_pid':after_pid,
+            'uncommitted_gap':gap,'durable_text_batches':len(rows),
+            'markers_exactly_once':True,'execution_identity_preserved':True}
+    finally:await store.close()
+
+
+async def case_p29(client,args):
+    from sqlalchemy import select
+    from sandbox_harness.common.db.models import JobActivityRow,JobAttemptRow
+    from sandbox_harness.common.sandbox.runtime import RuntimeClient
+    from sandbox_harness.common.contracts.sandbox_contracts import SandboxHandle
+    import sandbox_harness.common.sandbox.sandbox_factory as sandbox_factory
+    thread,turn=await origin(client,args,'P29')
+    ready=await wait_turn(client,turn['id'],args.timeout)
+    if ready['state']!='COMPLETED':raise AssertionError('origin_turn_failed')
+    objective=('Do not use tools. Return a long numbered factual checklist. The first line must be exactly '
+        'CHILD-STREAM-BEGIN, followed by 180 distinct lines formatted "Item NNN: child stream recovery", '
+        'and the final line exactly CHILD-STREAM-END. Do not omit or merge lines.')
+    prepared=require(await prepare(client,thread,turn,[harness_job(290,args,objective=objective)],
+        'P29',suppress_continuation=True)).json()
+    committed=(require(await client.post(
+        f"api/job-group-drafts/{prepared['draft']['id']}/confirm")).json()
+        if prepared.get('mode')=='draft' else prepared)
+    job=committed['jobs'][0];settings=load_platform_settings();store=core_repository(settings)
+    backend=sandbox_factory.build_sandbox_registry(settings);runtime=RuntimeClient(backend=backend)
+    gap=None;execution_id='';before_pid=after_pid=0
+    try:
+        deadline=time.monotonic()+min(args.timeout,300);sandbox=None
+        while time.monotonic()<deadline:
+            async with store.connections() as db:
+                attempt=(await db.execute(select(JobAttemptRow).where(
+                    JobAttemptRow.job_id==job['id'],JobAttemptRow.accepted_at.is_not(None)).order_by(
+                    JobAttemptRow.generation.desc()).limit(1))).scalar_one_or_none()
+            committed_sequence=await store.job_runtime_sequence(job['id'],
+                attempt.external_execution_id) if attempt and attempt.external_execution_id else 0
+            if attempt:
+                receipt=json.loads(attempt.acceptance_receipt_json or '{}')
+                if receipt.get('sandbox_handle') and attempt.external_execution_id:
+                    execution_id=attempt.external_execution_id
+                    if sandbox is None:
+                        sandbox=await backend.get(SandboxHandle.from_mapping(receipt['sandbox_handle']))
+                    status=await runtime.execution_status(sandbox,execution_id)
+                    if status and status.get('state')=='running':
+                        pending=int(status.get('last_sequence') or 0)-int(committed_sequence)
+                        if pending>=2:
+                            gap={'runtime_sequence':int(status['last_sequence']),
+                                'committed_sequence':int(committed_sequence),'pending':pending}
+                            before_pid,after_pid=await hard_restart_service(args,'job_worker');break
+            await asyncio.sleep(.05)
+        if gap is None:raise AssertionError('child_uncommitted_stream_window_not_observed')
+        final=await wait_job(client,job['id'],args.timeout)
+        if final['state']!='SUCCEEDED':raise AssertionError('child_recovery_failed:'+json.dumps(final))
+        summary=str((final.get('result') or {}).get('child_summary') or '')
+        if summary.count('CHILD-STREAM-BEGIN')!=1 or summary.count('CHILD-STREAM-END')!=1:
+            raise AssertionError('child_stream_markers_missing_or_duplicated')
+        async with store.connections() as db:
+            activities=list((await db.execute(select(JobActivityRow).where(
+                JobActivityRow.job_id==job['id'],JobActivityRow.kind=='text_delta').order_by(
+                JobActivityRow.sequence))).scalars().all())
+            attempts=list((await db.execute(select(JobAttemptRow).where(
+                JobAttemptRow.job_id==job['id']))).scalars().all())
+        spans=[json.loads(row.payload_json) for row in activities]
+        if not any(int(value.get('sequence_end') or 0)>int(value.get('sequence_start') or 0)
+                for value in spans):raise AssertionError('child_text_was_not_batched')
+        external_ids={row.external_execution_id for row in attempts if row.external_execution_id}
+        if external_ids!={execution_id}:raise AssertionError('child_execution_identity_changed')
+        return {'classification':'success','thread_id':thread['id'],'job_id':job['id'],
+            'execution_id':execution_id,'sigkill_pid':before_pid,'recovered_pid':after_pid,
+            'uncommitted_gap':gap,'durable_text_batches':len(activities),
+            'markers_exactly_once':True,'execution_identity_preserved':True}
+    finally:await store.close()
+
+
 HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case_p05,
     'P06':case_p06,'P07':case_p07,'P08':case_p08,'P09':case_p09,'P10':case_p10,
     'P11':case_p11,'P12':case_p12,'P13':case_p13,'P14':case_p14,'P15':case_p15,
     'P16':case_p16,'P17':case_p17,'P18':case_p18,'P19':case_p19,'P20':case_p20,
     'P21':case_p21,'P22':case_p22,'P23':case_p23,'P24':case_p24,
-    'P25':case_p25,'P26':case_p26,'P27':case_p27,
+    'P25':case_p25,'P26':case_p26,'P27':case_p27,'P28':case_p28,'P29':case_p29,
     'AS01':case_as01,
     'K07':case_k07,'K08':case_k08,'K09':case_k09,'K10':case_k10,'K11':case_k11,
     'K12':case_k12,'K13':case_k13,'K14':case_k14,'K15':case_k15,'K16':case_k16,'K17':case_k17,
@@ -1829,7 +1971,7 @@ HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case
 async def main():
     parser=argparse.ArgumentParser();parser.add_argument('--base-url',default='http://127.0.0.1:24767/')
     parser.add_argument('--case',required=True,choices=[
-        *(f'P{value:02d}' for value in range(1,28)),*(f'K{value:02d}' for value in range(1,18)),'AS01'])
+        *(f'P{value:02d}' for value in range(1,30)),*(f'K{value:02d}' for value in range(1,18)),'AS01'])
     parser.add_argument('--report',type=Path,required=True);parser.add_argument('--harness',default='codex')
     parser.add_argument('--model',default='gpt-5.6-sol');parser.add_argument('--reasoning',default='deep')
     parser.add_argument('--timeout',type=float,default=1200)

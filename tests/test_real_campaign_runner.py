@@ -63,7 +63,7 @@ def test_parallel_protocol_runner_never_fakes_unimplemented_success():
     source=(ROOT/"tests/run_real_parallel_protocol.py").read_text();ast.parse(source)
     assert "protocol_handler_not_implemented" in source
     assert "HANDLERS" in source and "'P02'" in source and "'P12'" in source
-    assert all(f"'P{index:02d}'" in source for index in range(1,28))
+    assert all(f"'P{index:02d}'" in source for index in range(1,30))
     assert "compile_delegation" in source and "metadata_required':False" in source
     assert 'parser.add_argument(\'--timeout\'' in source
     assert 'parser.add_argument(\'--intervention-delay\'' in source
@@ -73,7 +73,7 @@ def test_parallel_protocol_runner_never_fakes_unimplemented_success():
     assert all(f"'K{index:02d}'" in source for index in range(1,18))
     assert 'case_skill_coverage' in source and all(
         f'case_k{index:02d}' in source for index in range(7,12))
-    assert "SERIAL_CASES={'P13','P19','P21','P27','K08','AS01'}" in source
+    assert "SERIAL_CASES={'P13','P19','P21','P27','P28','P29','K08','AS01'}" in source
     assert "'video.generate'" in source and "'video.edit'" in source
     assert "'audio.generate'" in source and "'model3d.transform'" in source
     assert 'REST versus gRPC, monolith versus microservices, and SQL versus NoSQL' in source
