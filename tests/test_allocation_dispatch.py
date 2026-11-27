@@ -2,7 +2,7 @@ import asyncio
 import pytest
 from dataclasses import replace
 
-from test_harness_job import setup
+from test_harness_job import make_cleanup_due, setup
 from sandbox_harness.common.contracts.domain import (Harness)
 from sandbox_harness.common.execution.job_adapters import (AdapterStatus, JobExecutionContext)
 from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
@@ -184,6 +184,9 @@ async def test_late_response_cleans_cancelled_waiter_and_original_reservation(tm
             await store.transition_job(context.job.id,JobState.FAILED,expected_generation=context.generation,
                 result={'error_code':'child_allocation_timeout'})
         backend.finish.set();await service_task
+        if user_cancel:
+            assert await worker.run_cleanup_once()==0
+            await make_cleanup_due(store,context.job.id)
         await worker.run_cleanup_once()
         assert (await store.get_job_cleanup(context.job.id))['state']=='completed'
         assert await scheduler.active_reservation(context.job.id) is None

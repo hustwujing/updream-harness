@@ -5,6 +5,7 @@ from datetime import timedelta
 import pytest
 
 from test_allocation_dispatch import fixture
+from test_harness_job import make_cleanup_due
 from sandbox_harness.services.allocation_worker.allocation_dispatch import (AllocationClient, AllocationService)
 from sandbox_harness.common.contracts.domain import (now, Harness)
 from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
@@ -246,6 +247,8 @@ async def test_worker_replacement_requires_extra_capacity_and_keeps_late_cleanup
                     SandboxAllocationRow.job_id==context.job.id,SandboxAllocationRow.job_generation==1))).one()
                 row.reconcile_after=now()-timedelta(seconds=1)
             await allocator.reconcile_once()
+            assert await worker.run_cleanup_once()==0
+            await make_cleanup_due(store,context.job.id)
             await worker.run_cleanup_once()
             assert late.id not in provider.items and current.id in provider.items
             assert child.sessions[context.job.id].handle==current.handle
