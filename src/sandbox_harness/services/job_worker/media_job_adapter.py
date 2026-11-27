@@ -44,7 +44,7 @@ class MediaProviderJobAdapter(BaseJobAdapter):
             media_job=await self.store.confirm_media_draft(draft.id,owner_id,provider_spec=validated.spec)
         return AdapterSubmission(external_execution_id=media_job.id,acceptance_receipt={
             'media_job_id':media_job.id,'provider':media_job.provider,'provider_adapter':media_job.adapter,
-            'execution_mode':media_job.execution_mode})
+            'execution_mode':media_job.execution_mode,'source_generation':context.generation})
 
     async def resolve_execution(self,context:JobExecutionContext,external_execution_id:str)->str:
         return external_execution_id
@@ -74,7 +74,10 @@ class MediaProviderJobAdapter(BaseJobAdapter):
         if current.terminal:return current
         try:
             if hasattr(self.media,"cancel"):
-                await self.media.cancel(context);value=await self.media.get_media_job(
+                source_generation=int(context.previous_acceptance_receipt.get(
+                    'source_generation') or context.generation)
+                await self.media.cancel(context,source_generation=source_generation)
+                value=await self.media.get_media_job(
                     external_execution_id,context.job.owner_id)
             else:
                 value=await self.media.request_media_cancel(external_execution_id,context.job.owner_id)

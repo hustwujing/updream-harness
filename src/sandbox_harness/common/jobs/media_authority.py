@@ -66,18 +66,19 @@ class MediaAuthorityClient:
             raise RuntimeError("accepted_media_job_missing")
         return value
 
-    async def cancel(self, context):
-        dispatch_id = self.dispatch_id(context.job.id, context.generation)
+    async def cancel(self, context, *, source_generation: int | None = None):
+        target_generation=int(source_generation or context.generation)
+        dispatch_id = self.dispatch_id(context.job.id, target_generation)
         command_id = canonical_digest(["media.source.cancel", dispatch_id])
         payload = {"dispatch_id":dispatch_id,"source_job_id":context.job.id,
-                   "source_generation":context.generation}
+                   "source_generation":target_generation}
         async with self.core.transaction() as db:
             source, _ = await self._source(db, context)
             if not source.cancel_requested and JobState(source.state) not in TERMINAL_JOB_STATES:
                 raise RuntimeError("media_source_cancel_not_authorized")
             await self.core.enqueue_remote(db, command_id=command_id, target="media",
                 kind="media.source.cancel", aggregate_id=source.id, owner_id=source.owner_id,
-                thread_id=source.thread_id, generation=context.generation, payload=payload)
+                thread_id=source.thread_id, generation=target_generation, payload=payload)
         await self.core.relay_remote({"media":self.media.handoff})
 
     async def get_media_job(self, media_job_id, owner_id):

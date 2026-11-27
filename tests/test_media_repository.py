@@ -130,10 +130,14 @@ async def test_core_media_authority_replays_one_dispatch_and_orders_cancel(tmp_p
         assert first.id == second.id and first.generation_mode == "text_to_image"
         async with media.connections() as session:
             assert await session.scalar(select(func.count()).select_from(MediaJobRow)) == 1
+        await core.record_job_acceptance(job.id,"worker",attempt.generation,
+            external_execution_id=first.id,receipt={"source_generation":attempt.generation})
+        await core.defer_accepted_job(job.id,"worker",attempt.generation)
         await core.request_job_cancel(job.id, "owner")
+        replacement=await core.claim_job(job.id,"replacement","node",60)
         context = JobExecutionContext(job=await core.get_job(job.id), request=request,
-                                      generation=attempt.generation)
-        await authority.cancel(context)
+                                      generation=replacement.generation)
+        await authority.cancel(context,source_generation=attempt.generation)
         claimed = (await media.claim_media_jobs("media-worker"))[0]
         assert claimed["status"] == "cancel_requested"
     finally:

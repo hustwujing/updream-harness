@@ -61,18 +61,22 @@ class ImageDecomposeAdapter(MediaProviderJobAdapter):
             raise
 
     @staticmethod
-    def _submission(value):
+    def _submission(value,source_generation:int):
         return AdapterSubmission(value.id,{'media_job_id':value.id,'provider':value.provider,
-            'provider_adapter':value.adapter,'execution_mode':value.execution_mode})
+            'provider_adapter':value.adapter,'execution_mode':value.execution_mode,
+            'source_generation':source_generation})
 
     async def submit(self,context:JobExecutionContext)->AdapterSubmission:
-        return self._submission(await self._enqueue(context))
+        return self._submission(await self._enqueue(context),context.generation)
 
     async def recover_submission(self,context:JobExecutionContext)->SubmissionRecovery:
+        source_generation=int(context.previous_acceptance_receipt.get(
+            'source_generation') or context.generation)
         value=await self.media.media_execution_for_job(context.job.id,context.job.owner_id)
-        if value:return SubmissionRecovery(submission=self._submission(value))
+        if value:return SubmissionRecovery(submission=self._submission(value,source_generation))
         if hasattr(self.media,"submit"):
-            return SubmissionRecovery(submission=self._submission(await self._enqueue(context)))
+            return SubmissionRecovery(submission=self._submission(
+                await self._enqueue(context),source_generation))
         return SubmissionRecovery(safe_to_retry=True)
 
     async def resolve_execution(self,context:JobExecutionContext,external_execution_id:str)->str:
