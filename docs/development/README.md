@@ -15,7 +15,7 @@ Every code change requires:
 
 For the isolated Ali checkout, first verify the directory and branch described
 in [Getting started](getting-started.md). The current release baseline is the
-[190-case report](../test-evidence/ali-production-hardening-190-case-report.md);
+[193-case report](../test-evidence/ali-runtime-recovery-193-case-report.md);
 the [175-case report](../test-evidence/ali-cross-database-175-case-report.md)
 retains the original split-database evidence.
 

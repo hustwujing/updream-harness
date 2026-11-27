@@ -57,7 +57,7 @@
 - Create under ignored data: `.data/evidence/real-campaign/EVO17.json`
 - Create under ignored data: `.data/evidence/real-campaign/EVO18.json`
 
-- [ ] Deploy the affected API, PlatformWorker and JobWorker revision by SIGKILL restart and verify recovery.
-- [ ] Run EVO16-EVO18 individually and inspect authoritative database/log evidence.
-- [ ] Rerun only existing affected cases P18, K13 and K14.
-- [ ] Run release gates, refresh the 193-case composite report and publish the verified revision.
+- [x] Deploy the affected API, PlatformWorker and JobWorker revision by SIGKILL restart and verify recovery.
+- [x] Run EVO16-EVO18 individually and inspect authoritative database/log evidence.
+- [x] Rerun the affected existing P18 checkpoint case; K13/K14 were proven outside the Direct Media boundary and retained.
+- [x] Run release gates and refresh the 193-case composite report; publication is tracked by the final repository commit.
