@@ -33,6 +33,9 @@ SQLite/tar integrity checks.
 
 ## Evidence
 
+- Final full Python gate: `1640 passed, 23 skipped` at `5bccddf` plus
+  documentation-only gate recording.
+- Focused cold-restore, Codex Runner and RuntimeClient gates: `119 passed`.
 - Fault injection proved the first endpoint could fail and the refreshed
   endpoint received byte-identical checkpoint content.
 - P30 cold restore passed four real runs. Each run completed a Codex Turn,
