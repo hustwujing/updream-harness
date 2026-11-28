@@ -147,6 +147,21 @@ def apply_live_model_progress(model_activity,turn_values,job_values):
     return model_activity
 
 
+def close_stale_model_progress(model_activity,turns,jobs):
+    terminal_turns={state.value for state in TERMINAL}
+    for (turn_id,job_id),activity in model_activity.items():
+        parent=jobs.get(job_id) if job_id else turns.get(turn_id)
+        terminal=bool(parent and (parent.state in TERMINAL_JOB_STATES if job_id
+            else parent.state in terminal_turns))
+        if not terminal:continue
+        ended_at=iso(getattr(parent,'terminal_at',None) or parent.updated_at)
+        for round_ in activity['model_rounds']:
+            if round_['status']!='in_progress':continue
+            round_['status']='interrupted';round_['phase']='interrupted'
+            round_['ended_at']=ended_at
+    return model_activity
+
+
 def wait_barrier(group,progress,remaining=()):
     complete=progress['terminal']>=progress['total']
     paused=not complete and progress['paused']>=progress['total']-progress['terminal']
@@ -319,6 +334,8 @@ class ExecutionGraphProjector:
         reservation_by_job={row.job_id:row for row in reservations}
         usage_truncated=len(model_usage_rows)>MAX_MODEL_USAGE_ROWS
         model_activity=aggregate_model_activity(model_usage_rows[:MAX_MODEL_USAGE_ROWS])
+        close_stale_model_progress(model_activity,{row.id:row for row in turns},
+            {row.id:row for row in jobs})
         active_model_keys={(turn_id,job_id) for (turn_id,job_id),activity in model_activity.items()
             if any(round_['status']=='in_progress' for round_ in activity['model_rounds'])}
         if self.store.core.events and active_model_keys:

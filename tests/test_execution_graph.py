@@ -6,7 +6,7 @@ from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.contracts.domain import (EventKind, Harness, ItemType, ThreadCreate, TurnCreate, TurnState, now)
 from sandbox_harness.common.contracts.public_errors import (external_error_detail)
 from sandbox_harness.services.api.execution_graph import (ExecutionGraphProjector,aggregate_model_activity,
-    apply_live_model_progress)
+    apply_live_model_progress,close_stale_model_progress)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobGroupDraftCreate, JobKind, JobRequest, JobState)
 from sandbox_harness.common.db.accounts import AccountsRepository
 from sandbox_harness.common.db.api_repositories import ApiRepositories
@@ -56,6 +56,20 @@ def test_live_model_progress_overlays_durable_character_baseline_without_regress
         {'job-1':[{'kind':'model_character_progress','model_request_id':'child','output_characters':17}]})
     assert activity[('turn-1','')]['model_rounds'][0]['output_characters']==41
     assert activity[('turn-1','job-1')]['model_rounds'][0]['output_characters']==20
+
+
+def test_terminal_parent_closes_stale_model_progress_in_projection():
+    timestamp=now()
+    activity={('turn-1',''):{'token_usage':{},'model_rounds':[
+        {'request_id':'primary','status':'in_progress','phase':'streaming','ended_at':None}]},
+        ('turn-1','job-1'):{'token_usage':{},'model_rounds':[
+        {'request_id':'child','status':'in_progress','phase':'streaming','ended_at':None}]}}
+    close_stale_model_progress(activity,
+        {'turn-1':SimpleNamespace(state='COMPLETED',updated_at=timestamp)},
+        {'job-1':SimpleNamespace(state='SUCCEEDED',terminal_at=timestamp,updated_at=timestamp)})
+    assert activity[('turn-1','')]['model_rounds'][0]['status']=='interrupted'
+    assert activity[('turn-1','job-1')]['model_rounds'][0]['phase']=='interrupted'
+    assert all(value['ended_at'] for row in activity.values() for value in row['model_rounds'])
 
 
 async def test_execution_graph_contains_only_factual_boundaries_and_truthful_locations(tmp_path):
