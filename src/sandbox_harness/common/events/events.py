@@ -27,7 +27,8 @@ class RedisEventBus:
         return self.prefix + "events:" + turn_id
 
     def live_key(self,scope:str,identity:str)->str:
-        if scope not in {'turn','job'}:raise ValueError('live_stream_scope_invalid')
+        if scope not in {'turn','job','model-turn','model-job'}:
+            raise ValueError('live_stream_scope_invalid')
         return self.prefix+"live:"+scope+":"+identity
 
     async def initialize(self) -> None:
@@ -91,6 +92,28 @@ class RedisEventBus:
             log_event('redis.live.read.failed',level=logging.WARNING,exc=exc,
                 reason='database_progress_fallback')
         return cursor,values
+
+    async def latest_live(self,scope:str,identities:set[str]|list[str],count:int=64)->dict[str,list[dict]]:
+        values={};ordered=sorted({str(identity) for identity in identities if identity})
+        if not ordered:return values
+        try:
+            async with asyncio.timeout(REDIS_IO_TIMEOUT), self.redis.pipeline(transaction=False) as pipeline:
+                for identity in ordered:
+                    pipeline.xrevrange(self.live_key(scope,identity),count=max(1,min(count,512)))
+                rows=await pipeline.execute()
+            for identity,entries in zip(ordered,rows):
+                decoded=[]
+                for _,fields in entries:
+                    try:value=json.loads(fields.get('event','{}'))
+                    except (TypeError,ValueError):continue
+                    if isinstance(value,dict):decoded.append(value)
+                if decoded:values[identity]=decoded
+            self.available=True
+        except (RedisError,TimeoutError) as exc:
+            self.available=False
+            log_event('redis.live.latest.failed',level=logging.WARNING,exc=exc,
+                reason='database_progress_fallback',scope=scope)
+        return values
 
     async def wait_turn_activity(self,turn_id:str,durable_after:int,live_after:str='0-0',
                                  block_ms:int=15000)->tuple[bool,str,list[dict]]:

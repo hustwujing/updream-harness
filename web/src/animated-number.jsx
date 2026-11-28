@@ -12,9 +12,12 @@ export function useAnimatedNumber(identity,target,duration=350){
 }
 
 
-export function UnicodeCharacterCount({identity,text,className=''}){
- const count=[...String(text||'')].length,display=useAnimatedNumber(identity,count,350);
+export function unicodeCharacterCount(text){return [...String(text||'')].length}
+
+export function UnicodeCharacterCount({identity,text,count:providedCount,className='',label='正在生成'}){
+ const count=providedCount==null?unicodeCharacterCount(text):Math.max(0,Number(providedCount||0));
+ const display=useAnimatedNumber(identity,count,500);
  return <small className={className} data-character-count={Math.round(display)}>
-  正在生成 · {Math.round(display).toLocaleString()} 字符
+  {label} · <strong>{Math.round(display).toLocaleString()}</strong> 字符
  </small>
 }

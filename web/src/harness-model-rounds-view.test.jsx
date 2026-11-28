@@ -26,4 +26,14 @@ describe('model round details panel',()=>{
   expect(html).toContain('data-token-kind="characters"');
   expect(html).toContain('128 字符');
  });
+
+ it('shows a zero baseline while a model round is already streaming',()=>{
+  const node={id:'turn:primary',state:'RUNNING',title:'codex',objective:'Work',
+   location_label:'Cloud Sandbox',started_at:'2026-11-27T12:00:00Z',token_usage:{},model_rounds:[
+    {index:1,request_id:'live',model:'gpt-5.6',phase:'streaming',status:'in_progress',
+     started_at:'2026-11-27T12:00:01Z',output_characters:0}]};
+  const html=renderToStaticMarkup(<HarnessRunDetails node={node} now={Date.parse('2026-11-27T12:00:02Z')}/>);
+  expect(html).toContain('data-token-kind="characters"');
+  expect(html).toContain('0 字符');
+ });
 });

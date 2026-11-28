@@ -136,7 +136,8 @@ class OutputProbe:
             self._usage(usage)
 
 class ModelActivity:
-    def __init__(self, store, claims, progress_persist_seconds:float=5):
+    def __init__(self, store, claims, progress_persist_seconds:float=5,
+                 progress_live_seconds:float=.3):
         self.store = store
         self.claims = claims
         self.request_id = uuid.uuid4().hex
@@ -148,8 +149,13 @@ class ModelActivity:
         self.finished = False
         self.span = None
         self.progress_persist_seconds=progress_persist_seconds
+        self.progress_live_seconds=progress_live_seconds
         self.last_character_update=0
         self.last_character_update_at=self.started
+        self.last_live_character_update=0
+        self.last_live_character_update_at=self.started
+        self.live_character_target=0
+        self.live_character_task=None
 
     async def _observe(self, awaitable):
         try:
@@ -191,15 +197,36 @@ class ModelActivity:
                         harness=getattr(harness,'value',harness) or 'unknown')
             self.last_character_update=self.probe.output_characters
             self.last_character_update_at=observed_at
+            self.last_live_character_update_at=observed_at
+            self._queue_live_character_progress(self.probe.output_characters)
             await self.update('streaming', 'in_progress',
                 output_characters=self.probe.output_characters)
             return
         changed=self.probe.output_characters>before
+        if changed and (self.last_live_character_update==0 or
+                observed_at-self.last_live_character_update_at>=self.progress_live_seconds):
+            self.last_live_character_update_at=observed_at
+            self._queue_live_character_progress(self.probe.output_characters)
         if changed and observed_at-self.last_character_update_at>=self.progress_persist_seconds:
             self.last_character_update=self.probe.output_characters
             self.last_character_update_at=observed_at
             await self.update('streaming','in_progress',
                 output_characters=self.probe.output_characters)
+
+    def _queue_live_character_progress(self,count:int)->None:
+        if not hasattr(self.store,'publish_model_activity_progress'):return
+        self.live_character_target=max(self.live_character_target,count)
+        if self.live_character_task is None or self.live_character_task.done():
+            self.live_character_task=asyncio.create_task(
+                self._publish_live_character_progress(),name='model-character-'+self.request_id)
+
+    async def _publish_live_character_progress(self)->None:
+        while self.last_live_character_update<self.live_character_target:
+            count=self.live_character_target
+            await self._observe(self.store.publish_model_activity_progress(
+                turn_id=self.claims.turn_id,job_id=getattr(self.claims,'job_id',''),
+                model_request_id=self.request_id,output_characters=count))
+            self.last_live_character_update=count
 
     async def update(self, phase, status, **extra):
         if not self.item_id:
@@ -216,6 +243,7 @@ class ModelActivity:
             return
         self.finished = True
         self.probe.finish()
+        self._queue_live_character_progress(self.probe.output_characters)
         usage=self.probe.token_usage
         failed = bool(error_code or self.probe.failed or status_code is None or status_code >= 400)
         if self.span:

@@ -55,8 +55,16 @@ must not depend on Redis.
   durable refresh may replace their base text but may not duplicate or regress
   higher uncommitted fragments. Overlays bind to the server-provided Item ID so
   text after a tool cannot be appended to an earlier message from the same
-  execution. Character progress counts Unicode code points
-  from received public text and animates only toward an observed value.
+  execution. While a Turn is active, its transcript exposes one stable cumulative
+  character counter across all visible Agent messages. It counts Unicode code
+  points from received public text, remains mounted across tool boundaries and
+  animates only toward an observed value.
+- Gateway model-round progress publishes content-free character totals to the
+  owner-scoped Redis live stream at the configured live interval. Execution
+  Graph polling overlays a matching active request ID on its PostgreSQL baseline;
+  it never infers a count from logs or hidden model content. The durable progress
+  interval remains independently configurable, Redis loss falls back to that
+  database baseline, and neither path may delay or fail a model response.
 - Only active Items animate. Terminal Items retain a fixed elapsed duration.
 - Domain-specific terminal sets drive elapsed timers. Site retry exhaustion is
   terminal even though the Job remains manually recoverable.

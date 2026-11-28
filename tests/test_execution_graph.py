@@ -5,7 +5,8 @@ from types import SimpleNamespace
 from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.contracts.domain import (EventKind, Harness, ItemType, ThreadCreate, TurnCreate, TurnState, now)
 from sandbox_harness.common.contracts.public_errors import (external_error_detail)
-from sandbox_harness.services.api.execution_graph import (ExecutionGraphProjector,aggregate_model_activity)
+from sandbox_harness.services.api.execution_graph import (ExecutionGraphProjector,aggregate_model_activity,
+    apply_live_model_progress)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupCreate, JobGroupDraftCreate, JobKind, JobRequest, JobState)
 from sandbox_harness.common.db.accounts import AccountsRepository
 from sandbox_harness.common.db.api_repositories import ApiRepositories
@@ -42,6 +43,19 @@ def test_model_round_aggregation_deduplicates_latest_state_without_reordering():
     assert [value['request_id'] for value in values['model_rounds']]==['round-1','round-2']
     assert values['model_rounds'][0]['status']=='completed'
     assert values['token_usage']['ordinary_input_tokens']==13
+
+
+def test_live_model_progress_overlays_durable_character_baseline_without_regression():
+    activity={('turn-1',''):{'token_usage':{},'model_rounds':[
+        {'request_id':'primary','status':'in_progress','output_characters':12}]},
+        ('turn-1','job-1'):{'token_usage':{},'model_rounds':[
+        {'request_id':'child','status':'in_progress','output_characters':20}]}}
+    apply_live_model_progress(activity,{'turn-1':[
+        {'kind':'model_character_progress','model_request_id':'primary','output_characters':41},
+        {'kind':'model_character_progress','model_request_id':'primary','output_characters':30}]},
+        {'job-1':[{'kind':'model_character_progress','model_request_id':'child','output_characters':17}]})
+    assert activity[('turn-1','')]['model_rounds'][0]['output_characters']==41
+    assert activity[('turn-1','job-1')]['model_rounds'][0]['output_characters']==20
 
 
 async def test_execution_graph_contains_only_factual_boundaries_and_truthful_locations(tmp_path):

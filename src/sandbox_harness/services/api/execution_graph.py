@@ -1,6 +1,7 @@
 from __future__ import annotations
 from sandbox_harness.common.contracts.domain import now
 
+import asyncio
 import hashlib
 import json
 import re
@@ -127,6 +128,23 @@ def aggregate_model_activity(rows):
             'duration_ms':int(elapsed),'first_output_ms':int(first_output) if first_output is not None else None,
             **counts,'output_characters':characters,'error_code':error_code})
     return values
+
+
+def apply_live_model_progress(model_activity,turn_values,job_values):
+    for (turn_id,job_id),activity in model_activity.items():
+        events=(job_values if job_id else turn_values).get(job_id or turn_id,[])
+        rounds={round_['request_id']:round_ for round_ in activity['model_rounds']}
+        applied=set()
+        for event in events:
+            if event.get('kind')!='model_character_progress':continue
+            request_id=str(event.get('model_request_id') or '')
+            if request_id in applied or request_id not in rounds:continue
+            count=event.get('output_characters')
+            if isinstance(count,int) and not isinstance(count,bool) and count>=0:
+                rounds[request_id]['output_characters']=max(
+                    rounds[request_id]['output_characters'],count)
+                applied.add(request_id)
+    return model_activity
 
 
 def wait_barrier(group,progress,remaining=()):
@@ -301,6 +319,15 @@ class ExecutionGraphProjector:
         reservation_by_job={row.job_id:row for row in reservations}
         usage_truncated=len(model_usage_rows)>MAX_MODEL_USAGE_ROWS
         model_activity=aggregate_model_activity(model_usage_rows[:MAX_MODEL_USAGE_ROWS])
+        active_model_keys={(turn_id,job_id) for (turn_id,job_id),activity in model_activity.items()
+            if any(round_['status']=='in_progress' for round_ in activity['model_rounds'])}
+        if self.store.core.events and active_model_keys:
+            turn_live,job_live=await asyncio.gather(
+                self.store.core.events.latest_live('model-turn',
+                    {turn_id for turn_id,job_id in active_model_keys if not job_id}),
+                self.store.core.events.latest_live('model-job',
+                    {job_id for _,job_id in active_model_keys if job_id}))
+            apply_live_model_progress(model_activity,turn_live,job_live)
         activity_count={identity:int(count) for identity,count in activity_rows}
         retry_count={identity:int(count or 0) for identity,count in retry_rows}
         attempt_counts={identity:(int(count or 0),int(external or 0))

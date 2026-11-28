@@ -406,6 +406,13 @@ Stop requests are persisted on the Turn. The lease owner observes them through i
 
 Native interaction IDs exposed outside the sandbox are namespaced by execution; late answers cannot reach a later Harness process that reused the same native ID. Ending an execution also releases unanswered helper requests. Model discovery retains the last inventory if the upstream listing endpoint fails and still probes explicitly configured model routes. Redis connection and command stalls are bounded, so event persistence can fall back to database replay instead of waiting indefinitely.
 
+During active model output, the main transcript keeps one Turn-scoped cumulative
+public-character counter visible across tool calls and later response segments.
+Primary, Child and Reviewer model-round details receive content-free live counts
+through Redis and animate between observed totals; the configured five-second
+database batch remains the restart/reconnect baseline and is not increased for UI
+smoothness.
+
 The sidebar green dot means a completed Turn has not been viewed. Once the completed transcript is loaded in the focused, visible conversation, the client acknowledges that exact Turn through `POST /api/threads/{thread_id}/read`. The owner-scoped acknowledgement is stored on the Thread, survives reloads, and cannot pre-read a running Turn or acknowledge a newer completion through a stale request. Running Turns retain their spinner.
 
 Structured lifecycle logs, OpenTelemetry traces and bounded metrics cover API, Broker, workers, Sandbox allocation, Gateway, provider HTTP, storage and Runtime. This repository's K8s application services write structured JSON to stdout and use the company-injected OTLP endpoint; local JSONL remains optional and configurable beneath `.data`. SRE owns the log agent, Collector, disk delivery queue, storage, dashboards and alerts. Durable Domain Envelopes and continuations retain Span Links across restart and delayed delivery. Harness stdout remains the user/business protocol, while separately drained stderr emits one credential-redacted tail record per execution (1 KiB by default, configurable to zero or at most 1 MiB). External Sandbox Runtime signals use the scope-checked Gateway because the SRE-managed cluster agent cannot collect them directly; Gateway validates Runtime Metrics and replaces Sandbox authorization with SRE-provided OTLP credentials. Use `.venv/bin/sandbox-harness-logs --turn TURN_ID` to assemble a timeline. See [logging, IDs, stderr limits, retention, export configuration and troubleshooting](docs/observability.md).

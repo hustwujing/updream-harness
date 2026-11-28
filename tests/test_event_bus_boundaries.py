@@ -21,6 +21,7 @@ async def test_redis_connected_but_silent_has_bounded_database_fallback(monkeypa
         await bus.publish(Event(turn_id='test',sequence=1,kind=EventKind.STATE,payload={'state':'RUNNING'}));assert not bus.available
         await bus.publish_live('turn','test',{'execution_id':'one','parts':[]});assert not bus.available
         _,rows=await bus.read_live('turn','test',block_ms=1);assert rows==[] and not bus.available
+        assert await bus.latest_live('turn',{'test'})=={} and not bus.available
         ready,_,rows=await bus.wait_turn_activity('test',0,block_ms=1)
         assert not ready and rows==[] and not bus.available
         await bus.wait('test',0,block_ms=1);assert not bus.available

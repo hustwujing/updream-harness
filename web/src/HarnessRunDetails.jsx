@@ -40,7 +40,7 @@ function ModelRounds({node,now}){
      <small>{round.model||node.model||'模型'}
       {round.first_output_ms!=null?` · 首输出 ${formatDuration(Number(round.first_output_ms))}`:''}
       {tokens>0?` · ${formatCompactTokens(tokens)} tokens`:' · 用量待返回'}
-      {round.output_characters>0&&<> · <AnimatedToken nodeId={`${node.id}:${round.request_id}`} kind="characters" value={round.output_characters}/> 字符</>}</small>
+      {(round.output_characters>0||round.status==='in_progress')&&<> · <AnimatedToken nodeId={`${node.id}:${round.request_id}`} kind="characters" value={round.output_characters}/> 字符</>}</small>
     </article>})}</div>
   </details></>;
 }

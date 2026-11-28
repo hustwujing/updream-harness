@@ -976,7 +976,8 @@ def create_gateway(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404,"model_route_not_supported")
         observe_model=endpoint_kind in {"generation","compaction"}
         activity = (ModelActivity(activity_store,claims,
-            settings.stream_persist_seconds) if observe_model else None)
+            settings.stream_persist_seconds,settings.stream_live_publish_seconds)
+            if observe_model else None)
         reservation_id = ""
         if activity:await activity.start()
         try:

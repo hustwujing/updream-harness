@@ -11,7 +11,7 @@ CORE_METHODS = frozenset({
     "get_job_authorization_context", "get_job_group_draft_request", "get_turn_for_owner",
     "reject_job_group_draft", "request_job_cancel", "request_job_group_cancel",
     "update_job_group_draft", "validate_job_input_artifacts",
-    "persist_runtime_event", "update_model_activity",
+    "persist_runtime_event", "update_model_activity", "publish_model_activity_progress",
     "resolve_review_candidates",
 })
 MEDIA_METHODS = frozenset({

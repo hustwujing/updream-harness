@@ -184,6 +184,17 @@ class EventsTransactions:
         await self.append_event(turn_id, EventKind.STEP_PROGRESS if status == "in_progress" else EventKind.STEP_FINISHED,
             {"model_request_id": payload["model_request_id"], "phase": phase}, item_id=item_id)
 
+    async def publish_model_activity_progress(self, *, turn_id: str, job_id: str,
+                                              model_request_id: str,
+                                              output_characters: int) -> None:
+        if not self.events:return
+        scope='model-job' if job_id else 'model-turn';identity=job_id or turn_id
+        await self.events.publish_live(scope,identity,{
+            'kind':'model_character_progress','turn_id':turn_id,'job_id':job_id,
+            'model_request_id':model_request_id,
+            'output_characters':max(0,int(output_characters)),
+        })
+
 
     async def latest_model_activity_error(self,turn_id:str)->str:
         async with self.connections() as db:

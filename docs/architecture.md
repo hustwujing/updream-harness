@@ -10,10 +10,10 @@ The broker authenticates users, serializes turns per session, restores and saves
 
 PostgreSQL is authoritative for transcript Items, control events and committed
 Runtime event batches. Redis Streams under the product key prefix carry bounded
-live public-text deltas and wake connected clients. Reconnects reconcile the
-PostgreSQL committed cursor before overlaying higher Redis sequences, so Redis
-loss can delay display until the next durable flush but cannot lose transcript
-state.
+live public-text deltas, content-free model character progress and client wakeups.
+Reconnects reconcile the PostgreSQL committed cursor and model-progress baseline
+before overlaying higher Redis values, so Redis loss can delay display until the
+next durable flush but cannot lose transcript state or model accounting.
 
 ## Runtime Responsibilities
 
@@ -123,5 +123,8 @@ output. Waiting and streaming phases share one Item, so elapsed time remains con
 Retries appear as distinct HTTP-request steps; a failed request does not by itself
 mark the entire active Turn failed. Token-count and catalog endpoints are excluded.
 Timing writes are bounded and best effort so an observability outage does not fail
-an otherwise valid model request. The existing Redis event bus notifies clients;
-PostgreSQL remains the durable replay source.
+an otherwise valid model request. Active Primary, Child and Reviewer rounds also
+publish only their request identity and cumulative public-output character count
+to the bounded Redis live stream. The execution graph overlays that progress
+without increasing the configured PostgreSQL batch frequency; PostgreSQL remains
+the durable replay source.
