@@ -68,3 +68,7 @@ Selected release digests:
 All affected services were selected from immutable manifests and restarted by
 SIGKILL. Health, leader ownership, model catalog, queue writer and observability
 counters were healthy after restart.
+
+Post-baseline live Item ordering, native-session error projection and repeated
+checkpoint restore evidence is recorded in the
+[live order and restore addendum](ali-live-order-and-restore-addendum.md).
