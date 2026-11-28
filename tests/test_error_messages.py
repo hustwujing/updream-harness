@@ -35,3 +35,10 @@ def test_workspace_restore_failures_distinguish_unavailable_from_invalid_checkpo
     code,message=public_failure('checkpoint_restore_failed','private archive detail')
     assert code=='checkpoint_restore_failed'
     assert '校验或解包失败' in message and 'private' not in message
+
+
+def test_missing_native_session_has_specific_non_replay_guidance():
+    code,message=public_failure('native_session_unavailable','PRIVATE RPC detail')
+    assert code=='native_session_unavailable'
+    assert 'Codex 原生会话' in message and '新建会话' in message
+    assert '不会自动重放' in message and 'PRIVATE' not in message

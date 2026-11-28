@@ -154,6 +154,7 @@ def public_failure(code: str, detail: str) -> tuple[str, str]:
         'CheckpointRestoreError': '会话工作区恢复失败，请稍后重试。',
         'ConnectError': '暂时无法连接沙箱，请稍后重试。',
         'harness_result_missing': '执行进程已退出，但没有确认完成。本轮未计为成功，请检查已保存的文件后继续。',
+        'native_session_unavailable': '保存的 Codex 原生会话状态不可用，无法在原会话中继续。已保存的文件仍可查看；请新建会话继续，系统不会自动重放旧消息。',
         'harness_protocol_error': '执行进程返回了无法处理的消息，本轮已停止，请检查已保存的文件后重试。',
         'input_delivery_failed': '消息未能确认送达执行进程，本轮已停止，请重新发送。',
         'harness_exit': '执行进程异常退出，请检查已保存的文件后继续。',

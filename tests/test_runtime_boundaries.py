@@ -184,6 +184,19 @@ async def test_stream_eof_without_result_is_failure(tmp_path, monkeypatch):
     assert result['input_ids'] == ['initial']
 
 
+async def test_runner_error_is_not_overwritten_by_missing_result(tmp_path,monkeypatch):
+    app=runtime(tmp_path,monkeypatch,'''import sys,json
+sys.stdin.readline()
+print(json.dumps({'type':'error','error_code':'native_session_unavailable',
+ 'message':'Saved Codex session is unavailable'}),flush=True)
+''')
+    await endpoint(app,'/v1/turns')(runtime_app.TurnRequest(message='hello'))
+    result=await completed(app)
+    assert result['status']=='failed'
+    assert result['error_code']=='native_session_unavailable'
+    assert result['error_detail']=='Saved Codex session is unavailable'
+
+
 async def test_non_object_stdout_does_not_destroy_valid_completion(tmp_path, monkeypatch):
     app = runtime(tmp_path, monkeypatch, '''import sys,json
 sys.stdin.readline()

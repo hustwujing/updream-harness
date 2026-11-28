@@ -38,6 +38,13 @@ browser API and execution graph must carry the same stable message, optional
 safe reason and guidance. Arbitrary `error_reason` fields from an executor are
 discarded; only a valid structured `external_error_detail` envelope is trusted.
 
+Native Harness startup is also phase-specific. A Codex `thread/resume` RPC
+rejection uses `native_session_unavailable`; it is not a model or Sandbox
+availability error and must never trigger automatic message replay or silent
+creation of a replacement native thread. If the Runner emits a stable error and
+then exits without its completion receipt, Runtime preserves that error rather
+than overwriting it with `harness_result_missing`.
+
 ## Phase And Retry Matrix
 
 | Failure boundary | Side effect | Permitted action |

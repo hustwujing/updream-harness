@@ -22,11 +22,24 @@ class CodexAppServerExited(RuntimeError):
         super().__init__('Codex app-server exited')
 
 
+class CodexRpcError(RuntimeError):
+    def __init__(self,method,value):
+        self.method=method
+        code=value.get('code') if isinstance(value,dict) else None
+        self.diagnostics={'exception_type':type(self).__name__,'rpc_method':method,
+            **({'rpc_code':code} if isinstance(code,int) else {})}
+        super().__init__('Codex RPC failed')
+
+
 def runner_failure(exc):
     diagnostics={'exception_type':type(exc).__name__}
     if isinstance(exc,CodexAppServerExited):diagnostics=exc.diagnostics
-    return {'type':'error','error_code':'harness_runner_failed',
-        'message':'Harness runner failed','diagnostics':diagnostics}
+    if isinstance(exc,CodexRpcError):diagnostics=exc.diagnostics
+    unavailable=isinstance(exc,CodexRpcError) and exc.method=='thread/resume'
+    return {'type':'error','error_code':(
+        'native_session_unavailable' if unavailable else 'harness_runner_failed'),
+        'message':('Saved Codex session is unavailable' if unavailable
+            else 'Harness runner failed'),'diagnostics':diagnostics}
 
 
 class Bridge:
@@ -96,7 +109,7 @@ class Bridge:
             message = self.messages.get()
             if message is None:raise self.exited()
             if message.get("id") == identity and "method" not in message:
-                if "error" in message: raise RuntimeError(str(message["error"].get("message", "Codex RPC failed")))
+                if "error" in message:raise CodexRpcError(method,message.get('error'))
                 return message.get("result", {})
             if "id" in message and "method" in message: self.respond(message)
             else:

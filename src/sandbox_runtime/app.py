@@ -870,6 +870,11 @@ def create_app() -> FastAPI:
                 )
                 if event is not None:
                     execution.tools.observe(event.get("kind"),event.get("payload",{}),execution.id)
+                    if event.get('kind')=='error':
+                        payload=event.get('payload') or {}
+                        execution.protocol_state['runner_error']={
+                            'error_code':normalize_error_code(payload.get('error_code')),
+                            'error_detail':str(payload.get('message') or 'Harness runner failed')[:1000]}
                     execution.native_thread_id = event.get("payload", {}).get("thread_id") or execution.native_thread_id
                     if event.get("kind") != "text_delta" or not (
                         event.get("payload", {}).get("snapshot") and execution.saw_text_delta
@@ -932,11 +937,14 @@ def create_app() -> FastAPI:
             else:
                 await stop_process(execution)
             if missing_result or execution.cancel_requested:
+                runner_error=execution.protocol_state.get('runner_error') or {}
                 await finish_execution(execution, {
                     "status": "cancelled" if execution.cancel_requested else "failed",
                     "native_thread_id": execution.native_thread_id,
-                    "error_code": "cancelled" if execution.cancel_requested else "harness_result_missing",
-                    "error_detail": "Harness stopped before acknowledging all pending inputs",
+                    "error_code": ("cancelled" if execution.cancel_requested else
+                        str(runner_error.get('error_code') or 'harness_result_missing')),
+                    "error_detail": ("Harness stopped before acknowledging all pending inputs"
+                        if not runner_error else str(runner_error.get('error_detail') or 'Harness runner failed')),
                     "input_ids": execution_input_ids(execution),
                 })
                 return

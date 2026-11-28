@@ -101,3 +101,27 @@ for line in sys.stdin:
     assert failure["diagnostics"]["exception_type"] in {"CodexAppServerExited","BrokenPipeError"}
     assert set(failure["diagnostics"])<=set(
         ["exception_type","stderr_line_count","stderr_sha256"])
+
+
+def test_codex_runner_classifies_missing_resumed_session_without_raw_rpc_detail(tmp_path):
+    fake=tmp_path/'codex';secret='PRIVATE NATIVE SESSION ERROR'
+    fake.write_text(f'''#!/usr/bin/env python3
+import json,sys
+for line in sys.stdin:
+ value=json.loads(line);method=value.get("method");identity=value.get("id")
+ if method=="initialize":print(json.dumps({{"id":identity,"result":{{}}}}),flush=True)
+ elif method=="thread/resume":print(json.dumps({{"id":identity,"error":{{"code":-32004,"message":{secret!r}}}}}),flush=True)
+''')
+    fake.chmod(0o755)
+    environment={**os.environ,'PATH':str(tmp_path)+os.pathsep+os.environ['PATH'],
+        'PYTHONPATH':str(Path(__file__).resolve().parents[1]/'src')}
+    process=subprocess.run([sys.executable,'-m','sandbox_runtime.codex_runner','--model','model',
+        '--thread-id','missing-thread'],input='',stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+        text=True,env=environment,timeout=5)
+    assert process.returncode!=0 and secret not in process.stdout
+    failure=next(row for row in map(json.loads,process.stdout.splitlines())
+        if row.get('type')=='error')
+    assert failure['error_code']=='native_session_unavailable'
+    assert failure['message']=='Saved Codex session is unavailable'
+    assert failure['diagnostics']=={'exception_type':'CodexRpcError',
+        'rpc_method':'thread/resume','rpc_code':-32004}
