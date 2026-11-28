@@ -35,6 +35,14 @@ outcome as unknown/interrupted, never as permission to retry. Cancellation that
 wins before final commit must prevent later success. A stale generation cannot
 publish state, checkpoint, artifact or Runtime cursor.
 
+Cross-domain lifecycle operation IDs remain stable for one scope generation. An
+immediate local prepare refusal may be re-evaluated under the same identity when
+the caller retries after its blocker clears, because no participant command has
+left Core. A refusal reached after remote prepare/abort, a requester-mediated
+registration, or any committed/aborted barrier is final for that operation and
+must never be reopened. Re-evaluation reuses the existing barrier and must not
+duplicate participant effects.
+
 ## Tests
 
 Add transaction tests for the exact race, Broker recovery tests for each

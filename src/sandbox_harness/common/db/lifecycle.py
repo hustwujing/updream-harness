@@ -112,6 +112,15 @@ class LifecycleParticipant:
             return {"prepared": old.state in {"prepared", "committed"}, "error_code": old.error_code}
         owner = await self._scope(session, proposal.owner_id, "")
         scope = await self._scope(session, proposal.owner_id, proposal.thread_id) if proposal.thread_id else owner
+        error = await self._prepare_error(session, proposal, owner, scope)
+        if not error:
+            scope.frozen_by = proposal.operation_id
+        session.add(DomainBarrier(id=proposal.operation_id, proposal_json=encoded,
+            state="rejected" if error else "prepared", error_code=error))
+        await session.flush()
+        return {"prepared": not bool(error), "error_code": error}
+
+    async def _prepare_error(self,session,proposal,owner,scope):
         error = ""
         if owner.frozen_by or scope.frozen_by or scope.state == "deleted":
             error = "lifecycle_admission_blocked"
@@ -128,12 +137,24 @@ class LifecycleParticipant:
         if error and (not isinstance(error, str) or len(error) > 80
                       or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789_" for c in error)):
             raise ValueError("lifecycle_error_code_invalid")
+        return error
+
+    async def retry_rejected_prepare(self,session,proposal):
+        proposal.validate()
+        await self.handoff._identity_lock(session,"lifecycle",proposal.operation_id)
+        row=await session.get(DomainBarrier,proposal.operation_id,with_for_update=True)
+        if row is None or row.proposal_json!=canonical_json(asdict(proposal)):
+            raise ValueError("lifecycle_identity_conflict")
+        if row.state!="rejected":
+            return {"prepared":row.state in {"prepared","committed"},
+                "error_code":row.error_code}
+        owner=await self._scope(session,proposal.owner_id,"")
+        scope=await self._scope(session,proposal.owner_id,proposal.thread_id) if proposal.thread_id else owner
+        error=await self._prepare_error(session,proposal,owner,scope)
+        row.error_code=error
         if not error:
-            scope.frozen_by = proposal.operation_id
-        session.add(DomainBarrier(id=proposal.operation_id, proposal_json=encoded,
-            state="rejected" if error else "prepared", error_code=error))
-        await session.flush()
-        return {"prepared": not bool(error), "error_code": error}
+            scope.frozen_by=proposal.operation_id;row.state="prepared"
+        return {"prepared":not bool(error),"error_code":error}
 
     async def decide(self, session, proposal, commit, *, retain_barrier=False):
         proposal.validate()
@@ -234,6 +255,12 @@ class LifecycleCoordinator:
         if row:
             if row.proposal_json != encoded or row.participants_json != targets or row.requester != requester:
                 raise ValueError("lifecycle_identity_conflict")
+            if row.phase=="refused" and not requester:
+                result=await self.local.retry_rejected_prepare(session,proposal)
+                row.error_code=result["error_code"]
+                if result["prepared"]:
+                    row.phase="preparing"
+                    await self._enqueue(session,proposal,participants,"prepare")
             return self._view(row)
         result = await self.local.prepare(session, proposal)
         row = DomainLifecycle(id=proposal.operation_id, owner_id=proposal.owner_id, proposal_json=encoded,

@@ -158,7 +158,7 @@ async def test_pending_remote_obligation_blocks_lifecycle_until_receipt(tmp_path
         assert refused.state == "refused" and refused.error_code == "remote_obligations_pending"
         await core.relay_remote({"media":target})
         pending = await core.coordinator.start(LifecycleProposal(
-            "archive-ready", "owner", thread.id, 0, "archive", "archived"), {"media"})
+            "archive-blocked", "owner", thread.id, 0, "archive", "archived"), {"media"})
         assert pending.state == "pending"
     finally:
         await core.close(); await media.close()

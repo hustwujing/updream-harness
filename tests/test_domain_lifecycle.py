@@ -84,6 +84,28 @@ async def test_known_refusal_aborts_all_barriers_before_final_refusal(tmp_path):
         await cleanup(databases)
 
 
+async def test_immediate_local_refusal_can_retry_same_identity_after_blocker_clears(tmp_path):
+    from sandbox_harness.common.db.lifecycle import LifecycleProposal
+    databases,participants,coordinator,applied=await lifecycle(tmp_path)
+    proposal=LifecycleProposal("retry-local","owner","thread",0,"delete","deleted")
+    targets={name:part.handoff for name,part in participants.items() if name!="core"}
+    try:
+        async def block(session,value):return "active_work"
+        participants["core"].check=block
+        refused=await coordinator.start(proposal,set(targets))
+        assert refused.state=="refused" and refused.error_code=="active_work"
+        async def clear(session,value):return ""
+        participants["core"].check=clear
+        assert (await coordinator.start(proposal,set(targets))).state=="pending"
+        await coordinator.handoff.relay(targets)
+        await coordinator.advance(proposal.operation_id)
+        await coordinator.handoff.relay(targets)
+        assert (await coordinator.advance(proposal.operation_id)).state=="completed"
+        assert sorted(applied)==[("core","delete"),("media","delete"),("sites","delete")]
+    finally:
+        await cleanup(databases)
+
+
 async def test_unknown_delivery_stays_pending_and_conflicting_identity_is_rejected(tmp_path):
     from sandbox_harness.common.db.lifecycle import LifecycleProposal
     databases, participants, coordinator, applied = await lifecycle(tmp_path)
