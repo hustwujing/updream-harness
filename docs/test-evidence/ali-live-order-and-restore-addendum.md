@@ -21,6 +21,8 @@ catalog.
 
 ## Verification
 
+- Final full Python gate: `1638 passed, 23 skipped` at `80928d8` plus
+  documentation-only gate recording.
 - Focused Python: `83 passed` for Runtime buffer, Broker, Runtime, Codex Runner,
   Redis boundaries and public errors.
 - Frontend: `40/40` Vitest and production build.
