@@ -72,6 +72,13 @@ observation, Redis live model progress, Execution Graph model-round projection
 or transcript character animation changes. It does not change the 200-case
 catalog count.
 
+Supplemental `CV01`-`CV05` (`tests/run_real_checkpoint_versions.py`) validate
+the Core checkpoint version ledger on real sandboxes: normal publication,
+corrupt-archive rollback, PlatformWorker SIGKILL before activation, missing
+native-session rollback and ACTIVE plus two-SUPERSEDED retention. The runner
+must force a fresh sandbox for restore-negative cases and remove only its own
+Thread and sandbox. These cases do not change the 200-case catalog count.
+
 Documentation-only updates to a verified baseline need content, source-reference
 and link checks, not another real-provider campaign or deployment. Preserve the
 tested/deployed revision and commit the documentation separately; do not rewrite

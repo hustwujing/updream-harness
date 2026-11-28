@@ -28,6 +28,9 @@ revision. See the
 The supplemental
 [large-checkpoint recovery report](docs/test-evidence/ali-large-checkpoint-recovery-report.md)
 records the 210 MB Ali restore, checkpoint-pointer repair and chunk protocol.
+The [checkpoint version ledger report](docs/test-evidence/ali-checkpoint-version-ledger-report.md)
+records verified publication, deterministic rollback, worker SIGKILL safety and
+bounded retention on real Ali sandboxes.
 The [live model character progress report](docs/test-evidence/ali-live-model-character-progress-report.md)
 records the Gateway/API/browser progress path. Neither changes the frozen
 200-case catalog count.
