@@ -521,6 +521,16 @@ class SandboxPool:
                             self._pending_allocations.pop(pending_key,None)
                             self._retained_allocations.pop(pending_key,None)
                         return sandbox
+                    except SandboxNotFound:
+                        self._release_user_slot()
+                        self._capacity_changed.set()
+                        handle=(SandboxHandle.from_mapping(existing["handle"])
+                            if existing.get("handle") else None)
+                        if handle is not None:
+                            await self.ownership.confirm_direct_release(handle)
+                        if explicit_allocation:
+                            raise
+                        allocation_id=turn_id
                     except BaseException:
                         self._release_user_slot()
                         raise

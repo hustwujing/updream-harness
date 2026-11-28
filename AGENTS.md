@@ -32,6 +32,9 @@ claims made by documentation.
   creation outcomes retain ownership until authoritative reconciliation.
 - Used sandboxes may be retained only for the same Thread and are never returned
   to the pristine warm pool.
+- A non-RELEASED durable sandbox ownership handle protects its provider object
+  from startup orphan deletion. Provider-confirmed absence must converge that
+  ownership to RELEASED before a replacement allocation is created.
 - Persist the intended final state before cleanup. Revoke capability access,
   quiesce Runtime work and confirm sandbox deletion before releasing capacity.
 - Accepted external work keeps its original generation identity across Worker

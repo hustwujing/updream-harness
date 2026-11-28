@@ -285,6 +285,8 @@ async def test_pool_persists_retained_deadline_and_rebind_cancels_expiry(tmp_pat
         assert retained["state"] == "RETAINED"
         assert utc_datetime(retained["retained_until"]) >= before + timedelta(seconds=59)
         assert thread.id not in pool._expiry
+        assert (sandbox.handle.provider,sandbox.handle.allocation_id) in await core.active_sandbox_allocations()
+        assert (sandbox.handle.provider,sandbox.id) in await core.active_sandbox_keys()
 
         reused = await pool.acquire(thread_id=thread.id, turn_id="second", harness=Harness.CODEX,
             environment={}, ownership_owner_id="owner")
@@ -294,6 +296,65 @@ async def test_pool_persists_retained_deadline_and_rebind_cancels_expiry(tmp_pat
         await pool.release(reused, keep_attached=False)
     finally:
         await pool.close()
+        await core.close()
+
+
+async def test_startup_orphan_cleanup_preserves_durable_retained_ownership(tmp_path):
+    from sandbox_harness.common.execution.turn_broker import Broker
+    from sandbox_harness.common.sandbox.pool import SandboxPool
+    core,ledger,backend,thread,_=await setup_owned(tmp_path)
+    old=SandboxPool(backend,{h:'image' for h in Harness},{h:0 for h in Harness},
+        max_sandboxes=1,ownership=ledger);replacement=None
+    try:
+        sandbox=await old.acquire(thread_id=thread.id,turn_id='first',harness=Harness.CODEX,
+            environment={},ownership_owner_id='owner')
+        await old.release(sandbox,keep_attached=True,keepalive_seconds=60)
+        await old.close(preserve_sandbox_keys={old.sandbox_key(sandbox)})
+
+        replacement=SandboxPool(backend,{h:'image' for h in Harness},{h:0 for h in Harness},
+            max_sandboxes=1,ownership=ledger)
+        await replacement.restore_allocation_capacity(await ledger.capacity_obligations())
+        broker=Broker.__new__(Broker);broker.pool=replacement;broker.store=core
+        broker.active_sandboxes={}
+        await broker.cleanup_startup_orphans()
+
+        assert sandbox.id in backend.items
+        assert (await ledger.get(ledger.identity(
+            sandbox.handle.provider,sandbox.handle.allocation_id)))['state']=='RETAINED'
+    finally:
+        if not old._closed:await old.close()
+        if replacement:await replacement.close(preserve_sandbox_keys={
+            replacement.sandbox_key(sandbox)} if 'sandbox' in locals() else set())
+        await core.close()
+
+
+async def test_missing_retained_provider_sandbox_converges_to_fresh_turn_allocation(tmp_path):
+    from sandbox_harness.common.sandbox.pool import SandboxPool
+    core,ledger,backend,thread,_=await setup_owned(tmp_path)
+    old=SandboxPool(backend,{h:'image' for h in Harness},{h:0 for h in Harness},
+        max_sandboxes=1,ownership=ledger);replacement=None
+    try:
+        sandbox=await old.acquire(thread_id=thread.id,turn_id='first',harness=Harness.CODEX,
+            environment={},ownership_owner_id='owner')
+        old_identity=ledger.identity(sandbox.handle.provider,sandbox.handle.allocation_id)
+        await old.release(sandbox,keep_attached=True,keepalive_seconds=60)
+        await old.close(preserve_sandbox_keys={old.sandbox_key(sandbox)})
+        await backend.delete(sandbox)
+
+        replacement=SandboxPool(backend,{h:'image' for h in Harness},{h:0 for h in Harness},
+            max_sandboxes=1,ownership=ledger)
+        await replacement.restore_allocation_capacity(await ledger.capacity_obligations())
+        fresh=await replacement.acquire(thread_id=thread.id,turn_id='second',
+            harness=Harness.CODEX,environment={},ownership_owner_id='owner')
+
+        assert fresh.id!=sandbox.id and fresh.handle.allocation_id=='second'
+        assert (await ledger.get(old_identity))['state']=='RELEASED'
+        fresh_identity=ledger.identity(fresh.handle.provider,fresh.handle.allocation_id)
+        assert (await ledger.get(fresh_identity))['state']=='LIVE'
+        await replacement.release(fresh,keep_attached=False)
+    finally:
+        if not old._closed:await old.close()
+        if replacement:await replacement.close()
         await core.close()
 
 

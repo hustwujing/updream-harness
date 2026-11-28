@@ -6,6 +6,7 @@ from sqlalchemy import (or_, select, update)
 from sandbox_harness.common.contracts.domain import (TERMINAL, identifier, now)
 from sandbox_harness.common.contracts.job_contracts import (TERMINAL_JOB_STATES)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxHandle)
+from .ownership_models import SandboxOwnershipRow
 from .models import (JobAttemptRow, JobCleanupRow, JobRow, SandboxAllocationRow, SandboxAuditRow, SandboxControlRow, SandboxPortGrantRow, ThreadRow, TurnRow, canonical_json, utc_datetime)
 
 
@@ -181,8 +182,12 @@ class SandboxTransactions:
                 JobCleanupRow.state!="completed"))).scalars().all())
             dispatched=(await db.scalars(select(SandboxAllocationRow.handle_json).where(
                 SandboxAllocationRow.state=='READY'))).all()
+            owned=(await db.scalars(select(SandboxOwnershipRow.handle_json).where(
+                SandboxOwnershipRow.namespace==self.ownership.namespace,
+                SandboxOwnershipRow.state!='RELEASED',
+                SandboxOwnershipRow.handle_json!=''))).all()
         result=[]
-        for encoded in dispatched:
+        for encoded in [*dispatched,*owned]:
             try:result.append(SandboxHandle.from_mapping(json.loads(encoded)))
             except (TypeError,ValueError) as exc:
                 raise RuntimeError('active_sandbox_handle_missing_or_invalid') from exc
@@ -254,7 +259,11 @@ class SandboxTransactions:
             dispatched=(await db.execute(select(SandboxAllocationRow.provider,
                 SandboxAllocationRow.allocation_id).where(SandboxAllocationRow.state.in_(
                     ['PENDING','SENDING','READY','UNKNOWN'])))).all()
-        result=set(dispatched)
+            owned=(await db.execute(select(SandboxOwnershipRow.provider,
+                SandboxOwnershipRow.allocation_id).where(
+                    SandboxOwnershipRow.namespace==self.ownership.namespace,
+                    SandboxOwnershipRow.state!='RELEASED'))).all()
+        result=set(dispatched)|set(owned)
         for encoded in receipts:
             try:
                 value=json.loads(encoded)

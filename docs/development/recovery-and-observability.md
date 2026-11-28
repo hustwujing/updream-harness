@@ -189,6 +189,14 @@ provider evidence separately from current functional case results. Reclaim only
 after authoritative reconciliation or verified retirement of the exclusively
 owned test scope; do not change a historical result to make cleanup look green.
 
+Startup orphan cleanup includes every non-RELEASED `sandbox_ownership` handle in
+its protected set, including `RETAINED` sessions whose keepalive has not
+expired. A Worker restart must not delete a retained provider sandbox merely
+because no Turn is currently nonterminal. If provider lookup authoritatively
+returns not found, Pool commits direct release of the stale ownership and a
+normal Primary Turn may create a fresh allocation; it must not return the stale
+404 indefinitely.
+
 An accepted execution and its collected Artifacts are separate durable
 boundaries. If submission/execution completed but Artifact collection failed,
 the next worker generation reuses the persisted external ID and acceptance
