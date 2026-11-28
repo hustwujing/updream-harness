@@ -31,8 +31,8 @@ def test_real_case_catalog_includes_every_inherited_d_case_with_provenance():
             if case['id'].startswith('EVO') else case['id'][0])
         groups[prefix].append(case)
     assert {key:len(value) for key,value in groups.items()}=={
-        'S':31,'C':30,'R':17,'D':51,'P':29,'K':17,'XDB':6,'EVO':18}
-    assert len(catalog['cases'])==199 and catalog['runnable_case_count']==199
+        'S':31,'C':30,'R':17,'D':51,'P':30,'K':17,'XDB':6,'EVO':18}
+    assert len(catalog['cases'])==200 and catalog['runnable_case_count']==200
     assert not catalog['superseded_cases']
     assert [case['id'] for case in groups['XDB']]==[
         f'XDB{index:02d}' for index in range(1,7)]
@@ -63,7 +63,7 @@ def test_parallel_protocol_runner_never_fakes_unimplemented_success():
     source=(ROOT/"tests/run_real_parallel_protocol.py").read_text();ast.parse(source)
     assert "protocol_handler_not_implemented" in source
     assert "HANDLERS" in source and "'P02'" in source and "'P12'" in source
-    assert all(f"'P{index:02d}'" in source for index in range(1,31))
+    assert all(f"'P{index:02d}'" in source for index in range(1,32))
     assert "compile_delegation" in source and "metadata_required':False" in source
     assert 'parser.add_argument(\'--timeout\'' in source
     assert 'parser.add_argument(\'--intervention-delay\'' in source
@@ -73,7 +73,7 @@ def test_parallel_protocol_runner_never_fakes_unimplemented_success():
     assert all(f"'K{index:02d}'" in source for index in range(1,18))
     assert 'case_skill_coverage' in source and all(
         f'case_k{index:02d}' in source for index in range(7,12))
-    assert "SERIAL_CASES={'P13','P19','P21','P27','P28','P29','K08','AS01'}" in source
+    assert "SERIAL_CASES={'P13','P19','P21','P27','P28','P29','P31','K08','AS01'}" in source
     assert "'video.generate'" in source and "'video.edit'" in source
     assert "'audio.generate'" in source and "'model3d.transform'" in source
     assert 'REST versus gRPC, monolith versus microservices, and SQL versus NoSQL' in source

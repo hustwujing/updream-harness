@@ -14,10 +14,10 @@
     "evidence_root": ".data/evidence/real-campaign",
     "forbid_case_specific_product_fixes": true
   },
-  "runnable_case_count": 199,
+  "runnable_case_count": 200,
   "business_case_count": 78,
   "inherited_protocol_case_count": 51,
-  "parallel_case_count": 46,
+  "parallel_case_count": 47,
   "cross_database_case_count": 6,
   "evolution_case_count": 18,
   "cases": [
@@ -7239,6 +7239,35 @@
         "cold_restore",
         "native_session",
         "sandbox_replacement"
+      ],
+      "provenance": "parallel-design"
+    },
+    {
+      "id": "P31",
+      "title": "保留沙箱跨PlatformWorker重启",
+      "complexity": "parallel_protocol",
+      "assets": [],
+      "prompt": "Turn完成并保留附着沙箱后重启PlatformWorker；启动清理必须保护ownership，下一Turn复用同一沙箱。",
+      "expect": {
+        "retained_survived_restart": true,
+        "same_sandbox_reused": true
+      },
+      "content_checks": [
+        "ownership在保留期内为RETAINED",
+        "重启后Provider沙箱仍存在",
+        "下一Turn复用同一sandbox ID",
+        "startup orphan未删除受保护沙箱"
+      ],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_browser_or_api",
+      "executor": "parallel_protocol",
+      "required_features": [
+        "retained_sandbox",
+        "worker_restart",
+        "orphan_fencing",
+        "same_thread_reuse"
       ],
       "provenance": "parallel-design"
     },

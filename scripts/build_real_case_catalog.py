@@ -156,6 +156,12 @@ PARALLEL_CASES=[
         features=("checkpoint","cold_restore","native_session","sandbox_replacement"),
         content_checks=("首轮checkpoint已提交","附着沙箱已释放",
             "第二轮在新沙箱完成","native thread ID保持不变")),
+    protocol("P31","保留沙箱跨PlatformWorker重启",
+        "Turn完成并保留附着沙箱后重启PlatformWorker；启动清理必须保护ownership，下一Turn复用同一沙箱。",
+        {"retained_survived_restart":True,"same_sandbox_reused":True},
+        features=("retained_sandbox","worker_restart","orphan_fencing","same_thread_reuse"),
+        content_checks=("ownership在保留期内为RETAINED","重启后Provider沙箱仍存在",
+            "下一Turn复用同一sandbox ID","startup orphan未删除受保护沙箱")),
 ]
 
 

@@ -29,7 +29,7 @@ from sandbox_harness.common.db.media_repository import MediaRepository
 ROOT=Path(__file__).resolve().parents[1]
 TERMINAL_JOBS={'SUCCEEDED','FAILED','CANCELLED','BLOCKED','UNKNOWN'}
 PROTOCOL_LOCK=ROOT/'.data/tmp/real-protocol.lock'
-SERIAL_CASES={'P13','P19','P21','P27','P28','P29','K08','AS01'}
+SERIAL_CASES={'P13','P19','P21','P27','P28','P29','P31','K08','AS01'}
 
 
 def core_repository(settings):
@@ -1986,6 +1986,47 @@ async def case_p30(client,args):
     finally:await store.close()
 
 
+async def case_p31(client,args):
+    from sqlalchemy import select
+    from sandbox_harness.common.contracts.sandbox_contracts import SandboxHandle
+    from sandbox_harness.common.db.ownership_models import SandboxOwnershipRow
+    import sandbox_harness.common.sandbox.sandbox_factory as sandbox_factory
+    thread,first=await origin(client,args,'P31',
+        'Reply with exactly RETAINED_RESTART_FIRST and do not use tools.')
+    initial=await wait_turn(client,first['id'],args.timeout)
+    if initial['state']!='COMPLETED':raise AssertionError('retained_restart_first_failed')
+    settings=load_platform_settings();store=core_repository(settings)
+    try:
+        async with store.connections() as db:
+            retained=(await db.execute(select(SandboxOwnershipRow).where(
+                SandboxOwnershipRow.thread_id==thread['id'],
+                SandboxOwnershipRow.state=='RETAINED').order_by(
+                SandboxOwnershipRow.created_at.desc()).limit(1))).scalar_one_or_none()
+        if retained is None or not retained.handle_json or retained.retained_until is None:
+            raise AssertionError('retained_restart_ownership_missing')
+        handle=SandboxHandle.from_mapping(json.loads(retained.handle_json))
+        backend=sandbox_factory.build_sandbox_registry(settings)
+        before=await backend.get(handle)
+        old_pid,new_pid=await hard_restart_service(args,'platform_worker')
+        after=await backend.get(handle)
+        if after.id!=before.id:raise AssertionError('retained_restart_sandbox_changed')
+        second=require(await client.post(f"api/threads/{thread['id']}/turns",json={
+            'message':'Reply with exactly RETAINED_RESTART_SECOND and do not use tools.',
+            'attachments':[],'idempotency_key':'protocol-p31-'+uuid.uuid4().hex,
+            'delivery_mode':'start'})).json()
+        final=await wait_turn(client,second['id'],args.timeout)
+        if final['state']!='COMPLETED':
+            raise AssertionError('retained_restart_second_failed:'+json.dumps(final))
+        current=await store.get_turn(second['id'])
+        if current.sandbox_id!=handle.sandbox_id:
+            raise AssertionError('retained_restart_did_not_reuse_sandbox')
+        return {'classification':'success','thread_id':thread['id'],
+            'sandbox_id':handle.sandbox_id,'old_pid':old_pid,'new_pid':new_pid,
+            'retained_survived_restart':True,'same_sandbox_reused':True,
+            'second_turn_id':second['id']}
+    finally:await store.close()
+
+
 HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case_p05,
     'P06':case_p06,'P07':case_p07,'P08':case_p08,'P09':case_p09,'P10':case_p10,
     'P11':case_p11,'P12':case_p12,'P13':case_p13,'P14':case_p14,'P15':case_p15,
@@ -1993,6 +2034,7 @@ HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case
     'P21':case_p21,'P22':case_p22,'P23':case_p23,'P24':case_p24,
     'P25':case_p25,'P26':case_p26,'P27':case_p27,'P28':case_p28,'P29':case_p29,
     'P30':case_p30,
+    'P31':case_p31,
     'AS01':case_as01,
     'K07':case_k07,'K08':case_k08,'K09':case_k09,'K10':case_k10,'K11':case_k11,
     'K12':case_k12,'K13':case_k13,'K14':case_k14,'K15':case_k15,'K16':case_k16,'K17':case_k17,
@@ -2003,7 +2045,7 @@ HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case
 async def main():
     parser=argparse.ArgumentParser();parser.add_argument('--base-url',default='http://127.0.0.1:24767/')
     parser.add_argument('--case',required=True,choices=[
-        *(f'P{value:02d}' for value in range(1,31)),*(f'K{value:02d}' for value in range(1,18)),'AS01'])
+        *(f'P{value:02d}' for value in range(1,32)),*(f'K{value:02d}' for value in range(1,18)),'AS01'])
     parser.add_argument('--report',type=Path,required=True);parser.add_argument('--harness',default='codex')
     parser.add_argument('--model',default='gpt-5.6-sol');parser.add_argument('--reasoning',default='deep')
     parser.add_argument('--timeout',type=float,default=1200)
