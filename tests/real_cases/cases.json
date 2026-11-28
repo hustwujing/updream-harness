@@ -14,10 +14,10 @@
     "evidence_root": ".data/evidence/real-campaign",
     "forbid_case_specific_product_fixes": true
   },
-  "runnable_case_count": 198,
+  "runnable_case_count": 199,
   "business_case_count": 78,
   "inherited_protocol_case_count": 51,
-  "parallel_case_count": 45,
+  "parallel_case_count": 46,
   "cross_database_case_count": 6,
   "evolution_case_count": 18,
   "cases": [
@@ -7209,6 +7209,36 @@
         "redis_live_stream",
         "node_loss",
         "runtime_replay"
+      ],
+      "provenance": "parallel-design"
+    },
+    {
+      "id": "P30",
+      "title": "Codex冷沙箱会话恢复",
+      "complexity": "parallel_protocol",
+      "assets": [],
+      "prompt": "首轮完成后保存checkpoint并释放附着沙箱；第二轮在新沙箱恢复workspace和同一Codex native session。",
+      "expect": {
+        "checkpoint_restored": true,
+        "native_session_resumed": true,
+        "native_thread_preserved": true
+      },
+      "content_checks": [
+        "首轮checkpoint已提交",
+        "附着沙箱已释放",
+        "第二轮在新沙箱完成",
+        "native thread ID保持不变"
+      ],
+      "hook": null,
+      "status": "not_run",
+      "attempts": [],
+      "entry_mode": "deployed_browser_or_api",
+      "executor": "parallel_protocol",
+      "required_features": [
+        "checkpoint",
+        "cold_restore",
+        "native_session",
+        "sandbox_replacement"
       ],
       "provenance": "parallel-design"
     },

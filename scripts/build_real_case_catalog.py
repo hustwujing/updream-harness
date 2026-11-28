@@ -149,6 +149,13 @@ PARALLEL_CASES=[
         content_checks=("硬杀发生在Runtime序号领先JobActivity序号时",
             "恢复沿用原Child execution ID","首尾标记各出现一次",
             "至少一个Child文本批次覆盖多个Runtime序号")),
+    protocol("P30","Codex冷沙箱会话恢复",
+        "首轮完成后保存checkpoint并释放附着沙箱；第二轮在新沙箱恢复workspace和同一Codex native session。",
+        {"checkpoint_restored":True,"native_session_resumed":True,
+            "native_thread_preserved":True},
+        features=("checkpoint","cold_restore","native_session","sandbox_replacement"),
+        content_checks=("首轮checkpoint已提交","附着沙箱已释放",
+            "第二轮在新沙箱完成","native thread ID保持不变")),
 ]
 
 

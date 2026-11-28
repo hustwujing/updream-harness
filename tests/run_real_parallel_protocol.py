@@ -1955,12 +1955,44 @@ async def case_p29(client,args):
     finally:await store.close()
 
 
+async def case_p30(client,args):
+    thread,first=await origin(client,args,'P30',
+        'Reply with exactly COLD_RESUME_FIRST and do not use tools.')
+    completed=await wait_turn(client,first['id'],args.timeout)
+    if completed['state']!='COMPLETED':raise AssertionError('cold_resume_first_turn_failed')
+    settings=load_platform_settings();store=core_repository(settings)
+    try:
+        before=await store.get_thread(thread['id'])
+        if not before.native_thread_id or not before.checkpoint_ref:
+            raise AssertionError('cold_resume_source_state_missing')
+        require(await client.post(f"api/threads/{thread['id']}/sandbox/takeover"))
+        released=require(await client.post(f"api/threads/{thread['id']}/sandbox/release",
+            json={'managed_action':'preserve_work'})).json()
+        if not released.get('checkpointed'):raise AssertionError('cold_resume_release_not_checkpointed')
+        second=require(await client.post(f"api/threads/{thread['id']}/turns",json={
+            'message':'Reply with exactly COLD_RESUME_SECOND and do not use tools.',
+            'attachments':[],'idempotency_key':'protocol-p30-'+uuid.uuid4().hex,
+            'delivery_mode':'start'})).json()
+        final=await wait_turn(client,second['id'],args.timeout)
+        if final['state']!='COMPLETED':
+            raise AssertionError('cold_resume_second_turn_failed:'+json.dumps(final))
+        after=await store.get_thread(thread['id'])
+        if after.native_thread_id!=before.native_thread_id:
+            raise AssertionError('cold_resume_native_thread_changed')
+        return {'classification':'success','thread_id':thread['id'],
+            'first_turn_id':first['id'],'second_turn_id':second['id'],
+            'native_thread_id':after.native_thread_id,'checkpoint_restored':True,
+            'native_session_resumed':True,'released_sandbox':True}
+    finally:await store.close()
+
+
 HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case_p05,
     'P06':case_p06,'P07':case_p07,'P08':case_p08,'P09':case_p09,'P10':case_p10,
     'P11':case_p11,'P12':case_p12,'P13':case_p13,'P14':case_p14,'P15':case_p15,
     'P16':case_p16,'P17':case_p17,'P18':case_p18,'P19':case_p19,'P20':case_p20,
     'P21':case_p21,'P22':case_p22,'P23':case_p23,'P24':case_p24,
     'P25':case_p25,'P26':case_p26,'P27':case_p27,'P28':case_p28,'P29':case_p29,
+    'P30':case_p30,
     'AS01':case_as01,
     'K07':case_k07,'K08':case_k08,'K09':case_k09,'K10':case_k10,'K11':case_k11,
     'K12':case_k12,'K13':case_k13,'K14':case_k14,'K15':case_k15,'K16':case_k16,'K17':case_k17,
@@ -1971,7 +2003,7 @@ HANDLERS={'P01':case_p01,'P02':case_p02,'P03':case_p03,'P04':case_p04,'P05':case
 async def main():
     parser=argparse.ArgumentParser();parser.add_argument('--base-url',default='http://127.0.0.1:24767/')
     parser.add_argument('--case',required=True,choices=[
-        *(f'P{value:02d}' for value in range(1,30)),*(f'K{value:02d}' for value in range(1,18)),'AS01'])
+        *(f'P{value:02d}' for value in range(1,31)),*(f'K{value:02d}' for value in range(1,18)),'AS01'])
     parser.add_argument('--report',type=Path,required=True);parser.add_argument('--harness',default='codex')
     parser.add_argument('--model',default='gpt-5.6-sol');parser.add_argument('--reasoning',default='deep')
     parser.add_argument('--timeout',type=float,default=1200)
