@@ -33,6 +33,7 @@ def test_domain_transactions_compose_the_original_store_surface():
 async def test_domain_facade_uses_one_connection_registry(tmp_path):
     from test_support.legacy_store import Store
     from sandbox_harness.common.db.models import Base
+    from sandbox_harness.common.db.ownership_models import OwnershipBase
     from sqlalchemy import inspect
     store = Store("sqlite+aiosqlite:///" + str(tmp_path / "domains.db"))
     try:
@@ -40,8 +41,8 @@ async def test_domain_facade_uses_one_connection_registry(tmp_path):
         await store.initialize()
         async with store.engine.connect() as connection:
             actual = await connection.run_sync(lambda value: set(inspect(value).get_table_names()))
-        assert actual == set(Base.metadata.tables)
-        assert len(actual) == 59
+        assert actual == set(Base.metadata.tables)|set(OwnershipBase.metadata.tables)
+        assert len(actual) == 61
         assert store.connections.kw["bind"] is store.engine
     finally:
         await store.close()
