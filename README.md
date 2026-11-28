@@ -20,12 +20,14 @@ To add another sandbox backend, follow
 The public repository is [hustwujing/updream-harness](https://github.com/hustwujing/updream-harness)
 on branch `sandbox-harness-platform-parallel-ali`.
 
-The current modular Ali baseline contains 199 cases and is
-`composite_verified` through `7772ca8`: 199 successes, zero program failures and zero
+The current modular Ali baseline contains 200 cases and is
+`composite_verified` through `83f021e`: 200 successes, zero program failures and zero
 non-program failures, with each retained result preserving its actual tested
 revision. See the
-[199-case cold restore report](docs/test-evidence/ali-cold-restore-199-case-report.md).
+[200-case retained sandbox report](docs/test-evidence/ali-retained-sandbox-200-case-report.md).
 The prior
+[199-case cold restore report](docs/test-evidence/ali-cold-restore-199-case-report.md)
+remains the cold restore predecessor. The prior
 [198-case stream persistence report](docs/test-evidence/ali-stream-persistence-198-case-report.md)
 remains the stream persistence predecessor. The prior
 [196-case asynchronous execution report](docs/test-evidence/ali-async-execution-196-case-report.md)
@@ -349,7 +351,7 @@ affected lifecycle, Gateway, Runtime, image, Skill, API or deployment boundary.
 See [architecture.md](docs/architecture.md), [client API](docs/api.md), [data model](docs/data-model.md), [product interface](docs/product-interface.md), [gateway.md](docs/gateway.md), [Runtime Skill Bundle](docs/skills.md) and [deployment.md](docs/deployment.md).
 
 Current deployment, cross-database, recovery and case evidence is consolidated
-in the [199-case Ali report](docs/test-evidence/ali-cold-restore-199-case-report.md).
+in the [200-case Ali report](docs/test-evidence/ali-retained-sandbox-200-case-report.md).
 
 ## Runtime Toolchain
 

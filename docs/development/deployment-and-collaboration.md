@@ -28,7 +28,7 @@ cross-domain SQL session.
 6. SIGKILL the affected service and start it through `deploy/ali/start.sh` so
    recovery is exercised rather than assumed.
 7. Verify service health and rerun the failed or affected real cases.
-8. Run the full Python gate, frontend tests/build and the 199-case catalog gate
+8. Run the full Python gate, frontend tests/build and the 200-case catalog gate
    before publication.
 
 `deploy/ali/start.sh` starts missing services. Use `deploy/ali/stop.sh` before a

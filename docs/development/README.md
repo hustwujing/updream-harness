@@ -15,7 +15,9 @@ Every code change requires:
 
 For the isolated Ali checkout, first verify the directory and branch described
 in [Getting started](getting-started.md). The current release baseline is the
-[199-case report](../test-evidence/ali-cold-restore-199-case-report.md);
+[200-case report](../test-evidence/ali-retained-sandbox-200-case-report.md);
+the [199-case report](../test-evidence/ali-cold-restore-199-case-report.md)
+retains the preceding cold restore evidence;
 the [198-case report](../test-evidence/ali-stream-persistence-198-case-report.md)
 retains the preceding stream persistence evidence;
 the [196-case report](../test-evidence/ali-async-execution-196-case-report.md)
