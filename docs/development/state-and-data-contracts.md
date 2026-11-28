@@ -17,9 +17,10 @@ and sandbox ownership. Media owns media drafts, Jobs, outputs and references.
 Sites owns site projects, drafts, deployment Jobs, versions and files. Each
 business session is rejected if it touches another authority's tables.
 
-There is no separate sandbox-attempt, checkpoint or capability-grant table.
-Sandbox identity, capability nonce, lease and Runtime cursor live on `turns`;
-the latest checkpoint reference and native Harness thread ID live on `threads`.
+There is no separate sandbox-attempt or capability-grant table. Sandbox
+identity, capability nonce, lease and Runtime cursor live on `turns`.
+`checkpoint_versions` owns immutable checkpoint history; the latest ACTIVE
+object reference and native Harness thread ID are projected on `threads`.
 OpenSandbox metadata and structured telemetry provide additional evidence but
 are not substitutes for database state.
 
@@ -166,6 +167,18 @@ the Runtime must not expose parser- or host-specific exception text. Tests for
 these cases must also assert that no workspace or image-managed Skill bytes
 were modified. Size framing failures use `checkpoint_content_length_invalid`,
 `checkpoint_size_mismatch` or `checkpoint_too_large` as applicable.
+
+Checkpoint save writes the immutable object, records STAGING, verifies archive
+digest/path boundaries and Codex SQLite/native identity, then records VERIFIED.
+ACTIVE transition and Thread pointer update are one transaction. A crash before
+activation leaves the previous ACTIVE untouched. Stale STAGING/VERIFIED rows
+expire only after the configured object-GC grace.
+
+A deterministic archive rejection before Harness start, or an explicit native
+session failure whose Runtime result excludes the current input ID, may mark the
+bad ACTIVE version INVALID and reactivate the newest SUPERSEDED version. The
+current Turn remains failed with `checkpoint_version_rolled_back`; the platform
+does not resend its message. A user-initiated later Turn uses the fallback.
 
 Durable Jobs write a pre-submit `SUBMITTING` intent under the active Job lease
 before any external call. A heartbeat covers submit, status, reconcile,

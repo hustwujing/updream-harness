@@ -51,6 +51,10 @@ claims made by documentation.
   Thread pointer. Large immutable checkpoint transfers use bounded idempotent
   chunks, configured bounded concurrency and an exact size/digest commit rather
   than one monolithic request. Providers share this Runtime protocol.
+- Checkpoint publication is `STAGING -> VERIFIED -> ACTIVE`; activation and the
+  Thread pointer change are one transaction. Deterministic pre-input restore or
+  native-session failure may reactivate the newest SUPERSEDED version, but the
+  failed Turn is never automatically replayed.
 - Stream events are ordered by `(turn_id, sequence)` and Runtime receipts are
   idempotent by `(execution_id, source_sequence)`.
 - Live model progress may carry only request identity and cumulative public

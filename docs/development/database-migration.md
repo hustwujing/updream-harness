@@ -7,16 +7,17 @@ changes.
 
 ## Current mechanism
 
-There is no Alembic migration directory. `Store.initialize` runs
-`Base.metadata.create_all` for fresh databases and then explicit, additive
-schema inspection/ALTER logic for existing databases. Therefore changing only a
-SQLAlchemy row class updates a fresh install but does not upgrade an existing
-deployment.
+Fresh domain databases create only their declared authority tables and persist
+an exact schema digest. Existing split databases fail closed on any table or
+digest difference; service startup never performs an implicit business schema
+migration. A schema change therefore requires an explicit idempotent migration
+tool, coordinated consumer releases and a zero-active-work deployment window.
 
 ## Required implementation
 
 1. Update the row model and public/domain contract if exposed.
-2. Add an idempotent schema inspection and migration in `Store.initialize`.
+2. Add an explicit idempotent migration that accepts only the exact previous or
+   target schema shape; do not hide migration in repository initialization.
 3. Supply a server default for new non-null columns so an existing populated
    table upgrades safely.
 4. Backfill derived values in the same controlled migration before code relies
@@ -24,7 +25,9 @@ deployment.
 5. Handle both SQLite tests and PostgreSQL syntax/types explicitly. Do not
    assume timestamp timezone metadata is identical.
 6. Add indexes with `IF NOT EXISTS` where supported and verify query predicates.
-7. Update data-model documentation to describe the implemented table, not a
+7. Update the domain schema identity only in the same transaction as the
+   additive migration and required backfill.
+8. Update data-model documentation to describe the implemented table, not a
    conceptual future table.
 
 Destructive column removal, type narrowing or constraint changes require an

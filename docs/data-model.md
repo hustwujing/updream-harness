@@ -1,8 +1,8 @@
 # Data Model
 
-This document describes the tables implemented in
-`src/sandbox_harness/store.py`. `domain.py` defines API/runtime models; not every
-domain concept has a separate table.
+This document describes the tables implemented under
+`src/sandbox_harness/common/db/`. `domain.py` defines API/runtime models; not
+every domain concept has a separate table.
 
 ## Threads
 
@@ -108,9 +108,17 @@ or recovering Turn, including when the frozen manifest is empty.
 Object bytes live in the configured content-addressed local or S3/BOSS store.
 References are `sha256:<digest>` and reads verify both size and digest.
 
-The latest checkpoint is not a table row. Its object reference and native
-Harness thread ID are committed on `threads` after the content-addressed archive
-write succeeds.
+`checkpoint_versions` is the immutable checkpoint publication ledger. It stores
+owner/Thread/source Turn, parent version, object reference, SHA-256, size, native
+Harness thread ID, partial flag, structural verification receipt, state and
+activation timestamps. States are `STAGING`, `VERIFIED`, `ACTIVE`,
+`SUPERSEDED` and `INVALID`.
+
+Activation supersedes the previous ACTIVE version and updates
+`threads.checkpoint_ref/native_thread_id` in the same Core transaction. The
+Thread columns remain the fast current projection. ACTIVE plus the two newest
+SUPERSEDED versions are retained; uncommitted versions expire after the object
+GC grace. GC marks every non-INVALID ledger object before sweeping.
 
 ## Media references
 

@@ -20,3 +20,7 @@ Workspace restore must complete before the Worker may replace the Thread's
 checkpoint. A failed restore releases the fresh sandbox while preserving the
 last good object reference. Checkpoints above 8 MiB use the Runtime's 1 MiB
 idempotent chunk protocol with configurable bounded concurrency.
+
+Checkpoint objects publish through the Core-owned version ledger. Structural
+and native-state verification precedes ACTIVE; deterministic pre-input failure
+can reactivate the previous verified version but never replays the failed Turn.
