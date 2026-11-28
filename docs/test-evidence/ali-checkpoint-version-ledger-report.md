@@ -47,6 +47,15 @@ Focused verification at `83d5bd3`:
 This includes Runtime boundaries, Codex runner behavior, Runtime Code Bundle
 closure and Broker checkpoint rollback tests.
 
+The release gate at `079e878` completed with:
+
+```text
+1663 passed, 23 skipped, 189 warnings in 350.14s
+```
+
+There were no Python test failures. The skips are the repository's existing
+environment-conditional tests.
+
 ## Migration And Cleanup
 
 The explicit production migration backfilled 43 ACTIVE versions and updated the
