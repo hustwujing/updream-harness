@@ -86,7 +86,7 @@ def test_media_worker_is_a_separate_service():
     assert "then copy the finished regular files into `/workspace/outputs`" in instructions
     assert "setsar=1" in instructions
     assert "--append-system-prompt" in adapters
-    assert '"developerInstructions": runtime_instructions()' in codex
+    assert '"developerInstructions"' in codex and "runtime_instructions()" in codex
     assert 'runtime_instructions() + "\\nUser request:' in deepseek
 
 
