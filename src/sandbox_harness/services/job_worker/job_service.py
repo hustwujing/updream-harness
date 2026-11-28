@@ -80,6 +80,7 @@ async def serve(settings: Settings, *, stop_event: asyncio.Event | None = None) 
         request_retry_initial_delay_seconds=settings.runtime_request_retry_initial_delay_seconds,
         request_retry_backoff_multiplier=settings.runtime_request_retry_backoff_multiplier,
         request_retry_max_delay_seconds=settings.runtime_request_retry_max_delay_seconds,
+        checkpoint_upload_concurrency=settings.runtime_checkpoint_upload_concurrency,
         bundle_dir=settings.runtime_bundle_dir,default_bundle_digest=settings.runtime_bundle_digest,
         code_bundle_dir=settings.runtime_code_bundle_dir,
         default_code_bundle_digest=settings.runtime_code_bundle_digest,

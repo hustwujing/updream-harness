@@ -111,6 +111,7 @@ class Settings(BaseSettings):
     runtime_request_retry_initial_delay_seconds: float = Field(default=1, ge=0.1, le=60)
     runtime_request_retry_backoff_multiplier: float = Field(default=2, ge=1, le=4)
     runtime_request_retry_max_delay_seconds: float = Field(default=10, ge=0.1, le=300)
+    runtime_checkpoint_upload_concurrency: int = Field(default=4, ge=1, le=16)
     runtime_bundle_dir: Path = Path(".data/runtime-bundles")
     runtime_bundle_digest: str = Field(default="", pattern=r"^$|^[0-9a-f]{64}$")
     runtime_code_bundle_dir: Path = Path(".data/runtime-code-bundles")

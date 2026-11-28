@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import io
 import tarfile
@@ -14,16 +15,24 @@ from test_runtime_boundaries import runtime
 CHUNK=4*1024*1024
 
 
-async def test_large_checkpoint_uses_idempotent_one_megabyte_chunks(tmp_path,monkeypatch):
+@pytest.mark.parametrize('concurrency',[1,4])
+async def test_large_checkpoint_uses_idempotent_one_megabyte_chunks(
+        tmp_path,monkeypatch,concurrency):
     app=runtime(tmp_path,monkeypatch,'');upstream=httpx.ASGITransport(app=app)
-    dropped=set();bodies=[]
+    dropped=set();bodies=[];active=0;maximum_active=0
     class Ingress(httpx.AsyncBaseTransport):
         async def handle_async_request(self,request):
+            nonlocal active,maximum_active
             body=await request.aread();bodies.append((request.url.path,len(body)))
             if len(body)>1024*1024:return httpx.Response(413)
-            response=await upstream.handle_async_request(request)
             key=('chunk' if '/chunks/' in request.url.path else
                 'commit' if request.url.path.endswith('/commit') else '')
+            if key=='chunk':
+                active+=1;maximum_active=max(maximum_active,active)
+                await asyncio.sleep(.01)
+            try:response=await upstream.handle_async_request(request)
+            finally:
+                if key=='chunk':active-=1
             if key and key not in dropped and response.is_success:
                 dropped.add(key);await response.aread()
                 raise httpx.ReadError('reply lost',request=request)
@@ -34,13 +43,30 @@ async def test_large_checkpoint_uses_idempotent_one_megabyte_chunks(tmp_path,mon
         member=tarfile.TarInfo('project/work/large.bin');member.size=len(payload)
         archive.addfile(member,io.BytesIO(payload))
     data=raw.getvalue();objects=ObjectStore(tmp_path/'objects');reference,_=objects.put(data)
-    client=RuntimeClient(transport=Ingress());sandbox=make_sandbox()
+    client=RuntimeClient(transport=Ingress(),
+        checkpoint_upload_concurrency=concurrency);sandbox=make_sandbox()
     await client.restore(sandbox,object_chunks(objects,reference,maximum=len(data)),size=len(data))
     assert (tmp_path/'workspace/project/work/large.bin').read_bytes()==payload
     assert max(size for _,size in bodies)<=1024*1024
     assert dropped=={'chunk','commit'}
+    assert maximum_active==(1 if concurrency==1 else 4)
     assert not list((tmp_path/'runtime/checkpoint-uploads').glob('*.part'))
     assert not (tmp_path/'runtime/checkpoint-upload.tar').exists()
+
+
+def test_checkpoint_staging_accepts_complete_out_of_order_chunks(tmp_path):
+    from fastapi import HTTPException
+    from sandbox_runtime.project_uploads import ProjectUploads
+    target=tmp_path/'restored.tar'
+    manager=ProjectUploads(tmp_path/'staging',lambda path:target,
+        max_bytes=16,chunk_bytes=3,allow_out_of_order=True)
+    identity='a'*32;manager.begin(identity,'checkpoint.tar',6)
+    manager.chunk(identity,3,b'def');manager.chunk(identity,0,b'abc')
+    assert manager.chunk(identity,0,b'abc')=={'bytes':3,'offset':0}
+    with pytest.raises(HTTPException,match='project_upload_chunk_conflict'):
+        manager.chunk(identity,2,b'xx')
+    receipt=manager.commit(identity,hashlib.sha256(b'abcdef').hexdigest())
+    assert receipt['bytes']==6 and target.read_bytes()==b'abcdef'
 
 
 @pytest.mark.parametrize('streaming',[False,True])

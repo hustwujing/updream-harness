@@ -21,11 +21,12 @@ IDLE_SECONDS = 600
 
 class ProjectUploads:
     def __init__(self, root: Path, target, *, max_bytes:int|None=None,
-                 chunk_bytes:int=CHUNK_BYTES):
+                 chunk_bytes:int=CHUNK_BYTES,allow_out_of_order:bool=False):
         self.root = root
         self.target = target
         self.max_bytes=max_bytes
         self.chunk_bytes=chunk_bytes
+        self.allow_out_of_order=allow_out_of_order
         if self.chunk_bytes<=0:
             raise ValueError('project_upload_limits_invalid')
         self.epoch = uuid.uuid4().hex
@@ -117,7 +118,7 @@ class ProjectUploads:
         self.records[identity] = {'id': identity, 'path': path, 'size': size,
             'issued_at': issued_at,
             'written': 0, 'temporary': temporary, 'status': 'open',
-            'touched': time.monotonic()}
+            'touched': time.monotonic(), 'segments': {}}
         return {'upload_id': identity, 'chunk_bytes': self.chunk_bytes}
 
     def _open(self, identity: str) -> dict:
@@ -147,6 +148,26 @@ class ProjectUploads:
         if (not body or len(body)>self.chunk_bytes or offset<0
                 or offset+len(body)>value['size']):
             raise HTTPException(400, 'project_upload_chunk_invalid')
+        if self.allow_out_of_order:
+            segments=value['segments']
+            if offset in segments:
+                length,digest=segments[offset]
+                if length!=len(body) or digest!=hashlib.sha256(body).hexdigest():
+                    raise HTTPException(409,'project_upload_chunk_conflict')
+                with self._file(value) as stream:
+                    stream.seek(offset)
+                    if stream.read(len(body))!=body:
+                        raise HTTPException(409,'project_upload_chunk_conflict')
+                return {'bytes':len(body),'offset':offset}
+            end=offset+len(body)
+            if any(not (end<=start or offset>=start+length)
+                    for start,(length,_) in segments.items()):
+                raise HTTPException(409,'project_upload_chunk_conflict')
+            with self._file(value,writable=True) as stream:
+                stream.seek(offset);stream.write(body);stream.flush()
+            segments[offset]=(len(body),hashlib.sha256(body).hexdigest())
+            value['written']+=len(body)
+            return {'bytes':len(body),'offset':offset}
         if offset > value['written']:
             raise HTTPException(409, 'project_upload_offset_mismatch')
         with self._file(value, writable=True) as stream:
@@ -168,7 +189,14 @@ class ProjectUploads:
                 raise HTTPException(409, 'project_upload_digest_conflict')
             return value['receipt']
         value = self._open(identity)
-        if value['written'] != value['size']:
+        if self.allow_out_of_order:
+            cursor=0
+            for offset,(length,_) in sorted(value['segments'].items()):
+                if offset!=cursor:raise HTTPException(409,'project_upload_incomplete')
+                cursor+=length
+            complete=cursor==value['size'] and value['written']==value['size']
+        else:complete=value['written']==value['size']
+        if not complete:
             raise HTTPException(409, 'project_upload_incomplete')
         with self._file(value) as stream:
             actual = hashlib.file_digest(stream, 'sha256').hexdigest()

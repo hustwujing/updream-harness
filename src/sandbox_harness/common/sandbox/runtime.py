@@ -75,6 +75,7 @@ class RuntimeClient:
                  request_retry_initial_delay_seconds: float = 1,
                  request_retry_backoff_multiplier: float = 2,
                  request_retry_max_delay_seconds: float = 10,
+                 checkpoint_upload_concurrency:int=4,
                  bundle_dir: Path | None = None, default_bundle_digest: str = "",
                  code_bundle_dir: Path | None = None, default_code_bundle_digest: str = "",
                  transport: httpx.AsyncBaseTransport | None = None,
@@ -87,6 +88,8 @@ class RuntimeClient:
             request_retry_initial_delay_seconds))
         self.request_retry_backoff_multiplier=max(1,float(request_retry_backoff_multiplier))
         self.request_retry_max_delay_seconds=max(0.1,float(request_retry_max_delay_seconds))
+        self.checkpoint_upload_concurrency=max(1,min(16,int(
+            checkpoint_upload_concurrency)))
         self.bundle_dir = bundle_dir
         self.default_bundle_digest = default_bundle_digest
         self.code_bundle_dir = code_bundle_dir
@@ -286,18 +289,29 @@ class RuntimeClient:
         await self._resolve_endpoint(sandbox)
         upload_id=uuid.uuid4().hex;upload_path='/v1/checkpoint/uploads/'+upload_id
         issued_at=int(time.time());digest=hashlib.sha256();offset=0;pending=bytearray()
+        tasks:set[asyncio.Task]=set()
         async with observed_async_client('sandbox-runtime',base_url=sandbox.runtime_url,
                 headers={**sandbox.runtime_headers,**carrier()},timeout=300,
                 trust_env=False,transport=self.transport) as client:
-            async def send_chunk(body):
-                nonlocal offset
+            async def send_chunk(chunk_offset,body):
                 response=await self._request_with_startup_retry(client,'PUT',
-                    upload_path+'/chunks/'+str(offset),content=body,
+                    upload_path+'/chunks/'+str(chunk_offset),content=body,
                     headers={'Content-Type':'application/octet-stream'})
                 self._raise_for_status(sandbox,response)
-                if response.json()!={'bytes':len(body),'offset':offset}:
+                if response.json()!={'bytes':len(body),'offset':chunk_offset}:
                     raise RuntimeTransferError('checkpoint_upload_chunk_receipt_mismatch')
-                digest.update(body);offset+=len(body)
+            async def schedule(body):
+                nonlocal offset,tasks
+                chunk_offset=offset;offset+=len(body);digest.update(body)
+                tasks.add(asyncio.create_task(send_chunk(chunk_offset,body),
+                    name='checkpoint-chunk-'+str(chunk_offset)))
+                if len(tasks)>=self.checkpoint_upload_concurrency:
+                    done,tasks=await asyncio.wait(tasks,
+                        return_when=asyncio.FIRST_COMPLETED)
+                    results=await asyncio.gather(*done,return_exceptions=True)
+                    failure=next((value for value in results
+                        if isinstance(value,BaseException)),None)
+                    if failure is not None:raise failure
             try:
                 response=await self._request_with_startup_retry(
                     client,'GET','/v1/checkpoint/uploads')
@@ -312,16 +326,22 @@ class RuntimeClient:
                 self._raise_for_status(sandbox,response)
                 if response.json().get('chunk_bytes')!=chunk_size:
                     raise RuntimeTransferError('checkpoint_upload_chunk_limit_changed')
-                async for part in content:
-                    if offset+len(pending)+len(part)>size:
-                        raise RuntimeTransferError('runtime_transfer_size_mismatch')
-                    view=memoryview(part)
-                    while view:
-                        length=min(chunk_size-len(pending),len(view))
-                        pending.extend(view[:length]);view=view[length:]
-                        if len(pending)==chunk_size:
-                            await send_chunk(bytes(pending));pending.clear()
-                if pending:await send_chunk(bytes(pending))
+                try:
+                    async for part in content:
+                        if offset+len(pending)+len(part)>size:
+                            raise RuntimeTransferError('runtime_transfer_size_mismatch')
+                        view=memoryview(part)
+                        while view:
+                            length=min(chunk_size-len(pending),len(view))
+                            pending.extend(view[:length]);view=view[length:]
+                            if len(pending)==chunk_size:
+                                await schedule(bytes(pending));pending.clear()
+                    if pending:await schedule(bytes(pending))
+                    if tasks:await asyncio.gather(*tasks)
+                except BaseException:
+                    for task in tasks:task.cancel()
+                    await asyncio.gather(*tasks,return_exceptions=True)
+                    raise
                 if offset!=size:raise RuntimeTransferError('runtime_transfer_size_mismatch')
                 response=await self._request_with_startup_retry(client,'POST',
                     upload_path+'/commit',params={'sha256':digest.hexdigest()})

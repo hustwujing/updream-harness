@@ -1282,7 +1282,8 @@ def create_app() -> FastAPI:
         return RUN/'checkpoint-upload.tar'
 
     checkpoint_uploads=ProjectUploads(RUN/'checkpoint-uploads',checkpoint_upload_target,
-        max_bytes=MAX_CHECKPOINT_BYTES,chunk_bytes=CHECKPOINT_CHUNK_BYTES)
+        max_bytes=MAX_CHECKPOINT_BYTES,chunk_bytes=CHECKPOINT_CHUNK_BYTES,
+        allow_out_of_order=True)
     checkpoint_upload_target('checkpoint.tar').unlink(missing_ok=True)
     app.state.checkpoint_uploads=checkpoint_uploads
     checkpoint_chunk_slots=asyncio.Semaphore(4)
