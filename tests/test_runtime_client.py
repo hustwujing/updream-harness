@@ -70,9 +70,9 @@ async def test_checkpoint_restore_refreshes_provider_endpoint_after_retry_exhaus
     sandbox=Sandbox(id='sandbox',harness=Harness.CODEX,image='image',runtime_url='',metadata={})
     await runtime.restore(sandbox,object_chunks(store,reference,maximum=len(payload)),size=len(payload))
     assert backend.calls==[False,True]
-    assert [host for host,_ in requests]==['runtime-one']*4+['runtime-two']
+    assert [host for host,_ in requests]==['runtime-one','runtime-two']
     assert all(body==payload for _,body in requests)
-    assert waits==[1,2,4]
+    assert waits==[1]
 
 
 async def test_checkpoint_restore_does_not_retry_deterministic_rejection(tmp_path):

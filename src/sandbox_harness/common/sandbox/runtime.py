@@ -259,19 +259,25 @@ class RuntimeClient:
 
     @observed("workspace.restore")
     async def restore(self, sandbox: Sandbox, archive, *, size: int) -> None:
-        for endpoint_attempt in range(2):
+        retryable={429,502,503,504}
+        for attempt in range(self.request_retry_attempts):
             await self._resolve_endpoint(sandbox)
             try:
                 async with observed_async_client('sandbox-runtime',base_url=sandbox.runtime_url,
                         headers={**sandbox.runtime_headers,**carrier()}, timeout=120,
                         trust_env=False, transport=self.transport) as client:
-                    response=await self._request_with_startup_retry(client,"PUT","/v1/checkpoint",
+                    response=await client.put("/v1/checkpoint",
                         content=archive,headers={"Content-Type":"application/x-tar",
                             "Content-Length":str(size)})
-                    self._raise_for_status(sandbox,response);return
+                    if response.status_code not in retryable:
+                        self._raise_for_status(sandbox,response);return
+                    if attempt==self.request_retry_attempts-1:
+                        self._raise_for_status(sandbox,response)
             except (httpx.TimeoutException,httpx.TransportError):
-                if self.backend is None or endpoint_attempt:raise
-                self._endpoint_refresh.add(sandbox.id)
+                if attempt==self.request_retry_attempts-1:raise
+                if self.backend is not None:self._endpoint_refresh.add(sandbox.id)
+            await asyncio.sleep(self._request_retry_delay(attempt))
+        raise RuntimeError('unreachable')
 
     async def put_attachment(self, sandbox: Sandbox, name: str, data: bytes, mime: str) -> None:
         await self._resolve_endpoint(sandbox)
