@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy import (inspect as sqlalchemy_inspect, text)
 from sqlalchemy.exc import (OperationalError)
 from sandbox_harness.common.db.models import (Base, SCHEMA_INITIALIZATION_LOCK_ID)
+from sandbox_harness.common.db.ownership_models import (OwnershipBase)
 
 
 class UpgradesTransactions:
@@ -14,6 +15,7 @@ class UpgradesTransactions:
                 await connection.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"),
                     {"lock_id": SCHEMA_INITIALIZATION_LOCK_ID})
             await connection.run_sync(Base.metadata.create_all)
+            await connection.run_sync(OwnershipBase.metadata.create_all)
             allocation_columns=await connection.run_sync(lambda value:{column['name'] for column in
                 sqlalchemy_inspect(value).get_columns('sandbox_allocations')})
             timestamp_type='TIMESTAMP WITH TIME ZONE' if connection.dialect.name=='postgresql' else 'TIMESTAMP'

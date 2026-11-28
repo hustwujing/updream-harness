@@ -183,7 +183,7 @@ class SandboxTransactions:
             dispatched=(await db.scalars(select(SandboxAllocationRow.handle_json).where(
                 SandboxAllocationRow.state=='READY'))).all()
             owned=(await db.scalars(select(SandboxOwnershipRow.handle_json).where(
-                SandboxOwnershipRow.namespace==self.ownership.namespace,
+                SandboxOwnershipRow.namespace==self.sandbox_namespace,
                 SandboxOwnershipRow.state!='RELEASED',
                 SandboxOwnershipRow.handle_json!=''))).all()
         result=[]
@@ -261,7 +261,7 @@ class SandboxTransactions:
                     ['PENDING','SENDING','READY','UNKNOWN'])))).all()
             owned=(await db.execute(select(SandboxOwnershipRow.provider,
                 SandboxOwnershipRow.allocation_id).where(
-                    SandboxOwnershipRow.namespace==self.ownership.namespace,
+                    SandboxOwnershipRow.namespace==self.sandbox_namespace,
                     SandboxOwnershipRow.state!='RELEASED'))).all()
         result=set(dispatched)|set(owned)
         for encoded in receipts:

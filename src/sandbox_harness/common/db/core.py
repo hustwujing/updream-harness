@@ -43,6 +43,7 @@ class CoreRepository(CoreThreadLifecycle, DomainDatabase, BaseConnections, Capab
         DomainDatabase.__init__(self, "core", database_url)
         self.events = RedisEventBus(redis_url, redis_prefix) if redis_url else None
         self._initialize_locks()
+        self.sandbox_namespace = namespace
         self.ownership = SandboxOwnership(self, namespace)
         self.lifecycle = LifecycleParticipant(self, self._check_lifecycle, self._apply_lifecycle,
             prepare_commit=self.ownership.request_cleanup, commit_ready=self.ownership.cleanup_ready,

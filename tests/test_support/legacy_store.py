@@ -39,3 +39,8 @@ class Store(BaseConnections, UpgradesTransactions, CapabilitiesTransactions,
             FilesTransactions, InteractionsTransactions, MediaReferencesTransactions,
             MediaDraftsTransactions, MediaJobsTransactions, SitesTransactions):
     """Preserves historical transaction tests without shipping a production facade."""
+
+    def __init__(self,database_url:str,redis_url:str="",
+                 redis_prefix:str="sandbox-harness-test:",*,namespace:str="legacy-test"):
+        super().__init__(database_url,redis_url,redis_prefix)
+        self.sandbox_namespace=namespace
