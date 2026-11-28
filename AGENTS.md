@@ -49,7 +49,8 @@ claims made by documentation.
 - A fresh sandbox may publish a replacement checkpoint only after restoration
   of the prior workspace is confirmed. Restore failure preserves the last good
   Thread pointer. Large immutable checkpoint transfers use bounded idempotent
-  chunks and an exact size/digest commit rather than one monolithic request.
+  chunks, configured bounded concurrency and an exact size/digest commit rather
+  than one monolithic request. Providers share this Runtime protocol.
 - Stream events are ordered by `(turn_id, sequence)` and Runtime receipts are
   idempotent by `(execution_id, source_sequence)`.
 - Live model progress may carry only request identity and cumulative public

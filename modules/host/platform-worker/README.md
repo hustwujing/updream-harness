@@ -19,4 +19,4 @@ on the configured interval; Runtime ACK follows the lease-fenced commit.
 Workspace restore must complete before the Worker may replace the Thread's
 checkpoint. A failed restore releases the fresh sandbox while preserving the
 last good object reference. Checkpoints above 8 MiB use the Runtime's 1 MiB
-idempotent chunk protocol.
+idempotent chunk protocol with configurable bounded concurrency.

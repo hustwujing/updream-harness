@@ -13,6 +13,8 @@ only database-committed ranges. ACK compacts old segments; terminal journals are
 removed after a short recovery retention period.
 
 Large checkpoint restore stages fixed 1 MiB chunks under the private Runtime
-state root. Chunk offsets and bytes are idempotent; commit verifies total length
-and SHA-256, extracts once, and retains a replayable receipt. Runtime startup
-removes abandoned staging, and sandboxes receive no object-store credential.
+state root. Chunk offsets and bytes are idempotent and may arrive out of order
+under configured bounded concurrency; overlap is rejected and commit requires
+gap-free coverage, total length and SHA-256 before one extraction. Runtime
+startup removes abandoned staging, and sandboxes receive no object-store
+credential.

@@ -111,7 +111,11 @@ Checkpoint restore is replayable from immutable object storage. Archives up to
 Runtime staging protocol with fixed 1 MiB chunks, immutable offsets, replay-safe
 receipts and an exact total size/SHA-256 commit before extraction. A lost chunk
 or commit response reuses the same upload identity and bytes; it never restarts
-Harness execution. Runtime replacement invalidates unfinished staging.
+Harness execution. Chunks may arrive out of order with configured concurrency
+(`runtime_checkpoint_upload_concurrency`, default 4, range 1-16); overlap or
+conflicting replay is rejected and commit requires gap-free coverage. Runtime
+replacement invalidates unfinished staging. Setting concurrency to 1 preserves
+the serial rollback path.
 
 A fresh sandbox may write a new Thread checkpoint only after the previous
 workspace restore is confirmed. A transport or archive restore failure skips
