@@ -20,6 +20,7 @@ from sandbox_harness.common.catalog.catalog import (HarnessCatalog)
 from sandbox_harness.common.configuration.config import (Settings)
 from sandbox_harness.common.contracts.domain import (EventKind, Harness, ItemType, RuntimeResult, TurnCreate, TurnState, TurnView, now)
 from sandbox_harness.common.storage.objects import (ObjectStore, object_chunks)
+from sandbox_harness.common.storage.checkpoints import (verify_checkpoint_archive)
 from sandbox_harness.common.contracts.errors import (public_failure)
 from sandbox_harness.common.sandbox.pool import (SandboxPool)
 from sandbox_harness.common.sandbox.runtime import (RuntimeClient, RuntimeStreamInterrupted)
@@ -63,6 +64,10 @@ class CheckpointRestoreError(RuntimeError):
 
 class CheckpointRestoreUnavailable(CheckpointRestoreError):
     error_code="sandbox_workspace_restore_unavailable"
+
+
+class CheckpointRollbackRequired(CheckpointRestoreError):
+    error_code="checkpoint_version_rolled_back"
 
 
 def checkpoint_restore_error(exc:httpx.HTTPError)->CheckpointRestoreError:
@@ -780,8 +785,19 @@ class Broker:
             downloads.append(archive)
             checkpoint_ref, _ = await asyncio.to_thread(self.objects.put_file, archive.path,
                 digest=archive.sha256, size=archive.size)
-            await self.store.update_thread_checkpoint(thread_id, checkpoint_ref, native_thread_id,
-                turn_id=turn_id, lease_owner=self.instance_id, recovery_generation=generation)
+            staged=await self.store.stage_checkpoint_version(thread_id,checkpoint_ref,
+                native_thread_id,size=archive.size,source_turn_id=turn_id,partial=partial,
+                lease_owner=self.instance_id,recovery_generation=generation)
+            try:
+                verification=await asyncio.to_thread(verify_checkpoint_archive,archive.path,
+                    expected_size=archive.size,expected_sha256=archive.sha256,
+                    harness=sandbox.harness.value,native_thread_id=native_thread_id)
+            except ValueError as exc:
+                await self.store.invalidate_checkpoint_version(staged['id'],str(exc))
+                raise
+            await self.store.verify_checkpoint_version(staged['id'],verification)
+            await self.store.activate_checkpoint_version(staged['id'],
+                lease_owner=self.instance_id,recovery_generation=generation)
             event("workspace.checkpoint.persisted",bytes=archive.size,partial=partial)
             total = 0; runtime_artifacts = await self.runtime.artifacts(sandbox, turn_id)
             site_roots = {PurePosixPath(item["path"]).parent.as_posix()
@@ -1060,7 +1076,21 @@ class Broker:
                                 thread.checkpoint_ref, maximum=self.settings.max_checkpoint_bytes),
                                 size=archive_size)
                         except httpx.HTTPError as exc:
-                            raise checkpoint_restore_error(exc) from exc
+                            failure=checkpoint_restore_error(exc)
+                            if failure.error_code=='checkpoint_restore_failed':
+                                fallback=await self.store.rollback_checkpoint_version(
+                                    thread.id,thread.checkpoint_ref,failure.error_code,
+                                    source_turn_id=turn.id,lease_owner=self.instance_id,
+                                    recovery_generation=generation)
+                                if fallback:
+                                    await self.store.append_event(turn.id,EventKind.WARNING,{
+                                        'code':'checkpoint_version_rolled_back',
+                                        'detail':'最新工作区版本不可恢复，已回退到上一验证版本。'},
+                                        lease_owner=self.instance_id,
+                                        recovery_generation=generation)
+                                    raise CheckpointRollbackRequired(
+                                        'Checkpoint rollback completed before Harness input') from exc
+                            raise failure from exc
                     workspace_restore_confirmed=True
                     await self._register_project_attachments(thread.id, turn.id, turn.attachments)
                     project_files = await self.store.freeze_turn_project_files(turn.id, thread.id,
@@ -1144,16 +1174,34 @@ class Broker:
                     error_detail = result.error_detail
                     error_code,error_detail=await reconcile_native_model_error(
                         self.store,turn.id,error_code,error_detail)
+                    checkpoint_rolled_back=False
+                    if (error_code=='native_session_unavailable'
+                            and turn.id not in result.input_ids and thread.checkpoint_ref):
+                        fallback=await self.store.rollback_checkpoint_version(
+                            thread.id,thread.checkpoint_ref,error_code,
+                            source_turn_id=turn.id,lease_owner=self.instance_id,
+                            recovery_generation=generation)
+                        if fallback:
+                            checkpoint_rolled_back=True
+                            error_code='checkpoint_version_rolled_back'
+                            error_detail=('The latest native session was unavailable; the Thread '
+                                'checkpoint was rolled back before input acceptance')
+                            await self.store.append_event(turn.id,EventKind.WARNING,{
+                                'code':error_code,
+                                'detail':'最新会话版本不可恢复，已回退到上一验证版本。'},
+                                lease_owner=self.instance_id,
+                                recovery_generation=generation)
                     # Preserve inspectable work even if the next model request failed.
                     # A failed Turn remains failed; partial artifacts are labelled as such.
-                    try:
-                        await self._state(turn.id, TurnState.CHECKPOINTING, sandbox_id=sandbox.id)
-                        await self._save_workspace(sandbox, thread.id, turn.id,
-                            result.native_thread_id or native_thread_id, partial=True)
-                    except Exception:
-                        logger.exception("Failed to preserve partial workspace turn=%s", turn.id)
-                        await self.store.append_event(turn.id, EventKind.WARNING,
-                            {"code": "partial_workspace_save_failed", "detail": "本轮中间文件未能完整保存。"})
+                    if not checkpoint_rolled_back:
+                        try:
+                            await self._state(turn.id, TurnState.CHECKPOINTING, sandbox_id=sandbox.id)
+                            await self._save_workspace(sandbox, thread.id, turn.id,
+                                result.native_thread_id or native_thread_id, partial=True)
+                        except Exception:
+                            logger.exception("Failed to preserve partial workspace turn=%s", turn.id)
+                            await self.store.append_event(turn.id, EventKind.WARNING,
+                                {"code": "partial_workspace_save_failed", "detail": "本轮中间文件未能完整保存。"})
         except asyncio.CancelledError:
             self.cancellation_handlers.add(turn_id)
             if self.closing:

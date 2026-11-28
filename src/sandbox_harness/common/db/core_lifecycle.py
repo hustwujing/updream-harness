@@ -2,7 +2,7 @@
 from sqlalchemy import delete, or_, select, update
 from sandbox_harness.common.contracts.domain import TERMINAL, now
 from sandbox_harness.common.contracts.job_contracts import JobState, JobGroupState, TERMINAL_JOB_STATES
-from .models import (ArtifactRow, AuthorizationSnapshotRow, BudgetAccountRow, BudgetLedgerRow, BudgetReservationRow, EventRow, InteractionRow, ItemRow, JobActivityRow, JobArtifactRow, JobAttemptRow, JobCleanupRow, JobDisplayActivityRow, JobGroupDraftRow, JobGroupRow, JobLeaseRow, JobOutboxRow, JobRow, PauseParticipantRow, ProjectFileRow, ResourceReservationRow, ReviewGateRow, SandboxAllocationRow, SandboxAuditRow, SandboxControlRow, SandboxPortGrantRow, ThreadControlRow, ThreadRow, TurnInputRow, TurnOrderRow, TurnProjectFileRow, TurnRow)
+from .models import (ArtifactRow, AuthorizationSnapshotRow, BudgetAccountRow, BudgetLedgerRow, BudgetReservationRow, CheckpointVersionRow, EventRow, InteractionRow, ItemRow, JobActivityRow, JobArtifactRow, JobAttemptRow, JobCleanupRow, JobDisplayActivityRow, JobGroupDraftRow, JobGroupRow, JobLeaseRow, JobOutboxRow, JobRow, PauseParticipantRow, ProjectFileRow, ResourceReservationRow, ReviewGateRow, SandboxAllocationRow, SandboxAuditRow, SandboxControlRow, SandboxPortGrantRow, ThreadControlRow, ThreadRow, TurnInputRow, TurnOrderRow, TurnProjectFileRow, TurnRow)
 from .domain_database import DomainOutbox
 from .ownership_models import RemoteObligationRow
 
@@ -116,6 +116,8 @@ class CoreThreadLifecycle:
         await db.execute(delete(ThreadControlRow).where(
             ThreadControlRow.thread_id == thread_id))
         await db.execute(delete(ProjectFileRow).where(ProjectFileRow.thread_id == thread_id))
+        await db.execute(delete(CheckpointVersionRow).where(
+            CheckpointVersionRow.thread_id==thread_id))
         await db.execute(delete(ItemRow).where(ItemRow.thread_id == thread_id))
         remote_ids = select(RemoteObligationRow.id).where(
             RemoteObligationRow.thread_id == thread_id)

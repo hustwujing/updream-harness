@@ -20,6 +20,7 @@ from sandbox_harness.common.observability.http import (observed_async_client)
 from sandbox_harness.common.sandbox.sandbox import (Sandbox, SandboxNotFound)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxHandle)
 from sandbox_harness.common.storage.objects import (object_chunks)
+from sandbox_harness.common.storage.checkpoints import (verify_checkpoint_archive)
 
 
 EXECD_PORT = 44772
@@ -520,9 +521,22 @@ class SandboxInspector:
                     try:
                         checkpoint_ref, _ = await asyncio.to_thread(self.objects.put_file,
                             archive.path, digest=archive.sha256, size=archive.size)
+                        staged=await self.store.stage_checkpoint_version(thread_id,
+                            checkpoint_ref,thread.native_thread_id,size=archive.size,
+                            require_idle=True,expected_owner_id=owner_id)
+                        try:
+                            verification=await asyncio.to_thread(verify_checkpoint_archive,
+                                archive.path,expected_size=archive.size,
+                                expected_sha256=archive.sha256,harness=thread.harness.value,
+                                native_thread_id=thread.native_thread_id)
+                        except ValueError as exc:
+                            await self.store.invalidate_checkpoint_version(staged['id'],str(exc))
+                            raise
+                        await self.store.verify_checkpoint_version(staged['id'],verification)
+                        await self.store.activate_checkpoint_version(staged['id'],
+                            require_idle=True,expected_owner_id=owner_id)
                     finally:
                         archive.remove()
-                    await self.store.update_thread_checkpoint_idle(thread_id, owner_id, checkpoint_ref)
                     checkpointed = True
                     await self.pool.release(sandbox, keep_attached=True,
                         keepalive_seconds=self.settings.session_keepalive_seconds)

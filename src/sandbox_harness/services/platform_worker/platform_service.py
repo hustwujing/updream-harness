@@ -137,10 +137,13 @@ class PlatformWorker:
             lambda:authoritative_object_references(self.store),audit=audit)
         while not self.stop_event.is_set():
             try:
+                expired=await self.store.core.expire_uncommitted_checkpoint_versions(
+                    self.settings.object_gc_grace_seconds)
                 result=await collector.run(grace_seconds=self.settings.object_gc_grace_seconds,
                     dry_run=self.settings.object_gc_dry_run)
                 event('object.gc.completed',count=result['deleted_count'],
-                    bytes=result['bytes_deleted'],partial=result['dry_run'])
+                    bytes=result['bytes_deleted'],partial=result['dry_run'],
+                    expired_checkpoint_count=expired)
             except asyncio.CancelledError:raise
             except Exception as exc:event('object.gc.failed',level=40,exc=exc)
             await self._wait(self.settings.object_gc_interval_seconds)

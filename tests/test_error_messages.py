@@ -42,3 +42,9 @@ def test_missing_native_session_has_specific_non_replay_guidance():
     assert code=='native_session_unavailable'
     assert 'Codex 原生会话' in message and '新建会话' in message
     assert '不会自动重放' in message and 'PRIVATE' not in message
+
+
+def test_checkpoint_rollback_explains_safe_manual_continuation():
+    code,message=public_failure('checkpoint_version_rolled_back','private')
+    assert code=='checkpoint_version_rolled_back'
+    assert '上一' in message and '继续' in message and '重放' in message

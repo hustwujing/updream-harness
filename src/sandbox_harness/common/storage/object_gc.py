@@ -10,11 +10,11 @@ from sqlalchemy import select
 
 
 async def authoritative_object_references(repositories)->set[str]:
-    from sandbox_harness.common.db.account_models import UserRow
     from sandbox_harness.common.db.models import (
         ArtifactRow, JobArtifactRow, MediaDraftRow, MediaJobOutputRow, MediaJobRow,
         MediaReferenceAssetRow, MediaVoiceCloneRow, ProjectFileRow, SiteDraftFileRow,
         SiteDraftRow, SiteFileRow, ThreadRow, TurnProjectFileRow, UploadRow,
+        CheckpointVersionRow,UserRow,
     )
     result=set()
     async with repositories.accounts.connections() as db:
@@ -26,6 +26,9 @@ async def authoritative_object_references(repositories)->set[str]:
                 model.object_ref!=""))).all() if value)
         result.update(value for value in (await db.scalars(select(ThreadRow.checkpoint_ref).where(
             ThreadRow.checkpoint_ref!=""))).all() if value)
+        result.update(value for value in (await db.scalars(select(
+            CheckpointVersionRow.object_ref).where(CheckpointVersionRow.state.in_(
+                ["STAGING","VERIFIED","ACTIVE","SUPERSEDED"])))).all() if value)
     async with repositories.media.connections() as db:
         for model in (MediaReferenceAssetRow,MediaVoiceCloneRow,MediaJobOutputRow):
             result.update(value for value in (await db.scalars(select(model.object_ref).where(

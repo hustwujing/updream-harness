@@ -59,6 +59,26 @@ class ThreadRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class CheckpointVersionRow(Base):
+    __tablename__ = "checkpoint_versions"
+    __table_args__ = (UniqueConstraint("thread_id", "source_turn_id", "object_ref"),)
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    thread_id: Mapped[str] = mapped_column(String(32), index=True)
+    source_turn_id: Mapped[str] = mapped_column(String(32), index=True, default="")
+    parent_id: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    object_ref: Mapped[str] = mapped_column(Text)
+    sha256: Mapped[str] = mapped_column(String(64))
+    size: Mapped[int] = mapped_column(BigInteger)
+    native_thread_id: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    state: Mapped[str] = mapped_column(String(24), index=True)
+    partial: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    verification_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ThreadControlRow(Base):
     __tablename__ = "thread_controls"
     thread_id: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -1032,7 +1052,7 @@ class JobDisplayActivityRow(Base):
 
 
 OWNER_MIGRATION_ROWS = (
-    ThreadRow, ThreadControlRow, PauseParticipantRow, UploadRow,
+    ThreadRow, CheckpointVersionRow, ThreadControlRow, PauseParticipantRow, UploadRow,
     MediaDraftRow, MediaReferenceUploadRow, MediaVoiceCloneRow, MediaBatchRow, MediaJobRow,
     SiteProjectRow, SiteDraftRow, SiteDeployJobRow,
     SandboxControlRow, SandboxPortGrantRow, SandboxAuditRow,

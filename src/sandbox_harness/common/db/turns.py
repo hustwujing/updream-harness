@@ -772,18 +772,10 @@ class TurnsTransactions:
     @observed("db.checkpoint.commit")
     async def update_thread_checkpoint(self, thread_id: str, checkpoint_ref: str, native_thread_id: str,
                                        *, turn_id: str | None = None, lease_owner: str | None = None,
-                                       recovery_generation: int | None = None) -> None:
-        async with self.connections.begin() as db:
-            if lease_owner is not None:
-                fence = (await db.execute(update(TurnRow).where(TurnRow.id == turn_id,
-                    TurnRow.thread_id == thread_id, TurnRow.lease_owner == lease_owner,
-                    TurnRow.recovery_generation == recovery_generation, TurnRow.lease_expires_at > now())
-                    .values(updated_at=TurnRow.updated_at).returning(TurnRow.id))).scalar_one_or_none()
-                if fence is None:
-                    raise RuntimeError("stale_turn_lease")
-            row = await db.get(ThreadRow, thread_id, with_for_update=True)
-            if not row:
-                raise KeyError("thread_not_found")
-            row.checkpoint_ref = checkpoint_ref
-            row.native_thread_id = native_thread_id
-            row.updated_at = now()
+                                       recovery_generation: int | None = None,
+                                       checkpoint_size:int=0,partial:bool=False,
+                                       verification:dict|None=None) -> None:
+        await self.commit_checkpoint_version(thread_id,checkpoint_ref,native_thread_id,
+            size=checkpoint_size,source_turn_id=turn_id or "",partial=partial,
+            verification=verification,lease_owner=lease_owner,
+            recovery_generation=recovery_generation)

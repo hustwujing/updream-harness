@@ -144,6 +144,8 @@ def public_failure(code: str, detail: str) -> tuple[str, str]:
         return code, '恢复工作区时与沙箱的连接暂时中断，工作区快照仍安全保存，本轮尚未开始执行。'
     if code == 'checkpoint_restore_failed':
         return code, '沙箱可达，但已保存的工作区快照校验或解包失败，本轮尚未开始执行。'
+    if code == 'checkpoint_version_rolled_back':
+        return code, '最新工作区版本无法安全恢复，系统已回退到上一个验证版本。本轮没有重放，请发送“继续”重试。'
     if re.search(r'\b503\b', text) or 'servers are currently overloaded' in text:
         return 'model_service_overloaded', '模型服务繁忙（503），本轮未能完成。已保存的阶段文件可在工作区查看，稍后可以继续。'
     if re.search(r'\b429\b', text):

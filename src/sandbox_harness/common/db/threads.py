@@ -4,7 +4,7 @@ from sqlalchemy import (or_, delete, func, select, update)
 from sandbox_harness.common.contracts.domain import (ThreadCreate, ThreadView, TurnState, identifier, now)
 from sandbox_harness.common.catalog.catalog import (ResolvedProfile)
 from sandbox_harness.common.contracts.job_contracts import (JobGroupState, JobState, TERMINAL_JOB_STATES)
-from .models import (ArtifactRow, AuthorizationSnapshotRow, BudgetAccountRow, BudgetLedgerRow, BudgetReservationRow, EventRow, InteractionRow, ItemRow, JobActivityRow, JobArtifactRow, JobAttemptRow, JobCleanupRow, JobDisplayActivityRow, JobGroupDraftRow, JobGroupRow, JobLeaseRow, JobOutboxRow, JobRow, MediaBatchRow, MediaDraftRow, MediaExecutionRow, MediaJobOutputRow, MediaJobRow, MediaOutboxRow, MediaReferenceUploadRow, PauseParticipantRow, ProjectFileRow, ResourceReservationRow, ReviewGateRow, SandboxAllocationRow, SandboxAuditRow, SandboxControlRow, SandboxPortGrantRow, SiteDeployJobRow, SiteDraftFileRow, SiteDraftRow, SiteFileRow, SiteProjectRow, SiteVersionRow, ThreadControlRow, ThreadRow, TurnInputRow, TurnOrderRow, TurnProjectFileRow, TurnRow, utc_datetime)
+from .models import (ArtifactRow, AuthorizationSnapshotRow, BudgetAccountRow, BudgetLedgerRow, BudgetReservationRow, CheckpointVersionRow, EventRow, InteractionRow, ItemRow, JobActivityRow, JobArtifactRow, JobAttemptRow, JobCleanupRow, JobDisplayActivityRow, JobGroupDraftRow, JobGroupRow, JobLeaseRow, JobOutboxRow, JobRow, MediaBatchRow, MediaDraftRow, MediaExecutionRow, MediaJobOutputRow, MediaJobRow, MediaOutboxRow, MediaReferenceUploadRow, PauseParticipantRow, ProjectFileRow, ResourceReservationRow, ReviewGateRow, SandboxAllocationRow, SandboxAuditRow, SandboxControlRow, SandboxPortGrantRow, SiteDeployJobRow, SiteDraftFileRow, SiteDraftRow, SiteFileRow, SiteProjectRow, SiteVersionRow, ThreadControlRow, ThreadRow, TurnInputRow, TurnOrderRow, TurnProjectFileRow, TurnRow, utc_datetime)
 
 
 class ThreadsTransactions:
@@ -241,6 +241,8 @@ class ThreadsTransactions:
             await db.execute(delete(ThreadControlRow).where(
                 ThreadControlRow.thread_id == thread_id))
             await db.execute(delete(ProjectFileRow).where(ProjectFileRow.thread_id == thread_id))
+            await db.execute(delete(CheckpointVersionRow).where(
+                CheckpointVersionRow.thread_id==thread_id))
             await db.execute(delete(ItemRow).where(ItemRow.thread_id == thread_id))
             if turn_ids:
                 await db.execute(delete(TurnOrderRow).where(TurnOrderRow.turn_id.in_(turn_ids)))

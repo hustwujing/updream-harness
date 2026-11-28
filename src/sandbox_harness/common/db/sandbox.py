@@ -314,17 +314,20 @@ class SandboxTransactions:
 
 
     async def update_thread_checkpoint_idle(self, thread_id: str, owner_id: str,
-                                            checkpoint_ref: str) -> None:
-        async with self.connections.begin() as db:
+                                            checkpoint_ref: str,*,checkpoint_size:int=0,
+                                            verification:dict|None=None) -> None:
+        async with self.connections() as db:
             thread = (await db.execute(select(ThreadRow).where(ThreadRow.id == thread_id,
-                ThreadRow.owner_id == owner_id).with_for_update())).scalar_one_or_none()
-            if not thread:
-                raise KeyError("thread_not_found")
-            active = (await db.execute(select(TurnRow.id).where(TurnRow.thread_id == thread_id,
+                ThreadRow.owner_id == owner_id))).scalar_one_or_none()
+            if not thread:raise KeyError("thread_not_found")
+            active=(await db.execute(select(TurnRow.id).where(TurnRow.thread_id==thread_id,
                 TurnRow.state.not_in([state.value for state in TERMINAL])).limit(1))).scalar_one_or_none()
-            if active:
-                raise RuntimeError("active_turn_prevents_checkpoint")
-            thread.checkpoint_ref = checkpoint_ref; thread.updated_at = now()
+            if active:raise RuntimeError("active_turn_prevents_checkpoint")
+            native_thread_id=thread.native_thread_id
+        await self.commit_checkpoint_version(thread_id,checkpoint_ref,native_thread_id,
+            size=checkpoint_size,verification=verification or {
+                'object_digest':'verified','archive':'idle_checkpoint'},require_idle=True,
+            expected_owner_id=owner_id)
 
 
     async def add_sandbox_audit(self, thread_id: str, owner_id: str, sandbox_id: str,

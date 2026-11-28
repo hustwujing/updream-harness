@@ -21,6 +21,7 @@ from sandbox_harness.common.storage.objects import (ObjectStore)
 from sandbox_harness.common.sandbox.pool import (SandboxPool)
 from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend, Sandbox)
 from test_support.legacy_store import (Store)
+from test_support.checkpoints import (checkpoint_bytes)
 
 
 class CountingStream(httpx.AsyncByteStream):
@@ -151,9 +152,9 @@ async def test_artifact_count_limit_is_public_turn_failure(tmp_path):
             yield RuntimeResult(status="completed", native_thread_id="native")
         async def checkpoint(self, sandbox, *, maximum):
             path = tmp_path / ("checkpoint-" + __import__('uuid').uuid4().hex)
-            path.write_bytes(b"checkpoint")
+            data=checkpoint_bytes();path.write_bytes(data)
             from sandbox_harness.common.sandbox.runtime import (StagedRuntimeObject)
-            return StagedRuntimeObject(path, 10, hashlib.sha256(b"checkpoint").hexdigest())
+            return StagedRuntimeObject(path,len(data),hashlib.sha256(data).hexdigest())
         async def artifacts(self, *args):
             raise RuntimeTransferError("artifact_count_limit_exceeded")
         async def cancel(self, *args): return {"cancelled": True}

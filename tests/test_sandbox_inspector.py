@@ -1,5 +1,7 @@
 from datetime import timedelta
 from types import SimpleNamespace
+import io
+import tarfile
 
 import httpx
 import pytest
@@ -13,6 +15,7 @@ from sandbox_harness.common.sandbox.pool import (SandboxPool)
 from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
 from sandbox_harness.common.execution.sandbox_inspector import (SandboxInspector, TerminalTicketCodec, websocket_endpoint_headers)
 from test_support.legacy_store import (SandboxControlRow, Store)
+from test_support.checkpoints import (checkpoint_bytes)
 from sqlalchemy import update
 from sandbox_harness.common.sandbox.runtime import (StagedRuntimeObject)
 from sandbox_runtime import app as runtime_app
@@ -126,8 +129,8 @@ class FakeRuntime:
     async def checkpoint(self, sandbox, *, maximum):
         if self.fail_checkpoint: raise httpx.ConnectError("runtime lost")
         target=__import__('pathlib').Path.cwd()/'.data'/'tmp'/'inspector-checkpoint'
-        target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(b'checkpoint')
-        return StagedRuntimeObject(target,10,__import__('hashlib').sha256(b'checkpoint').hexdigest())
+        data=checkpoint_bytes();target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(data)
+        return StagedRuntimeObject(target,len(data),__import__('hashlib').sha256(data).hexdigest())
 
 
 class FakeBroker:
@@ -449,7 +452,9 @@ async def test_checkpoint_transport_failure_stays_retryable_and_retains_sandbox(
         result=await inspector.release(thread.id,owner,managed_action="discard")
         assert result["checkpointed"] is True and revokes==1
         checkpoint=(await store.get_thread(thread.id,owner)).checkpoint_ref
-        assert objects.get(checkpoint,maximum=1024)==b"checkpoint"
+        data=objects.get(checkpoint,maximum=1024*1024)
+        with tarfile.open(fileobj=io.BytesIO(data),mode='r:*') as archive:
+            assert 'state/codex/state_5.sqlite' in archive.getnames()
     finally:await pool.close();await store.close()
 
 

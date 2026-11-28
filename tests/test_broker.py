@@ -19,6 +19,7 @@ from sandbox_harness.common.sandbox.sandbox import (FakeSandboxBackend)
 from sandbox_harness.common.contracts.sandbox_contracts import (SandboxCreateRequest, SandboxHandle)
 from sandbox_harness.common.sandbox.sandbox_factory import (SandboxProfileResolver)
 from test_support.legacy_store import (Store)
+from test_support.checkpoints import (checkpoint_bytes)
 
 
 class Runtime:
@@ -38,7 +39,7 @@ class Runtime:
         root=Path.cwd()/'.data'/'tmp'/'test-runtime';root.mkdir(parents=True,exist_ok=True)
         path=root/(__import__('uuid').uuid4().hex);path.write_bytes(data)
         return StagedRuntimeObject(path,len(data),hashlib.sha256(data).hexdigest())
-    async def checkpoint(self, sandbox, *, maximum): return self.stage(b"checkpoint")
+    async def checkpoint(self, sandbox, *, maximum): return self.stage(checkpoint_bytes())
     async def artifacts(self, sandbox, expected_batch_id): return [{"path": "result.txt", "mime": "text/plain",
         "size":6,"sha256":hashlib.sha256(b"result").hexdigest()}]
     async def artifact(self, sandbox, path, *, maximum): return self.stage(b"result")
@@ -1046,6 +1047,82 @@ async def test_restore_failure_never_replaces_last_good_checkpoint(tmp_path):
         assert runtime.checkpoint_calls==0
     finally:
         await broker.close();await pool.close();await store.close()
+
+
+async def test_invalid_checkpoint_rolls_back_without_starting_harness(tmp_path):
+    class InvalidRestoreRuntime(Runtime):
+        started=0
+        async def restore(self,sandbox,archive,*,size):
+            request=httpx.Request('PUT','http://runtime/v1/checkpoint')
+            raise httpx.HTTPStatusError('invalid checkpoint',request=request,
+                response=httpx.Response(400,request=request))
+        async def run(self,*args,**kwargs):
+            self.started+=1
+            yield RuntimeResult(status='completed',native_thread_id='unexpected')
+
+    settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(
+        tmp_path/'checkpoint-rollback.db'),backend='fake',gateway_signing_key='k'*32,
+        gateway_url='http://127.0.0.1:9',session_keepalive_seconds=0)
+    store=Store(settings.database_url);await store.initialize();objects=ObjectStore(tmp_path/'objects')
+    backend=FakeSandboxBackend();pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness})
+    runtime=InvalidRestoreRuntime();catalog=HarnessCatalog();broker=Broker(
+        settings,store,objects,pool,runtime,catalog);owner='a'*64
+    try:
+        profile=catalog.resolve('codex','gpt-5.6','standard')
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level='standard',title='Rollback invalid'),profile,owner)
+        first,_=objects.put(b'first');second,_=objects.put(b'second')
+        await store.update_thread_checkpoint(thread.id,first,'native-1')
+        await store.update_thread_checkpoint(thread.id,second,'native-2')
+        turn=await broker.submit(thread.id,TurnCreate(message='continue',
+            idempotency_key='rollback-invalid-turn'))
+        for _ in range(300):
+            current=await store.get_turn(turn.id)
+            if current.state==TurnState.FAILED and turn.id not in broker.tasks:break
+            await asyncio.sleep(.01)
+        saved=await store.get_thread(thread.id);versions=await store.list_checkpoint_versions(thread.id)
+        assert current.error_code=='checkpoint_version_rolled_back' and runtime.started==0
+        assert saved.checkpoint_ref==first and saved.native_thread_id=='native-1'
+        assert next(row for row in versions if row['object_ref']==first)['state']=='ACTIVE'
+        assert next(row for row in versions if row['object_ref']==second)['state']=='INVALID'
+    finally:await broker.close();await pool.close();await store.close()
+
+
+async def test_unaccepted_native_resume_failure_rolls_back_without_partial_save(tmp_path):
+    class NativeFailureRuntime(Runtime):
+        checkpoint_calls=0
+        async def run(self,*args,**kwargs):
+            yield RuntimeResult(status='failed',error_code='native_session_unavailable',
+                error_detail='private',input_ids=[])
+        async def checkpoint(self,*args,**kwargs):
+            self.checkpoint_calls+=1
+            return await super().checkpoint(*args,**kwargs)
+
+    settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(
+        tmp_path/'native-rollback.db'),backend='fake',gateway_signing_key='k'*32,
+        gateway_url='http://127.0.0.1:9',session_keepalive_seconds=0)
+    store=Store(settings.database_url);await store.initialize();objects=ObjectStore(tmp_path/'objects')
+    backend=FakeSandboxBackend();pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness})
+    runtime=NativeFailureRuntime();catalog=HarnessCatalog();broker=Broker(
+        settings,store,objects,pool,runtime,catalog);owner='a'*64
+    try:
+        profile=catalog.resolve('codex','gpt-5.6','standard')
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level='standard',title='Rollback native'),profile,owner)
+        first,_=objects.put(b'first');second,_=objects.put(b'second')
+        await store.update_thread_checkpoint(thread.id,first,'native-1')
+        await store.update_thread_checkpoint(thread.id,second,'native-2')
+        turn=await broker.submit(thread.id,TurnCreate(message='continue',
+            idempotency_key='rollback-native-turn'))
+        for _ in range(300):
+            current=await store.get_turn(turn.id)
+            if current.state==TurnState.FAILED and turn.id not in broker.tasks:break
+            await asyncio.sleep(.01)
+        saved=await store.get_thread(thread.id)
+        assert current.error_code=='checkpoint_version_rolled_back'
+        assert saved.checkpoint_ref==first and saved.native_thread_id=='native-1'
+        assert runtime.checkpoint_calls==0
+    finally:await broker.close();await pool.close();await store.close()
 
 
 async def test_success_cleanup_failure_keeps_durable_completed_intent_until_recovery(tmp_path,monkeypatch):

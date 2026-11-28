@@ -82,12 +82,13 @@ async def test_old_checkpoint_writer_is_fenced(tmp_path):
         old=await store.claim_turn(first.id,'old',30)
         await store.release_turn_lease(first.id,'old',old.recovery_generation)
         new=await store.claim_turn(first.id,'new',30)
-        await store.update_thread_checkpoint(thread.id,'sha256:new','native-new',turn_id=first.id,
+        new_ref='sha256:'+'1'*64;old_ref='sha256:'+'2'*64
+        await store.update_thread_checkpoint(thread.id,new_ref,'native-new',turn_id=first.id,
             lease_owner='new',recovery_generation=new.recovery_generation)
         with pytest.raises(RuntimeError,match='stale_turn_lease'):
-            await store.update_thread_checkpoint(thread.id,'sha256:old','native-old',turn_id=first.id,
+            await store.update_thread_checkpoint(thread.id,old_ref,'native-old',turn_id=first.id,
                 lease_owner='old',recovery_generation=old.recovery_generation)
-        assert (await store.get_thread(thread.id)).checkpoint_ref=='sha256:new'
+        assert (await store.get_thread(thread.id)).checkpoint_ref==new_ref
     finally:await store.close()
 
 

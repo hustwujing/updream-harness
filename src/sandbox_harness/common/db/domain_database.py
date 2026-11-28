@@ -26,6 +26,7 @@ DOMAIN_TABLES = {
     "core": frozenset({
         "artifacts", "authorization_snapshots", "budget_accounts", "budget_ledger",
         "budget_reservations", "capability_ledger", "child_job_continuations", "events",
+        "checkpoint_versions",
         "interactions", "items", "job_activities", "job_artifacts", "job_attempts",
         "job_cleanups", "job_display_activities", "job_group_drafts", "job_groups",
         "job_leases", "job_outbox", "jobs", "model_token_reservations", "nodes",

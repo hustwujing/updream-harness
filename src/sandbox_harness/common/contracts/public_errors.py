@@ -78,6 +78,7 @@ def public_turn_failure(*, code: str, detail: str, turn_id: str) -> dict:
         "sandbox_workspace_restore_unavailable": (
             "请稍后重新发送本轮消息；系统会从上一个已保存的工作区继续。"),
         "checkpoint_restore_failed": "请提供查询编号联系管理员，不要删除已有工作区数据。",
+        "checkpoint_version_rolled_back": "系统已回退到上一验证版本，请发送“继续”重试。",
     }.get(public_code) or "请按提示处理；若问题持续，请提供查询编号联系管理员。")
     return {
         "error_code": public_code,

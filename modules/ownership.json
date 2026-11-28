@@ -194,6 +194,14 @@
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/capabilities.py"
     },
+    "src/sandbox_harness/common/db/checkpoint_migration.py": {
+      "owner": "common/db",
+      "target": "src/sandbox_harness/common/db/checkpoint_migration.py"
+    },
+    "src/sandbox_harness/common/db/checkpoints.py": {
+      "owner": "common/db",
+      "target": "src/sandbox_harness/common/db/checkpoints.py"
+    },
     "src/sandbox_harness/common/db/cleanup.py": {
       "owner": "common/db",
       "target": "src/sandbox_harness/common/db/cleanup.py"
@@ -525,6 +533,10 @@
     "src/sandbox_harness/common/storage/__init__.py": {
       "owner": "common/storage",
       "target": "src/sandbox_harness/common/storage/__init__.py"
+    },
+    "src/sandbox_harness/common/storage/checkpoints.py": {
+      "owner": "common/storage",
+      "target": "src/sandbox_harness/common/storage/checkpoints.py"
     },
     "src/sandbox_harness/common/storage/directories.py": {
       "owner": "common/storage",
