@@ -11,7 +11,7 @@ BUSINESS_FIELDS = frozenset({
     "bundle_version", "bytes", "cache_read_input_tokens", "cache_write_input_tokens",
     "cancelled", "capture_mode", "capture_session", "checkpointed", "count",
     "discovered_count", "disk_errors", "dropped_count", "duration_ms", "elapsed_seconds",
-    "error_code", "execution_id", "exit_code", "expired", "export_failures", "external_execution_id",
+    "error_code", "execution_id", "exit_code", "expired", "expired_checkpoint_count", "export_failures", "external_execution_id",
     "failure_origin", "failure_stage", "failures", "file_count", "file_id", "files", "final_state",
     "first_output_ms", "generation", "gap_count", "group_count", "group_id", "harness",
     "header_ms", "healthy_count", "ingress", "input_id", "input_tokens", "interaction_id",
