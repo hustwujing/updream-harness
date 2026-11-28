@@ -20,9 +20,15 @@ IDLE_SECONDS = 600
 
 
 class ProjectUploads:
-    def __init__(self, root: Path, target):
+    def __init__(self, root: Path, target, *, max_bytes:int|None=None,
+                 chunk_bytes:int=CHUNK_BYTES):
         self.root = root
         self.target = target
+        self.max_bytes=max_bytes
+        self.chunk_bytes=chunk_bytes
+        if (self.chunk_bytes<=0 or
+                self.max_bytes is not None and self.chunk_bytes>self.max_bytes):
+            raise ValueError('project_upload_limits_invalid')
         self.epoch = uuid.uuid4().hex
         self.records: OrderedDict[str, dict] = OrderedDict()
         self.writers: dict[str, str] = {}
@@ -83,7 +89,8 @@ class ProjectUploads:
             raise HTTPException(410, 'project_upload_initialization_expired')
         if not re.fullmatch(r'[0-9a-f]{32}', identity):
             raise HTTPException(400, 'project_upload_id_invalid')
-        if not 0 <= size <= MAX_BYTES:
+        maximum=self.max_bytes if self.max_bytes is not None else MAX_BYTES
+        if not 0 <= size <= maximum:
             raise HTTPException(413, 'project_upload_size_invalid')
         try:
             self.target(path)
@@ -97,11 +104,11 @@ class ProjectUploads:
             if value['status'] not in {'open', 'complete'}:
                 raise HTTPException(409, 'project_upload_inactive')
             value['touched'] = time.monotonic()
-            return {'upload_id': identity, 'chunk_bytes': CHUNK_BYTES}
+            return {'upload_id': identity, 'chunk_bytes': self.chunk_bytes}
         self._make_room()
         active = [v for v in self.records.values()
                   if v['status'] == 'open' and v['path'] != path]
-        if len(active) >= MAX_ACTIVE or sum(v['size'] for v in active) + size > MAX_BYTES:
+        if len(active)>=MAX_ACTIVE or sum(v['size'] for v in active)+size>maximum:
             raise HTTPException(429, 'project_upload_capacity')
         temporary = self.root / (uuid.uuid4().hex + '.part')
         with temporary.open('xb'):
@@ -112,7 +119,7 @@ class ProjectUploads:
             'issued_at': issued_at,
             'written': 0, 'temporary': temporary, 'status': 'open',
             'touched': time.monotonic()}
-        return {'upload_id': identity, 'chunk_bytes': CHUNK_BYTES}
+        return {'upload_id': identity, 'chunk_bytes': self.chunk_bytes}
 
     def _open(self, identity: str) -> dict:
         self._reap()
@@ -138,7 +145,8 @@ class ProjectUploads:
 
     def chunk(self, identity: str, offset: int, body: bytes) -> dict:
         value = self._open(identity)
-        if not body or len(body) > CHUNK_BYTES or offset < 0 or offset + len(body) > value['size']:
+        if (not body or len(body)>self.chunk_bytes or offset<0
+                or offset+len(body)>value['size']):
             raise HTTPException(400, 'project_upload_chunk_invalid')
         if offset > value['written']:
             raise HTTPException(409, 'project_upload_offset_mismatch')

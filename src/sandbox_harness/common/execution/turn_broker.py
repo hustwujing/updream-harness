@@ -924,6 +924,7 @@ class Broker:
         cleanup_pending = False
         result=None
         execution_id=turn.runtime_execution_id or ''
+        workspace_restore_confirmed=False
         try:
             async with self.thread_lock(thread.id):
                 try:
@@ -983,6 +984,7 @@ class Broker:
                     sandbox = await self.pool.adopt(selected,thread_id=thread.id,turn_id=turn.id,
                         expected_profile=self._sandbox_profile_for_turn(turn),
                         ownership_owner_id=thread.owner_id)
+                    workspace_restore_confirmed=True
                     self.active_sandboxes[turn.id] = sandbox
                     if status.get("state") == "completed" and turn.runtime_sequence >= int(status.get("last_sequence") or 0):
                         recovered_result = RuntimeResult.model_validate({
@@ -1059,6 +1061,7 @@ class Broker:
                                 size=archive_size)
                         except httpx.HTTPError as exc:
                             raise checkpoint_restore_error(exc) from exc
+                    workspace_restore_confirmed=True
                     await self._register_project_attachments(thread.id, turn.id, turn.attachments)
                     project_files = await self.store.freeze_turn_project_files(turn.id, thread.id,
                         lease_owner=self.instance_id, recovery_generation=generation)
@@ -1205,7 +1208,7 @@ class Broker:
                 error_code = getattr(exc, "error_code", type(exc).__name__)
                 error_detail = str(exc)
                 event("turn.execution.failed",level=logging.ERROR,exc=exc,turn_id=turn.id,execution_id=turn.runtime_execution_id)
-                if sandbox and not lost_lease:
+                if sandbox and not lost_lease and workspace_restore_confirmed:
                     try:
                         await self._state(turn.id, TurnState.CHECKPOINTING, sandbox_id=sandbox.id)
                         await self._save_workspace(sandbox, thread.id, turn.id,
@@ -1223,6 +1226,10 @@ class Broker:
                                 lost_lease = True
                             else:
                                 raise
+                elif sandbox and not lost_lease:
+                    event("workspace.partial_save.skipped",level=logging.WARNING,
+                        turn_id=turn.id,sandbox_id=sandbox.id,
+                        reason="workspace_restore_unconfirmed")
                 try:
                     await self.store.append_event(turn.id, EventKind.ERROR,
                         {"code": error_code, "detail": error_detail[:1000]},

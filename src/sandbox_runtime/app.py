@@ -61,6 +61,7 @@ HARNESS_JSONL_LIMIT = 16 * 1024 * 1024
 RUNTIME_EVENT_JOURNAL_LIMIT = 256 * 1024 * 1024
 MAX_OUTPUT_ARTIFACTS = 50_000
 MAX_CHECKPOINT_BYTES = 4 * 1024 * 1024 * 1024
+CHECKPOINT_CHUNK_BYTES = 1024 * 1024
 MAX_HARNESS_STDERR_LOG_BYTES = 1024 * 1024
 
 
@@ -1276,39 +1277,96 @@ def create_app() -> FastAPI:
         return {"configured": True, "skills": skills, "skills_deferred": value.defer_skill_install,
             "capability_change": app.state.capability_change_frame}
 
-    @app.put("/v1/checkpoint")
-    async def restore(request: Request):
-        staged = await stage_checkpoint_request(request)
-        try:
-            def safe_checkpoint_member(member, _destination):
-                try:
-                    path = safe_relative(member.name)
-                except ValueError as exc:
-                    raise tarfile.FilterError("Invalid checkpoint member") from exc
-                if path.parts[0] not in PERSISTENT:
-                    raise tarfile.FilterError("Invalid checkpoint member")
-                if member.issym() or member.islnk() or member.isdev():
-                    return None
-                current = WORKSPACE
-                for part in path.parts[:-1]:
-                    current = current / part
-                    if current.is_symlink():
-                        raise tarfile.FilterError("Checkpoint member traverses a link")
-                return member
+    def checkpoint_upload_target(path:str)->Path:
+        if path!='checkpoint.tar':raise ValueError('checkpoint_upload_path_invalid')
+        return RUN/'checkpoint-upload.tar'
+
+    checkpoint_uploads=ProjectUploads(RUN/'checkpoint-uploads',checkpoint_upload_target,
+        max_bytes=MAX_CHECKPOINT_BYTES,chunk_bytes=CHECKPOINT_CHUNK_BYTES)
+    checkpoint_upload_target('checkpoint.tar').unlink(missing_ok=True)
+    app.state.checkpoint_uploads=checkpoint_uploads
+    checkpoint_chunk_slots=asyncio.Semaphore(4)
+
+    async def apply_checkpoint(staged:Path)->None:
+        def safe_checkpoint_member(member, _destination):
             try:
-                with tarfile.open(staged, "r:*") as archive:
-                    archive.extractall(WORKSPACE, filter=safe_checkpoint_member)
-            except (tarfile.TarError, OSError) as exc:
-                raise HTTPException(400, "checkpoint_archive_invalid") from exc
-        finally:
-            staged.unlink(missing_ok=True)
+                path = safe_relative(member.name)
+            except ValueError as exc:
+                raise tarfile.FilterError("Invalid checkpoint member") from exc
+            if path.parts[0] not in PERSISTENT:
+                raise tarfile.FilterError("Invalid checkpoint member")
+            if member.issym() or member.islnk() or member.isdev():
+                return None
+            current = WORKSPACE
+            for part in path.parts[:-1]:
+                current = current / part
+                if current.is_symlink():
+                    raise tarfile.FilterError("Checkpoint member traverses a link")
+            return member
+        try:
+            with tarfile.open(staged, "r:*") as archive:
+                archive.extractall(WORKSPACE, filter=safe_checkpoint_member)
+        except (tarfile.TarError, OSError) as exc:
+            raise HTTPException(400, "checkpoint_archive_invalid") from exc
         if app.state.harness:
             skills = materialize_skills(app.state.harness, WORKSPACE, app.state.skill_ids,
                 app.state.skill_digests or None)
             event("runtime.skills.materialized", harness=app.state.harness,
                 bundle_version=skills["bundle_version"], skill_count=skills["skill_count"])
         load_jobs()
+
+    @app.put("/v1/checkpoint")
+    async def restore(request: Request):
+        staged = await stage_checkpoint_request(request)
+        try:await apply_checkpoint(staged)
+        finally:staged.unlink(missing_ok=True)
         return {"restored": True}
+
+    @app.get('/v1/checkpoint/uploads')
+    async def checkpoint_upload_protocol():
+        return {'epoch':checkpoint_uploads.epoch,'chunk_bytes':CHECKPOINT_CHUNK_BYTES}
+
+    @app.put('/v1/checkpoint/uploads/{upload_id}')
+    async def begin_checkpoint_upload(upload_id:str,size:int,issued_at:int,epoch:str):
+        return checkpoint_uploads.begin(upload_id,'checkpoint.tar',size,issued_at,epoch)
+
+    @app.put('/v1/checkpoint/uploads/{upload_id}/chunks/{offset}')
+    async def checkpoint_upload_chunk(upload_id:str,offset:int,request:Request):
+        async with checkpoint_chunk_slots:
+            if 'content-length' in request.headers:
+                try:declared=int(request.headers['content-length'])
+                except ValueError:raise HTTPException(400,'checkpoint_upload_length_invalid')
+                if declared<0 or declared>CHECKPOINT_CHUNK_BYTES:
+                    raise HTTPException(413,'checkpoint_upload_chunk_too_large')
+            data=bytearray()
+            async for part in request.stream():
+                if len(data)+len(part)>CHECKPOINT_CHUNK_BYTES:
+                    raise HTTPException(413,'checkpoint_upload_chunk_too_large')
+                data.extend(part)
+            return checkpoint_uploads.chunk(upload_id,offset,bytes(data))
+
+    @app.post('/v1/checkpoint/uploads/{upload_id}/commit')
+    async def commit_checkpoint_upload(upload_id:str,sha256:str):
+        receipt=checkpoint_uploads.commit(upload_id,sha256)
+        record=checkpoint_uploads.records.get(upload_id)
+        if record is None:raise HTTPException(404,'checkpoint_upload_unknown')
+        if not record.get('restored'):
+            target=checkpoint_upload_target('checkpoint.tar')
+            try:await apply_checkpoint(target)
+            except BaseException:
+                raise
+            else:
+                record['restored']=True;target.unlink(missing_ok=True)
+        return {'restored':True,'bytes':receipt['bytes'],'sha256':receipt['sha256']}
+
+    @app.delete('/v1/checkpoint/uploads/{upload_id}')
+    async def abort_checkpoint_upload(upload_id:str):
+        record=checkpoint_uploads.records.get(upload_id)
+        checkpoint_uploads.abort(upload_id)
+        if record and record.get('status')=='complete' and not record.get('restored'):
+            checkpoint_upload_target('checkpoint.tar').unlink(missing_ok=True)
+            record['status']='aborted'
+        return {'aborted':True}
 
     @app.post("/v1/job-artifacts/stage")
     async def stage_job_artifact(value: JobArtifactStage):

@@ -1,4 +1,6 @@
 import hashlib
+import io
+import tarfile
 
 import httpx
 import pytest
@@ -6,9 +8,39 @@ import pytest
 from sandbox_harness.common.contracts.domain import (Harness)
 from sandbox_harness.common.sandbox.runtime import (RuntimeClient)
 from sandbox_harness.common.sandbox.sandbox import (Sandbox)
+from sandbox_harness.common.storage.objects import (ObjectStore,object_chunks)
 from test_runtime_boundaries import runtime
 
 CHUNK=4*1024*1024
+
+
+async def test_large_checkpoint_uses_idempotent_one_megabyte_chunks(tmp_path,monkeypatch):
+    app=runtime(tmp_path,monkeypatch,'');upstream=httpx.ASGITransport(app=app)
+    dropped=set();bodies=[]
+    class Ingress(httpx.AsyncBaseTransport):
+        async def handle_async_request(self,request):
+            body=await request.aread();bodies.append((request.url.path,len(body)))
+            if len(body)>1024*1024:return httpx.Response(413)
+            response=await upstream.handle_async_request(request)
+            key=('chunk' if '/chunks/' in request.url.path else
+                'commit' if request.url.path.endswith('/commit') else '')
+            if key and key not in dropped and response.is_success:
+                dropped.add(key);await response.aread()
+                raise httpx.ReadError('reply lost',request=request)
+            return response
+    raw=io.BytesIO()
+    payload=b'x'*(9*1024*1024)
+    with tarfile.open(fileobj=raw,mode='w') as archive:
+        member=tarfile.TarInfo('project/work/large.bin');member.size=len(payload)
+        archive.addfile(member,io.BytesIO(payload))
+    data=raw.getvalue();objects=ObjectStore(tmp_path/'objects');reference,_=objects.put(data)
+    client=RuntimeClient(transport=Ingress());sandbox=make_sandbox()
+    await client.restore(sandbox,object_chunks(objects,reference,maximum=len(data)),size=len(data))
+    assert (tmp_path/'workspace/project/work/large.bin').read_bytes()==payload
+    assert max(size for _,size in bodies)<=1024*1024
+    assert dropped=={'chunk','commit'}
+    assert not list((tmp_path/'runtime/checkpoint-uploads').glob('*.part'))
+    assert not (tmp_path/'runtime/checkpoint-upload.tar').exists()
 
 
 @pytest.mark.parametrize('streaming',[False,True])

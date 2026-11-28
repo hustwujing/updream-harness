@@ -259,6 +259,9 @@ class RuntimeClient:
 
     @observed("workspace.restore")
     async def restore(self, sandbox: Sandbox, archive, *, size: int) -> None:
+        if size>8*1024*1024:
+            await self._restore_checkpoint_chunks(sandbox,archive,size=size)
+            return
         retryable={429,502,503,504}
         for attempt in range(self.request_retry_attempts):
             await self._resolve_endpoint(sandbox)
@@ -278,6 +281,57 @@ class RuntimeClient:
                 if self.backend is not None:self._endpoint_refresh.add(sandbox.id)
             await asyncio.sleep(self._request_retry_delay(attempt))
         raise RuntimeError('unreachable')
+
+    async def _restore_checkpoint_chunks(self,sandbox:Sandbox,content,*,size:int)->None:
+        await self._resolve_endpoint(sandbox)
+        upload_id=uuid.uuid4().hex;upload_path='/v1/checkpoint/uploads/'+upload_id
+        issued_at=int(time.time());digest=hashlib.sha256();offset=0;pending=bytearray()
+        async with observed_async_client('sandbox-runtime',base_url=sandbox.runtime_url,
+                headers={**sandbox.runtime_headers,**carrier()},timeout=300,
+                trust_env=False,transport=self.transport) as client:
+            async def send_chunk(body):
+                nonlocal offset
+                response=await self._request_with_startup_retry(client,'PUT',
+                    upload_path+'/chunks/'+str(offset),content=body,
+                    headers={'Content-Type':'application/octet-stream'})
+                self._raise_for_status(sandbox,response)
+                if response.json()!={'bytes':len(body),'offset':offset}:
+                    raise RuntimeTransferError('checkpoint_upload_chunk_receipt_mismatch')
+                digest.update(body);offset+=len(body)
+            try:
+                response=await self._request_with_startup_retry(
+                    client,'GET','/v1/checkpoint/uploads')
+                self._raise_for_status(sandbox,response);protocol=response.json()
+                epoch=protocol.get('epoch');chunk_size=protocol.get('chunk_bytes')
+                if not isinstance(epoch,str) or len(epoch)!=32:
+                    raise RuntimeTransferError('checkpoint_upload_epoch_invalid')
+                if not isinstance(chunk_size,int) or not 0<chunk_size<=1024*1024:
+                    raise RuntimeTransferError('checkpoint_upload_chunk_limit_invalid')
+                response=await self._request_with_startup_retry(client,'PUT',upload_path,
+                    params={'size':size,'issued_at':issued_at,'epoch':epoch})
+                self._raise_for_status(sandbox,response)
+                if response.json().get('chunk_bytes')!=chunk_size:
+                    raise RuntimeTransferError('checkpoint_upload_chunk_limit_changed')
+                async for part in content:
+                    if offset+len(pending)+len(part)>size:
+                        raise RuntimeTransferError('runtime_transfer_size_mismatch')
+                    view=memoryview(part)
+                    while view:
+                        length=min(chunk_size-len(pending),len(view))
+                        pending.extend(view[:length]);view=view[length:]
+                        if len(pending)==chunk_size:
+                            await send_chunk(bytes(pending));pending.clear()
+                if pending:await send_chunk(bytes(pending))
+                if offset!=size:raise RuntimeTransferError('runtime_transfer_size_mismatch')
+                response=await self._request_with_startup_retry(client,'POST',
+                    upload_path+'/commit',params={'sha256':digest.hexdigest()})
+                self._raise_for_status(sandbox,response);receipt=response.json()
+                if (not receipt.get('restored') or receipt.get('bytes')!=size
+                        or receipt.get('sha256')!=digest.hexdigest()):
+                    raise RuntimeTransferError('checkpoint_upload_receipt_mismatch')
+            finally:
+                try:await client.delete(upload_path,timeout=5)
+                except httpx.HTTPError:pass
 
     async def put_attachment(self, sandbox: Sandbox, name: str, data: bytes, mime: str) -> None:
         await self._resolve_endpoint(sandbox)

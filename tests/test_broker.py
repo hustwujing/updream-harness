@@ -1009,6 +1009,45 @@ async def test_primary_execution_failure_survives_cleanup_failure_and_saves_part
         await broker.close(); await pool.close(); await store.close()
 
 
+async def test_restore_failure_never_replaces_last_good_checkpoint(tmp_path):
+    class RestoreFailureRuntime(Runtime):
+        def __init__(self):super().__init__();self.checkpoint_calls=0
+        async def restore(self,sandbox,archive,*,size):
+            raise httpx.ReadError('controlled restore disconnect',
+                request=httpx.Request('PUT','http://runtime/v1/checkpoint'))
+        async def checkpoint(self,sandbox,*,maximum):
+            self.checkpoint_calls+=1
+            return await super().checkpoint(sandbox,maximum=maximum)
+
+    settings=Settings(data_root=tmp_path,
+        database_url='sqlite+aiosqlite:///'+str(tmp_path/'restore-failure.db'),
+        backend='fake',gateway_signing_key='k'*32,gateway_url='http://127.0.0.1:9',
+        session_keepalive_seconds=0)
+    store=Store(settings.database_url);await store.initialize();objects=ObjectStore(tmp_path/'objects')
+    old_ref,_=objects.put(b'last-good-checkpoint');backend=FakeSandboxBackend()
+    pool=SandboxPool(backend,{h:'' for h in Harness},{h:0 for h in Harness})
+    runtime=RestoreFailureRuntime();catalog=HarnessCatalog();broker=Broker(
+        settings,store,objects,pool,runtime,catalog);owner='a'*64
+    try:
+        profile=catalog.resolve('codex','gpt-5.6','standard')
+        thread=await store.create_thread(ThreadCreate(harness=Harness.CODEX,model=profile.model,
+            reasoning_level='standard',title='Restore failure'),profile,owner)
+        await store.update_thread_checkpoint(thread.id,old_ref,'native-good')
+        turn=await broker.submit(thread.id,TurnCreate(message='continue',
+            idempotency_key='restore-failure-turn'))
+        for _ in range(300):
+            current=await store.get_turn(turn.id)
+            if current.state==TurnState.FAILED and turn.id not in broker.tasks:break
+            await asyncio.sleep(.01)
+        saved=await store.get_thread(thread.id)
+        assert current.state==TurnState.FAILED
+        assert current.error_code=='sandbox_workspace_restore_unavailable'
+        assert saved.checkpoint_ref==old_ref and saved.native_thread_id=='native-good'
+        assert runtime.checkpoint_calls==0
+    finally:
+        await broker.close();await pool.close();await store.close()
+
+
 async def test_success_cleanup_failure_keeps_durable_completed_intent_until_recovery(tmp_path,monkeypatch):
     settings=Settings(data_root=tmp_path,database_url='sqlite+aiosqlite:///'+str(tmp_path/'success-cleanup.db'),
         backend='fake',gateway_signing_key='k'*32,gateway_url='http://127.0.0.1:9',
