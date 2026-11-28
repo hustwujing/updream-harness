@@ -61,7 +61,7 @@
   ],
   "compatibility": {
     "wire_protocol": "unchanged",
-    "schema": "unchanged",
+    "schema": "checkpoint-versions-v1",
     "baseline": "8b79ea5"
   },
   "migration_stage": "isolated"
