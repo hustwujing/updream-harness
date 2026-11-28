@@ -103,6 +103,10 @@ waiting or failed outcome becomes `CANCELLED` unless cleanup itself failed.
   marks. Runtime ACK is sent only after the matching database transaction
   succeeds. A failed or unknown transaction leaves the journal unacknowledged
   so replacement Workers replay it; ACK must never precede commit.
+- Each Primary live-text envelope carries the exact durable `agent_message`
+  Item ID established by the first committed text in that segment. Tool and
+  step boundaries close the current message; later text establishes a new Item
+  before live publication. Never route live text by execution ID alone.
 - Input status is `pending`, `delivered`, `unknown`, `applied` or `failed`.
   Transport loss after delivery becomes `unknown`; it is not permission to send
   the input again as new work.

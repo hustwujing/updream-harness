@@ -53,7 +53,9 @@ must not depend on Redis.
   back by new output.
 - Live transcript overlays deduplicate by execution and Runtime sequence. A
   durable refresh may replace their base text but may not duplicate or regress
-  higher uncommitted fragments. Character progress counts Unicode code points
+  higher uncommitted fragments. Overlays bind to the server-provided Item ID so
+  text after a tool cannot be appended to an earlier message from the same
+  execution. Character progress counts Unicode code points
   from received public text and animates only toward an observed value.
 - Only active Items animate. Terminal Items retain a fixed elapsed duration.
 - Domain-specific terminal sets drive elapsed timers. Site retry exhaustion is

@@ -1239,6 +1239,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             if not parts:continue
                             payload={'execution_id':execution_id,'sequence_start':parts[0]['sequence'],
                                 'sequence_end':parts[-1]['sequence'],
+                                'item_id':str(value.get('item_id') or ''),
                                 'text':''.join(part['text'] for part in parts),'parts':parts}
                             yield f"event: live_text_delta\ndata: {json.dumps(payload,ensure_ascii=False)}\n\n"
                         if durable or not live or not store.events.available:break

@@ -8,7 +8,10 @@ from sandbox_harness.services.job_worker.harness_job import SandboxChildBackend
 
 async def test_runtime_stream_buffer_batches_text_and_flushes_before_control_event():
     persisted=[];live=[];acked=[]
-    async def persist(value):persisted.append(value)
+    async def persist(value):
+        persisted.append(value)
+        return SimpleNamespace(item_id=(f'item-{value.runtime_sequence}'
+            if value.kind==EventKind.TEXT_DELTA else ''))
     async def publish(value):live.append(value)
     async def acknowledge(sequence):acked.append(sequence)
     buffer=RuntimeStreamBuffer(execution_id='execution',persist_event=persist,
@@ -28,6 +31,26 @@ async def test_runtime_stream_buffer_batches_text_and_flushes_before_control_eve
     assert persisted[1].payload['sequence_start']==2
     assert acked==[1,3,4]
     assert ''.join(part['text'] for value in live for part in value['parts'])=='abc'
+    assert {value['item_id'] for value in live}=={'item-1'}
+
+
+async def test_text_after_tool_boundary_targets_a_new_agent_item():
+    live=[]
+    async def persist(value):
+        return SimpleNamespace(item_id=(f'item-{value.runtime_sequence}'
+            if value.kind==EventKind.TEXT_DELTA else ''))
+    async def publish(value):live.append(value)
+    buffer=RuntimeStreamBuffer(execution_id='execution',persist_event=persist,
+        persist_seconds=5,live_seconds=5,publish_live=publish)
+    await buffer.add(RuntimeEvent(kind=EventKind.TEXT_DELTA,payload={'text':'before'},
+        runtime_sequence=1))
+    await buffer.add(RuntimeEvent(kind=EventKind.TOOL_STARTED,
+        payload={'tool_use_id':'tool','name':'shell'},runtime_sequence=2))
+    await buffer.add(RuntimeEvent(kind=EventKind.TEXT_DELTA,payload={'text':'after'},
+        runtime_sequence=3))
+    await buffer.close()
+    assert [(value['item_id'],value['text']) for value in live]==[
+        ('item-1','before'),('item-3','after')]
 
 
 async def test_runtime_stream_buffer_never_acknowledges_failed_persistence():

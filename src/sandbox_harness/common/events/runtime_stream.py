@@ -36,6 +36,7 @@ class RuntimeStreamBuffer:
         self._tool_start=0
         self._tool_end=0
         self._live_parts:list[tuple[int,str]]=[]
+        self._live_item_id=''
         self._persist_task:asyncio.Task|None=None
         self._live_task:asyncio.Task|None=None
         self._first_text_committed=False
@@ -59,6 +60,10 @@ class RuntimeStreamBuffer:
         if value.kind!=EventKind.TEXT_DELTA:
             await self.flush()
             await self._persist(value)
+            if (value.kind in {EventKind.TOOL_STARTED,EventKind.STEP_STARTED}
+                    and not value.payload.get('model_request_id')):
+                self._first_text_committed=False
+                self._live_item_id=''
             return
         await self._flush_tool_output()
         text=str(value.payload.get('text') or '')
@@ -135,9 +140,12 @@ class RuntimeStreamBuffer:
                 text=''.join(self._text);start=self._text_start;end=self._text_end
                 self._text=[];self._text_start=0;self._text_end=0
             try:
-                await self._persist_unlocked(RuntimeEvent(kind=EventKind.TEXT_DELTA,
+                receipt=await self._persist_unlocked(RuntimeEvent(kind=EventKind.TEXT_DELTA,
                     payload={'text':text,'sequence_start':start,'sequence_end':end},
                     runtime_sequence=end))
+                item_id=getattr(receipt,'item_id','')
+                if not item_id and isinstance(receipt,dict):item_id=str(receipt.get('item_id') or '')
+                if item_id:self._live_item_id=str(item_id)
                 self._first_text_committed=True
             except BaseException:
                 async with self._lock:
@@ -151,7 +159,8 @@ class RuntimeStreamBuffer:
         async with self._lock:
             if not self._live_parts:return
             parts=self._live_parts;self._live_parts=[]
-            value={'execution_id':self.execution_id,'sequence_start':parts[0][0],
+            value={'execution_id':self.execution_id,'item_id':self._live_item_id,
+                'sequence_start':parts[0][0],
                 'sequence_end':parts[-1][0],'text':''.join(text for _,text in parts),
                 'parts':[{'sequence':sequence,'text':text} for sequence,text in parts]}
         await self.publish_live(value)
@@ -176,13 +185,14 @@ class RuntimeStreamBuffer:
     async def _persist(self,value:RuntimeEvent)->None:
         async with self._commit_lock:await self._persist_unlocked(value)
 
-    async def _persist_unlocked(self,value:RuntimeEvent)->None:
-        await self.persist_event(value)
+    async def _persist_unlocked(self,value:RuntimeEvent):
+        result=await self.persist_event(value)
         if self.acknowledge and value.runtime_sequence:
             try:await self.acknowledge(value.runtime_sequence)
             except Exception as exc:
                 logger.warning('Runtime stream acknowledgement unavailable execution=%s sequence=%s error=%s',
                     self.execution_id,value.runtime_sequence,type(exc).__name__)
+        return result
 
     async def _cancel_timer(self,name:str)->None:
         task=getattr(self,name)

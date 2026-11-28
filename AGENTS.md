@@ -49,7 +49,8 @@ claims made by documentation.
   Redis may carry bounded live deltas, but PostgreSQL advances the committed
   Runtime cursor only with the aggregated transcript/activity transaction.
   ACK Runtime only after that transaction succeeds; control and terminal
-  boundaries flush pending fragments first.
+  boundaries flush pending fragments first. Primary live deltas bind to the
+  exact durable transcript Item; execution identity alone is insufficient.
 - Files leave a sandbox only through validated attachments, managed project
   files, checkpoints or `/workspace/outputs` artifacts.
 

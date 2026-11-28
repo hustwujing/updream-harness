@@ -690,11 +690,11 @@ class Broker:
             raise
 
     async def _record_runtime_event(self, thread_id: str, turn_id: str, value: RuntimeEvent,
-                                    execution_id: str = "") -> None:
+                                    execution_id: str = ""):
         generation = self.leases.get(turn_id)
         if value.kind not in {EventKind.TEXT_DELTA, EventKind.TOOL_OUTPUT}:
             event("runtime.event.received",thread_id=thread_id,turn_id=turn_id,execution_id=execution_id,runtime_sequence=value.runtime_sequence,tool_id=value.payload.get("tool_use_id"),reason=value.kind.value)
-        await self.store.persist_runtime_event(thread_id, turn_id, value, execution_id,
+        recorded=await self.store.persist_runtime_event(thread_id, turn_id, value, execution_id,
             lease_owner=self.instance_id if generation is not None else None,
             recovery_generation=generation)
         if value.kind==EventKind.STEP_FINISHED and value.payload.get("input_completed"):
@@ -704,10 +704,11 @@ class Broker:
                         execution_id=execution_id,
                         lease_owner=self.instance_id if generation is not None else None,
                         recovery_generation=generation)
+        return recorded
 
     def _runtime_stream_buffer(self,thread_id:str,turn_id:str,execution_id:str,sandbox):
         async def persist(value):
-            await self._record_runtime_event(thread_id,turn_id,value,execution_id)
+            return await self._record_runtime_event(thread_id,turn_id,value,execution_id)
         async def publish(value):
             if self.store.events:
                 await self.store.events.publish_live('turn',turn_id,value)
