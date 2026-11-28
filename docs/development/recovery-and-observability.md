@@ -106,6 +106,18 @@ its partial staging file and restarts at byte zero; an object-backed upload
 reopens the immutable object for every attempt. Deterministic 4xx rejection is
 not retried.
 
+Checkpoint upload is replayable from immutable object storage. If all bounded
+transport attempts fail before Runtime accepts the archive, `RuntimeClient`
+must force-refresh the provider endpoint/traffic token and replay the complete
+object once through a new client. It must not reuse a consumed iterator or
+apply this behavior to Harness execution submission.
+
+Codex completion is durable only after its app-server has observed stdin EOF
+and exited. Before Runtime receives `harness.input.completed`, the Runner starts
+a fresh app-server and verifies `thread/resume` for the same native ID. A failed
+verification reports `native_session_unavailable`; checkpoint publication may
+not claim a native session that a new process cannot resume.
+
 Harness execution start, Provider submission, PTY creation and media-render
 submission do not use this policy because a lost response can hide an accepted
 external side effect. Those paths retain their accepted-handle reconciliation

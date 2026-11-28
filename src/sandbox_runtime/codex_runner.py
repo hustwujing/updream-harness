@@ -117,9 +117,13 @@ class Bridge:
 
     def close(self):
         if self.process.poll() is None:
-            self.process.terminate()
-            try: self.process.wait(5)
-            except subprocess.TimeoutExpired: self.process.kill(); self.process.wait(5)
+            try:
+                if self.process.stdin and not self.process.stdin.closed:self.process.stdin.close()
+                self.process.wait(5)
+            except (BrokenPipeError,subprocess.TimeoutExpired):
+                if self.process.poll() is None:self.process.terminate()
+                try:self.process.wait(2)
+                except subprocess.TimeoutExpired:self.process.kill();self.process.wait(2)
 
 
 def main():
@@ -138,14 +142,21 @@ def main():
                     interaction_condition.notify_all()
         eof.set()
 
-    threading.Thread(target=read_controls, daemon=True).start(); bridge = Bridge(interaction_responses, interaction_condition)
+    threading.Thread(target=read_controls, daemon=True).start();bridge=None
+    def open_bridge(thread_id=''):
+        value=Bridge(interaction_responses,interaction_condition)
+        try:
+            value.rpc("initialize",{"clientInfo":{"name":"sandbox-harness-platform","version":"0.1.0"}})
+            value.write({"method":"initialized","params":{}})
+            params={"cwd":"/workspace/project","model":args.model,"approvalPolicy":"never",
+                "sandbox":"danger-full-access","developerInstructions":runtime_instructions()}
+            if thread_id:params["threadId"]=thread_id
+            opened=value.rpc("thread/resume" if thread_id else "thread/start",params)
+            return value,opened["thread"]["id"]
+        except BaseException:
+            value.close();raise
     try:
-        bridge.rpc("initialize", {"clientInfo": {"name": "sandbox-harness-platform", "version": "0.1.0"}})
-        bridge.write({"method": "initialized", "params": {}})
-        params = {"cwd": "/workspace/project", "model": args.model, "approvalPolicy": "never",
-            "sandbox": "danger-full-access", "developerInstructions": runtime_instructions()}
-        if args.thread_id: params["threadId"] = args.thread_id
-        opened = bridge.rpc("thread/resume" if args.thread_id else "thread/start", params); thread_id = opened["thread"]["id"]
+        bridge,thread_id=open_bridge(args.thread_id)
         bridge.emit({"type": "thread.started", "thread_id": thread_id})
         while not eof.is_set() or not controls.empty():
             try: first = controls.get(timeout=.1)
@@ -180,13 +191,19 @@ def main():
             error = completed_turn.get("error") or {}
             status=completed_turn.get("status", "completed")
             native_code=error.get("codexErrorInfo")
-            bridge.emit({"type": "harness.input.completed", "input_ids": input_ids, "thread_id": thread_id,
+            bridge.close();bridge=None
+            verification,verified_thread_id=open_bridge(thread_id)
+            verification.close()
+            if verified_thread_id!=thread_id:raise CodexRpcError('thread/resume',{'code':-32004})
+            Bridge.emit({"type": "harness.input.completed", "input_ids": input_ids, "thread_id": thread_id,
                 "status": status,"error_code": (normalize_error_code(native_code)
                     if native_code else "harness_failed" if status=="failed" else ""),
                 "error_detail": error.get("message") or ""})
+            return 0
     except Exception as exc:
-        bridge.emit(runner_failure(exc));return 1
-    finally: bridge.close()
+        Bridge.emit(runner_failure(exc));return 1
+    finally:
+        if bridge is not None:bridge.close()
 
 
 if __name__ == "__main__":raise SystemExit(main())

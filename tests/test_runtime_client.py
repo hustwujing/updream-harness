@@ -51,6 +51,30 @@ async def test_checkpoint_restore_replays_the_complete_object_after_read_error(t
     assert waits==[1]
 
 
+async def test_checkpoint_restore_refreshes_provider_endpoint_after_retry_exhaustion(tmp_path,monkeypatch):
+    waits=[]
+    async def no_wait(seconds):waits.append(seconds)
+    monkeypatch.setattr('sandbox_harness.common.sandbox.runtime.asyncio.sleep',no_wait)
+    store=ObjectStore(tmp_path/'objects');payload=b'checkpoint-'*200000
+    reference,_=store.put(payload);requests=[]
+    class Backend:
+        def __init__(self):self.calls=[]
+        async def endpoint(self,sandbox,port,*,force_refresh=False):
+            self.calls.append(force_refresh)
+            return SandboxEndpoint(url=('http://runtime-two' if force_refresh else 'http://runtime-one'))
+    async def respond(request):
+        body=await request.aread();requests.append((request.url.host,body))
+        if request.url.host=='runtime-one':raise httpx.ReadError('cold endpoint reset',request=request)
+        return httpx.Response(200,json={'restored':True})
+    backend=Backend();runtime=RuntimeClient(backend=backend,transport=httpx.MockTransport(respond))
+    sandbox=Sandbox(id='sandbox',harness=Harness.CODEX,image='image',runtime_url='',metadata={})
+    await runtime.restore(sandbox,object_chunks(store,reference,maximum=len(payload)),size=len(payload))
+    assert backend.calls==[False,True]
+    assert [host for host,_ in requests]==['runtime-one']*4+['runtime-two']
+    assert all(body==payload for _,body in requests)
+    assert waits==[1,2,4]
+
+
 async def test_checkpoint_restore_does_not_retry_deterministic_rejection(tmp_path):
     store=ObjectStore(tmp_path/'objects');reference,_=store.put(b'invalid-checkpoint');calls=[]
     async def respond(request):

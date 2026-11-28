@@ -259,14 +259,19 @@ class RuntimeClient:
 
     @observed("workspace.restore")
     async def restore(self, sandbox: Sandbox, archive, *, size: int) -> None:
-        await self._resolve_endpoint(sandbox)
-        async with observed_async_client('sandbox-runtime',base_url=sandbox.runtime_url,
-                headers={**sandbox.runtime_headers,**carrier()}, timeout=120,
-                trust_env=False, transport=self.transport) as client:
-            response = await self._request_with_startup_retry(client,"PUT","/v1/checkpoint",
-                content=archive,
-                headers={"Content-Type": "application/x-tar", "Content-Length": str(size)})
-            self._raise_for_status(sandbox,response)
+        for endpoint_attempt in range(2):
+            await self._resolve_endpoint(sandbox)
+            try:
+                async with observed_async_client('sandbox-runtime',base_url=sandbox.runtime_url,
+                        headers={**sandbox.runtime_headers,**carrier()}, timeout=120,
+                        trust_env=False, transport=self.transport) as client:
+                    response=await self._request_with_startup_retry(client,"PUT","/v1/checkpoint",
+                        content=archive,headers={"Content-Type":"application/x-tar",
+                            "Content-Length":str(size)})
+                    self._raise_for_status(sandbox,response);return
+            except (httpx.TimeoutException,httpx.TransportError):
+                if self.backend is None or endpoint_attempt:raise
+                self._endpoint_refresh.add(sandbox.id)
 
     async def put_attachment(self, sandbox: Sandbox, name: str, data: bytes, mime: str) -> None:
         await self._resolve_endpoint(sandbox)
