@@ -12,3 +12,6 @@ It does not run Turn execution, recovery or singleton supervisors.
 Cross-domain writes must use `CrossDomainCommands` or the lifecycle coordinator.
 Transcript SSE combines durable PostgreSQL batches with owner-checked, bounded
 Redis live deltas. Browser overlays deduplicate by Runtime execution and sequence.
+Execution Graph snapshots additionally overlay request-matched character totals
+from the isolated `model-turn` and `model-job` Redis streams; PostgreSQL remains
+the durable five-second model-progress baseline.

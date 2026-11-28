@@ -25,6 +25,12 @@ The current modular Ali baseline contains 200 cases and is
 non-program failures, with each retained result preserving its actual tested
 revision. See the
 [200-case retained sandbox report](docs/test-evidence/ali-retained-sandbox-200-case-report.md).
+The supplemental
+[large-checkpoint recovery report](docs/test-evidence/ali-large-checkpoint-recovery-report.md)
+records the 210 MB Ali restore, checkpoint-pointer repair and chunk protocol.
+The [live model character progress report](docs/test-evidence/ali-live-model-character-progress-report.md)
+records the Gateway/API/browser progress path. Neither changes the frozen
+200-case catalog count.
 The prior
 [199-case cold restore report](docs/test-evidence/ali-cold-restore-199-case-report.md)
 remains the cold restore predecessor. The prior

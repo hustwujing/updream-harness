@@ -106,11 +106,18 @@ its partial staging file and restarts at byte zero; an object-backed upload
 reopens the immutable object for every attempt. Deterministic 4xx rejection is
 not retried.
 
-Checkpoint upload is replayable from immutable object storage. If all bounded
-transport attempts fail before Runtime accepts the archive, `RuntimeClient`
-must force-refresh the provider endpoint/traffic token and replay the complete
-object once through a new client. It must not reuse a consumed iterator or
-apply this behavior to Harness execution submission.
+Checkpoint restore is replayable from immutable object storage. Archives up to
+8 MiB use the bounded whole-request path. Larger archives use an isolated
+Runtime staging protocol with fixed 1 MiB chunks, immutable offsets, replay-safe
+receipts and an exact total size/SHA-256 commit before extraction. A lost chunk
+or commit response reuses the same upload identity and bytes; it never restarts
+Harness execution. Runtime replacement invalidates unfinished staging.
+
+A fresh sandbox may write a new Thread checkpoint only after the previous
+workspace restore is confirmed. A transport or archive restore failure skips
+partial save entirely and preserves the last good pointer. Partial checkpoint
+after a later execution error remains best effort, but must not convert an
+unrestored empty workspace into the authoritative Thread state.
 
 Codex completion is durable only after its app-server has observed stdin EOF
 and exited. Before Runtime receives `harness.input.completed`, the Runner starts
@@ -427,6 +434,10 @@ business catalog.
   the correct terminal state in one transaction rather than waiting externally.
 - Best-effort partial checkpoint after an execution exception; a later retry
   must inspect current project artifacts rather than trust stale Harness memory.
+- Restore failure before Harness execution, proving the previous checkpoint
+  reference remains unchanged and no partial checkpoint request occurs.
+- A checkpoint larger than the monolithic threshold through an ingress that
+  rejects requests above 1 MiB, including lost chunk and commit responses.
 - Telemetry queue/export/disk failure without business-state mutation.
 
 Use deterministic Harness fixtures for recovery mechanics and label them as

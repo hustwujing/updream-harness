@@ -46,8 +46,18 @@ claims made by documentation.
 - PostgreSQL is authoritative. Redis is a bounded notification/replay aid.
 - Checkpoint commit precedes successful or waiting publication. Artifact and
   checkpoint writes remain lease-fenced and content-addressed.
+- A fresh sandbox may publish a replacement checkpoint only after restoration
+  of the prior workspace is confirmed. Restore failure preserves the last good
+  Thread pointer. Large immutable checkpoint transfers use bounded idempotent
+  chunks and an exact size/digest commit rather than one monolithic request.
 - Stream events are ordered by `(turn_id, sequence)` and Runtime receipts are
   idempotent by `(execution_id, source_sequence)`.
+- Live model progress may carry only request identity and cumulative public
+  character counts. Redis delivery is best effort, PostgreSQL is the durable
+  baseline, and progress publication must never delay or fail Provider output.
+- A cross-domain lifecycle may re-evaluate an immediate local prepare refusal
+  under the same operation identity only before any participant command leaves
+  Core. A remote, committed or aborted decision is never reopened.
 - Public text and tool-output fragments use the shared Runtime stream buffer.
   Redis may carry bounded live deltas, but PostgreSQL advances the committed
   Runtime cursor only with the aggregated transcript/activity transaction.
