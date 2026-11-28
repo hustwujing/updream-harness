@@ -875,7 +875,10 @@ def create_app() -> FastAPI:
                         payload=event.get('payload') or {}
                         execution.protocol_state['runner_error']={
                             'error_code':normalize_error_code(payload.get('error_code')),
-                            'error_detail':str(payload.get('message') or 'Harness runner failed')[:1000]}
+                            'error_detail':str(payload.get('message') or 'Harness runner failed')[:1000],
+                            'input_ids':[identity for identity in dict.fromkeys(
+                                str(value) for value in (payload.get('input_ids') or []) if value)
+                                if identity in execution.received_input_ids]}
                     execution.native_thread_id = event.get("payload", {}).get("thread_id") or execution.native_thread_id
                     if event.get("kind") != "text_delta" or not (
                         event.get("payload", {}).get("snapshot") and execution.saw_text_delta
@@ -946,7 +949,8 @@ def create_app() -> FastAPI:
                         str(runner_error.get('error_code') or 'harness_result_missing')),
                     "error_detail": ("Harness stopped before acknowledging all pending inputs"
                         if not runner_error else str(runner_error.get('error_detail') or 'Harness runner failed')),
-                    "input_ids": execution_input_ids(execution),
+                    "input_ids": (runner_error.get('input_ids',[])
+                        if runner_error else execution_input_ids(execution)),
                 })
                 return
             background = await wait_background(execution)

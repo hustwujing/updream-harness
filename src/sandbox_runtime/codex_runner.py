@@ -31,7 +31,7 @@ class CodexRpcError(RuntimeError):
         super().__init__('Codex RPC failed')
 
 
-def runner_failure(exc):
+def runner_failure(exc, input_ids=()):
     diagnostics={'exception_type':type(exc).__name__}
     if isinstance(exc,CodexAppServerExited):diagnostics=exc.diagnostics
     if isinstance(exc,CodexRpcError):diagnostics=exc.diagnostics
@@ -39,7 +39,8 @@ def runner_failure(exc):
     return {'type':'error','error_code':(
         'native_session_unavailable' if unavailable else 'harness_runner_failed'),
         'message':('Saved Codex session is unavailable' if unavailable
-            else 'Harness runner failed'),'diagnostics':diagnostics}
+            else 'Harness runner failed'),'diagnostics':diagnostics,
+        'input_ids':list(dict.fromkeys(str(value) for value in input_ids if value))}
 
 
 class Bridge:
@@ -155,6 +156,7 @@ def main():
             return value,opened["thread"]["id"]
         except BaseException:
             value.close();raise
+    accepted_input_ids=[]
     try:
         bridge,thread_id=open_bridge(args.thread_id)
         bridge.emit({"type": "thread.started", "thread_id": thread_id})
@@ -165,14 +167,15 @@ def main():
                 "sandboxPolicy": {"type": "externalSandbox", "networkAccess": "enabled"},
                 "input": [{"type": "text", "text": first["message"]}], "model": args.model,
                 "effort": os.environ.get("HARNESS_REASONING_EFFORT", "high")})
-            turn_id = started["turn"]["id"]; input_ids = [first["id"]]; completed = False; completed_turn = {}
+            turn_id = started["turn"]["id"]; input_ids = [first["id"]]
+            accepted_input_ids.append(first["id"]); completed = False; completed_turn = {}
             while not completed:
                 while True:
                     try: extra = controls.get_nowait()
                     except queue.Empty: break
                     bridge.rpc("turn/steer", {"threadId": thread_id, "expectedTurnId": turn_id,
                         "input": [{"type": "text", "text": extra["message"]}], "clientUserMessageId": extra["id"]})
-                    input_ids.append(extra["id"])
+                    input_ids.append(extra["id"]);accepted_input_ids.append(extra["id"])
                 while True:
                     try: forwarded = bridge.forwarded.get_nowait()
                     except queue.Empty: break
@@ -201,7 +204,7 @@ def main():
                 "error_detail": error.get("message") or ""})
             return 0
     except Exception as exc:
-        Bridge.emit(runner_failure(exc));return 1
+        Bridge.emit(runner_failure(exc,accepted_input_ids));return 1
     finally:
         if bridge is not None:bridge.close()
 

@@ -125,6 +125,7 @@ for line in sys.stdin:
         if row.get('type')=='error')
     assert failure['error_code']=='native_session_unavailable'
     assert failure['message']=='Saved Codex session is unavailable'
+    assert failure['input_ids']==[]
     assert failure['diagnostics']=={'exception_type':'CodexRpcError',
         'rpc_method':'thread/resume','rpc_code':-32004}
 
@@ -157,3 +158,35 @@ open(marker,'w').write('durable-thread')
     rows=list(map(json.loads,process.stdout.splitlines()))
     completed=next(row for row in rows if row.get('type')=='harness.input.completed')
     assert completed['thread_id']=='durable-thread' and marker.read_text()=='durable-thread'
+
+
+def test_codex_runner_reports_accepted_input_when_post_turn_resume_fails(tmp_path):
+    fake=tmp_path/'codex';starts=tmp_path/'app-server-starts'
+    fake.write_text(f'''#!/usr/bin/env python3
+import json,os,sys
+starts={str(starts)!r}
+count=int(open(starts).read())+1 if os.path.exists(starts) else 1
+open(starts,'w').write(str(count))
+def send(value):print(json.dumps(value),flush=True)
+for line in sys.stdin:
+ value=json.loads(line);method=value.get('method');identity=value.get('id')
+ if method=='initialize':send({{'id':identity,'result':{{}}}})
+ elif method=='thread/start':send({{'id':identity,'result':{{'thread':{{'id':'fragile-thread'}}}}}})
+ elif method=='thread/resume':
+  send({{'id':identity,'error':{{'code':-32004,'message':'not persisted'}}}})
+ elif method=='turn/start':
+  send({{'id':identity,'result':{{'turn':{{'id':'turn'}}}}}})
+  send({{'method':'turn/completed','params':{{'turn':{{'id':'turn','status':'completed'}}}}}})
+''')
+    fake.chmod(0o755)
+    environment={**os.environ,'PATH':str(tmp_path)+os.pathsep+os.environ['PATH'],
+        'PYTHONPATH':str(Path(__file__).resolve().parents[1]/'src')}
+    process=subprocess.run([sys.executable,'-m','sandbox_runtime.codex_runner','--model','model'],
+        input=json.dumps({'type':'input','id':'accepted-one','message':'persist'})+'\n',
+        stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=environment,timeout=10)
+    assert process.returncode!=0,process.stderr
+    failure=next(row for row in map(json.loads,process.stdout.splitlines())
+        if row.get('type')=='error')
+    assert failure['error_code']=='native_session_unavailable'
+    assert failure['input_ids']==['accepted-one']
+    assert starts.read_text()=='2'

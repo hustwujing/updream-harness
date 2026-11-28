@@ -195,6 +195,21 @@ print(json.dumps({'type':'error','error_code':'native_session_unavailable',
     assert result['status']=='failed'
     assert result['error_code']=='native_session_unavailable'
     assert result['error_detail']=='Saved Codex session is unavailable'
+    assert result['input_ids']==[]
+
+
+async def test_runner_error_preserves_only_explicitly_accepted_inputs(tmp_path,monkeypatch):
+    app=runtime(tmp_path,monkeypatch,'''import sys,json
+value=json.loads(sys.stdin.readline())
+print(json.dumps({'type':'error','error_code':'native_session_unavailable',
+ 'message':'Saved Codex session is unavailable','input_ids':[value['id'],'not-received']}),flush=True)
+''')
+    await endpoint(app,'/v1/turns')(runtime_app.TurnRequest(
+        message='hello',execution_id='accepted-error',input_id='accepted'))
+    result=await completed(app)
+    assert result['status']=='failed'
+    assert result['error_code']=='native_session_unavailable'
+    assert result['input_ids']==['accepted']
 
 
 async def test_non_object_stdout_does_not_destroy_valid_completion(tmp_path, monkeypatch):
