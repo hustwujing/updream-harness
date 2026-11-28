@@ -23,7 +23,8 @@ async def remove_thread(client:httpx.AsyncClient,thread_id:str)->None:
         if response.status_code!=409:break
         try:detail=response.json().get("detail")
         except (TypeError,ValueError):detail=""
-        if detail!="active_thread_cannot_be_deleted":response.raise_for_status()
+        if detail not in {"active_thread_cannot_be_deleted","remote_obligations_pending"}:
+            response.raise_for_status()
         await asyncio.sleep(.5)
     response.raise_for_status()
     if response.status_code==204:return
