@@ -64,6 +64,14 @@ collection without resubmission. Run it whenever `ArtifactGateway`, writable
 directory recovery, Child collection or Controlled collection changes. It does
 not change the frozen 175-case catalog count.
 
+Supplemental `MC01` (`tests/run_real_model_character_progress.py`) runs one real
+Codex stream and requires multiple monotonically increasing content-free Redis
+and Execution Graph character samples before terminal completion. It then
+deletes its own Thread through the lifecycle API. Run it whenever Gateway model
+observation, Redis live model progress, Execution Graph model-round projection
+or transcript character animation changes. It does not change the 200-case
+catalog count.
+
 Documentation-only updates to a verified baseline need content, source-reference
 and link checks, not another real-provider campaign or deployment. Preserve the
 tested/deployed revision and commit the documentation separately; do not rewrite
