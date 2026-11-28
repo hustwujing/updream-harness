@@ -26,8 +26,7 @@ class ProjectUploads:
         self.target = target
         self.max_bytes=max_bytes
         self.chunk_bytes=chunk_bytes
-        if (self.chunk_bytes<=0 or
-                self.max_bytes is not None and self.chunk_bytes>self.max_bytes):
+        if self.chunk_bytes<=0:
             raise ValueError('project_upload_limits_invalid')
         self.epoch = uuid.uuid4().hex
         self.records: OrderedDict[str, dict] = OrderedDict()
